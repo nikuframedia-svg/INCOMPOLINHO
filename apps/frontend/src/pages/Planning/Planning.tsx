@@ -1,4 +1,4 @@
-import NikufraEngine from '../../features/planning/NikufraEngine';
+import { SchedulingPage as NikufraEngine } from '../../features/scheduling';
 import useUIStore from '../../stores/useUIStore';
 
 function Planning() {
