@@ -31,6 +31,7 @@ import useSettingsStore, { getTransformConfig } from '../../stores/useSettingsSt
 import useToastStore from '../../stores/useToastStore';
 import { gridDensityVars } from '../../utils/gridDensity';
 import { computePlanDiff } from '../../utils/planDiff';
+import { useGanttInteraction } from '../scheduling/hooks/useGanttInteraction';
 import { useScheduleFilters } from '../scheduling/hooks/useScheduleFilters';
 import './NikufraEngine.css';
 
@@ -845,62 +846,31 @@ function GanttView({
   validation?: ScheduleValidationReport | null;
 }) {
   const { machines, dates, dnames, tools } = data;
-  // Working day indices — filter weekends
-  const wdi = useMemo(
-    () =>
-      data.workdays.map((w: boolean, i: number) => (w ? i : -1)).filter((i): i is number => i >= 0),
-    [data.workdays],
+  const { state: gantt, actions: ganttActions } = useGanttInteraction(
+    blocks,
+    machines,
+    mSt,
+    data.workdays,
+    validation,
   );
-  const [hov, setHov] = useState<string | null>(null);
-  // Initialize to first working day
-  const [selDay, setSelDay] = useState(() => (wdi.length > 0 ? wdi[0] : 0));
-  const [selM, setSelM] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [selOp, setSelOp] = useState<string | null>(null);
-  const selBlock = useMemo(
-    () => (selOp ? (blocks.find((b) => b.opId === selOp && b.dayIdx === selDay) ?? null) : null),
-    [blocks, selOp, selDay],
-  );
-  const dayB = useMemo(
-    () =>
-      blocks.filter(
-        (b) =>
-          b.dayIdx === selDay &&
-          b.type !== 'blocked' &&
-          (b.endMin - b.startMin >= 2 || b.setupS != null),
-      ),
-    [blocks, selDay],
-  );
-  const dayBlkN = useMemo(
-    () =>
-      new Set(blocks.filter((b) => b.dayIdx === selDay && b.type === 'blocked').map((b) => b.opId))
-        .size,
-    [blocks, selDay],
-  );
-  const activeM = useMemo(() => {
-    const ms = new Set<string>();
-    blocks.filter((b) => b.dayIdx === selDay).forEach((b) => ms.add(b.machineId));
-    Object.entries(mSt).forEach(([id, s]) => {
-      if (s === 'down') ms.add(id);
-    });
-    let a = machines.filter((m) => ms.has(m.id));
-    if (selM) a = a.filter((m) => m.id === selM);
-    return a;
-  }, [blocks, selDay, selM, mSt, machines]);
-  const ppm = 1.2 * zoom;
-  const totalW = (S1 - S0) * ppm;
+  const {
+    hov,
+    selDay,
+    selM,
+    zoom,
+    selOp,
+    selBlock,
+    dayB,
+    dayBlkN,
+    activeM,
+    wdi,
+    ppm,
+    totalW,
+    violationsByDay,
+  } = gantt;
+  const { setHov, setSelDay, setSelM, setZoom, setSelOp } = ganttActions;
   const hours: number[] = [];
   for (let h = 7; h <= 24; h++) hours.push(h);
-  const violationsByDay = useMemo(() => {
-    if (!validation) return {} as Record<number, number>;
-    const byDay: Record<number, number> = {};
-    for (const v of validation.violations) {
-      const daySet = new Set<number>();
-      for (const op of v.affectedOps) daySet.add(op.dayIdx);
-      for (const d of daySet) byDay[d] = (byDay[d] || 0) + 1;
-    }
-    return byDay;
-  }, [validation]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
