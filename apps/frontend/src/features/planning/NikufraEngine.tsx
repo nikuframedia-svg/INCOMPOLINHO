@@ -33,6 +33,7 @@ import { gridDensityVars } from '../../utils/gridDensity';
 import { computePlanDiff } from '../../utils/planDiff';
 import { useGanttInteraction } from '../scheduling/hooks/useGanttInteraction';
 import { useScheduleFilters } from '../scheduling/hooks/useScheduleFilters';
+import { useScheduleValidation } from '../scheduling/hooks/useScheduleValidation';
 import './NikufraEngine.css';
 
 import type {
@@ -66,7 +67,6 @@ import {
   // Failure analysis
   analyzeAllFailures,
   applyAlternative,
-  auditCoverage,
   autoReplan,
   autoRouteOverflow,
   type buildResourceTimelines,
@@ -100,7 +100,6 @@ import {
   // Core scheduling
   transformPlanState,
   undoReplanActions,
-  validateSchedule,
 } from '../../lib/engine';
 
 // §2. TRANSFORM + UTILS: All imported from incompol-plan via lib/engine
@@ -7391,42 +7390,7 @@ export default function NikufraEngine() {
     );
   }, [blocks, allOps, engineData]);
 
-  const validation = useMemo(() => {
-    if (!engineData) return null;
-    return validateSchedule(
-      blocks,
-      engineData.machines,
-      engineData.toolMap,
-      allOps,
-      engineData.thirdShift,
-    );
-  }, [blocks, engineData, allOps]);
-
-  const audit = useMemo(() => {
-    if (!engineData) return null;
-    return auditCoverage(blocks, allOps, engineData.toolMap, engineData.twinGroups);
-  }, [blocks, allOps, engineData]);
-
-  // Derive feasibility summary from blocks
-  const feasibility = useMemo(() => {
-    if (!blocks.length || !engineData) return null;
-    const okOps = new Set<string>();
-    const infOps = new Set<string>();
-    for (const b of blocks) {
-      if (b.type === 'ok' && b.qty > 0) okOps.add(b.opId);
-      if (b.type === 'infeasible' || b.type === 'blocked') infOps.add(b.opId);
-    }
-    // Ops that have at least one ok block are considered feasible
-    for (const id of okOps) infOps.delete(id);
-    const total = okOps.size + infOps.size;
-    return {
-      totalOps: total,
-      feasibleOps: okOps.size,
-      infeasibleOps: infOps.size,
-      score: total > 0 ? okOps.size / total : 1,
-      deadlineFeasible: infOps.size === 0,
-    };
-  }, [blocks, engineData]);
+  const { validation, audit, feasibility } = useScheduleValidation(blocks, allOps, engineData);
 
   // ── Quick Auto-Replan for PlanView ──
   const handlePlanAutoReplan = useCallback((): AutoReplanSummary | null => {
