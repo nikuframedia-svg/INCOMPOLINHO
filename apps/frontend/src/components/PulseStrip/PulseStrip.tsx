@@ -58,7 +58,7 @@ const VARIANT_COLORS: Record<PillVariant, string> = {
   blue: C.bl,
 };
 
-function PulseStrip() {
+export function PulseStrip() {
   const { engine, cap, metrics, validation } = useScheduleData();
 
   // Working day indices — filter out weekends
@@ -178,5 +178,3 @@ function PulseStrip() {
     </div>
   );
 }
-
-export default PulseStrip;

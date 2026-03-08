@@ -3,7 +3,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, mono } from '../intel-helpers';
 
-export default function NetworkView({ data }: { data: IntelData }) {
+export function NetworkView({ data }: { data: IntelData }) {
   const { nodes, edges } = data.network;
 
   const SVG_W = 560,

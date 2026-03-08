@@ -1,7 +1,5 @@
-import SupplyMonitor from '../../features/supply/SupplyMonitor';
+import { SupplyMonitor } from '../../features/supply/SupplyMonitor';
 
-function Supply() {
+export function Supply() {
   return <SupplyMonitor />;
 }
-
-export default Supply;

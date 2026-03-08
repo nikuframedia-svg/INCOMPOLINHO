@@ -21,7 +21,7 @@ import type { IDataSource } from '../stores/useAppStore';
 export type { CreatePRParams, CreateScenarioParams, ScenarioExtended } from '../domain/types';
 
 // ── Data Store (user-loaded ISOP data) ──
-import useDataStore from '../stores/useDataStore';
+import { useDataStore } from '../stores/useDataStore';
 
 // ── Fixture loader ──
 
@@ -129,7 +129,7 @@ function buildPlanState(nk: NikufraData): PlanState {
 
 // ── MockDataSource ──
 
-const MockDataSource: IDataSource = {
+export const MockDataSource: IDataSource = {
   // Plans — no backend data (replanStore uses this with null-safe handling)
   async getPlan(): Promise<Plan | null> {
     return null;
@@ -183,5 +183,3 @@ const MockDataSource: IDataSource = {
     return buildPlanState(modified);
   },
 };
-
-export default MockDataSource;

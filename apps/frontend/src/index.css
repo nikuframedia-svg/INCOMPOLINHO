@@ -107,6 +107,9 @@
   --shadow-glow: 0 0 20px rgba(20, 184, 166, 0.15);
   --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
 
+  /* Layout */
+  --sidebar-width: 220px;
+
   /* Z-index */
   --z-sticky: 2;
   --z-dropdown: 100;

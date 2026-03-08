@@ -24,7 +24,7 @@ import {
   DEFAULT_WORKFORCE_CONFIG,
   opsByDayFromWorkforce,
 } from '../lib/engine';
-import useUIStore from '../stores/useUIStore';
+import { useUIStore } from '../stores/useUIStore';
 import { useScheduleData } from './useScheduleData';
 
 // Re-export OpDay type from lib/engine for consumers

@@ -54,13 +54,7 @@ function SummaryGrid({ meta }: { meta: LoadMeta }) {
 
 export { SummaryGrid, trustBadgeClass, trustIcon };
 
-export default function DataPreview({
-  fileName,
-  meta,
-  warnings,
-  onApply,
-  onCancel,
-}: DataPreviewProps) {
+export function DataPreview({ fileName, meta, warnings, onApply, onCancel }: DataPreviewProps) {
   return (
     <div className="carregar-dados__preview">
       <div className="carregar-dados__preview-header">

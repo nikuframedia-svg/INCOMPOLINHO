@@ -1,19 +1,19 @@
 import React, { useCallback, useMemo } from 'react';
 import { Collapsible } from '../../components/Common/Collapsible';
-import EmptyState from '../../components/Common/EmptyState';
+import { EmptyState } from '../../components/Common/EmptyState';
 import { HeatmapLegend } from '../../components/Common/HeatmapLegend';
 import { SkeletonCard, SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { Term } from '../../components/Common/Tooltip';
-import PulseStrip from '../../components/PulseStrip/PulseStrip';
+import { PulseStrip } from '../../components/PulseStrip/PulseStrip';
 import { useScheduleData } from '../../hooks/useScheduleData';
 import type { DayLoad } from '../../lib/engine';
 import { C, DAY_CAP, opsByDayFromWorkforce, TC } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars, showDetailedCells } from '../../utils/gridDensity';
 import { utilColor } from '../../utils/utilColor';
 import './Dashboard.css';
 
-function Dashboard() {
+export function Dashboard() {
   const { engine, cap, metrics, loading, error } = useScheduleData();
   const openContextPanel = useUIStore((s) => s.actions.openContextPanel);
   const setFocus = useUIStore((s) => s.actions.setFocus);
@@ -463,5 +463,3 @@ function Dashboard() {
     </div>
   );
 }
-
-export default Dashboard;

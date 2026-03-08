@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { MachineLegend, StatRow } from '../intel-atoms';
 import { fmtDate, fmtMin, MC, mono } from '../intel-helpers';
 
-export default function HorizonView({ data }: { data: IntelData }) {
+export function HorizonView({ data }: { data: IntelData }) {
   const { horizon, machines } = data;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 

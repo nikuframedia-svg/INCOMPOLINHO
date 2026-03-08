@@ -17,7 +17,7 @@ interface ToastState {
   actions: ToastActions;
 }
 
-const useToastStore = create<ToastState>((set) => ({
+export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
 
   actions: {
@@ -46,5 +46,3 @@ const useToastStore = create<ToastState>((set) => ({
 
 export const useToasts = () => useToastStore((s) => s.toasts);
 export const useToastActions = () => useToastStore((s) => s.actions);
-
-export default useToastStore;

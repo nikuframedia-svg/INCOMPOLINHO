@@ -4,10 +4,10 @@ import type { Block, DayLoad, EngineData, ScheduleValidationReport } from '../..
 import { C, DAY_CAP, S0, S1, T1 } from '../../../../lib/engine';
 import { useGanttInteraction } from '../../hooks/useGanttInteraction';
 import { Card, dot, fmtT, Pill, Tag, toolColor } from '../atoms';
-import ValidationPanel from '../ValidationPanel';
-import OpDetailPanel from './OpDetailPanel';
+import { ValidationPanel } from '../ValidationPanel';
+import { OpDetailPanel } from './OpDetailPanel';
 
-export default function GanttView({
+export function GanttView({
   blocks,
   mSt,
   cap,

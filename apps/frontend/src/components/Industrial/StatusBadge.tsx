@@ -41,7 +41,7 @@ export interface StatusBadgeProps {
   icon?: ReactNode;
 }
 
-export default function StatusBadge({ variant, label, icon }: StatusBadgeProps) {
+export function StatusBadge({ variant, label, icon }: StatusBadgeProps) {
   const color = COLOR_MAP[variant];
   const bg = BG_MAP[variant];
 

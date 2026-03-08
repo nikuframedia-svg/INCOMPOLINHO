@@ -13,7 +13,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { MasterISOPData, NikufraData } from '../domain/nikufra-types';
-import useToastStore from './useToastStore';
+import { useToastStore } from './useToastStore';
 
 export interface LoadMeta {
   rows: number;
@@ -28,7 +28,7 @@ export interface LoadMeta {
 
 // ── Master data merge ──────────────────────────────────────────────────
 
-import useSettingsStore from './useSettingsStore';
+import { useSettingsStore } from './useSettingsStore';
 
 const getDefaultSetupHours = () => useSettingsStore.getState().defaultSetupHours;
 
@@ -252,7 +252,7 @@ interface DataStoreState {
   actions: DataActions;
 }
 
-const useDataStore = create<DataStoreState>()(
+export const useDataStore = create<DataStoreState>()(
   persist(
     (set, get) => ({
       nikufraData: null,
@@ -306,5 +306,3 @@ if (typeof window !== 'undefined') {
 export const useNikufraData = () => useDataStore((s) => s.nikufraData);
 export const useIsMerging = () => useDataStore((s) => s.isMerging);
 export const useDataActions = () => useDataStore((s) => s.actions);
-
-export default useDataStore;

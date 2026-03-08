@@ -15,7 +15,7 @@ interface ReplanState {
   actions: ReplanActions;
 }
 
-const useReplanStore = create<ReplanState>((set) => ({
+export const useReplanStore = create<ReplanState>((set) => ({
   onApplyCallback: null,
   actions: {
     setOnApplyCallback: (cb) => set({ onApplyCallback: cb }),
@@ -25,5 +25,3 @@ const useReplanStore = create<ReplanState>((set) => ({
 // ── Atomic selector hooks ─────────────────────────────────────
 
 export const useReplanActions = () => useReplanStore((s) => s.actions);
-
-export default useReplanStore;

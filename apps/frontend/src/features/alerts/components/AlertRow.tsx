@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Alert } from '../alert-types';
 import { isFlashing, PRIORITY_BG, PRIORITY_COLORS, PRIORITY_LABELS } from '../alert-types';
-import useAlertStore from '../useAlertStore';
+import { useAlertStore } from '../useAlertStore';
 import '../alerts.css';
 
 const STATE_LABELS: Record<string, string> = {
@@ -33,7 +33,7 @@ interface AlertRowProps {
   onDrillDown?: (alert: Alert) => void;
 }
 
-export default function AlertRow({ alert, onShelve, onDrillDown }: AlertRowProps) {
+export function AlertRow({ alert, onShelve, onDrillDown }: AlertRowProps) {
   const acknowledge = useAlertStore((s) => s.acknowledge);
   const [expanded, setExpanded] = useState(false);
 

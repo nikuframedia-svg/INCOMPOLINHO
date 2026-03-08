@@ -1,0 +1,15 @@
+/* App Layout — Sidebar + Content */
+
+.app-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-void);
+}
+
+.app-layout__main {
+  flex: 1;
+  padding: 0;
+  margin-left: var(--sidebar-width, 220px);
+  margin-bottom: 32px; /* Space for FocusStrip */
+}

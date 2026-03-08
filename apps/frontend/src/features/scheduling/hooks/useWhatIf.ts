@@ -15,7 +15,7 @@ import {
   quickValidate,
   runOptimization,
 } from '../../../lib/engine';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
 export interface WhatIfScenario {
   t1: number;

@@ -7,14 +7,14 @@ import {
   PRIORITY_COLORS,
   PRIORITY_LABELS,
 } from '../alert-types';
-import useAlertStore, { useActiveAlerts, useStandingCount, useUnackCount } from '../useAlertStore';
-import AlertRow from './AlertRow';
-import ShelveDialog from './ShelveDialog';
+import { useActiveAlerts, useAlertStore, useStandingCount, useUnackCount } from '../useAlertStore';
+import { AlertRow } from './AlertRow';
+import { ShelveDialog } from './ShelveDialog';
 import '../alerts.css';
 
 const PRIORITIES: AlertPriority[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
-export default function AlertPanel() {
+export function AlertPanel() {
   const alarmsPerTenMin = useAlertStore((s) => s.alarmsPerTenMin);
   const activeAlerts = useActiveAlerts();
   const standingCount = useStandingCount();

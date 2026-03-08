@@ -188,7 +188,7 @@ interface SettingsState {
 
 // ── Store ──────────────────────────────────────────────────────
 
-const useSettingsStore = create<SettingsState>()(
+export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       // ── §1 Defaults ──
@@ -525,5 +525,3 @@ export function getTransformConfig(): TransformConfigFromSettings {
     demandSemantics: s.demandSemantics,
   };
 }
-
-export default useSettingsStore;

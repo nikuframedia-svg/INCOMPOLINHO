@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { NikufraData } from '../../../domain/nikufra-types';
-import useDataStore from '../../../stores/useDataStore';
+import { useDataStore } from '../../../stores/useDataStore';
 import { nikufraDataToNkData, nikufraDataToSnapshot } from '../intel-adapter';
 import { computeAll, type IntelData, type NkData, type SnapshotFixture } from '../intel-compute';
 

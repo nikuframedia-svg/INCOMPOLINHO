@@ -4,7 +4,7 @@ import type { Block, DayLoad, EMachine, EOp, ETool } from '../../../../lib/engin
 import { C, DAY_CAP } from '../../../../lib/engine';
 import { dot, fmtT, toolColor } from '../atoms';
 
-export default function OpDetailPanel({
+export function OpDetailPanel({
   block: b,
   tool,
   op,

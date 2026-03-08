@@ -1,1 +1,1 @@
-export { default as SchedulingPage } from './components/SchedulingPage';
+export { SchedulingPage } from './components/SchedulingPage';

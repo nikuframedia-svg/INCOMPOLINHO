@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, labelSt, MC, mono, toolFamily } from '../intel-helpers';
 
-export default function ToolGroupView({ data }: { data: IntelData }) {
+export function ToolGroupView({ data }: { data: IntelData }) {
   const { toolGrouping } = data;
 
   // Family color mapping

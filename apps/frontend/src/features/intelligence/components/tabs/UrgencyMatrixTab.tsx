@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { clientColorMap, fmtQty, mono } from '../intel-helpers';
 
-export default function UrgencyView({ data }: { data: IntelData }) {
+export function UrgencyView({ data }: { data: IntelData }) {
   const { urgency } = data;
   const [hoverSku, setHoverSku] = useState<string | null>(null);
 

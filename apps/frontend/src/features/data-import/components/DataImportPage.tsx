@@ -1,21 +1,21 @@
 import { CalendarDays } from 'lucide-react';
 import type { DemandSemantics } from '../../../stores/useSettingsStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
-import useUIStore from '../../../stores/useUIStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
+import { useUIStore } from '../../../stores/useUIStore';
 import { SEMANTICS_OPTIONS, useIsopParser } from '../hooks/useIsopParser';
-import DataPreview from './DataPreview';
-import DataValidation from './DataValidation';
-import FileUploader from './FileUploader';
-import ImportConfirmation from './ImportConfirmation';
-import MOStrategySection from './MOStrategySection';
-import MRPSupplySection from './MRPSupplySection';
-import OptimizationProfileSection from './OptimizationProfileSection';
-import OverflowRoutingSection from './OverflowRoutingSection';
-import PlanningRulesSection from './PlanningRulesSection';
-import ShiftsCapacitySection from './ShiftsCapacitySection';
-import '../../../pages/Definicoes/CarregarDados.css';
+import { DataPreview } from './DataPreview';
+import { DataValidation } from './DataValidation';
+import { FileUploader } from './FileUploader';
+import { ImportConfirmation } from './ImportConfirmation';
+import { MOStrategySection } from './MOStrategySection';
+import { MRPSupplySection } from './MRPSupplySection';
+import { OptimizationProfileSection } from './OptimizationProfileSection';
+import { OverflowRoutingSection } from './OverflowRoutingSection';
+import { PlanningRulesSection } from './PlanningRulesSection';
+import { ShiftsCapacitySection } from './ShiftsCapacitySection';
+import './CarregarDados.css';
 
-export default function DataImportPage() {
+export function DataImportPage() {
   const panelOpen = useUIStore((s) => s.contextPanelOpen);
   const semantics = useSettingsStore((s) => s.demandSemantics);
   const setDemandSemantics = useSettingsStore((s) => s.actions.setDemandSemantics);

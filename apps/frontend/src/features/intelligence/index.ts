@@ -1,1 +1,1 @@
-export { default as IntelligencePage } from './components/IntelligencePage';
+export { IntelligencePage } from './components/IntelligencePage';

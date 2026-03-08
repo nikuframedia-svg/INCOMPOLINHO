@@ -72,7 +72,7 @@ interface PlanVersionState {
   actions: PlanVersionActions;
 }
 
-const usePlanVersionStore = create<PlanVersionState>()(
+export const usePlanVersionStore = create<PlanVersionState>()(
   persist(
     (set, get) => ({
       versions: [],
@@ -183,5 +183,3 @@ const usePlanVersionStore = create<PlanVersionState>()(
 export const usePlanVersions = () => usePlanVersionStore((s) => s.versions);
 export const useCurrentPlanId = () => usePlanVersionStore((s) => s.currentId);
 export const usePlanVersionActions = () => usePlanVersionStore((s) => s.actions);
-
-export default usePlanVersionStore;

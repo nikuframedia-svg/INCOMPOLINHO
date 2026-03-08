@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, clientColorMap, fmtMin, fmtQty, MC, mono } from '../intel-helpers';
 
-export default function CrossClientView({ data }: { data: IntelData }) {
+export function CrossClientView({ data }: { data: IntelData }) {
   const { crossClient } = data;
 
   const cc = useMemo(

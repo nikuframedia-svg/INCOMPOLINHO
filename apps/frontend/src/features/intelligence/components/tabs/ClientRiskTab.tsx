@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, fmtQty, MC, mono } from '../intel-helpers';
 
-export default function RiskView({ data }: { data: IntelData }) {
+export function RiskView({ data }: { data: IntelData }) {
   const { clientRisk } = data;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 

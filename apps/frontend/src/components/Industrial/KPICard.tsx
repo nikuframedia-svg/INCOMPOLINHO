@@ -19,14 +19,7 @@ export interface KPICardProps {
   statusColor?: string;
 }
 
-export default function KPICard({
-  label,
-  value,
-  unit,
-  trend,
-  sparkline,
-  statusColor,
-}: KPICardProps) {
+export function KPICard({ label, value, unit, trend, sparkline, statusColor }: KPICardProps) {
   const sparkOption = useMemo(() => {
     if (!sparkline || sparkline.length === 0) return null;
     return {

@@ -12,7 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../../hooks/useScheduleData';
 import type { DayLoad } from '../../lib/engine';
 import { DAY_CAP } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import './ContextPanel.css';
 
 // ── Collapsible section ────────────────────────────────────
@@ -193,7 +193,7 @@ function MachineDetail({ machineId }: { machineId: string }) {
             className="ctx-panel__action-btn"
             onClick={() => {
               setFocus({ machine: machineId });
-              navigate('/planning');
+              navigate('/plan');
             }}
             data-testid="ctx-open-planning"
           >
@@ -204,7 +204,7 @@ function MachineDetail({ machineId }: { machineId: string }) {
             className="ctx-panel__action-btn"
             onClick={() => {
               setFocus({ machine: machineId });
-              navigate('/fabrica');
+              navigate('/console');
             }}
             data-testid="ctx-open-fabrica"
           >
@@ -264,7 +264,7 @@ function ToolDetail({ toolId }: { toolId: string }) {
             className="ctx-panel__action-btn"
             onClick={() => {
               setFocus({ toolId });
-              navigate('/pecas');
+              navigate('/mrp');
             }}
             data-testid="ctx-open-pecas"
           >
@@ -275,7 +275,7 @@ function ToolDetail({ toolId }: { toolId: string }) {
             className="ctx-panel__action-btn"
             onClick={() => {
               setFocus({ toolId });
-              navigate('/supply');
+              navigate('/mrp');
             }}
             data-testid="ctx-open-supply"
           >
@@ -289,7 +289,7 @@ function ToolDetail({ toolId }: { toolId: string }) {
 }
 
 // ── Main ContextPanel ──────────────────────────────────────
-function ContextPanel() {
+export function ContextPanel() {
   const isOpen = useUIStore((s) => s.contextPanelOpen);
   const entity = useUIStore((s) => s.contextEntity);
   const close = useUIStore((s) => s.actions.closeContextPanel);
@@ -333,5 +333,3 @@ function ContextPanel() {
     </div>
   );
 }
-
-export default ContextPanel;

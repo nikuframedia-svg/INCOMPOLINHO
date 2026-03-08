@@ -10,7 +10,7 @@ interface FileUploaderProps {
   onClick: () => void;
 }
 
-export default function FileUploader({
+export function FileUploader({
   dragActive,
   processing,
   processingFileName,

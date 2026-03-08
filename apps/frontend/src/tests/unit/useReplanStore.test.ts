@@ -1,7 +1,7 @@
 // Testes unitários para useReplanStore (simplified — legacy backend logic removed)
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import useReplanStore from '../../stores/useReplanStore';
+import { useReplanStore } from '../../stores/useReplanStore';
 
 describe('useReplanStore', () => {
   beforeEach(() => {

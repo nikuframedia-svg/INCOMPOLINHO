@@ -1,6 +1,6 @@
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import EmptyState from '../../components/Common/EmptyState';
+import { EmptyState } from '../../components/Common/EmptyState';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { Term } from '../../components/Common/Tooltip';
 import type {
@@ -13,7 +13,7 @@ import type {
 import { useScheduleData } from '../../hooks/useScheduleData';
 import type { ActionMessage, EngineData } from '../../lib/engine';
 import { C, computeActionMessages, computeMRP, computeROP } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import './SupplyMonitor.css';
 
 const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
@@ -149,7 +149,7 @@ function computeSupplyRows(
 
 // ── Main Component ─────────────────────────────────────────────
 
-function SupplyMonitor() {
+export function SupplyMonitor() {
   const { engine, loading, error } = useScheduleData();
   const panelOpen = useUIStore((s) => s.contextPanelOpen);
   const [search, setSearch] = useState('');
@@ -797,5 +797,3 @@ function KCard({
     </div>
   );
 }
-
-export default SupplyMonitor;

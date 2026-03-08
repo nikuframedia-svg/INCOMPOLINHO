@@ -19,7 +19,7 @@ export interface AlarmItemProps {
   actions?: AlarmAction[];
 }
 
-export default function AlarmItem({
+export function AlarmItem({
   priority,
   state = 'solid',
   title,

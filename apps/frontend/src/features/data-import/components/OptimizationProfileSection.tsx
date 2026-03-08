@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from 'lucide-react';
 import type { OptimizationProfile } from '../../../stores/useSettingsStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
 const PROFILE_OPTIONS: { id: OptimizationProfile; label: string; desc: string }[] = [
   { id: 'balanced', label: 'Equilibrado', desc: 'Pesos balanceados para uso geral' },
@@ -19,7 +19,7 @@ const WEIGHT_DEFS: { key: string; label: string; max: number }[] = [
   { key: 'wBelowMinBatch', label: 'Lote minimo', max: 50 },
 ];
 
-export default function OptimizationProfileSection() {
+export function OptimizationProfileSection() {
   const optimizationProfile = useSettingsStore((s) => s.optimizationProfile);
   const wTardiness = useSettingsStore((s) => s.wTardiness);
   const wSetupCount = useSettingsStore((s) => s.wSetupCount);

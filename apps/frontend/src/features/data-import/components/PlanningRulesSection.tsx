@@ -1,6 +1,6 @@
 import { ListOrdered } from 'lucide-react';
 import type { DispatchRule } from '../../../stores/useSettingsStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
 const DISPATCH_OPTIONS: { value: DispatchRule; label: string; desc: string }[] = [
   {
@@ -22,7 +22,7 @@ const DISPATCH_OPTIONS: { value: DispatchRule; label: string; desc: string }[] =
   },
 ];
 
-export default function PlanningRulesSection() {
+export function PlanningRulesSection() {
   const dispatchRule = useSettingsStore((s) => s.dispatchRule);
   const bucketWindowDays = useSettingsStore((s) => s.bucketWindowDays);
   const maxEddGapDays = useSettingsStore((s) => s.maxEddGapDays);

@@ -1,12 +1,12 @@
 import { Trash2, Upload } from 'lucide-react';
 import type { SavedScenario } from '../useConfigPreview';
-import useConfigPreview from '../useConfigPreview';
+import { useConfigPreview } from '../useConfigPreview';
 
 interface Props {
   onPromote?: (scenario: SavedScenario) => void;
 }
 
-export default function ScenarioManager({ onPromote }: Props) {
+export function ScenarioManager({ onPromote }: Props) {
   const scenarios = useConfigPreview((s) => s.scenarios);
   const selectedId = useConfigPreview((s) => s.selectedScenarioId);
   const selectScenario = useConfigPreview((s) => s.selectScenario);

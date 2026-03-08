@@ -98,7 +98,7 @@ const DEFAULT_CONSTRAINTS: ConfigConstraints = {
 
 let nextId = 1;
 
-const useConfigPreview = create<ConfigPreviewState>()(
+export const useConfigPreview = create<ConfigPreviewState>()(
   persist(
     (set, get) => ({
       weights: { ...DEFAULT_WEIGHTS },
@@ -181,5 +181,3 @@ const useConfigPreview = create<ConfigPreviewState>()(
     },
   ),
 );
-
-export default useConfigPreview;

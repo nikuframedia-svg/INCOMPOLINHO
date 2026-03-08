@@ -20,19 +20,19 @@ import {
   scoreSchedule,
   transformPlanState,
 } from '../../../lib/engine';
-import useReplanStore from '../../../stores/useReplanStore';
-import useSettingsStore, { getTransformConfig } from '../../../stores/useSettingsStore';
-import useToastStore from '../../../stores/useToastStore';
+import { useReplanStore } from '../../../stores/useReplanStore';
+import { getTransformConfig, useSettingsStore } from '../../../stores/useSettingsStore';
+import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleFilters } from '../hooks/useScheduleFilters';
 import { useScheduleValidation } from '../hooks/useScheduleValidation';
 import { dot, Pill } from './atoms';
-import GanttView from './GanttChart/GanttChart';
-import ReplanView from './ReplanPanel';
-import PlanView from './ScheduleKPIs';
-import WhatIfView from './WhatIfPanel';
+import { GanttView } from './GanttChart/GanttChart';
+import { ReplanView } from './ReplanPanel';
+import { PlanView } from './ScheduleKPIs';
+import { WhatIfView } from './WhatIfPanel';
 import '../../planning/NikufraEngine.css';
 
-export default function SchedulingPage() {
+export function SchedulingPage() {
   const ds = useDataSource();
   const [engineData, setEngineData] = useState<EngineData | null>(null);
   const [loading, setLoading] = useState(true);

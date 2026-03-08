@@ -41,7 +41,7 @@ interface UIStoreState {
   actions: UIActions;
 }
 
-const useUIStore = create<UIStoreState>()(
+export const useUIStore = create<UIStoreState>()(
   persist(
     (set) => ({
       commandPaletteOpen: false,
@@ -80,5 +80,3 @@ export const useContextEntity = () => useUIStore((s) => s.contextEntity);
 export const useFocus = () => useUIStore((s) => s.focus);
 export const useSelectedDayIdx = () => useUIStore((s) => s.selectedDayIdx);
 export const useUIActions = () => useUIStore((s) => s.actions);
-
-export default useUIStore;

@@ -6,11 +6,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import EmptyState from '../../components/Common/EmptyState';
+import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { useScheduleData } from '../../hooks/useScheduleData';
 import { C, computeRiskGrid, type RiskLevel, type RiskRow } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars } from '../../utils/gridDensity';
 import './Risk.css';
 
@@ -23,7 +23,7 @@ const RISK_BG: Record<RiskLevel, string> = {
   ok: 'transparent',
 };
 
-function Risk() {
+export function Risk() {
   const { engine, cap, validation, mrp, loading, error } = useScheduleData();
   const openContextPanel = useUIStore((s) => s.actions.openContextPanel);
   const setFocus = useUIStore((s) => s.actions.setFocus);
@@ -290,5 +290,3 @@ function RiskGroup({
     </>
   );
 }
-
-export default Risk;

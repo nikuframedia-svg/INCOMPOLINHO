@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { parseISOPFile } from '../../domain/isopClientParser';
 import type { MRPSkuViewResult } from '../../domain/mrp/mrp-types';
 import type { NikufraData } from '../../domain/nikufra-types';
+import { computeOrderRisk, groupByClient } from '../../features/mrp/utils/encomendas-compute';
 import type { Block, CoverageAuditResult, DayLoad, EngineData, MRPResult } from '../../lib/engine';
 import {
   auditCoverage,
@@ -29,7 +30,6 @@ import {
   transformPlanState,
   validateSchedule,
 } from '../../lib/engine';
-import { computeOrderRisk, groupByClient } from '../../pages/MRP/utils/encomendas-compute';
 
 // ── Paths ──
 

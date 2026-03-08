@@ -1,1 +1,1 @@
-export { default as DataImportPage } from './components/DataImportPage';
+export { DataImportPage } from './components/DataImportPage';

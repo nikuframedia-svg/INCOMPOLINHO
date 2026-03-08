@@ -1,8 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.tsx';
+import { App } from './app/App';
 import './index.css';
-import useAppStore from './stores/useAppStore';
+import { useAppStore } from './stores/useAppStore';
 
 // Inicializar data source no arranque
 useAppStore.getState().actions.initializeDataSource();

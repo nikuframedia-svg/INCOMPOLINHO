@@ -17,16 +17,16 @@ import {
   opsByDayFromWorkforce,
 } from '../../../lib/engine';
 import type { PlanVersionParams } from '../../../stores/usePlanVersionStore';
-import usePlanVersionStore from '../../../stores/usePlanVersionStore';
-import useToastStore from '../../../stores/useToastStore';
+import { usePlanVersionStore } from '../../../stores/usePlanVersionStore';
+import { useToastStore } from '../../../stores/useToastStore';
 import { gridDensityVars } from '../../../utils/gridDensity';
 import { computePlanDiff } from '../../../utils/planDiff';
 import { useWhatIf } from '../hooks/useWhatIf';
 import { Card, dot, Metric, Pill, Tag, toolColor } from './atoms';
 import { OBJECTIVE_PROFILES } from './constants';
-import PlanComparePanel from './PlanComparePanel';
+import { PlanComparePanel } from './PlanComparePanel';
 
-export default function WhatIfView({
+export function WhatIfView({
   data,
   onApplyMoves,
   isSaving,

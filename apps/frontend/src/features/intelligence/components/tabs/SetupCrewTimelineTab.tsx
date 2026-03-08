@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { MachineLegend, StatRow } from '../intel-atoms';
 import { fmtDate, fmtMin, MC, mono, timeStr } from '../intel-helpers';
 
-export default function SetupCrewView({ data }: { data: IntelData }) {
+export function SetupCrewView({ data }: { data: IntelData }) {
   const { setupTimeline, workingDates } = data;
   const [hoverSlot, setHoverSlot] = useState<number | null>(null);
 

@@ -8,10 +8,10 @@
 
 import { X } from 'lucide-react';
 import type { FocusContext } from '../../stores/useUIStore';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import './FocusStrip.css';
 
-function FocusStrip() {
+export function FocusStrip() {
   const focus = useUIStore((s) => s.focus);
   const setFocus = useUIStore((s) => s.actions.setFocus);
   const pills: Array<{ key: keyof FocusContext; label: string; value: string }> = [];
@@ -45,5 +45,3 @@ function FocusStrip() {
     </div>
   );
 }
-
-export default FocusStrip;

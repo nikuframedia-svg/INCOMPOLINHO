@@ -3,7 +3,7 @@
 import { render, screen } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import Planning from '../../pages/Planning/Planning';
+import { PlanPage as Planning } from '../../features/plan/pages/PlanPage';
 
 describe('A11y - Basic Checks', () => {
   const pages = [{ name: 'Planning', component: Planning }];

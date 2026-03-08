@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Toast as ToastType } from '../../stores/useToastStore';
-import useToastStore from '../../stores/useToastStore';
+import { useToastStore } from '../../stores/useToastStore';
 import './Toast.css';
 
 const icons: Record<ToastType['type'], string> = {
@@ -39,7 +39,7 @@ function ToastItem({ toast }: { toast: ToastType }) {
   );
 }
 
-export default function ToastContainer() {
+export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
 
   if (toasts.length === 0) return null;

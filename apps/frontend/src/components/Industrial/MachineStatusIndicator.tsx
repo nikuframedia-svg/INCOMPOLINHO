@@ -17,11 +17,7 @@ export interface MachineStatusIndicatorProps {
   compact?: boolean;
 }
 
-export default function MachineStatusIndicator({
-  state,
-  machineId,
-  compact,
-}: MachineStatusIndicatorProps) {
+export function MachineStatusIndicator({ state, machineId, compact }: MachineStatusIndicatorProps) {
   const color = EQUIPMENT_STATE[state];
   const animated = state === 'running' || state === 'transition';
 

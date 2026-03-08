@@ -4,7 +4,7 @@ import type { ScheduleValidationReport, ScheduleViolation } from '../../../lib/e
 import { C } from '../../../lib/engine';
 import { Card, Tag } from './atoms';
 
-export default function ValidationPanel({
+export function ValidationPanel({
   validation,
   dnames,
   dates,

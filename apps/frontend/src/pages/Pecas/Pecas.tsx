@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import EmptyState from '../../components/Common/EmptyState';
+import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { Term } from '../../components/Common/Tooltip';
 import { useScheduleData } from '../../hooks/useScheduleData';
 import { C, TC } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import './Pecas.css';
 
 type SortField =
@@ -20,7 +20,7 @@ type SortField =
   | 'pH';
 type SortDir = 'asc' | 'desc';
 
-function Pecas() {
+export function Pecas() {
   const { engine, blocks, loading, error } = useScheduleData();
   const openContextPanel = useUIStore((s) => s.actions.openContextPanel);
   const setFocus = useUIStore((s) => s.actions.setFocus);
@@ -385,5 +385,3 @@ function SCard({ label, value, color }: { label: string; value: string; color: s
     </div>
   );
 }
-
-export default Pecas;

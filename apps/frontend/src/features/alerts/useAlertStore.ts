@@ -25,7 +25,7 @@ interface AlertState {
   setAlarmsPerTenMin: (n: number) => void;
 }
 
-const useAlertStore = create<AlertState>()((set) => ({
+export const useAlertStore = create<AlertState>()((set) => ({
   alerts: [],
   alarmsPerTenMin: 0,
 
@@ -119,5 +119,3 @@ export const usePriorityCount = (priority: AlertPriority) =>
   useAlertStore(
     (s) => s.alerts.filter((a) => a.priority === priority && a.state !== 'NORMAL').length,
   );
-
-export default useAlertStore;

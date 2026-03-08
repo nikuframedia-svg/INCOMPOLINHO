@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { MC, mono } from '../intel-helpers';
 
-export default function ExplainView({ data }: { data: IntelData }) {
+export function ExplainView({ data }: { data: IntelData }) {
   const { explain } = data;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<'all' | 'issues'>('all');

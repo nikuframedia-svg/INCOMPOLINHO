@@ -34,8 +34,8 @@ import {
   simulateWithout,
   undoReplanActions,
 } from '../../../lib/engine';
-import useSettingsStore from '../../../stores/useSettingsStore';
-import useToastStore from '../../../stores/useToastStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
+import { useToastStore } from '../../../stores/useToastStore';
 
 export interface ReplanControlState {
   xai: string | null;

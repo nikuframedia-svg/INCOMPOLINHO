@@ -1,5 +1,5 @@
 import type { PolicyId } from '../useConfigPreview';
-import useConfigPreview from '../useConfigPreview';
+import { useConfigPreview } from '../useConfigPreview';
 
 interface PolicyOption {
   id: PolicyId;
@@ -15,7 +15,7 @@ const POLICIES: PolicyOption[] = [
   { id: 'custom', name: 'Custom', desc: 'Sliders editaveis' },
 ];
 
-export default function PolicySelector() {
+export function PolicySelector() {
   const policy = useConfigPreview((s) => s.policy);
   const setPolicy = useConfigPreview((s) => s.setPolicy);
 

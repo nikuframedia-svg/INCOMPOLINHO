@@ -4,7 +4,7 @@
 import { render, screen } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import Planning from '../../pages/Planning/Planning';
+import { PlanPage as Planning } from '../../features/plan/pages/PlanPage';
 
 describe('Planning Page - Regression Tests', () => {
   it('deve carregar Planning sem erros', async () => {

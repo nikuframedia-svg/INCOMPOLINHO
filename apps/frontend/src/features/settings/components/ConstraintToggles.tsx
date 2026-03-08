@@ -1,5 +1,5 @@
 import type { ConfigConstraints } from '../useConfigPreview';
-import useConfigPreview from '../useConfigPreview';
+import { useConfigPreview } from '../useConfigPreview';
 
 interface ConstraintDef {
   key: keyof ConfigConstraints;
@@ -14,7 +14,7 @@ const CONSTRAINTS: ConstraintDef[] = [
   { key: 'operatorPool', name: 'Operator Pool', desc: 'Capacidade de operadores por turno' },
 ];
 
-export default function ConstraintToggles() {
+export function ConstraintToggles() {
   const constraints = useConfigPreview((s) => s.constraints);
   const setConstraint = useConfigPreview((s) => s.setConstraint);
   const frozenHorizonDays = useConfigPreview((s) => s.frozenHorizonDays);

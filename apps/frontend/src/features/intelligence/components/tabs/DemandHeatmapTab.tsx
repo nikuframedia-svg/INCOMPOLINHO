@@ -4,7 +4,7 @@ import type { IntelData } from '../../intel-compute';
 import { HeatLegend, StatRow } from '../intel-atoms';
 import { fmtDate, fmtMin, fmtPct, heatColor, MC, mono } from '../intel-helpers';
 
-export default function HeatmapView({ data }: { data: IntelData }) {
+export function HeatmapView({ data }: { data: IntelData }) {
   const { heatmap, machines, workingDates } = data;
   const [hover, setHover] = useState<{ mi: number; di: number } | null>(null);
 

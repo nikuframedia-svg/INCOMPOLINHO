@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { Collapsible } from '../../components/Common/Collapsible';
-import EmptyState from '../../components/Common/EmptyState';
+import { EmptyState } from '../../components/Common/EmptyState';
 import { HeatmapLegend } from '../../components/Common/HeatmapLegend';
 import { SkeletonCard, SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { StatusBanner } from '../../components/Common/StatusBanner';
@@ -8,7 +8,7 @@ import { Term } from '../../components/Common/Tooltip';
 import { useScheduleData } from '../../hooks/useScheduleData';
 import type { DayLoad } from '../../lib/engine';
 import { C, DAY_CAP, opsByDayFromWorkforce } from '../../lib/engine';
-import useUIStore from '../../stores/useUIStore';
+import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars, showDetailedCells } from '../../utils/gridDensity';
 import { utilColor } from '../../utils/utilColor';
 import './Fabrica.css';
@@ -23,7 +23,7 @@ function aggregateWeekly(vals: number[]): number[] {
   return weeks;
 }
 
-function Fabrica() {
+export function Fabrica() {
   const { engine, cap, metrics, loading, error } = useScheduleData();
   const openContextPanel = useUIStore((s) => s.actions.openContextPanel);
   const setFocus = useUIStore((s) => s.actions.setFocus);
@@ -487,5 +487,3 @@ function Fabrica() {
     </div>
   );
 }
-
-export default Fabrica;

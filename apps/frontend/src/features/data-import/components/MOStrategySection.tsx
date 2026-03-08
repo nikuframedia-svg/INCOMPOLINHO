@@ -1,6 +1,6 @@
 import { Users } from 'lucide-react';
 import type { MOStrategy } from '../../../stores/useSettingsStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
 const MO_OPTIONS: { value: MOStrategy; label: string; desc: string }[] = [
   {
@@ -20,7 +20,7 @@ const MO_OPTIONS: { value: MOStrategy; label: string; desc: string }[] = [
   },
 ];
 
-export default function MOStrategySection() {
+export function MOStrategySection() {
   const moStrategy = useSettingsStore((s) => s.moStrategy);
   const moNominalPG1 = useSettingsStore((s) => s.moNominalPG1);
   const moNominalPG2 = useSettingsStore((s) => s.moNominalPG2);

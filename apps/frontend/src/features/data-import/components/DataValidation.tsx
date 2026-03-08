@@ -5,7 +5,7 @@ interface DataValidationProps {
   fileName: string;
 }
 
-export default function DataValidation({ errors, fileName }: DataValidationProps) {
+export function DataValidation({ errors, fileName }: DataValidationProps) {
   return (
     <>
       <div className="carregar-dados__preview-header">

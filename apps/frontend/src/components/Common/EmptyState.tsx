@@ -62,7 +62,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
 };
 
-export default function EmptyState({
+export function EmptyState({
   title,
   description,
   actionLabel,

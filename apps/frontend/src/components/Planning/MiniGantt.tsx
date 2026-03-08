@@ -22,7 +22,14 @@ interface MiniGanttProps {
   label?: string;
 }
 
-function MiniGantt({ blocks, machines, dates, dnames, highlightOps, label }: MiniGanttProps) {
+export function MiniGantt({
+  blocks,
+  machines,
+  dates,
+  dnames,
+  highlightOps,
+  label,
+}: MiniGanttProps) {
   // Group blocks by machine+day
   const gridData = useMemo(() => {
     const map = new Map<string, Block[]>();
@@ -119,5 +126,3 @@ function MiniGantt({ blocks, machines, dates, dnames, highlightOps, label }: Min
     </div>
   );
 }
-
-export default MiniGantt;

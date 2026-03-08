@@ -19,7 +19,7 @@ function formatDateTime(iso: string): string {
   );
 }
 
-export default function ImportConfirmation({
+export function ImportConfirmation({
   fileName,
   loadedAt,
   meta,

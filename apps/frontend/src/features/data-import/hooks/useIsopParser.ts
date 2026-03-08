@@ -4,8 +4,8 @@ import { parseISOPFile } from '../../../domain/isopClientParser';
 import type { NikufraData } from '../../../domain/nikufra-types';
 import { invalidateScheduleCache } from '../../../hooks/useScheduleData';
 import type { LoadMeta } from '../../../stores/useDataStore';
-import useDataStore, { useDataActions, useNikufraData } from '../../../stores/useDataStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useDataActions, useDataStore, useNikufraData } from '../../../stores/useDataStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
 export type UploadState =
   | { step: 'idle' }

@@ -107,7 +107,7 @@ interface AutoReplanSummary {
   unresolvedCount: number;
 }
 
-export default function PlanView({
+export function PlanView({
   blocks,
   cap,
   mSt,

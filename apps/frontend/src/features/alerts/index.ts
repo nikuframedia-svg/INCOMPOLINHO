@@ -13,12 +13,12 @@ export {
   PRIORITY_LABELS,
   PRIORITY_RESPONSE,
 } from './alert-types';
-export { default as AlertPanel } from './components/AlertPanel';
-export { default as AlertRow } from './components/AlertRow';
-export { default as ShelveDialog } from './components/ShelveDialog';
+export { AlertPanel } from './components/AlertPanel';
+export { AlertRow } from './components/AlertRow';
+export { ShelveDialog } from './components/ShelveDialog';
 export {
-  default as useAlertStore,
   useActiveAlerts,
+  useAlertStore,
   usePriorityCount,
   useStandingCount,
   useUnackCount,

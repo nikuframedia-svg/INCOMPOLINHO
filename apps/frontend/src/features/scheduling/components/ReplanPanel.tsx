@@ -19,7 +19,7 @@ import { useReplanControl } from '../hooks/useReplanControl';
 import { Card, dot, Metric, Pill, Tag, toolColor } from './atoms';
 import { OBJECTIVE_PROFILES } from './constants';
 
-export default function ReplanView({
+export function ReplanView({
   mSt,
   tSt,
   moves,

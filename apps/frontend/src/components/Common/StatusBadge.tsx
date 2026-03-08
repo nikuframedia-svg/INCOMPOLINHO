@@ -39,12 +39,10 @@ const statusColors: Record<string, string> = {
   EXPIRED: 'gray',
 };
 
-function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
+export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
   const color = statusColors[status] || 'gray';
 
   return (
     <span className={`status-badge status-badge--${color} status-badge--${size}`}>{status}</span>
   );
 }
-
-export default StatusBadge;

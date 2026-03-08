@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Alert } from '../alert-types';
-import useAlertStore from '../useAlertStore';
+import { useAlertStore } from '../useAlertStore';
 import '../alerts.css';
 
 const PRESETS = [
@@ -16,7 +16,7 @@ interface ShelveDialogProps {
   onClose: () => void;
 }
 
-export default function ShelveDialog({ alert, onClose }: ShelveDialogProps) {
+export function ShelveDialog({ alert, onClose }: ShelveDialogProps) {
   const shelve = useAlertStore((s) => s.shelve);
   const [reason, setReason] = useState('');
   const [durationMin, setDurationMin] = useState(30);

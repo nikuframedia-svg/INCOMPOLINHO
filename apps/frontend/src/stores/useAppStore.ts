@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import MockDataSource from '../adapters/MockDataSource';
+import { MockDataSource } from '../adapters/MockDataSource';
 import type { PlanState } from '../domain/nikufra-types';
 import type {
   CreatePRParams,
@@ -78,7 +78,7 @@ interface AppState {
   actions: AppActions;
 }
 
-const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set) => ({
   dataSource: initialDataSource,
   isLoading: false,
   error: null,
@@ -103,5 +103,3 @@ const useAppStore = create<AppState>((set) => ({
 
 export const useDataSource = () => useAppStore((s) => s.dataSource);
 export const useAppActions = () => useAppStore((s) => s.actions);
-
-export default useAppStore;

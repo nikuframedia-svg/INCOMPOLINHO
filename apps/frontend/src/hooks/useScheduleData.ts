@@ -37,8 +37,8 @@ import {
   transformPlanState,
   validateSchedule,
 } from '../lib/engine';
-import useDataStore from '../stores/useDataStore';
-import useSettingsStore, { getTransformConfig } from '../stores/useSettingsStore';
+import { useDataStore } from '../stores/useDataStore';
+import { getTransformConfig, useSettingsStore } from '../stores/useSettingsStore';
 import { useDataSource } from './useDataSource';
 
 export interface ScheduleData {

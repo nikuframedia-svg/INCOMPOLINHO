@@ -1,7 +1,7 @@
 import { GitBranch } from 'lucide-react';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
-export default function OverflowRoutingSection() {
+export function OverflowRoutingSection() {
   const altUtilThreshold = useSettingsStore((s) => s.altUtilThreshold);
   const maxAutoMoves = useSettingsStore((s) => s.maxAutoMoves);
   const maxOverflowIter = useSettingsStore((s) => s.maxOverflowIter);

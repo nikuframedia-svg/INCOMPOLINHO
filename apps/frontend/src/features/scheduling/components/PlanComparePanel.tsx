@@ -2,12 +2,12 @@ import { ArrowRight } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import type { EngineData } from '../../../lib/engine';
 import { C, DAY_CAP } from '../../../lib/engine';
-import usePlanVersionStore from '../../../stores/usePlanVersionStore';
+import { usePlanVersionStore } from '../../../stores/usePlanVersionStore';
 import { gridDensityVars } from '../../../utils/gridDensity';
 import { computePlanDiff } from '../../../utils/planDiff';
 import { Card, Tag } from './atoms';
 
-export default function PlanComparePanel({ data }: { data: EngineData }) {
+export function PlanComparePanel({ data }: { data: EngineData }) {
   const versions = usePlanVersionStore((s) => s.versions);
   const [idA, setIdA] = useState<string | null>(null);
   const [idB, setIdB] = useState<string | null>(null);

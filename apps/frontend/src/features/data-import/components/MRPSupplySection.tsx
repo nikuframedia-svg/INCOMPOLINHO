@@ -1,8 +1,8 @@
 import { Package } from 'lucide-react';
 import type { ServiceLevelOption } from '../../../stores/useSettingsStore';
-import useSettingsStore from '../../../stores/useSettingsStore';
+import { useSettingsStore } from '../../../stores/useSettingsStore';
 
-export default function MRPSupplySection() {
+export function MRPSupplySection() {
   const serviceLevel = useSettingsStore((s) => s.serviceLevel);
   const coverageThresholdDays = useSettingsStore((s) => s.coverageThresholdDays);
   const abcThresholdA = useSettingsStore((s) => s.abcThresholdA);

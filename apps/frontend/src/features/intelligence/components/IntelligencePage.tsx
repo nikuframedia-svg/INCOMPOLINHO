@@ -3,16 +3,16 @@ import { C } from '../../../lib/engine';
 import { useIntelCompute } from '../hooks/useIntelCompute';
 import '../NikufraIntel.css';
 import { type IntelTab, mono, TABS } from './intel-helpers';
-import BottleneckView from './tabs/BottleneckCascadeTab';
-import HorizonView from './tabs/CapacityHorizonTab';
-import RiskView from './tabs/ClientRiskTab';
-import CrossClientView from './tabs/CrossClientTab';
-import HeatmapView from './tabs/DemandHeatmapTab';
-import ExplainView from './tabs/ExplainTraceTab';
-import NetworkView from './tabs/MachineNetworkTab';
-import SetupCrewView from './tabs/SetupCrewTimelineTab';
-import ToolGroupView from './tabs/ToolGroupingTab';
-import UrgencyView from './tabs/UrgencyMatrixTab';
+import { BottleneckView } from './tabs/BottleneckCascadeTab';
+import { HorizonView } from './tabs/CapacityHorizonTab';
+import { RiskView } from './tabs/ClientRiskTab';
+import { CrossClientView } from './tabs/CrossClientTab';
+import { HeatmapView } from './tabs/DemandHeatmapTab';
+import { ExplainView } from './tabs/ExplainTraceTab';
+import { NetworkView } from './tabs/MachineNetworkTab';
+import { SetupCrewView } from './tabs/SetupCrewTimelineTab';
+import { ToolGroupView } from './tabs/ToolGroupingTab';
+import { UrgencyView } from './tabs/UrgencyMatrixTab';
 
 const snapTabs = new Set<IntelTab>([
   'heatmap',
@@ -25,7 +25,7 @@ const snapTabs = new Set<IntelTab>([
   'explain',
 ]);
 
-export default function IntelligencePage() {
+export function IntelligencePage() {
   const [tab, setTab] = useState<IntelTab>('heatmap');
   const { data, snap, loading, error } = useIntelCompute();
 

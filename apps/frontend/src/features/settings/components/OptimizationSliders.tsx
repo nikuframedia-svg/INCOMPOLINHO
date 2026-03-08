@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { ConfigWeights } from '../useConfigPreview';
-import useConfigPreview from '../useConfigPreview';
+import { useConfigPreview } from '../useConfigPreview';
 
 const SLIDER_KEYS: { key: keyof ConfigWeights; label: string }[] = [
   { key: 'otd', label: 'OTD (entrega)' },
@@ -8,7 +8,7 @@ const SLIDER_KEYS: { key: keyof ConfigWeights; label: string }[] = [
   { key: 'utilization', label: 'Utilizacao' },
 ];
 
-export default function OptimizationSliders() {
+export function OptimizationSliders() {
   const weights = useConfigPreview((s) => s.weights);
   const setWeight = useConfigPreview((s) => s.setWeight);
   const previewKpis = useConfigPreview((s) => s.previewKpis);

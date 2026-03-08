@@ -3,7 +3,7 @@ import type { IntelData } from '../../intel-compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, fmtMin, fmtPct, labelSt, MC, mono } from '../intel-helpers';
 
-export default function BottleneckView({ data }: { data: IntelData }) {
+export function BottleneckView({ data }: { data: IntelData }) {
   const { bottlenecks } = data;
   const overflowed = bottlenecks.filter((b) => b.peakPct > 100);
   const noAlt = bottlenecks.filter((b) => !b.hasAlternatives);

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { KPISnapshot } from '../useConfigPreview';
-import useConfigPreview from '../useConfigPreview';
+import { useConfigPreview } from '../useConfigPreview';
 
 interface Props {
   currentKpis: KPISnapshot | null;
@@ -47,7 +47,7 @@ function formatDelta(delta: number, decimals: number, unit: string): string {
   return `${sign}${delta.toFixed(decimals)}${unit}`;
 }
 
-export default function ScheduleComparison({ currentKpis, onApply, onDiscard }: Props) {
+export function ScheduleComparison({ currentKpis, onApply, onDiscard }: Props) {
   const previewKpis = useConfigPreview((s) => s.previewKpis);
   const isComputing = useConfigPreview((s) => s.isComputing);
   const saveScenario = useConfigPreview((s) => s.saveScenario);
