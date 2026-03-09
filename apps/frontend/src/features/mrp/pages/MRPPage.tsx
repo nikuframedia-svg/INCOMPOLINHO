@@ -6,6 +6,7 @@ import type { MRPRecord, MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
 import { useScheduleData } from '@/hooks/useScheduleData';
 import { C, computeMRP, computeMRPSkuView } from '@/lib/engine';
 import { useUIStore } from '@/stores/useUIStore';
+import { MRPTrustBanner } from '../components/MRPTrustBanner';
 import { CTPTab } from '../tabs/CTPTab';
 import { EncomendasTab } from '../tabs/EncomendasTab';
 import { MachineTableTab, SKUTableTab, ToolTableTab } from '../tabs/MRPTableTab';
@@ -153,6 +154,8 @@ export function MRPPage() {
           SKUs · {mrp.records.length} tools
         </span>
       </div>
+
+      <MRPTrustBanner />
 
       {/* Status Banner */}
       {(() => {

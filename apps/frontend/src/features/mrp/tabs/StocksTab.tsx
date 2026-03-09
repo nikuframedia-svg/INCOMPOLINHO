@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Block, EngineData, MRPResult, MRPSkuViewResult } from '@/lib/engine';
 import { C } from '@/lib/engine';
 import { fmtQty, mono } from '../utils/mrp-helpers';
+import type { StockRow } from '../utils/stock-compute';
 import { computeStockKPIs, computeStockRows, coverageColor } from '../utils/stock-compute';
 import { CoverageTimeline } from './CoverageTimeline';
 import { StockKPIPanel } from './StockKPIPanel';
@@ -18,6 +19,10 @@ interface StocksTabProps {
   mrp: MRPResult;
   skuView: MRPSkuViewResult;
   blocks: Block[];
+}
+
+function skuConfidence(row: StockRow): 'complete' | 'partial' {
+  return row.ratePerHour > 0 && row.currentStock >= 0 ? 'complete' : 'partial';
 }
 
 const RISK_COLORS: Record<string, string> = {
@@ -141,6 +146,7 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
               >
                 Cobertura{sortIcon('coverage')}
               </th>
+              <th style={{ textAlign: 'center' }}>Confiança</th>
             </tr>
           </thead>
           <tbody>
@@ -212,6 +218,25 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                     }}
                   >
                     {row.coverageDays}d
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {(() => {
+                      const conf = skuConfidence(row);
+                      return (
+                        <span
+                          style={{
+                            fontSize: 8,
+                            fontWeight: 600,
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            background: conf === 'complete' ? `${C.ac}18` : `${C.yl}18`,
+                            color: conf === 'complete' ? C.ac : C.yl,
+                          }}
+                        >
+                          {conf === 'complete' ? 'Completo' : 'Parcial'}
+                        </span>
+                      );
+                    })()}
                   </td>
                 </tr>
               );
