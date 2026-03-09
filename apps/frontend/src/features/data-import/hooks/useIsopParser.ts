@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import type { ParseError, ParseResult } from '../../../domain/isopClientParser';
-import { parseISOPFile } from '../../../domain/isopClientParser';
+import type { ParseError, ParseResult } from '../../../domain/isop';
+import { parseISOPFile } from '../../../domain/isop';
 import type { NikufraData } from '../../../domain/nikufra-types';
 import { invalidateScheduleCache } from '../../../hooks/useScheduleData';
 import type { LoadMeta } from '../../../stores/useDataStore';

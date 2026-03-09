@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { parseISOPFile } from '../../domain/isopClientParser';
+import { parseISOPFile } from '../../domain/isop';
 import type { NikufraData } from '../../domain/nikufra-types';
 import type {
   AutoReplanResult,
