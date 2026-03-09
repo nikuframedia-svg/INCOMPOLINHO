@@ -3,12 +3,10 @@
  * Delegates rendering to focused sub-components in ./replan/.
  */
 import { AlertTriangle } from 'lucide-react';
-import React from 'react';
+import type React from 'react';
 import type { Block, DayLoad, EngineData, EOp, MoveAction, OptResult } from '../../../lib/engine';
 import { type buildResourceTimelines, C } from '../../../lib/engine';
-import { useReplanControl } from '../hooks/useReplanControl';
-import type { ReplanKPISnapshot } from '../hooks/useReplanHistory';
-import { useReplanHistory } from '../hooks/useReplanHistory';
+import { useReplanOrchestrator } from '../hooks/useReplanOrchestrator';
 import { OBJECTIVE_PROFILES } from './constants';
 import { ReplanKPIPreview } from './ReplanKPIPreview';
 import { ReplanStrategyCard } from './ReplanStrategyCard';
@@ -22,6 +20,45 @@ import {
   ResourceDownCard,
   RushOrderCard,
 } from './replan';
+
+function QualityBanner({
+  qv,
+}: {
+  qv: { criticalCount: number; highCount: number; warnings: string[] };
+}) {
+  if (qv.criticalCount === 0 && qv.highCount === 0) return null;
+  const isCrit = qv.criticalCount > 0;
+  const color = isCrit ? C.rd : C.yl;
+  const bg = isCrit ? C.rdS : `${C.yl}18`;
+  const critTxt = isCrit
+    ? `${qv.criticalCount} conflito${qv.criticalCount > 1 ? 's' : ''} crítico${qv.criticalCount > 1 ? 's' : ''}`
+    : '';
+  const highTxt = qv.highCount > 0 ? `${qv.highCount} alerta${qv.highCount > 1 ? 's' : ''}` : '';
+  const sep = critTxt && highTxt ? ' · ' : '';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 12px',
+        borderRadius: 6,
+        background: bg,
+        borderLeft: `3px solid ${color}`,
+      }}
+    >
+      <AlertTriangle size={13} style={{ color, flexShrink: 0 }} />
+      <span style={{ fontSize: 10, fontWeight: 600, color }}>
+        {critTxt}
+        {sep}
+        {highTxt}
+      </span>
+      {qv.warnings.length > 0 && (
+        <span style={{ fontSize: 9, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
+      )}
+    </div>
+  );
+}
 
 export function ReplanView({
   mSt,
@@ -68,61 +105,14 @@ export function ReplanView({
 }) {
   const { machines, tools, dates, dnames, toolMap: TM, focusIds } = data;
   const {
-    entries: replanEntries,
-    addEntry: addReplanEntry,
+    rpc,
+    rpcActions,
+    replanEntries,
     undoEntry,
-    clear: clearHistory,
-  } = useReplanHistory();
-  const [replanPreview, setReplanPreview] = React.useState<{
-    before: ReplanKPISnapshot;
-    after: ReplanKPISnapshot;
-    movesCount: number;
-    pendingApply: (() => void) | null;
-  } | null>(null);
-
-  const onReplanComplete = React.useCallback(
-    (info: {
-      trigger: string;
-      triggerType: string;
-      strategy: string;
-      strategyLabel: string;
-      movesCount: number;
-      moves: MoveAction[];
-    }) => {
-      const kpiBefore: ReplanKPISnapshot = neMetrics
-        ? {
-            otd: neMetrics.otdDelivery,
-            setupMin: neMetrics.setupMin,
-            tardiness: neMetrics.tardinessDays,
-            overflows: neMetrics.overflows,
-          }
-        : { otd: 0, setupMin: 0, tardiness: 0, overflows: 0 };
-      addReplanEntry({
-        trigger: info.trigger,
-        triggerType: info.triggerType as
-          | 'machine_down'
-          | 'tool_down'
-          | 'rush_order'
-          | 'material_delay'
-          | 'operator_absent'
-          | 'manual',
-        strategy: info.strategy as
-          | 'right_shift'
-          | 'match_up'
-          | 'partial'
-          | 'full_regen'
-          | 'auto_replan',
-        strategyLabel: info.strategyLabel,
-        movesCount: info.movesCount,
-        moves: info.moves,
-        kpiBefore,
-        kpiAfter: kpiBefore,
-      });
-    },
-    [neMetrics, addReplanEntry],
-  );
-
-  const { state: rpc, actions: rpcActions } = useReplanControl(
+    clearHistory,
+    replanPreview,
+    setReplanPreview,
+  } = useReplanOrchestrator(
     data,
     blocks,
     allOps,
@@ -133,7 +123,7 @@ export function ReplanView({
     replanTimelines,
     OBJECTIVE_PROFILES,
     setRushOrders,
-    onReplanComplete,
+    neMetrics,
   );
 
   const { xai, editingDown, decs, qv } = rpc;
@@ -141,39 +131,8 @@ export function ReplanView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Quality validation banner */}
-      {(qv.criticalCount > 0 || qv.highCount > 0) && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '6px 12px',
-            borderRadius: 6,
-            background: qv.criticalCount > 0 ? C.rdS : `${C.yl}18`,
-            borderLeft: `3px solid ${qv.criticalCount > 0 ? C.rd : C.yl}`,
-          }}
-        >
-          <AlertTriangle
-            size={13}
-            style={{ color: qv.criticalCount > 0 ? C.rd : C.yl, flexShrink: 0 }}
-          />
-          <span
-            style={{ fontSize: 10, fontWeight: 600, color: qv.criticalCount > 0 ? C.rd : C.yl }}
-          >
-            {qv.criticalCount > 0
-              ? `${qv.criticalCount} conflito${qv.criticalCount > 1 ? 's' : ''} crítico${qv.criticalCount > 1 ? 's' : ''}`
-              : ''}
-            {qv.criticalCount > 0 && qv.highCount > 0 ? ' · ' : ''}
-            {qv.highCount > 0 ? `${qv.highCount} alerta${qv.highCount > 1 ? 's' : ''}` : ''}
-          </span>
-          {qv.warnings.length > 0 && (
-            <span style={{ fontSize: 9, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
-          )}
-        </div>
-      )}
+      <QualityBanner qv={qv} />
 
-      {/* Resource Down (machines + tools) */}
       <ResourceDownCard
         machines={machines}
         tools={tools}
@@ -201,7 +160,6 @@ export function ReplanView({
         setDownEndDay={rpcActions.setDownEndDay}
       />
 
-      {/* Day range picker for temporal down */}
       {editingDown && (
         <DayRangePicker
           editingDown={editingDown}
@@ -219,7 +177,6 @@ export function ReplanView({
         />
       )}
 
-      {/* Auto-Replan */}
       <AutoReplanCard
         wdi={rpc.wdi}
         dates={dates}
@@ -251,7 +208,6 @@ export function ReplanView({
         handleArApplyAll={rpcActions.handleArApplyAll}
       />
 
-      {/* Failures / Breakdowns */}
       <FailureFormCard
         machines={machines}
         tools={tools}
@@ -283,7 +239,6 @@ export function ReplanView({
         runCascadingReplan={rpcActions.runCascadingReplan}
       />
 
-      {/* Strategy Recommendation */}
       {rpc.failures.length > 0 && rpc.failureImpacts.length > 0 && (
         <ReplanStrategyCard
           failures={rpc.failures}
@@ -294,7 +249,6 @@ export function ReplanView({
         />
       )}
 
-      {/* KPI Preview */}
       {replanPreview && (
         <ReplanKPIPreview
           before={replanPreview.before}
@@ -308,7 +262,6 @@ export function ReplanView({
         />
       )}
 
-      {/* Optimization */}
       <OptimalRoutingCard
         tools={tools}
         optRunning={rpc.optRunning}
@@ -329,7 +282,6 @@ export function ReplanView({
         profiles={OBJECTIVE_PROFILES}
       />
 
-      {/* Rush Orders */}
       <RushOrderCard
         tools={tools}
         focusIds={focusIds}
@@ -348,7 +300,6 @@ export function ReplanView({
         removeRushOrder={rpcActions.removeRushOrder}
       />
 
-      {/* Metrics + Decisions + Capacity Impact */}
       <DecisionsPanel
         data={data}
         blocks={blocks}
@@ -363,7 +314,6 @@ export function ReplanView({
         neMetrics={neMetrics}
       />
 
-      {/* Replan History Timeline */}
       <ReplanTimeline
         entries={replanEntries}
         onUndo={(id) => {
