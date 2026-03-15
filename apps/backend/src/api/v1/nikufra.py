@@ -52,7 +52,11 @@ async def get_nikufra_data() -> dict[str, Any]:
     """
     try:
         service = _get_service()
-        return service.get_data()
+        data = service.get_data()
+        # Include ISOP reference date (first date from ISOP, not system date)
+        if service.isop_date:
+            data["isop_date"] = service.isop_date.isoformat()
+        return data
     except FileNotFoundError as e:
         raise APIException(status_code=404, code=ErrorCodes.ERR_NOT_FOUND, message=str(e))
     except Exception as e:

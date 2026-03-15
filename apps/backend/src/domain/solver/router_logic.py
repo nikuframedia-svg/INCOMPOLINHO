@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 # Solver Router — routes to CP-SAT, lexicographic, or heuristic fallback
 # Conforme CLAUDE.md Camada 3:
 # <50 jobs: solução óptima (120s). 50-200: time limit 60s. >200: fallback ATCS.
 # Lexicographic mode gets 180s default (3 phases × 60s each).
-
 from .cpsat_solver import CpsatSolver
 from .heuristic_fallback import HeuristicFallback
 from .lexicographic import LexicographicSolver

@@ -1,6 +1,8 @@
 # CP-SAT Constraint Builders — Incompol factory constraints
 # SetupCrew, ToolTimeline, CalcoTimeline, OperatorPool (advisory), Twin co-production
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 
@@ -38,9 +40,7 @@ def build_tool_intervals(
 
     # Only return tools that span 2+ machines (cross-machine constraint)
     return {
-        tid: intervals
-        for tid, intervals in tool_intervals.items()
-        if len(tool_machines[tid]) > 1
+        tid: intervals for tid, intervals in tool_intervals.items() if len(tool_machines[tid]) > 1
     }
 
 
@@ -128,14 +128,16 @@ def analyse_operator_pool(
                 if op_start_in_day < window_end and op_end_in_day > window_start:
                     ops_needed = op_operators.get(entry["op_id"], 1)
                     if ops_needed > capacity:
-                        warnings.append({
-                            "type": "OPERATOR_CAPACITY_WARNING",
-                            "machine_id": machine_id,
-                            "shift": shift_name,
-                            "op_id": entry["op_id"],
-                            "operators_needed": ops_needed,
-                            "capacity": capacity,
-                        })
+                        warnings.append(
+                            {
+                                "type": "OPERATOR_CAPACITY_WARNING",
+                                "machine_id": machine_id,
+                                "shift": shift_name,
+                                "op_id": entry["op_id"],
+                                "operators_needed": ops_needed,
+                                "capacity": capacity,
+                            }
+                        )
 
     return warnings
 

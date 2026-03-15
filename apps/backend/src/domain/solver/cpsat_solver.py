@@ -177,6 +177,7 @@ class CpsatSolver:
                 model.Add(end_curr <= start_next)
 
         # 5. Machine sequencing
+        all_setup_arcs: list[tuple] = []  # (arc_lit, setup_dur, machine_id)
         if use_circuit:
             # Circuit mode: AddCircuit per machine handles sequencing + setup
             circuit_setup_intervals: list[cp_model.IntervalVar] = []
@@ -184,7 +185,7 @@ class CpsatSolver:
             end_vars_map = {oid: op_vars[oid][1] for oid in op_vars}
 
             for mid, jobs_list in machine_jobs.items():
-                _arcs, sivs = add_machine_circuit(
+                arcs, sivs = add_machine_circuit(
                     model=model,
                     machine_id=mid,
                     jobs=jobs_list,
@@ -196,6 +197,7 @@ class CpsatSolver:
                     horizon=horizon,
                 )
                 circuit_setup_intervals.extend(sivs)
+                all_setup_arcs.extend(arcs)
 
             # SetupCrew on circuit-derived setup intervals
             constraints = request.constraints
@@ -221,8 +223,8 @@ class CpsatSolver:
         if constraints.calco_timeline:
             apply_calco_timeline(model, op_calco_map, op_full_intervals)
 
-        # 7. Objective
-        self._add_objective(model, request, op_vars, horizon)
+        # 7. Objective (with changeover penalty from circuit arcs)
+        self._add_objective(model, request, op_vars, horizon, all_setup_arcs)
 
         # 7b. Warm-start with EDD heuristic
         if request.config.warm_start:
@@ -276,15 +278,32 @@ class CpsatSolver:
                 n_ops=n_ops,
             )
 
-    def _add_objective(self, model, request, op_vars, horizon):
-        """Add objective function to the model."""
+    def _add_objective(self, model, request, op_vars, horizon, setup_arcs=None):
+        """Add objective function to the model.
+
+        When setup_arcs are provided (circuit mode), adds a changeover penalty:
+        each tool change arc adds +1 to the objective. Tardiness is scaled by
+        1000 so it dominates, but the solver prefers fewer changeovers as tiebreaker.
+        """
         objective = request.config.objective
+
+        # Changeover penalty: sum of active arcs that represent tool changes
+        has_changeover = False
+        changeover_penalty = 0
+        if setup_arcs:
+            arc_lits = [arc_lit for (arc_lit, _, _) in setup_arcs if arc_lit is not None]
+            if arc_lits:
+                changeover_penalty = sum(arc_lits)
+                has_changeover = True
 
         if objective == "makespan":
             makespan_var = model.NewIntVar(0, horizon, "makespan")
             for op_id, (_, end_var, _, _, _, _, _) in op_vars.items():
                 model.Add(makespan_var >= end_var)
-            model.Minimize(makespan_var)
+            if has_changeover:
+                model.Minimize(1000 * makespan_var + changeover_penalty)
+            else:
+                model.Minimize(makespan_var)
 
         elif objective == "tardiness":
             tardiness_vars = []
@@ -295,7 +314,10 @@ class CpsatSolver:
                 model.Add(tardy >= end_var - job.due_date_min)
                 model.Add(tardy >= 0)
                 tardiness_vars.append(tardy)
-            model.Minimize(sum(tardiness_vars))
+            if has_changeover:
+                model.Minimize(1000 * sum(tardiness_vars) + changeover_penalty)
+            else:
+                model.Minimize(sum(tardiness_vars))
 
         else:  # weighted_tardiness
             weighted_tardy_terms = []
@@ -309,7 +331,10 @@ class CpsatSolver:
                 weighted_tardy = model.NewIntVar(0, horizon * scaled_weight, f"wtardy_{job.id}")
                 model.Add(weighted_tardy == tardy * scaled_weight)
                 weighted_tardy_terms.append(weighted_tardy)
-            model.Minimize(sum(weighted_tardy_terms))
+            if has_changeover:
+                model.Minimize(1000 * sum(weighted_tardy_terms) + changeover_penalty)
+            else:
+                model.Minimize(sum(weighted_tardy_terms))
 
     def _extract_solution(
         self, solver, op_vars, request, solve_time, status_str, n_ops

@@ -1,5 +1,6 @@
 # CP-SAT Solver — Pydantic schemas
 
+from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -98,7 +99,7 @@ class SolverRequest(BaseModel):
     shifts: ShiftConfig = Field(default_factory=ShiftConfig)
 
     @model_validator(mode="after")
-    def validate_twin_pairs_ops_exist(self) -> "SolverRequest":
+    def validate_twin_pairs_ops_exist(self) -> SolverRequest:
         """Validate that all op_ids in twin_pairs reference existing operations."""
         if not self.twin_pairs:
             return self

@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 # Integration Tests (S-06)
 # End-to-end tests with Incompol-scale fixtures (5 machines, ~20 tools, ~30 jobs)
 # Validates all contracts S-00 through S-05 working together.
-
-
 from src.domain.solver.cpsat_solver import CpsatSolver
 from src.domain.solver.lexicographic import LexicographicSolver
 from src.domain.solver.montecarlo import monte_carlo_otd
