@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PP1 — ProdPlan ONE</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-primary: #0a0b0d;
+  --bg-secondary: #111318;
+  --bg-tertiary: #1a1d24;
+  --bg-hover: #22262f;
+  --border: #2a2e38;
+  --border-light: #363b47;
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0ab;
+  --text-muted: #6b7280;
+  --accent: #3b82f6;
+  --accent-dim: #1d4ed8;
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.15);
+  --yellow: #f59e0b;
+  --yellow-dim: rgba(245,158,11,0.15);
+  --green: #10b981;
+  --green-dim: rgba(16,185,129,0.15);
+  --atraso: #dc2626;
+  --atraso-dim: rgba(220,38,38,0.2);
+  --machine-1: #3b82f6;
+  --machine-2: #8b5cf6;
+  --machine-3: #06b6d4;
+  --machine-4: #f59e0b;
+  --machine-5: #ef4444;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* Layout */
+.app { display: grid; grid-template-rows: 56px 1fr; height: 100vh; }
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.header h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px; font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.header h1 span { color: var(--accent); }
+.header-status { display: flex; gap: 16px; align-items: center; }
+.status-dot { width:8px; height:8px; border-radius:50%; background:var(--green); display:inline-block; }
+.header-info { font-size:12px; color:var(--text-secondary); font-family:'JetBrains Mono',monospace; }
+
+.main { display: grid; grid-template-columns: 1fr 380px; overflow: hidden; }
+.content { display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; }
+
+/* KPI Bar */
+.kpi-bar {
+  display: flex; gap: 1px; padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.kpi {
+  flex: 1; padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  margin: 0 4px;
+}
+.kpi-label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; }
+.kpi-value { font-size:24px; font-weight:700; font-family:'JetBrains Mono',monospace; }
+.kpi-value.red { color:var(--red); }
+.kpi-value.yellow { color:var(--yellow); }
+.kpi-value.green { color:var(--green); }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+.tab {
+  padding: 10px 20px; font-size:13px; font-weight:500;
+  color: var(--text-muted); cursor:pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.tab:hover { color: var(--text-secondary); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Panels */
+.panel { display: none; overflow: auto; padding: 16px; }
+.panel.active { display: block; }
+
+/* Gantt */
+.gantt-container { overflow-x: auto; overflow-y: auto; }
+.gantt-machine { margin-bottom: 16px; }
+.gantt-machine-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px; font-weight: 600;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 4px 4px 0 0;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.gantt-machine-label .load { font-size:11px; color:var(--text-muted); font-weight:400; }
+.gantt-track {
+  position: relative;
+  height: 44px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0 0 4px 4px;
+  overflow: hidden;
+}
+.gantt-bar {
+  position: absolute; top: 4px; height: 36px;
+  border-radius: 4px;
+  display: flex; align-items: center;
+  padding: 0 8px; font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer; transition: opacity 0.15s;
+  overflow: hidden; white-space: nowrap;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.gantt-bar:hover { opacity:0.85; z-index: 10; }
+.gantt-bar .bar-label { overflow:hidden; text-overflow:ellipsis; }
+.gantt-bar.p3 { border-left: 3px solid var(--atraso); }
+.gantt-bar.p2 { border-left: 3px solid var(--red); }
+.gantt-bar.p1 { border-left: 3px solid var(--yellow); }
+
+/* Tooltip */
+.tooltip {
+  position: fixed; z-index: 1000;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: 8px; padding: 12px 16px;
+  font-size: 12px; max-width: 320px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  pointer-events: none; display: none;
+}
+.tooltip .tt-title { font-weight:600; margin-bottom:6px; font-size:13px; }
+.tooltip .tt-row { display:flex; justify-content:space-between; gap:16px; padding:2px 0; }
+.tooltip .tt-label { color:var(--text-muted); }
+.tooltip .tt-value { font-family:'JetBrains Mono',monospace; font-weight:500; }
+
+/* Alerts Panel */
+.alert-item {
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--text-muted);
+}
+.alert-item.atraso { border-left-color: var(--atraso); background: var(--atraso-dim); }
+.alert-item.red { border-left-color: var(--red); background: var(--red-dim); }
+.alert-item.yellow { border-left-color: var(--yellow); background: var(--yellow-dim); }
+.alert-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+.alert-severity {
+  font-size:10px; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.08em; padding:2px 6px; border-radius:3px;
+}
+.alert-severity.atraso { background:var(--atraso); color:white; }
+.alert-severity.red { background:var(--red); color:white; }
+.alert-severity.yellow { background:var(--yellow); color:black; }
+.alert-ref { font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; }
+.alert-detail { font-size:12px; color:var(--text-secondary); margin-top:4px; }
+.alert-qty { font-family:'JetBrains Mono',monospace; font-weight:600; }
+
+/* References Table */
+.ref-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px;
+}
+.ref-table th {
+  text-align: left; padding: 8px 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-weight: 600; font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 5;
+}
+.ref-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.ref-table tr:hover { background: var(--bg-hover); }
+.priority-badge {
+  display: inline-block; padding: 1px 6px;
+  border-radius: 3px; font-size: 10px; font-weight: 700;
+}
+.priority-badge.p3 { background:var(--atraso-dim); color:var(--atraso); }
+.priority-badge.p2 { background:var(--red-dim); color:var(--red); }
+.priority-badge.p1 { background:var(--yellow-dim); color:var(--yellow); }
+.priority-badge.p0 { background:var(--green-dim); color:var(--green); }
+
+/* Chat Panel */
+.chat-panel {
+  display: flex; flex-direction: column;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  height: 100%;
+}
+.chat-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.chat-header .ai-badge {
+  font-size:10px; background:var(--accent);
+  padding:2px 6px; border-radius:3px; font-weight:700;
+}
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.chat-msg {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px; line-height: 1.5;
+  max-width: 95%;
+}
+.chat-msg.user {
+  background: var(--accent-dim);
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+.chat-msg.assistant {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+.chat-msg.system {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  font-style: italic;
+}
+.chat-msg .tool-calls {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+.chat-msg .tool-call {
+  padding: 2px 0;
+}
+.chat-msg .tool-call .fn-name { color: var(--accent); }
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex; gap: 8px;
+}
+.chat-input {
+  flex: 1; padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px; font-family: 'Inter', sans-serif;
+  outline: none; resize: none;
+}
+.chat-input:focus { border-color: var(--accent); }
+.chat-input::placeholder { color: var(--text-muted); }
+.chat-send {
+  padding: 10px 16px;
+  background: var(--accent);
+  border: none; border-radius: 8px;
+  color: white; font-weight: 600;
+  cursor: pointer; font-size: 13px;
+  transition: background 0.15s;
+}
+.chat-send:hover { background: var(--accent-dim); }
+.chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Loading */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  height: 200px; color: var(--text-muted);
+}
+.spinner {
+  width: 24px; height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* Gantt time axis */
+.gantt-time-axis {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; margin-bottom: 8px;
+  font-size: 10px; color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <h1><span>PP1</span> — ProdPlan ONE</h1>
+    <div class="header-status">
+      <span class="header-info" id="header-info">A carregar...</span>
+      <span class="status-dot" id="status-dot"></span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="content">
+      <!-- KPIs -->
+      <div class="kpi-bar" id="kpi-bar">
+        <div class="kpi"><div class="kpi-label">Referências</div><div class="kpi-value" id="kpi-refs">—</div></div>
+        <div class="kpi"><div class="kpi-label">Jobs Agendados</div><div class="kpi-value" id="kpi-jobs">—</div></div>
+        <div class="kpi"><div class="kpi-label">Atrasos</div><div class="kpi-value red" id="kpi-atraso">—</div></div>
+        <div class="kpi"><div class="kpi-label">Urgentes</div><div class="kpi-value red" id="kpi-red">—</div></div>
+        <div class="kpi"><div class="kpi-label">Atenção</div><div class="kpi-value yellow" id="kpi-yellow">—</div></div>
+        <div class="kpi"><div class="kpi-label">Utilização Média</div><div class="kpi-value green" id="kpi-util">—</div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" data-tab="gantt">Gantt</div>
+        <div class="tab" data-tab="alerts">Alertas</div>
+        <div class="tab" data-tab="refs">Referências</div>
+        <div class="tab" data-tab="machines">Máquinas</div>
+      </div>
+
+      <!-- Tab Panels -->
+      <div class="panel active" id="panel-gantt">
+        <div class="gantt-container" id="gantt-container">
+          <div class="loading"><div class="spinner"></div>A carregar plano...</div>
+        </div>
+      </div>
+      <div class="panel" id="panel-alerts">
+        <div id="alerts-container">
+          <div class="loading"><div class="spinner"></div>A carregar alertas...</div>
+        </div>
+      </div>
+      <div class="panel" id="panel-refs">
+        <div id="refs-container">
+          <div class="loading"><div class="spinner"></div>A carregar referências...</div>
+        </div>
+      </div>
+      <div class="panel" id="panel-machines">
+        <div id="machines-container">
+          <div class="loading"><div class="spinner"></div>A carregar máquinas...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat Panel -->
+    <div class="chat-panel">
+      <div class="chat-header">
+        <span class="ai-badge">GPT-4o</span>
+        Assistente de Planeamento
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-msg system">
+          Assistente PP1 pronto. Pode perguntar sobre o plano, alterar definições, adicionar restrições — tudo em português.
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <textarea class="chat-input" id="chat-input"
+          placeholder="Ex: porque é que a ref 769 está em risco?"
+          rows="1"></textarea>
+        <button class="chat-send" id="chat-send" onclick="sendChat()">Enviar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const API = '';  // Same origin
+const MACHINE_COLORS = {
+  PRM019: '#3b82f6',
+  PRM031: '#8b5cf6',
+  PRM039: '#06b6d4',
+  PRM042: '#f59e0b',
+  PRM043: '#ef4444',
+};
+
+let scheduleData = [];
+let machineData = {};
+
+// === Init ===
+async function init() {
+  try {
+    const res = await fetch(API + '/api/load-default', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      document.getElementById('header-info').textContent =
+        `${data.metadata.total_refs} refs · ${data.metadata.total_machines} máquinas · ISOP ${data.metadata.date_range.split(' ')[0]}`;
+      document.getElementById('status-dot').style.background =
+        data.llm_available ? '#10b981' : '#f59e0b';
+      await loadDashboard();
+      await loadSchedule();
+      await loadAlerts();
+      await loadReferences();
+      await loadMachines();
+    }
+  } catch (e) {
+    document.getElementById('header-info').textContent = 'Erro ao carregar ISOP';
+    document.getElementById('status-dot').style.background = '#ef4444';
+    console.error(e);
+  }
+}
+
+// === Dashboard ===
+async function loadDashboard() {
+  const res = await fetch(API + '/api/dashboard');
+  const data = await res.json();
+  const k = data.kpis;
+  document.getElementById('kpi-refs').textContent = k.total_references;
+  document.getElementById('kpi-jobs').textContent = k.total_scheduled_jobs;
+  document.getElementById('kpi-atraso').textContent = k.alerts_atraso;
+  document.getElementById('kpi-red').textContent = k.alerts_red;
+  document.getElementById('kpi-yellow').textContent = k.alerts_yellow;
+  document.getElementById('kpi-util').textContent = k.avg_machine_utilization + '%';
+  machineData = data.machines;
+}
+
+// === Gantt ===
+async function loadSchedule() {
+  const res = await fetch(API + '/api/schedule');
+  const data = await res.json();
+  scheduleData = data.schedule;
+  renderGantt(data.schedule, data.machines);
+}
+
+function renderGantt(jobs, machines) {
+  const container = document.getElementById('gantt-container');
+  if (!jobs.length) {
+    container.innerHTML = '<div class="loading">Sem jobs agendados</div>';
+    return;
+  }
+
+  // Find time range
+  const starts = jobs.map(j => new Date(j.start).getTime());
+  const ends = jobs.map(j => new Date(j.end).getTime());
+  const minTime = Math.min(...starts);
+  const maxTime = Math.max(...ends);
+  const range = maxTime - minTime;
+
+  // Gantt width: 100% of container
+  const trackWidth = container.clientWidth - 40;
+
+  let html = '';
+
+  // Time axis
+  const numTicks = 10;
+  html += '<div class="gantt-time-axis">';
+  for (let i = 0; i <= numTicks; i++) {
+    const t = new Date(minTime + (range * i / numTicks));
+    html += `<span>${t.toLocaleDateString('pt-PT', {day:'2-digit', month:'short'})}</span>`;
+  }
+  html += '</div>';
+
+  for (const machine of machines) {
+    const machineJobs = jobs.filter(j => j.machine === machine);
+    if (!machineJobs.length) continue;
+
+    const color = MACHINE_COLORS[machine] || '#6b7280';
+    const load = machineData[machine];
+    const loadStr = load ? `${load.utilization_pct}% · ${load.num_jobs} jobs` : '';
+
+    html += `<div class="gantt-machine">`;
+    html += `<div class="gantt-machine-label" style="border-left:3px solid ${color}">
+      ${machine} <span class="load">${loadStr}</span>
+    </div>`;
+
+    // Multi-row for overlapping jobs
+    const rows = assignRows(machineJobs, minTime, maxTime);
+
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      html += `<div class="gantt-track" style="height:${rows.length > 1 ? 40 : 44}px">`;
+      for (const job of rows[rowIdx]) {
+        const left = ((new Date(job.start).getTime() - minTime) / range) * 100;
+        const width = ((new Date(job.end).getTime() - new Date(job.start).getTime()) / range) * 100;
+        const priorityClass = job.priority > 0 ? ` p${job.priority}` : '';
+
+        html += `<div class="gantt-bar${priorityClass}"
+          style="left:${left}%; width:${Math.max(width, 0.5)}%;
+          background:${color}22; color:${color};"
+          onmouseenter="showTooltip(event, ${JSON.stringify(job).replace(/"/g, '&quot;')})"
+          onmouseleave="hideTooltip()"
+          onmousemove="moveTooltip(event)">
+          <span class="bar-label">${job.ref_id} · ${job.quantity.toLocaleString()}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function assignRows(jobs, minTime, maxTime) {
+  // Simple row assignment to avoid overlaps
+  const rows = [[]];
+  const sorted = [...jobs].sort((a, b) => new Date(a.start) - new Date(b.start));
+
+  for (const job of sorted) {
+    let placed = false;
+    for (const row of rows) {
+      const lastEnd = row.length ? new Date(row[row.length - 1].end).getTime() : 0;
+      if (new Date(job.start).getTime() >= lastEnd) {
+        row.push(job);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      rows.push([job]);
+    }
+  }
+  return rows;
+}
+
+// === Tooltip ===
+function showTooltip(event, job) {
+  const tt = document.getElementById('tooltip');
+  const priorityLabels = {0:'Normal', 1:'Atenção', 2:'Urgente', 3:'ATRASO'};
+  tt.innerHTML = `
+    <div class="tt-title">${job.ref_id}</div>
+    <div class="tt-row"><span class="tt-label">Cliente</span><span class="tt-value">${job.client}</span></div>
+    <div class="tt-row"><span class="tt-label">Designação</span><span class="tt-value">${job.designation}</span></div>
+    <div class="tt-row"><span class="tt-label">Máquina</span><span class="tt-value">${job.machine}</span></div>
+    <div class="tt-row"><span class="tt-label">Ferramenta</span><span class="tt-value">${job.tool}</span></div>
+    <div class="tt-row"><span class="tt-label">Quantidade</span><span class="tt-value">${job.quantity.toLocaleString()} pcs</span></div>
+    <div class="tt-row"><span class="tt-label">Peças/Hora</span><span class="tt-value">${job.pieces_per_hour.toLocaleString()}</span></div>
+    <div class="tt-row"><span class="tt-label">Duração</span><span class="tt-value">${job.duration_hours}h</span></div>
+    <div class="tt-row"><span class="tt-label">Início</span><span class="tt-value">${new Date(job.start).toLocaleString('pt-PT')}</span></div>
+    <div class="tt-row"><span class="tt-label">Fim</span><span class="tt-value">${new Date(job.end).toLocaleString('pt-PT')}</span></div>
+    <div class="tt-row"><span class="tt-label">Prioridade</span><span class="tt-value">${priorityLabels[job.priority]}</span></div>
+  `;
+  tt.style.display = 'block';
+  moveTooltip(event);
+}
+function moveTooltip(event) {
+  const tt = document.getElementById('tooltip');
+  tt.style.left = (event.clientX + 12) + 'px';
+  tt.style.top = (event.clientY + 12) + 'px';
+}
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+}
+
+// === Alerts ===
+async function loadAlerts() {
+  const res = await fetch(API + '/api/alerts');
+  const data = await res.json();
+  renderAlerts(data.alerts);
+}
+
+function renderAlerts(alerts) {
+  const container = document.getElementById('alerts-container');
+  if (!alerts.length) {
+    container.innerHTML = '<div class="loading">Sem alertas activos ✓</div>';
+    return;
+  }
+
+  let html = '';
+  for (const a of alerts) {
+    html += `<div class="alert-item ${a.severity}">
+      <div class="alert-header">
+        <span class="alert-ref">${a.ref_id}</span>
+        <span class="alert-severity ${a.severity}">${a.severity === 'atraso' ? '⚠ ATRASO' : a.severity === 'red' ? '🔴 URGENTE' : '🟡 ATENÇÃO'}</span>
+      </div>
+      <div class="alert-detail">
+        ${a.client} · ${a.designation}<br>
+        Faltam <span class="alert-qty">${a.shortage_qty.toLocaleString()}</span> peças · Máq: ${a.machine} · Data: ${a.due_date}
+      </div>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+// === References ===
+async function loadReferences() {
+  const res = await fetch(API + '/api/references');
+  const data = await res.json();
+  renderReferences(data.references);
+}
+
+function renderReferences(refs) {
+  const container = document.getElementById('refs-container');
+  const priorityLabels = {0:'OK', 1:'Atenção', 2:'Urgente', 3:'ATRASO'};
+
+  let html = '<table class="ref-table"><thead><tr>';
+  html += '<th>Ref</th><th>Cliente</th><th>Designação</th><th>Máquina</th><th>Stock</th><th>Lote Econ.</th><th>Pcs/H</th><th>Gémea</th><th>1ª Ruptura</th><th>Estado</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const r of refs) {
+    const p = r.priority;
+    html += `<tr>
+      <td>${r.ref_id}</td>
+      <td>${r.client_name}</td>
+      <td style="color:var(--text-secondary);font-family:Inter,sans-serif;font-size:11px">${r.designation}</td>
+      <td>${r.machine}</td>
+      <td>${(r.stock || 0).toLocaleString()}</td>
+      <td>${(r.economic_lot || 0).toLocaleString()}</td>
+      <td>${(r.pieces_per_hour || 0).toLocaleString()}</td>
+      <td>${r.twin_ref || '—'}</td>
+      <td>${r.first_shortage || '—'}</td>
+      <td><span class="priority-badge p${p}">${priorityLabels[p]}</span></td>
+    </tr>`;
+  }
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// === Machines ===
+async function loadMachines() {
+  const res = await fetch(API + '/api/machines');
+  const data = await res.json();
+  renderMachines(data.machines);
+}
+
+function renderMachines(machines) {
+  const container = document.getElementById('machines-container');
+  let html = '';
+
+  for (const [id, m] of Object.entries(machines)) {
+    const color = MACHINE_COLORS[id] || '#6b7280';
+    const utilPct = m.utilization_pct;
+    const barColor = utilPct > 80 ? 'var(--red)' : utilPct > 60 ? 'var(--yellow)' : 'var(--green)';
+
+    html += `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;border-left:3px solid ${color}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px">${id}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:${barColor}">${utilPct}%</span>
+      </div>
+      <div style="height:8px;background:var(--bg-tertiary);border-radius:4px;overflow:hidden;margin-bottom:10px">
+        <div style="height:100%;width:${utilPct}%;background:${barColor};border-radius:4px;transition:width 0.3s"></div>
+      </div>
+      <div style="display:flex;gap:24px;font-size:12px;color:var(--text-secondary)">
+        <span>${m.num_jobs} jobs</span>
+        <span>${m.scheduled_hours}h agendadas</span>
+        <span>${m.capacity_hours_30d}h capacidade (30d)</span>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// === Tabs ===
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// === Chat ===
+const chatInput = document.getElementById('chat-input');
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+});
+
+// Auto-resize textarea
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+});
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  const btn = document.getElementById('chat-send');
+  btn.disabled = true;
+
+  // Add user message
+  addChatMsg(msg, 'user');
+
+  // Add thinking indicator
+  const thinkingId = addChatMsg('A pensar...', 'system');
+
+  try {
+    const res = await fetch(API + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+
+    // Remove thinking
+    document.getElementById(thinkingId)?.remove();
+
+    // Add assistant response
+    let responseHtml = data.response || '';
+
+    if (data.tool_calls && data.tool_calls.length > 0) {
+      responseHtml += '<div class="tool-calls">';
+      for (const tc of data.tool_calls) {
+        responseHtml += `<div class="tool-call">→ <span class="fn-name">${tc.function}</span>(${JSON.stringify(tc.arguments)})</div>`;
+      }
+      responseHtml += '</div>';
+    }
+
+    addChatMsg(responseHtml, 'assistant', true);
+
+    // If schedule was updated, reload everything
+    if (data.schedule_updated) {
+      addChatMsg('Plano recalculado. A actualizar vista...', 'system');
+      await loadDashboard();
+      await loadSchedule();
+      await loadAlerts();
+      await loadReferences();
+      await loadMachines();
+    }
+  } catch (e) {
+    document.getElementById(thinkingId)?.remove();
+    addChatMsg('Erro ao comunicar com o assistente. Verifique se a OPENAI_API_KEY está configurada.', 'system');
+    console.error(e);
+  }
+
+  btn.disabled = false;
+}
+
+let msgCounter = 0;
+function addChatMsg(content, role, isHtml = false) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  const id = 'msg-' + (++msgCounter);
+  div.id = id;
+  div.className = 'chat-msg ' + role;
+  if (isHtml) {
+    div.innerHTML = content;
+  } else {
+    div.textContent = content;
+  }
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+// === Start ===
+init();
+</script>
+</body>
+</html>
