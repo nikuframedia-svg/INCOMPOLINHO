@@ -1,16 +1,18 @@
 import { Breadcrumb } from 'antd';
-import { Menu, Search } from 'lucide-react';
+import { Menu, MessageSquare, Search } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { NotificationBell } from '../components/Common/NotificationBell';
 import { TrustGateBanner } from '../components/Common/TrustGateBanner';
-import { AmbientBackground } from '../components/ui/AmbientBackground';
 import { ContextPanel } from '../components/ContextPanel/ContextPanel';
 import { FocusStrip } from '../components/FocusStrip/FocusStrip';
+import { AmbientBackground } from '../components/ui/AmbientBackground';
 import { useDeliveryAlertGenerator } from '../features/alerts/useDeliveryAlertGenerator';
 import { useNightShiftAlertGenerator } from '../features/alerts/useNightShiftAlertGenerator';
 import { useStockAlertGenerator } from '../features/alerts/useStockAlertGenerator';
+import { ChatPanel } from '../features/copilot/ChatPanel';
 import {
+  useCopilotPanelOpen,
   useSidebarCollapsed,
   useSidebarMobileOpen,
   useUIActions,
@@ -52,7 +54,13 @@ function AppHeader() {
   useNightShiftAlertGenerator();
   useDeliveryAlertGenerator();
   const mobileOpen = useSidebarMobileOpen();
-  const { toggleSidebar, openMobileSidebar, closeMobileSidebar, openCommandPalette } = useUIActions();
+  const {
+    toggleSidebar,
+    openMobileSidebar,
+    closeMobileSidebar,
+    openCommandPalette,
+    toggleCopilotPanel,
+  } = useUIActions();
   const location = useLocation();
 
   const segments = location.pathname.split('/').filter(Boolean);
@@ -89,12 +97,16 @@ function AppHeader() {
       </button>
       <Breadcrumb items={breadcrumbItems} />
       <div className="app-header__actions">
-        <NotificationBell />
         <button
           type="button"
-          className="app-header__search-pill"
-          onClick={openCommandPalette}
+          className="app-header__copilot-btn"
+          onClick={toggleCopilotPanel}
+          title="Copilot (Ctrl+Shift+K)"
         >
+          <MessageSquare size={16} />
+        </button>
+        <NotificationBell />
+        <button type="button" className="app-header__search-pill" onClick={openCommandPalette}>
           <Search size={14} />
           <span>Pesquisar...</span>
           <kbd>&#8984;K</kbd>
@@ -106,6 +118,8 @@ function AppHeader() {
 
 export function AppLayout({ children }: LayoutProps) {
   const sidebarCollapsed = useSidebarCollapsed();
+  const copilotOpen = useCopilotPanelOpen();
+  const { closeCopilotPanel } = useUIActions();
 
   return (
     <div className={`app-layout ${sidebarCollapsed ? 'app-layout--collapsed' : ''}`}>
@@ -118,6 +132,7 @@ export function AppLayout({ children }: LayoutProps) {
       </main>
       <FocusStrip />
       <ContextPanel />
+      <ChatPanel open={copilotOpen} onClose={closeCopilotPanel} />
     </div>
   );
 }

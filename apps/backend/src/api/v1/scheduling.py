@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from ...core.logging import get_logger
+from ...domain.copilot.state import copilot_state
 from ...domain.scheduling.overflow.auto_route_overflow import auto_route_overflow
 from ...domain.scheduling.types import (
     Block,
@@ -53,6 +54,36 @@ class SchedulingRunResponse(BaseModel):
     n_ops: int = 0
 
     model_config = {"arbitrary_types_allowed": True}
+
+
+# ── KPI Helper ──────────────────────────────────────────────────────────────
+
+
+def _compute_kpis(blocks: list[Block], ed: EngineData) -> dict:
+    """Compute dashboard KPIs from scheduled blocks."""
+    total = len(blocks)
+    prod_blocks = [b for b in blocks if getattr(b, "block_type", None) != "infeasible"]
+    infeasible = [b for b in blocks if getattr(b, "block_type", None) == "infeasible"]
+    machines_used = set()
+    total_qty = 0
+    total_prod_min = 0
+    for b in prod_blocks:
+        machines_used.add(getattr(b, "machine_id", ""))
+        total_qty += getattr(b, "qty", 0)
+        total_prod_min += getattr(b, "production_minutes", 0)
+
+    otd_pct = round((1 - len(infeasible) / max(total, 1)) * 100, 1) if total > 0 else 100.0
+
+    return {
+        "total_blocks": total,
+        "production_blocks": len(prod_blocks),
+        "infeasible_blocks": len(infeasible),
+        "total_qty": total_qty,
+        "total_production_min": total_prod_min,
+        "otd_pct": otd_pct,
+        "machines_used": len(machines_used),
+        "n_ops": len(ed.ops),
+    }
 
 
 # ── Endpoint ────────────────────────────────────────────────────────────────
@@ -105,6 +136,20 @@ async def run_scheduling(request: SchedulingRunRequest) -> SchedulingRunResponse
         # Serialize moves/advances as dicts for JSON response
         moves_dicts = [m.dict() if hasattr(m, "dict") else m for m in auto_moves]
         advances_dicts = [a.dict() if hasattr(a, "dict") else a for a in auto_advances]
+
+        # ── Populate copilot state ──
+        copilot_state.update_from_schedule_result(
+            {
+                "blocks": blocks,
+                "decisions": decisions,
+                "feasibility_report": feasibility,
+                "auto_moves": auto_moves,
+                "kpis": _compute_kpis(blocks, ed),
+                "engine_data": ed.model_dump() if hasattr(ed, "model_dump") else ed.dict(),
+                "solver_used": "atcs_python",
+                "solve_time_s": round(elapsed, 3),
+            }
+        )
 
         logger.info(
             "scheduling.run.done",

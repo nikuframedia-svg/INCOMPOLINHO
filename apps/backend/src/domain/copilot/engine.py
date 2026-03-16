@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime
+from typing import Any
 
 from .state import copilot_state
 
@@ -12,14 +13,77 @@ logger = logging.getLogger(__name__)
 
 
 class _DateEncoder(json.JSONEncoder):
-    def default(self, o):
+    def default(self, o: Any) -> Any:
         if isinstance(o, (date, datetime)):
             return o.isoformat()
         return super().default(o)
 
 
-def _dumps(obj) -> str:
+def _dumps(obj: Any) -> str:
     return json.dumps(obj, cls=_DateEncoder, ensure_ascii=False)
+
+
+# ─── Rule → Scheduler Bridge ────────────────────────────────────────────────
+
+
+def _rules_to_user_moves(rules: list[dict]) -> list[dict]:
+    """Translate copilot rules into user_moves for auto_route_overflow."""
+    moves: list[dict] = []
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+        action = rule.get("action", {})
+        condition = rule.get("condition", {})
+        if action.get("type") != "move_to_machine":
+            continue
+        target = action.get("params", {}).get("machine", "")
+        if not target:
+            continue
+
+        if condition.get("type") == "sku_equals":
+            sku = condition.get("params", {}).get("sku", "")
+            if sku:
+                moves.append({"op_id": sku, "target_machine": target})
+        elif condition.get("type") == "sku_in_list":
+            for sku in condition.get("params", {}).get("skus", []):
+                moves.append({"op_id": sku, "target_machine": target})
+    return moves
+
+
+def _apply_rules_to_ops(ops: list[Any], rules: list[dict]) -> list[Any]:
+    """Apply copilot rules that modify ops before scheduling."""
+    skip_skus: set[str] = set()
+    priority_boosts: dict[str, float] = {}
+
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+        action = rule.get("action", {})
+        condition = rule.get("condition", {})
+        action_type = action.get("type", "")
+
+        if action_type == "skip_scheduling":
+            if condition.get("type") == "sku_equals":
+                sku = condition.get("params", {}).get("sku", "")
+                if sku:
+                    skip_skus.add(sku)
+        elif action_type == "set_priority":
+            boost = action.get("params", {}).get("boost", 2.0)
+            if condition.get("type") == "sku_equals":
+                sku = condition.get("params", {}).get("sku", "")
+                if sku:
+                    priority_boosts[sku] = boost
+
+    if skip_skus:
+        ops = [op for op in ops if getattr(op, "sku", getattr(op, "id", "")) not in skip_skus]
+
+    if priority_boosts:
+        for op in ops:
+            op_sku = getattr(op, "sku", getattr(op, "id", ""))
+            if op_sku in priority_boosts and hasattr(op, "w"):
+                op.w = getattr(op, "w", 1.0) * priority_boosts[op_sku]
+
+    return ops
 
 
 # ─── Tool Executors ───────────────────────────────────────────────────────────
@@ -43,6 +107,17 @@ def _exec_adicionar_regra(args: dict) -> str:
     if any(r.get("id") == rule["id"] for r in existing):
         return _dumps({"error": f"Regra {rule['id']} já existe."})
     copilot_state.add_rule(rule)
+
+    # Auto-recalculate if engine_data available
+    if copilot_state.engine_data is not None:
+        recalc = _exec_recalcular_plano({})
+        return _dumps(
+            {
+                "status": "ok",
+                "message": f"Regra '{args['name']}' criada.",
+                "recalculo": json.loads(recalc),
+            }
+        )
     return _dumps({"status": "ok", "message": f"Regra '{args['name']}' criada."})
 
 
@@ -50,6 +125,16 @@ def _exec_remover_regra(args: dict) -> str:
     removed = copilot_state.remove_rule(args["id"])
     if not removed:
         return _dumps({"error": f"Regra {args['id']} não encontrada."})
+
+    if copilot_state.engine_data is not None:
+        recalc = _exec_recalcular_plano({})
+        return _dumps(
+            {
+                "status": "ok",
+                "message": f"Regra {args['id']} removida.",
+                "recalculo": json.loads(recalc),
+            }
+        )
     return _dumps({"status": "ok", "message": f"Regra {args['id']} removida."})
 
 
@@ -101,20 +186,19 @@ def _exec_ver_alertas(args: dict) -> str:
 
 
 def _exec_ver_carga_maquinas(args: dict) -> str:
-    if copilot_state.schedule is None:
+    if not copilot_state.blocks:
         return _dumps({"error": "Plano não carregado."})
-    gantt = copilot_state.schedule
     machine_id = args.get("machine_id")
-    machines = {}
-    for m_id in gantt.get("machines", []):
+    machines: dict[str, dict] = {}
+    for b in copilot_state.blocks:
+        m_id = b.get("machine_id", b.get("machine", ""))
         if machine_id and m_id != machine_id:
             continue
-        m_jobs = [j for j in gantt.get("jobs", []) if j.get("machine") == m_id]
-        machines[m_id] = {
-            "jobs": len(m_jobs),
-            "minutos_producao": sum(j.get("production_minutes", 0) for j in m_jobs),
-            "pecas_total": sum(j.get("qty", 0) for j in m_jobs),
-        }
+        if m_id not in machines:
+            machines[m_id] = {"jobs": 0, "minutos_producao": 0, "pecas_total": 0}
+        machines[m_id]["jobs"] += 1
+        machines[m_id]["minutos_producao"] += b.get("production_minutes", 0)
+        machines[m_id]["pecas_total"] += b.get("qty", 0)
     return _dumps({"máquinas": machines})
 
 
@@ -132,8 +216,24 @@ def _exec_agrupar_material(args: dict) -> str:
         "reason": reason,
     }
     copilot_state.add_rule(rule)
+
+    # Auto-recalculate
+    if copilot_state.engine_data is not None:
+        recalc = _exec_recalcular_plano({})
+        return _dumps(
+            {
+                "status": "ok",
+                "message": f"Regra de agrupamento criada: {rule_id}",
+                "rule_id": rule_id,
+                "recalculo": json.loads(recalc),
+            }
+        )
     return _dumps(
-        {"status": "ok", "message": f"Regra de agrupamento criada: {rule_id}", "rule_id": rule_id}
+        {
+            "status": "ok",
+            "message": f"Regra de agrupamento criada: {rule_id}",
+            "rule_id": rule_id,
+        }
     )
 
 
@@ -151,24 +251,234 @@ def _exec_mover_referencia(args: dict) -> str:
         "reason": reason,
     }
     copilot_state.add_rule(rule)
+
+    # Auto-recalculate
+    if copilot_state.engine_data is not None:
+        recalc = _exec_recalcular_plano({})
+        return _dumps(
+            {
+                "status": "ok",
+                "message": f"Referência {sku} movida para {target}.",
+                "recalculo": json.loads(recalc),
+            }
+        )
     return _dumps({"status": "ok", "message": f"Referência {sku} movida para {target}."})
 
 
 def _exec_recalcular_plano(_args: dict) -> str:
+    """Run Python scheduler with current engine_data + copilot rules."""
+    if copilot_state.engine_data is None:
+        return _dumps(
+            {
+                "status": "error",
+                "message": "Sem dados de engine. Carrega o ISOP e corre o scheduling primeiro.",
+            }
+        )
+
+    import time
+
+    from ..scheduling.overflow.auto_route_overflow import auto_route_overflow
+    from ..scheduling.types import EngineData, MoveAction
+
+    try:
+        # Reconstruct EngineData from stored dict
+        ed_raw = copilot_state.engine_data
+        ed = EngineData(**ed_raw) if isinstance(ed_raw, dict) else ed_raw
+
+        # Apply copilot rules
+        rules = copilot_state.get_rules()
+        ops = _apply_rules_to_ops(list(ed.ops), rules)
+        user_moves = [MoveAction(**m) for m in _rules_to_user_moves(rules)]
+
+        old_kpis = copilot_state.kpis
+
+        t0 = time.perf_counter()
+        result = auto_route_overflow(
+            ops=ops,
+            m_st=ed.m_st,
+            t_st=ed.t_st,
+            user_moves=user_moves,
+            machines=ed.machines,
+            tool_map=ed.tool_map,
+            workdays=ed.workdays,
+            n_days=ed.n_days,
+            workforce_config=ed.workforce_config,
+            rule="EDD",
+            third_shift=ed.third_shift,
+            twin_validation_report=ed.twin_validation_report,
+            order_based=ed.order_based,
+            max_tier=4,
+        )
+        elapsed = time.perf_counter() - t0
+
+        blocks = result.get("blocks", [])
+        total = len(blocks)
+        infeasible = sum(1 for b in blocks if getattr(b, "block_type", None) == "infeasible")
+        total_qty = sum(getattr(b, "qty", 0) for b in blocks)
+        otd_pct = round((1 - infeasible / max(total, 1)) * 100, 1) if total > 0 else 100.0
+
+        new_kpis: dict[str, Any] = {
+            "total_blocks": total,
+            "infeasible_blocks": infeasible,
+            "total_qty": total_qty,
+            "otd_pct": otd_pct,
+        }
+
+        # Update copilot state
+        copilot_state.update_from_schedule_result(
+            {
+                "blocks": blocks,
+                "decisions": result.get("decisions", []),
+                "feasibility_report": result.get("feasibility_report"),
+                "auto_moves": result.get("auto_moves", []),
+                "kpis": new_kpis,
+                "engine_data": copilot_state.engine_data,
+                "solver_used": "atcs_python",
+                "solve_time_s": round(elapsed, 3),
+            }
+        )
+
+        return _dumps(
+            {
+                "status": "ok",
+                "message": f"Plano recalculado. {total} blocos, OTD {otd_pct}%.",
+                "kpis": new_kpis,
+                "kpis_anteriores": old_kpis,
+                "solve_time_s": round(elapsed, 3),
+                "n_rules_applied": len(rules),
+            }
+        )
+
+    except Exception as e:
+        logger.exception("recalcular_plano error")
+        return _dumps({"status": "error", "message": str(e)})
+
+
+def _exec_explicar_decisao(args: dict) -> str:
+    """Explain why a production block is scheduled where it is."""
+    if not copilot_state.decisions:
+        return _dumps({"error": "Plano não calculado. Sem decisões disponíveis."})
+
+    sku = args["sku"]
+    machine = args.get("machine_id")
+    day = args.get("day_idx")
+
+    relevant = copilot_state.get_decisions_for_sku(sku)
+
+    if machine:
+        relevant = [d for d in relevant if d.get("machine_id", "") == machine]
+    if day is not None:
+        relevant = [d for d in relevant if d.get("day_idx") == day]
+
+    if not relevant:
+        return _dumps({"info": f"Sem decisões registadas para {sku}."})
+
+    formatted = []
+    for d in relevant:
+        formatted.append(
+            {
+                "tipo": d.get("type", "?"),
+                "detalhe": d.get("detail", "?"),
+                "máquina": d.get("machine_id", "?"),
+                "dia": d.get("day_idx"),
+                "turno": d.get("shift"),
+                "op_id": d.get("op_id", "?"),
+            }
+        )
+
+    return _dumps({"decisões": formatted, "total": len(formatted), "sku": sku})
+
+
+def _exec_explicar_logica(args: dict) -> str:
+    """Explain scheduling logic for a given aspect."""
+    aspecto = args.get("aspecto", "geral")
+
+    explicacoes = {
+        "geral": (
+            "O scheduling usa um pipeline de 8 passos:\n"
+            "1. Backward scheduling (calcular quando começar com base no lead time)\n"
+            "2. Agrupar demand por ferramenta/máquina/deadline\n"
+            "3. Merge de peças gémeas (mesma ferramenta = 1 produção)\n"
+            "4. Ordenar pela dispatch rule (ATCS por defeito)\n"
+            "5. Alocar turno a turno, respeitando 4 constraints\n"
+            "6. Nivelar carga entre máquinas\n"
+            "7. Merge de blocos adjacentes\n"
+            "8. Verificar deadlines e marcar infeasible"
+        ),
+        "dispatch": (
+            "ATCS (Apparent Tardiness Cost with Setups):\n"
+            "Prioridade = (peso/tempo) × exp(-folga/(k1×média)) × exp(-setup/(k2×média_setup))\n"
+            "Combina urgência de entrega com custo de setup.\n"
+            "5 regras disponíveis: ATCS, EDD, CR, SPT, WSPT.\n"
+            "UCB1 bandit selecciona a melhor automaticamente."
+        ),
+        "constraints": (
+            "4 constraints HARD:\n"
+            "1. SetupCrew: max 1 setup simultâneo em toda a fábrica\n"
+            "2. ToolTimeline: ferramenta em 1 máquina de cada vez\n"
+            "3. CalcoTimeline: calço em 1 máquina de cada vez\n"
+            "4. OperatorPool: capacidade por turno (advisory, não bloqueia)"
+        ),
+        "overflow": (
+            "Quando uma operação não cabe:\n"
+            "Tier 1: Avançar produção ou mover para alternativa\n"
+            "Tier 2: Tardiness — advance + alt + combo + batch\n"
+            "Tier 3: OTD-Delivery — 7 fases A-G com multi-regra\n"
+            "Se nada resulta → infeasible (sinalizado no Gantt)"
+        ),
+        "twins": (
+            "Peças gémeas = mesma ferramenta + máquina.\n"
+            "Produção simultânea: qty = max(A, B), tempo = 1x.\n"
+            "Excedente da gémea menor → stock.\n"
+            "Emparelhamento cross-EDD: 1ª-1ª, 2ª-2ª por deadline."
+        ),
+        "alertas": (
+            "ATRASO: coluna ATRASO negativa no ISOP → falha já aconteceu (prioridade #1)\n"
+            "RED: faltam peças para amanhã\n"
+            "YELLOW: faltam peças dentro de 2-3 dias\n"
+            "GREEN: sem problema (stock cobre)"
+        ),
+        "replan": (
+            "4 níveis de replaneamento:\n"
+            "1. Right-shift (<30min): empurrar blocos seguintes\n"
+            "2. Match-up (30min-2h): reagendar zona afectada\n"
+            "3. Parcial (>2h): recalcular parte do plano\n"
+            "4. Regeneração total: recalcular tudo"
+        ),
+    }
+
+    return _dumps({"lógica": explicacoes.get(aspecto, explicacoes["geral"])})
+
+
+def _exec_ver_decisoes(args: dict) -> str:
+    """Return audit trail of scheduling decisions."""
+    if not copilot_state.decisions:
+        return _dumps({"error": "Plano não calculado. Sem decisões disponíveis."})
+
+    decisions = list(copilot_state.decisions)
+    tipo = args.get("tipo")
+    machine_id = args.get("machine_id")
+    limit = args.get("limit", 20)
+
+    if tipo:
+        decisions = [d for d in decisions if d.get("type") == tipo]
+    if machine_id:
+        decisions = [d for d in decisions if d.get("machine_id") == machine_id]
+
     return _dumps(
         {
-            "status": "info",
-            "message": "Recálculo de plano disponível via frontend (scheduling é client-side).",
+            "decisões": decisions[:limit],
+            "total": len(decisions),
+            "filtros": {"tipo": tipo, "machine_id": machine_id},
         }
     )
 
 
 def _exec_sugerir_melhorias(args: dict) -> str:
-    if copilot_state.schedule is None:
+    if not copilot_state.blocks:
         return _dumps({"error": "Plano não carregado."})
-    gantt = copilot_state.schedule
-    kpis = gantt.get("kpis", {})
-    suggestions = []
+    kpis = copilot_state.kpis or {}
+    suggestions: list[str] = []
 
     otd = kpis.get("otd_pct", 100)
     if otd < 100:
@@ -183,18 +493,17 @@ def _exec_sugerir_melhorias(args: dict) -> str:
             f"Existem {atraso_count} referências em ATRASO. Priorizar estas na próxima iteração."
         )
 
-    jobs = gantt.get("jobs", [])
     machine_loads: dict[str, int] = {}
-    for j in jobs:
-        m = j.get("machine", "?")
-        machine_loads[m] = machine_loads.get(m, 0) + j.get("production_minutes", 0)
+    for b in copilot_state.blocks:
+        m = b.get("machine_id", b.get("machine", "?"))
+        machine_loads[m] = machine_loads.get(m, 0) + b.get("production_minutes", 0)
     if machine_loads:
         max_m = max(machine_loads, key=lambda k: machine_loads[k])
         min_m = min(machine_loads, key=lambda k: machine_loads[k])
         if machine_loads[max_m] > machine_loads[min_m] * 1.5:
             suggestions.append(
-                f"Desequilíbrio de carga: {max_m} ({machine_loads[max_m]}min) vs {min_m} ({machine_loads[min_m]}min). "
-                "Considerar mover referências."
+                f"Desequilíbrio de carga: {max_m} ({machine_loads[max_m]}min) vs "
+                f"{min_m} ({machine_loads[min_m]}min). Considerar mover referências."
             )
 
     if not suggestions:
@@ -217,6 +526,9 @@ EXECUTORS = {
     "mover_referencia": _exec_mover_referencia,
     "recalcular_plano": _exec_recalcular_plano,
     "sugerir_melhorias": _exec_sugerir_melhorias,
+    "explicar_decisao": _exec_explicar_decisao,
+    "explicar_logica": _exec_explicar_logica,
+    "ver_decisoes": _exec_ver_decisoes,
 }
 
 

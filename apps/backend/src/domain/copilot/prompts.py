@@ -75,16 +75,17 @@ def build_system_prompt() -> str:
     """Build system prompt with current factory state."""
     parts = [SYSTEM_BASE]
 
-    if copilot_state.schedule is not None:
-        gantt = copilot_state.schedule
-        kpis = gantt.get("kpis", {})
+    if copilot_state.kpis is not None:
+        kpis = copilot_state.kpis
         parts.append(f"""
 ESTADO ACTUAL DO PLANO:
-- Jobs: {kpis.get("total_jobs", "?")}
+- Blocos: {kpis.get("total_blocks", "?")}
 - Peças total: {kpis.get("total_qty", "?")}
 - OTD: {kpis.get("otd_pct", "?")}%
-- Solver: {gantt.get("solver_status", "?")}
-- Tempo solver: {gantt.get("solve_time_seconds", "?")}s
+- Infeasíveis: {kpis.get("infeasible_blocks", 0)}
+- Solver: {copilot_state.solver_used or "?"}
+- Tempo solver: {copilot_state.solve_time_s}s
+- Decisões registadas: {len(copilot_state.decisions)}
 """)
 
     alerts = copilot_state.alerts or []

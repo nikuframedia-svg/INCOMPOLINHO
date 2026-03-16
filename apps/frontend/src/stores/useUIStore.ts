@@ -37,6 +37,9 @@ export interface UIActions {
   openMobileSidebar: () => void;
   closeMobileSidebar: () => void;
   setMrpRiskCount: (count: number) => void;
+  toggleCopilotPanel: () => void;
+  openCopilotPanel: () => void;
+  closeCopilotPanel: () => void;
 }
 
 interface UIStoreState {
@@ -50,6 +53,7 @@ interface UIStoreState {
   sidebarCollapsed: boolean;
   sidebarMobileOpen: boolean;
   mrpRiskCount: number;
+  copilotPanelOpen: boolean;
   actions: UIActions;
 }
 
@@ -66,6 +70,7 @@ export const useUIStore = create<UIStoreState>()(
       sidebarCollapsed: false,
       sidebarMobileOpen: false,
       mrpRiskCount: 0,
+      copilotPanelOpen: false,
 
       actions: {
         openCommandPalette: () => set({ commandPaletteOpen: true }),
@@ -84,6 +89,9 @@ export const useUIStore = create<UIStoreState>()(
         openMobileSidebar: () => set({ sidebarMobileOpen: true }),
         closeMobileSidebar: () => set({ sidebarMobileOpen: false }),
         setMrpRiskCount: (count) => set({ mrpRiskCount: count }),
+        toggleCopilotPanel: () => set((s) => ({ copilotPanelOpen: !s.copilotPanelOpen })),
+        openCopilotPanel: () => set({ copilotPanelOpen: true }),
+        closeCopilotPanel: () => set({ copilotPanelOpen: false }),
       },
     }),
     {
@@ -109,4 +117,5 @@ export const useTheme = () => useUIStore((s) => s.theme);
 export const useSidebarCollapsed = () => useUIStore((s) => s.sidebarCollapsed);
 export const useSidebarMobileOpen = () => useUIStore((s) => s.sidebarMobileOpen);
 export const useMrpRiskCount = () => useUIStore((s) => s.mrpRiskCount);
+export const useCopilotPanelOpen = () => useUIStore((s) => s.copilotPanelOpen);
 export const useUIActions = () => useUIStore((s) => s.actions);

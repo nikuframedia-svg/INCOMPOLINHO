@@ -97,7 +97,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       // ── §5c Defaults (Server Solver) ──
       useServerSolver: true,
-      usePythonScheduler: false,
+      usePythonScheduler: true,
       serverSolverTimeLimit: 60,
       serverSolverObjective: 'weighted_tardiness' as SolverObjective,
 

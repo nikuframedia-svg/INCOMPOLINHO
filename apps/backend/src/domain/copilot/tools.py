@@ -182,4 +182,66 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "explicar_decisao",
+            "description": "Explicar porque uma produção está agendada neste sítio (máquina, dia, turno).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sku": {"type": "string", "description": "Referência/SKU a explicar"},
+                    "machine_id": {"type": "string", "description": "Máquina (opcional)"},
+                    "day_idx": {"type": "integer", "description": "Dia (opcional)"},
+                },
+                "required": ["sku"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "explicar_logica",
+            "description": "Explicar a lógica de scheduling actual: que algoritmo, que regras, que prioridades.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "aspecto": {
+                        "type": "string",
+                        "enum": [
+                            "geral",
+                            "dispatch",
+                            "constraints",
+                            "overflow",
+                            "twins",
+                            "alertas",
+                            "replan",
+                        ],
+                        "description": "Aspecto da lógica a explicar",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_decisoes",
+            "description": "Ver o registo de decisões do scheduling (audit trail).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tipo": {
+                        "type": "string",
+                        "description": "Filtrar por tipo (ex: OVERFLOW_ROUTE, ADVANCE_PRODUCTION)",
+                    },
+                    "machine_id": {"type": "string", "description": "Filtrar por máquina"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Máximo de resultados (default: 20)",
+                    },
+                },
+            },
+        },
+    },
 ]

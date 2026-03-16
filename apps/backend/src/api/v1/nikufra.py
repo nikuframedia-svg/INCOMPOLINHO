@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from ...core.config import settings
 from ...core.errors import APIException, ErrorCodes
 from ...core.logging import get_logger
+from ...domain.copilot.state import copilot_state
 
 logger = get_logger(__name__)
 
@@ -58,6 +59,24 @@ async def get_nikufra_data() -> dict[str, Any]:
         # Include ISOP reference date (first date from ISOP, not system date)
         if service.isop_date:
             data["isop_date"] = service.isop_date.isoformat()
+
+        # ── Populate copilot state ──
+        copilot_state.isop_data = data
+        copilot_state.isop_date = data.get("isop_date")
+
+        # Compute coverage alerts if SKU data available
+        skus = data.get("skus")
+        if skus and isinstance(skus, dict):
+            try:
+                from ...domain.stock_alerts.coverage_engine import compute_coverage_alerts
+
+                alerts = compute_coverage_alerts(skus)
+                copilot_state.alerts = [
+                    a.model_dump() if hasattr(a, "model_dump") else a.dict() for a in alerts
+                ]
+            except Exception as alert_err:
+                logger.warning(f"Could not compute coverage alerts: {alert_err}")
+
         return data
     except FileNotFoundError as e:
         raise APIException(status_code=404, code=ErrorCodes.ERR_NOT_FOUND, message=str(e))
@@ -75,7 +94,14 @@ async def reload_nikufra_data() -> dict[str, Any]:
     """Force re-parse of all source files and return fresh data."""
     try:
         service = _get_service()
-        return service.reload()
+        data = service.reload()
+
+        # ── Populate copilot state on reload ──
+        copilot_state.isop_data = data
+        if service.isop_date:
+            copilot_state.isop_date = service.isop_date.isoformat()
+
+        return data
     except FileNotFoundError as e:
         raise APIException(status_code=404, code=ErrorCodes.ERR_NOT_FOUND, message=str(e))
     except Exception as e:
