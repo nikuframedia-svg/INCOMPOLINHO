@@ -1,6 +1,8 @@
 # Tests for Decision Ledger API endpoints
 # Conforme Contrato C3: Decision Ledger
 
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """initial_schema
 
 Revision ID: initial_schema

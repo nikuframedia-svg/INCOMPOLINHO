@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Add run events
 
 Revision ID: 20260205_0500

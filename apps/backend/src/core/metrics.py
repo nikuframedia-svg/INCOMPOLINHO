@@ -1,6 +1,8 @@
 # Metrics collection
 # Conforme SP-OBS-01
 
+from __future__ import annotations
+
 import threading
 import time
 from collections import defaultdict

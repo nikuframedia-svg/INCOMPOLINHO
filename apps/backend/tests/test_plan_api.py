@@ -1,6 +1,8 @@
 # Testes para Plan API
 # Conforme SP-BE-06
 
+from __future__ import annotations
+
 from unittest.mock import MagicMock
 from uuid import uuid4
 

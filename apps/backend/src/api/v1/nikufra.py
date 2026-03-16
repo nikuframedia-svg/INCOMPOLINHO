@@ -1,6 +1,8 @@
 # Nikufra Data API
 # Serves combined ISOP + PP data for the NikufraPlan frontend component
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 

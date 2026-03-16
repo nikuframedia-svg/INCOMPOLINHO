@@ -2,6 +2,8 @@
 # Conforme CLAUDE.md Camada 1: ATCS client-side (<10ms)
 # Priority(j) = (w/p) · exp(-slack/(k1·p̄)) · exp(-setup/(k2·s̄))
 
+from __future__ import annotations
+
 import math
 import time
 from collections import defaultdict

@@ -1,6 +1,8 @@
 # Simple in-memory rate limiter middleware
 # Default: 100 req/min per IP, 10 req/min for /solver/ endpoints
 
+from __future__ import annotations
+
 import time
 from collections import defaultdict
 from collections.abc import Callable

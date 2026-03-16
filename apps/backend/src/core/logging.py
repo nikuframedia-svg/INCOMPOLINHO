@@ -1,6 +1,8 @@
 # Logging estruturado
 # Conforme SP-BE-01 e C-15
 
+from __future__ import annotations
+
 import logging
 import sys
 

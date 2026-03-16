@@ -1,8 +1,11 @@
 # API v1
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 
 from .audit import audit_router
+from .copilot import copilot_router
 from .dqa import dqa_router
 from .events import router as events_router
 from .firewall import firewall_router
@@ -23,6 +26,7 @@ router = APIRouter(prefix="/v1")
 # Incluir sub-routers
 router.include_router(health_router)
 router.include_router(version_router)
+router.include_router(copilot_router)
 router.include_router(snapshots_router)
 router.include_router(plan_router)
 router.include_router(events_router)

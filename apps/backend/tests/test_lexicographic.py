@@ -1,6 +1,8 @@
 # Tests for S-02: Lexicographic 3-Phase Solver
 # Phase 1: min tardiness, Phase 2: max JIT, Phase 3: min setups/makespan
 
+from __future__ import annotations
+
 from src.domain.solver.lexicographic import LexicographicSolver
 from src.domain.solver.schemas import (
     ConstraintConfigInput,

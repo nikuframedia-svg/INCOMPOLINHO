@@ -5,6 +5,8 @@
 # which is not available in CI without a running DB. We test the core calculation logic
 # by reimplementing the pure functions here (same algorithms, no dependencies).
 
+from __future__ import annotations
+
 from decimal import Decimal
 
 

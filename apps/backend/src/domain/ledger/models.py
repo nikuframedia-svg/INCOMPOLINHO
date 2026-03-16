@@ -1,6 +1,8 @@
 # Decision Ledger — SQLAlchemy models
 # Conforme CLAUDE.md: Decision Integrity Firewall
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import (

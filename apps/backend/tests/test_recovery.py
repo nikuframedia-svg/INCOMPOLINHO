@@ -1,6 +1,8 @@
 # Tests for S-04: Cascading Recovery + Late Report
 # Validates 4-level escalation and late order reporting.
 
+from __future__ import annotations
+
 from src.domain.solver.late_report import _classify_priority, build_late_report
 from src.domain.solver.recovery import cascading_recovery
 from src.domain.solver.schemas import (

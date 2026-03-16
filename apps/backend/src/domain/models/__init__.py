@@ -1,5 +1,7 @@
 # Domain models
 
+from __future__ import annotations
+
 from ..learning.models import LearningProposal
 from ..ledger.models import DecisionEntry
 from ..run_events.models import RunEvent, RunEventType

@@ -1,6 +1,8 @@
 # Audit repository — DB access for audit_log table
 # Conforme C-15: append-only audit trail
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timedelta
 

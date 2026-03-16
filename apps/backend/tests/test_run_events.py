@@ -1,6 +1,8 @@
 # Testes para Run Events
 # Conforme SP-BE-12
 
+from __future__ import annotations
+
 from datetime import datetime
 from unittest.mock import MagicMock
 

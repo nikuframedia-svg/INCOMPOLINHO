@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """add_plan_jobs
 
 Revision ID: add_plan_jobs

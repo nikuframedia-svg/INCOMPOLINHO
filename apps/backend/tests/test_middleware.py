@@ -1,6 +1,8 @@
 # Testes unitários para middleware
 # Conforme SP-BE-01
 
+from __future__ import annotations
+
 import pytest
 from fastapi.testclient import TestClient
 

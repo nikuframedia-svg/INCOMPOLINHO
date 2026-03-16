@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Add operator pools
 
 Revision ID: 20260205_0400

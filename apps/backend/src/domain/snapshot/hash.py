@@ -1,6 +1,8 @@
 # Hash canónico para snapshots
 # Conforme SP-BE-04 e PP1_DOCUMENTO_MESTRE_v3.md Secção 7.4.1
 
+from __future__ import annotations
+
 import hashlib
 import json
 from typing import Any

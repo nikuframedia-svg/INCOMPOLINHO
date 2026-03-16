@@ -1,6 +1,8 @@
 # Database base configuration
 # Conforme SP-BE-02
 
+from __future__ import annotations
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker

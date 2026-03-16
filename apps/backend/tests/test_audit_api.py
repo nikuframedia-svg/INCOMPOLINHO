@@ -1,6 +1,8 @@
 # Tests for Audit API endpoints
 # Conforme C-15: Observability and Audit Trail
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4

@@ -1,6 +1,8 @@
 # Decision Integrity Firewall — Engine
 # Conforme CLAUDE.md: O Firewall NÃO impede decisões. Torna-as CARAS e VISÍVEIS.
 
+from __future__ import annotations
+
 from decimal import Decimal
 
 from .schemas import DeviationAssessment

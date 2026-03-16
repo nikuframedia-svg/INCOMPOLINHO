@@ -1,6 +1,8 @@
 # Testes para imutabilidade de snapshots
 # Conforme SP-BE-04
 
+from __future__ import annotations
+
 from datetime import datetime
 from uuid import uuid4
 

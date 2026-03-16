@@ -1,6 +1,8 @@
 # Data Quality Assessment (TrustIndex) API endpoints
 # Conforme Contrato C3: DQA
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 
 from ...domain.dqa.engine import DQAEngine

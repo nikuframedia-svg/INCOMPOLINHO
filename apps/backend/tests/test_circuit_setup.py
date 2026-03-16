@@ -2,6 +2,8 @@
 # Validates that same-tool consecutive ops get zero setup,
 # different-tool ops get proper setup, and SetupCrew still works.
 
+from __future__ import annotations
+
 from src.domain.solver.cpsat_solver import CpsatSolver
 from src.domain.solver.schemas import (
     ConstraintConfigInput,

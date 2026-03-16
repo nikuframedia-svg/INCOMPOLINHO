@@ -1,6 +1,8 @@
 # Audit service — business logic for audit trail
 # Conforme C-15: append-only audit trail with correlation tracking
 
+from __future__ import annotations
+
 from datetime import datetime
 
 from sqlalchemy.orm import Session

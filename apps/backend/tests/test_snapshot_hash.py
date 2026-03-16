@@ -1,6 +1,8 @@
 # Testes para hash canónico
 # Conforme SP-BE-04
 
+from __future__ import annotations
+
 from src.domain.snapshot.hash import calculate_snapshot_hash, canonical_json
 
 

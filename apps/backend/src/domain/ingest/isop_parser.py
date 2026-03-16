@@ -1,6 +1,8 @@
 # ISOP XLSX Parser
 # Conforme SP-BE-03 e C-02
 
+from __future__ import annotations
+
 import hashlib
 from datetime import date, datetime
 from pathlib import Path

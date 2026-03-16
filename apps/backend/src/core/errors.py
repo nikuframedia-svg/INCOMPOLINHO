@@ -2,6 +2,8 @@
 # Conforme SP-BE-01 e C-00
 
 
+from __future__ import annotations
+
 from fastapi import HTTPException
 from pydantic import BaseModel
 

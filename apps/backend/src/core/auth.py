@@ -1,6 +1,8 @@
 # API key authentication stub
 # When api_keys is empty (dev mode), auth is skipped entirely.
 
+from __future__ import annotations
+
 from collections.abc import Callable
 
 from fastapi import Request, Response

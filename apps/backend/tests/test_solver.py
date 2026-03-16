@@ -1,6 +1,8 @@
 # Tests for CP-SAT Solver + Heuristic Fallback + Router + Factory Constraints
 # Conforme Contrato C4
 
+from __future__ import annotations
+
 from src.domain.solver.cpsat_solver import CpsatSolver
 from src.domain.solver.heuristic_fallback import HeuristicFallback
 from src.domain.solver.router_logic import SolverRouter

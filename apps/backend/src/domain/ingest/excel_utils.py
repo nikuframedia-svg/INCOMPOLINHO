@@ -1,6 +1,8 @@
 # Shared Excel parsing utilities
 # Used by: isop_parser.py, planning/ingest_excel.py
 
+from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Any
 

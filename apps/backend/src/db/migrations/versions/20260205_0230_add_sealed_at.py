@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """add_sealed_at
 
 Revision ID: add_sealed_at

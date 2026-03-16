@@ -1,6 +1,8 @@
 # Snapshots endpoints
 # Conforme SP-BE-04
 
+from __future__ import annotations
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -35,7 +37,7 @@ class SnapshotResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod
-    def from_snapshot(cls, snapshot: Snapshot) -> "SnapshotResponse":
+    def from_snapshot(cls, snapshot: Snapshot) -> SnapshotResponse:
         """Cria response a partir de snapshot, incluindo gate_status"""
         data = cls.model_validate(snapshot)
         ti = float(snapshot.trust_index_overall)

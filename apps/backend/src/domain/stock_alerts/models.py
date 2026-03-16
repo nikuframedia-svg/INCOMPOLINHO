@@ -1,6 +1,8 @@
 # Stock Alerts — SQLAlchemy model
 # Persists acknowledge/snooze actions from frontend
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import Column, DateTime, String, func

@@ -1,6 +1,8 @@
 # Events API endpoints
 # Conforme SP-BE-12 e C-RUN
 
+from __future__ import annotations
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query

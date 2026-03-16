@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Add stock_alerts table for alert persistence
 
 Revision ID: 20260309_0100

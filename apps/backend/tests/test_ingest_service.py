@@ -1,5 +1,7 @@
 # Tests for Nikufra IngestService (Data Fusion Engine)
 
+from __future__ import annotations
+
 from src.domain.nikufra.ingest_service import IngestService, _fuzzy_match
 from src.domain.nikufra.schemas import (
     AlertCategory,

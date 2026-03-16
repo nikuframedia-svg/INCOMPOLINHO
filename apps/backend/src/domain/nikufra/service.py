@@ -267,22 +267,30 @@ class NikufraService:
 
         Date columns have headers like "27/02/2026" or "27/02".
         Returns the earliest date found, or None if no valid dates.
+        Uses the year from full-format dates instead of date.today().
         """
         if not date_cols:
             return None
 
         dates: list[date] = []
+        pending_no_year: list[datetime] = []
+
         for header in date_cols.values():
             for fmt in ("%d/%m/%Y", "%d/%m"):
                 try:
                     parsed = datetime.strptime(header.strip(), fmt)
                     if fmt == "%d/%m":
-                        # Assume current year
-                        parsed = parsed.replace(year=date.today().year)
-                    dates.append(parsed.date())
+                        pending_no_year.append(parsed)
+                    else:
+                        dates.append(parsed.date())
                     break
                 except ValueError:
                     continue
+
+        # Use year from parsed dates, fallback to current year
+        year = dates[0].year if dates else date.today().year
+        for p in pending_no_year:
+            dates.append(p.replace(year=year).date())
 
         return min(dates) if dates else None
 

@@ -1,6 +1,8 @@
 # Audit log model
 # Conforme SP-BE-02 e C-15
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 

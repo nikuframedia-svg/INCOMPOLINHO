@@ -1,6 +1,8 @@
 # Tests for S-00: ISOP date reference fix
 # Ensures the system uses ISOP dates (not system date) as reference
 
+from __future__ import annotations
+
 from datetime import date
 
 from src.domain.nikufra.constants import generate_fallback_dates

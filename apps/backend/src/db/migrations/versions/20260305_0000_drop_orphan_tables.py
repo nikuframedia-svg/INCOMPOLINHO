@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Drop orphan tables from deleted domains
 
 Removes tables created by migrations for domains that were deleted

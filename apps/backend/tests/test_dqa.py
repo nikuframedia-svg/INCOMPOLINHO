@@ -1,6 +1,8 @@
 # Tests for DQA / TrustIndex Engine
 # Conforme Contrato C3
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 
 from src.domain.dqa.engine import DQAEngine

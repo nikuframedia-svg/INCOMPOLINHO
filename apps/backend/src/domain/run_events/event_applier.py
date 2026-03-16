@@ -2,6 +2,8 @@
 # Events are stored in the DB for audit/history.
 # All scheduling is done client-side via INCOMPOL PLAN.
 
+from __future__ import annotations
+
 from sqlalchemy.orm import Session
 
 from ...core.logging import get_logger

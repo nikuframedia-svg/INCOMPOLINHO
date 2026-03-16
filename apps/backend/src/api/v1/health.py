@@ -1,6 +1,8 @@
 # Health endpoint
 # Conforme SP-BE-01
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 

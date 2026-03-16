@@ -1,6 +1,8 @@
 # Run Events models
 # Conforme SP-BE-12 e C-RUN
 
+from __future__ import annotations
+
 import enum
 import uuid
 from datetime import datetime

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Add Decision Ledger and Learning Proposals tables
 
 Revision ID: 20260308_0100

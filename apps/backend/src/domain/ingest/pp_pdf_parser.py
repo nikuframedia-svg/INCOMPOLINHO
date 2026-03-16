@@ -1,6 +1,8 @@
 # PP PDF Parser
 # Parses PP_PG1.pdf and PP_PG2.pdf production plans from Nikufra factory
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from pathlib import Path

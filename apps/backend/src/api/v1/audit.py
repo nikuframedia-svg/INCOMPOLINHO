@@ -1,6 +1,8 @@
 # Audit API endpoints — DB-backed
 # Conforme C-15: Observability and Audit Trail
 
+from __future__ import annotations
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query

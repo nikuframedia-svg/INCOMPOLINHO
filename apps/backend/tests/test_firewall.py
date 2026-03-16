@@ -1,6 +1,8 @@
 # Tests for Decision Integrity Firewall
 # Conforme Contrato C3
 
+from __future__ import annotations
+
 from decimal import Decimal
 
 from src.domain.firewall.engine import DecisionIntegrityFirewall

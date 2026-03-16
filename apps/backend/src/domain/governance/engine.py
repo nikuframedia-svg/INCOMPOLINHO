@@ -3,6 +3,8 @@
 # L0: Logging | L1: +Validação | L2: +Preview
 # L3: +Contrafactual+CustoDesvio | L4: +Aprovação | L5: +Multi-aprovação
 
+from __future__ import annotations
+
 from .schemas import GovernanceCheck
 
 # Mapeamento acção → nível mínimo de governance

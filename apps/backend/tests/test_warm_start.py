@@ -1,6 +1,8 @@
 # Tests for S-03: EDD Warm-Start + tool-grouped EDD
 # Validates heuristic produces feasible schedules and CP-SAT accepts hints.
 
+from __future__ import annotations
+
 from src.domain.solver.cpsat_solver import CpsatSolver
 from src.domain.solver.schemas import (
     ConstraintConfigInput,

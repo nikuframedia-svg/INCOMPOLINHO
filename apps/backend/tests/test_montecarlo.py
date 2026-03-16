@@ -1,6 +1,8 @@
 # Tests for S-05: Monte Carlo Robustness
 # Validates deterministic with seed, OTD estimation, and buffer suggestions.
 
+from __future__ import annotations
+
 import random
 
 from src.domain.solver.montecarlo import monte_carlo_otd

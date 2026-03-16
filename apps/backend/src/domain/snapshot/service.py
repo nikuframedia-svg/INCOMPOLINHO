@@ -1,6 +1,8 @@
 # Snapshot service
 # Conforme SP-BE-03
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 from uuid import uuid4

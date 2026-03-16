@@ -1,5 +1,7 @@
 # Learning Engine — SQLAlchemy models
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import (

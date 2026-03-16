@@ -1,6 +1,8 @@
 # Middleware para correlation_id e Idempotency-Key
 # Conforme SP-BE-01, C-00, C-15
 
+from __future__ import annotations
+
 import time
 import uuid
 from collections.abc import Callable

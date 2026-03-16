@@ -1,6 +1,8 @@
 # Tests for Governance Engine L0-L5
 # Conforme Contrato C3
 
+from __future__ import annotations
+
 from src.domain.governance.engine import GovernanceEngine
 
 

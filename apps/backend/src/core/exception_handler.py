@@ -1,6 +1,8 @@
 # Exception handler global
 # Conforme SP-BE-01
 
+from __future__ import annotations
+
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

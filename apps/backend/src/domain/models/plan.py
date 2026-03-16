@@ -1,6 +1,8 @@
 # Plan models
 # Conforme SP-BE-02 e C-04
 
+from __future__ import annotations
+
 import enum
 import uuid
 from datetime import datetime

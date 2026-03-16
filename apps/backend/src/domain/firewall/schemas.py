@@ -1,5 +1,7 @@
 # Decision Integrity Firewall — Pydantic schemas
 
+from __future__ import annotations
+
 from decimal import Decimal
 
 from pydantic import BaseModel, Field

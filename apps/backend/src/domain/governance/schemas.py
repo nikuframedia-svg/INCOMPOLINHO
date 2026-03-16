@@ -1,5 +1,7 @@
 # Governance L0-L5 — Pydantic schemas
 
+from __future__ import annotations
+
 from pydantic import BaseModel
 
 

@@ -1,6 +1,8 @@
 # Decision Integrity Firewall API endpoints
 # Conforme Contrato C3: Firewall
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 
 from ...domain.firewall.engine import DecisionIntegrityFirewall
