@@ -3,10 +3,11 @@
 # Gates: ≥0.90 Full Auto | ≥0.70 Monitoring | ≥0.50 Suggestion | <0.50 Manual
 from __future__ import annotations
 
+import datetime as _dt
 import math
-from datetime import UTC, datetime
+from datetime import datetime
 
-UTC = UTC
+UTC = _dt.UTC
 
 from .schemas import DimensionScore, TrustIndexResult
 

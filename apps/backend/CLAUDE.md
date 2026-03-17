@@ -18,7 +18,8 @@ Nunca editar migrations existentes.
 - dqa — Data quality / TrustIndex
 - learning — Learning engine
 - ledger — Decision ledger
-- governance — Governance L0-L5
+- settings — Engine settings (41 params, JSON persistence)
+- pipeline — Unified scheduling pipeline (ISOP→schedule)
 
 ## Copilot
 - `POST /v1/copilot/chat` — GPT-4o with 10 function-calling tools

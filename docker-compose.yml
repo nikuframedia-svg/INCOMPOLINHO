@@ -34,6 +34,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost"]}
       API_KEYS: ${API_KEYS:-[]}
       NIKUFRA_DATA_DIR: ${NIKUFRA_DATA_DIR:-data/nikufra}
+      PP1_OPENAI_API_KEY: ${PP1_OPENAI_API_KEY:-}
+      PP1_SETTINGS_DIR: ${PP1_SETTINGS_DIR:-data}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:

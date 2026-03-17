@@ -152,28 +152,53 @@ def _exec_alterar_definicao(args: dict) -> str:
 
 
 def _exec_explicar_referencia(args: dict) -> str:
-    if copilot_state.isop_data is None:
-        return _dumps({"error": "ISOP não carregado."})
     sku_code = args["sku"]
+
+    # Try ISOP data first
     isop = copilot_state.isop_data
-    if not isinstance(isop, dict) or sku_code not in isop.get("skus", {}):
-        return _dumps({"error": f"Referência {sku_code} não encontrada."})
-    s = isop["skus"][sku_code]
-    return _dumps(
-        {
-            "sku": s.get("sku", sku_code),
-            "designação": s.get("designation", "?"),
-            "máquina": s.get("machine", "?"),
-            "ferramenta": s.get("tool", "?"),
-            "peças/hora": s.get("pieces_per_hour", "?"),
-            "stock": s.get("stock", 0),
-            "atraso": s.get("atraso", 0),
-            "gémea": s.get("twin_ref"),
-            "encomendas": len(s.get("orders", [])),
-            "procura_total": sum(o.get("qty", 0) for o in s.get("orders", [])),
-            "clientes": s.get("clients", []),
-        }
-    )
+    if isinstance(isop, dict) and sku_code in isop.get("skus", {}):
+        s = isop["skus"][sku_code]
+        return _dumps(
+            {
+                "sku": s.get("sku", sku_code),
+                "designação": s.get("designation", "?"),
+                "máquina": s.get("machine", "?"),
+                "ferramenta": s.get("tool", "?"),
+                "peças/hora": s.get("pieces_per_hour", "?"),
+                "stock": s.get("stock", 0),
+                "atraso": s.get("atraso", 0),
+                "gémea": s.get("twin_ref"),
+                "encomendas": len(s.get("orders", [])),
+                "procura_total": sum(o.get("qty", 0) for o in s.get("orders", [])),
+                "clientes": s.get("clients", []),
+            }
+        )
+
+    # Fallback: try EngineData ops
+    ed = copilot_state.engine_data
+    if isinstance(ed, dict) and ed.get("ops"):
+        for op in ed["ops"]:
+            op_id = op.get("id", "") if isinstance(op, dict) else getattr(op, "id", "")
+            op_sku = op.get("sku", "") if isinstance(op, dict) else getattr(op, "sku", "")
+            if op_id == sku_code or op_sku == sku_code:
+                g = op.get if isinstance(op, dict) else lambda k, d=None: getattr(op, k, d)
+                return _dumps(
+                    {
+                        "sku": g("sku", op_id),
+                        "designação": g("nm", "?"),
+                        "máquina": g("m", "?"),
+                        "ferramenta": g("t", "?"),
+                        "peças/hora": g("pH", "?"),
+                        "stock": 0,
+                        "atraso": g("atr", 0),
+                        "gémea": g("twin", None),
+                        "fonte": "engine_data (parcial — carrega ISOP para dados completos)",
+                    }
+                )
+
+    if copilot_state.isop_data is None and copilot_state.engine_data is None:
+        return _dumps({"error": "Sem dados carregados. Carrega o ISOP primeiro."})
+    return _dumps({"error": f"Referência {sku_code} não encontrada."})
 
 
 def _exec_ver_alertas(args: dict) -> str:
@@ -182,6 +207,10 @@ def _exec_ver_alertas(args: dict) -> str:
     limit = args.get("limit", 10)
     if severity != "all":
         alerts = [a for a in alerts if a.get("severity") == severity]
+    if not alerts and copilot_state.isop_data is None and copilot_state.engine_data is None:
+        return _dumps({"info": "Sem dados carregados. Carrega o ISOP para ver alertas."})
+    if not alerts:
+        return _dumps({"info": "Tudo OK — sem alertas activos.", "total": 0})
     return _dumps({"alertas": alerts[:limit], "total": len(alerts)})
 
 
@@ -512,6 +541,43 @@ def _exec_sugerir_melhorias(args: dict) -> str:
     return _dumps({"sugestões": suggestions})
 
 
+def _exec_ver_producao_hoje(args: dict) -> str:
+    """Show today's planned production grouped by machine."""
+    if not copilot_state.blocks:
+        return _dumps({"error": "Plano não carregado."})
+    day_idx = args.get("day_idx", 0)
+    machines: dict[str, list[dict]] = {}
+    for b in copilot_state.blocks:
+        b_day = b.get("day_idx", b.get("dayIdx", -1))
+        if b_day != day_idx:
+            continue
+        m_id = b.get("machine_id", b.get("machineId", b.get("machine", "")))
+        if m_id not in machines:
+            machines[m_id] = []
+        machines[m_id].append(
+            {
+                "op_id": b.get("op_id", b.get("opId", "?")),
+                "tool": b.get("tool_id", b.get("toolId", "?")),
+                "qty": b.get("qty", 0),
+                "start": b.get("start_min", b.get("startMin", 0)),
+                "end": b.get("end_min", b.get("endMin", 0)),
+                "turno": b.get("shift", "?"),
+            }
+        )
+    if not machines:
+        return _dumps({"info": f"Sem produção planeada para o dia {day_idx}.", "day_idx": day_idx})
+    total_qty = sum(item["qty"] for items in machines.values() for item in items)
+    total_blocks = sum(len(items) for items in machines.values())
+    return _dumps(
+        {
+            "day_idx": day_idx,
+            "máquinas": machines,
+            "total_blocos": total_blocks,
+            "total_peças": total_qty,
+        }
+    )
+
+
 # ─── Tool Dispatcher ──────────────────────────────────────────────────────────
 
 
@@ -529,6 +595,7 @@ EXECUTORS = {
     "explicar_decisao": _exec_explicar_decisao,
     "explicar_logica": _exec_explicar_logica,
     "ver_decisoes": _exec_ver_decisoes,
+    "ver_producao_hoje": _exec_ver_producao_hoje,
 }
 
 

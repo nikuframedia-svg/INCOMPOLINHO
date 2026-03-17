@@ -80,7 +80,15 @@ export const useCopilotStore = create<CopilotStore>((set, get) => ({
           scheduleVersion: response.tool_calls_made > 0 ? s.scheduleVersion + 1 : s.scheduleVersion,
         }));
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido';
+        const raw = err instanceof Error ? err.message : 'Erro desconhecido';
+        let errorMsg = raw;
+        if (raw.includes('503') && raw.toLowerCase().includes('key')) {
+          errorMsg = 'Chave OpenAI não configurada no servidor.';
+        } else if (raw.includes('429')) {
+          errorMsg = 'Limite de pedidos OpenAI atingido. Tenta novamente em breve.';
+        } else if (raw.includes('Failed to fetch') || raw.includes('NetworkError')) {
+          errorMsg = 'Servidor não acessível. Verifica se o backend está a correr.';
+        }
         set({ isLoading: false, error: errorMsg });
       }
     },

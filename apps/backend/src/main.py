@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env into os.environ (needed by copilot for PP1_OPENAI_API_KEY)
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware

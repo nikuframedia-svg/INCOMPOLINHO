@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     api_keys: list[str] = []  # Empty = dev mode (skip auth)
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:5174"]
 
     model_config = {
         "env_file": ".env",

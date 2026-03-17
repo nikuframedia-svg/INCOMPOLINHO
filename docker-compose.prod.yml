@@ -1,0 +1,55 @@
+# Production overlay — extends docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Copy .env.example → .env and set DOMAIN, POSTGRES_PASSWORD, etc.
+#   2. Run deploy/init-letsencrypt.sh to obtain SSL certificates
+#   3. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx-ssl.conf:/etc/nginx/templates/default.conf.template:ro
+      - certbot-webroot:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    environment:
+      DOMAIN: ${DOMAIN:-pp1.nikufra.ai}
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      - pp1-network
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - pp1-network
+
+  # Override frontend to not expose port 80 directly
+  frontend:
+    ports: !reset []
+
+  # Override backend to not expose port 8000 directly
+  backend:
+    ports: !reset []
+    environment:
+      CORS_ORIGINS: '["https://${DOMAIN:-pp1.nikufra.ai}"]'
+
+  # Override postgres to not expose port
+  postgres:
+    ports: !reset []
+
+volumes:
+  certbot-webroot:
+  certbot-certs:

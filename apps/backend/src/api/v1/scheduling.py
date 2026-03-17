@@ -151,6 +151,26 @@ async def run_scheduling(request: SchedulingRunRequest) -> SchedulingRunResponse
             }
         )
 
+        # ── Fallback: populate isop_data from EngineData if not yet loaded ──
+        if copilot_state.isop_data is None and ed.ops:
+            skus: dict = {}
+            for op in ed.ops:
+                op_id = getattr(op, "id", "")
+                skus[op_id] = {
+                    "sku": op_id,
+                    "designation": getattr(op, "nm", op_id),
+                    "machine": getattr(op, "m", ""),
+                    "tool": getattr(op, "t", ""),
+                    "pieces_per_hour": getattr(op, "pH", 0),
+                    "stock": 0,
+                    "atraso": getattr(op, "atr", 0),
+                    "twin_ref": getattr(op, "twin", None),
+                    "clients": [],
+                    "orders": [],
+                }
+            copilot_state.isop_data = {"skus": skus}
+            logger.info("scheduling.isop_fallback", skus_from_engine=len(skus))
+
         logger.info(
             "scheduling.run.done",
             n_blocks=len(blocks),

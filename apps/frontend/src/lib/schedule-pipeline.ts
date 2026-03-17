@@ -1,8 +1,11 @@
 /**
- * schedule-pipeline.ts — Pure scheduling pipeline logic.
+ * schedule-pipeline.ts — Scheduling pipeline with backend-first strategy.
  *
- * Extracted from useScheduleData to keep the hook thin.
- * Runs: PlanState → EngineData → MRP → Schedule → CacheEntry.
+ * PRIMARY: Backend pipeline (/v1/pipeline/schedule) — sends NikufraData JSON.
+ * FALLBACK: Client-side TS engine (autoRouteOverflow) — when backend down.
+ *
+ * The backend handles: transform → MRP → scheduling → copilot state.
+ * Frontend only does client-side scheduling as fallback.
  */
 
 import {
@@ -53,14 +56,97 @@ export interface CacheEntry {
 
 export interface DataSourceLike {
   getPlanState: () => Promise<PlanState>;
+  /** NikufraData for backend pipeline (if available) */
+  getNikufraData?: () => Record<string, unknown> | null;
+}
+
+/**
+ * Try the backend pipeline first — sends NikufraData to /v1/pipeline/schedule.
+ * Returns CacheEntry on success, null if backend unavailable.
+ */
+async function tryBackendPipeline(
+  ds: DataSourceLike,
+  planState: PlanState,
+  tcfg: TransformConfigFromSettings,
+): Promise<CacheEntry | null> {
+  // Need NikufraData for backend pipeline
+  const nikufraData = ds.getNikufraData?.();
+  if (!nikufraData) return null;
+
+  const settings = useSettingsStore.getState();
+
+  try {
+    const { callBackendPipeline } = await import('../features/scheduling/api/pipelineApi');
+
+    const settingsPayload = {
+      dispatchRule: settings.dispatchRule === 'AUTO' ? 'EDD' : settings.dispatchRule,
+      thirdShift: planState.thirdShift ?? settings.thirdShiftDefault,
+      maxTier: 4,
+      orderBased: true,
+      demandSemantics: tcfg.demandSemantics || 'raw_np',
+    };
+
+    const response = await callBackendPipeline(nikufraData, settingsPayload);
+
+    if (!response.blocks || response.blocks.length === 0) {
+      // Backend returned empty — check for errors
+      if (response.parse_warnings?.some((w: string) => w.startsWith('Erro'))) {
+        console.warn('[schedule-pipeline] Backend pipeline error:', response.parse_warnings);
+        return null;
+      }
+    }
+
+    // We still need local EngineData for analytics (cap, score, validate, etc.)
+    const transformConfig: TransformConfig = {
+      moStrategy: tcfg.moStrategy,
+      moNominalPG1: tcfg.moNominalPG1,
+      moNominalPG2: tcfg.moNominalPG2,
+      moCustomPG1: tcfg.moCustomPG1,
+      moCustomPG2: tcfg.moCustomPG2,
+      demandSemantics: tcfg.demandSemantics || 'raw_np',
+      preStartBufferDays: tcfg.preStartBufferDays,
+    };
+    const data = transformPlanState(planState, transformConfig);
+    const mrp = computeMRP(data);
+
+    const dispatchRule: DispatchRule =
+      settings.dispatchRule === 'AUTO'
+        ? DISPATCH_BANDIT.select()
+        : (settings.dispatchRule as DispatchRule);
+
+    const thirdShiftRecommended = !!response.feasibility_report?.remediations?.some(
+      (r: { type: string }) => r.type === 'THIRD_SHIFT',
+    );
+
+    console.info(
+      `[schedule-pipeline] Backend pipeline OK: ${response.n_blocks} blocks in ${response.solve_time_s}s`,
+    );
+
+    return {
+      engine: data,
+      blocks: response.blocks,
+      autoMoves: response.auto_moves ?? [],
+      autoAdvances: response.auto_advances ?? [],
+      decisions: response.decisions ?? [],
+      feasibilityReport: response.feasibility_report ?? null,
+      transparencyReport: null,
+      mrp,
+      resolvedDispatchRule: dispatchRule,
+      thirdShiftRecommended,
+    };
+  } catch (e) {
+    console.warn(
+      '[schedule-pipeline] Backend pipeline unavailable, falling back to client-side:',
+      e instanceof Error ? e.message : String(e),
+    );
+    return null;
+  }
 }
 
 /**
  * Run the full scheduling pipeline:
- * 1. Load PlanState from data source
- * 2. Transform to EngineData
- * 3. Compute MRP + supply priority
- * 4. Schedule (autoReplan or autoRouteOverflow)
+ * 1. Try backend pipeline (sends NikufraData, backend does everything)
+ * 2. Fallback: client-side transform + MRP + schedule
  */
 export async function runSchedulePipeline(
   ds: DataSourceLike,
@@ -73,6 +159,15 @@ export async function runSchedulePipeline(
     throw new Error(`Falha ao carregar dados: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ── PRIMARY: Backend pipeline ──
+  const settings = useSettingsStore.getState();
+  if (settings.usePythonScheduler) {
+    const backendResult = await tryBackendPipeline(ds, planState, tcfg);
+    if (backendResult) return backendResult;
+  }
+
+  // ── FALLBACK: Client-side scheduling ──
+
   // 1. Transform PlanState → EngineData
   const transformConfig: TransformConfig = {
     moStrategy: tcfg.moStrategy,
@@ -84,7 +179,6 @@ export async function runSchedulePipeline(
     preStartBufferDays: tcfg.preStartBufferDays,
   };
 
-  // Safety net: force raw_np if demandSemantics is falsy (e.g. stale localStorage)
   if (!transformConfig.demandSemantics) {
     transformConfig.demandSemantics = 'raw_np';
     console.warn('[schedule-pipeline] demandSemantics was falsy — forced to raw_np');
@@ -92,7 +186,6 @@ export async function runSchedulePipeline(
 
   const data = transformPlanState(planState, transformConfig);
 
-  // Diagnostic: detect zero-demand anomaly (positive fixture values vs raw_np semantics)
   if (transformConfig.demandSemantics === 'raw_np') {
     const hasInput = planState.operations.some((o) =>
       o.daily_qty.some((v) => v != null && v !== 0),
@@ -116,8 +209,6 @@ export async function runSchedulePipeline(
   const supplyBoosts = computeSupplyPriority(data, mrp);
 
   // 3. Read scheduling settings
-  const settings = useSettingsStore.getState();
-  // AUTO delegates to UCB1 bandit; otherwise use manual selection
   const dispatchRule: DispatchRule =
     settings.dispatchRule === 'AUTO'
       ? DISPATCH_BANDIT.select()
@@ -132,7 +223,7 @@ export async function runSchedulePipeline(
   let resultTransparency: TransparencyReport | null = null;
 
   if (settings.usePythonScheduler) {
-    // Python ATCS scheduler (ported engine)
+    // Python ATCS scheduler — try direct EngineData call as secondary fallback
     try {
       const { callPythonScheduler } = await import('../features/scheduling/api/schedulingApi');
       const pyResult = await callPythonScheduler({
@@ -146,7 +237,6 @@ export async function runSchedulePipeline(
       resultDecisions = pyResult.decisions ?? [];
       resultFeasibility = pyResult.feasibility_report ?? null;
     } catch (e) {
-      // Fallback to client-side TS scheduling
       console.warn(
         '[schedule-pipeline] Python scheduler failed, falling back to TS client-side:',
         e instanceof Error ? e.message : String(e),
@@ -177,7 +267,6 @@ export async function runSchedulePipeline(
       resultFeasibility = overflowResult.feasibilityReport ?? null;
     }
   } else if (settings.useServerSolver) {
-    // CP-SAT server-side solver
     try {
       const request = engineDataToSolverRequest(data, {
         oee: settings.oee,
@@ -187,7 +276,6 @@ export async function runSchedulePipeline(
       const solverResult = await callServerSolver(request);
       resultBlocks = solverResultToBlocks(solverResult, data);
     } catch (e) {
-      // Fallback to client-side scheduling
       console.warn(
         '[schedule-pipeline] Server solver failed, falling back to client-side:',
         e instanceof Error ? e.message : String(e),
@@ -273,7 +361,7 @@ export async function runSchedulePipeline(
     resultFeasibility = overflowResult.feasibilityReport ?? null;
   }
 
-  // 5. Mark pre-start blocks (scheduled before ISOP D0)
+  // 5. Mark pre-start blocks
   const preN = data._preStartDays ?? 0;
   if (preN > 0) {
     for (const b of resultBlocks) {

@@ -8,6 +8,9 @@ from ..run_events.models import RunEvent, RunEventType
 from ..stock_alerts.models import StockAlert
 from .audit import AuditLog
 from .plan import Plan, PlanOperation, WorkOrder
+from .rule import Rule
+from .schedule_run import ScheduleRun
+from .settings import Setting
 from .snapshot import (
     Snapshot,
     SnapshotSource,
@@ -32,4 +35,8 @@ __all__ = [
     "LearningProposal",
     # Stock Alerts
     "StockAlert",
+    # Phase 3
+    "Setting",
+    "ScheduleRun",
+    "Rule",
 ]

@@ -89,6 +89,29 @@ async def get_nikufra_data() -> dict[str, Any]:
         )
 
 
+@nikufra_router.post("/upload")
+async def upload_isop_data(data: dict) -> dict:
+    """Receive ISOP data from frontend for copilot context."""
+    copilot_state.isop_data = data
+    copilot_state.isop_date = data.get("isop_date")
+
+    # Compute basic alerts from SKU data
+    skus = data.get("skus")
+    if skus and isinstance(skus, dict):
+        alerts = []
+        for sku_code, s in skus.items():
+            atr = s.get("atraso", 0)
+            if isinstance(atr, (int, float)) and atr < 0:
+                alerts.append(
+                    {"severity": "atraso", "message": f"Ref {sku_code} em atraso ({atr})"}
+                )
+        copilot_state.alerts = alerts
+
+    n = len(skus) if skus else 0
+    logger.info("nikufra.upload", skus_loaded=n)
+    return {"status": "ok", "skus_loaded": n}
+
+
 @nikufra_router.post("/reload")
 async def reload_nikufra_data() -> dict[str, Any]:
     """Force re-parse of all source files and return fresh data."""

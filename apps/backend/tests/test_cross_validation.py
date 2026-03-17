@@ -380,3 +380,121 @@ class TestCrossValidationConsistency:
         for b in result.blocks:
             if b.type == "ok" and not b.overflow:
                 assert b.start_min >= 0, f"Block starts before day: {b.start_min}"
+
+
+# ── Fixture-based integration tests ─────────────────────────────────────────
+
+import json
+import pathlib
+
+from src.domain.scheduling.transform import transform_plan_state
+
+FIXTURE_PATH = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "packages"
+    / "scheduling-engine"
+    / "src"
+    / "fixtures"
+    / "nikufra_data.json"
+)
+
+
+def _load_fixture_plan_state() -> dict:
+    """Load nikufra_data.json and convert to PlanState-like dict for transform."""
+    raw = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    operations = raw.get("operations", [])
+    tools = raw.get("tools", [])
+    tool_lookup = {t["id"]: t for t in tools}
+
+    enriched_ops = []
+    for op in operations:
+        tool_info = tool_lookup.get(op.get("t", ""), {})
+        enriched = {
+            "id": op.get("id", ""),
+            "m": op.get("m", ""),
+            "t": op.get("t", ""),
+            "sku": op.get("sku", ""),
+            "nm": op.get("nm", ""),
+            "pH": op.get("pH", 100),
+            "atr": op.get("atr", 0),
+            "d": op.get("d", []),
+            "op": op.get("op", 1),
+            "sH": op.get("s", tool_info.get("s", 0.75)),
+            "alt": tool_info.get("alt", "-"),
+            "eco": tool_info.get("lt", 0),
+            "twin": op.get("twin"),
+            "cl": op.get("cl"),
+        }
+        enriched_ops.append(enriched)
+
+    return {
+        "operations": enriched_ops,
+        "dates": raw.get("dates", []),
+        "dnames": raw.get("days_label", []),
+    }
+
+
+@pytest.fixture(scope="module")
+def fixture_engine_data():
+    """Transform the full nikufra_data.json fixture into EngineData."""
+    if not FIXTURE_PATH.exists():
+        pytest.skip("nikufra_data.json fixture not found")
+    plan_state = _load_fixture_plan_state()
+    return transform_plan_state(plan_state, demand_semantics="raw_np", order_based=True)
+
+
+class TestFixtureIntegration:
+    """Integration tests using the real nikufra_data.json fixture (64 ops, 44 tools, 6 machines)."""
+
+    def test_transform_produces_ops(self, fixture_engine_data):
+        ed = fixture_engine_data
+        assert len(ed.ops) >= 40, f"Expected >=40 ops, got {len(ed.ops)}"
+        assert len(ed.machines) >= 3, f"Expected >=3 machines, got {len(ed.machines)}"
+        assert ed.n_days >= 5, f"Expected >=5 days, got {ed.n_days}"
+
+    def test_scheduling_produces_blocks(self, fixture_engine_data):
+        ed = fixture_engine_data
+        result = schedule_from_engine_data(ed, rule="EDD")
+        ok_blocks = [b for b in result.blocks if b.type == "ok"]
+        assert len(ok_blocks) > 0, "No production blocks"
+
+    def test_otd_above_threshold(self, fixture_engine_data):
+        """OTD should be >= 90% on the fixture data (limited 8-day horizon)."""
+        ed = fixture_engine_data
+        result = auto_route_overflow(
+            ops=ed.ops,
+            m_st=ed.m_st,
+            t_st=ed.t_st,
+            user_moves=[],
+            machines=ed.machines,
+            tool_map=ed.tool_map,
+            workdays=ed.workdays,
+            n_days=ed.n_days,
+            rule="EDD",
+            order_based=True,
+            max_tier=4,
+        )
+        kpis = compute_kpis(result["blocks"], ed.ops)
+        assert kpis["otd"] >= 0.90, f"OTD too low on fixture: {kpis['otd']:.2%}"
+
+    def test_no_tool_timeline_violations(self, fixture_engine_data):
+        """No tool should be on two machines on the same day."""
+        ed = fixture_engine_data
+        result = schedule_from_engine_data(ed, rule="EDD")
+
+        tool_day_machines: dict[tuple[str, int], set[str]] = {}
+        for b in result.blocks:
+            if b.type == "ok":
+                key = (b.tool_id, b.day_idx)
+                tool_day_machines.setdefault(key, set()).add(b.machine_id)
+
+        violations = [k for k, v in tool_day_machines.items() if len(v) > 1]
+        assert len(violations) == 0, f"Tool timeline violations: {violations}"
+
+    @pytest.mark.parametrize("rule", ["EDD", "ATCS", "CR", "SPT", "WSPT"])
+    def test_all_dispatch_rules_on_fixture(self, fixture_engine_data, rule):
+        """All dispatch rules should produce blocks on the real fixture."""
+        ed = fixture_engine_data
+        result = schedule_from_engine_data(ed, rule=rule)
+        ok_blocks = [b for b in result.blocks if b.type == "ok"]
+        assert len(ok_blocks) > 0, f"Rule {rule} produced no blocks on fixture"

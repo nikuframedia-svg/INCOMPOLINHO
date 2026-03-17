@@ -7,12 +7,14 @@
 
 import { MessageSquare, Minus, Send, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { invalidateScheduleCache } from '../../hooks/useScheduleData';
 import { ChatMessage } from './ChatMessage';
 import {
   useCopilotActions,
   useCopilotError,
   useCopilotLoading,
   useCopilotMessages,
+  useCopilotScheduleVersion,
 } from './useCopilot';
 import './ChatPanel.css';
 
@@ -26,9 +28,19 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const isLoading = useCopilotLoading();
   const error = useCopilotError();
   const { sendMessage, clearMessages, clearError } = useCopilotActions();
+  const scheduleVersion = useCopilotScheduleVersion();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const prevVersionRef = useRef(scheduleVersion);
+
+  // Invalidate schedule cache when copilot recalculates (tool calls bump version)
+  useEffect(() => {
+    if (scheduleVersion !== prevVersionRef.current) {
+      prevVersionRef.current = scheduleVersion;
+      invalidateScheduleCache();
+    }
+  }, [scheduleVersion]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {

@@ -47,6 +47,7 @@ export interface IDataSource {
   }) => Promise<unknown>;
 
   // Planning Engine (used by useScheduleData + NikufraEngine)
+  getNikufraData?: () => Record<string, unknown> | null;
   getPlanState?: () => Promise<PlanState>;
   applyReplan?: (params: {
     moves: Array<{ op_id: string; from_machine: string; to_machine: string }>;

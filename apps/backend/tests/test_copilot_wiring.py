@@ -179,7 +179,7 @@ def test_get_context_summary():
 
 def test_tools_count():
     """Tools list has 13 entries (10 original + 3 new)."""
-    assert len(TOOLS) == 13
+    assert len(TOOLS) == 14
 
 
 def test_explicar_decisao_tool():

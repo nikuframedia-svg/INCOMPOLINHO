@@ -29,9 +29,11 @@ class ChatRequest(BaseModel):
 @copilot_router.post("/chat")
 async def copilot_chat(request: ChatRequest) -> dict:
     """Chat with the copilot. Supports function calling loop."""
-    api_key = os.environ.get("PP1_OPENAI_API_KEY", "")
+    api_key = os.environ.get("PP1_OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        raise HTTPException(503, "OpenAI API key not configured. Set PP1_OPENAI_API_KEY.")
+        raise HTTPException(
+            503, "Chave OpenAI não configurada. Define PP1_OPENAI_API_KEY ou OPENAI_API_KEY."
+        )
 
     try:
         import openai

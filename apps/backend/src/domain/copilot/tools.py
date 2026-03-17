@@ -1,4 +1,4 @@
-"""Copilot function-calling tools — 10 tools for GPT-4o.
+"""Copilot function-calling tools — 14 tools for GPT-4o.
 
 Each tool is a dict compatible with OpenAI's function calling schema.
 Execution logic is in engine.py.
@@ -239,6 +239,22 @@ TOOLS = [
                     "limit": {
                         "type": "integer",
                         "description": "Máximo de resultados (default: 20)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_producao_hoje",
+            "description": "Ver a produção planeada para um dia específico, agrupada por máquina.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "day_idx": {
+                        "type": "integer",
+                        "description": "Índice do dia (0 = hoje, 1 = amanhã, etc.). Default: 0",
                     },
                 },
             },
