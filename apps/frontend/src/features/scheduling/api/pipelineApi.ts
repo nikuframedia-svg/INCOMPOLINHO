@@ -47,16 +47,24 @@ export async function callBackendPipeline(
   settings: Record<string, unknown>,
 ): Promise<PipelineResponse> {
   const base = config.apiBaseURL;
-  const res = await fetch(`${base}/v1/pipeline/schedule`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      nikufra_data: nikufraData,
-      settings,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Pipeline HTTP ${res.status}: ${await res.text().catch(() => 'unknown')}`);
+  // SAT-08: 30s timeout — backend ATCS pipeline should be fast, but never wait forever
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${base}/v1/pipeline/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nikufra_data: nikufraData,
+        settings,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`Pipeline HTTP ${res.status}: ${await res.text().catch(() => 'unknown')}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
   }
-  return await res.json();
 }

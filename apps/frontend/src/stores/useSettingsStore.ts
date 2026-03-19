@@ -96,8 +96,8 @@ export const useSettingsStore = create<SettingsState>()(
       demandSemantics: 'raw_np' as DemandSemantics,
 
       // ── §5c Defaults (Server Solver) ──
-      useServerSolver: true,
-      usePythonScheduler: true,
+      useServerSolver: false,
+      usePythonScheduler: false,
       serverSolverTimeLimit: 60,
       serverSolverObjective: 'weighted_tardiness' as SolverObjective,
 

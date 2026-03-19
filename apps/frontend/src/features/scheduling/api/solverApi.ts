@@ -56,6 +56,7 @@ export interface SolverRequest {
   config: SolverConfig;
   twin_pairs: TwinPairInput[];
   constraints: ConstraintConfigInput;
+  workdays?: number[];
 }
 
 // ── Response types ──
@@ -114,16 +115,29 @@ export interface OptimalResult {
 
 // ── API calls ──
 
+/** SAT-08: Fetch with AbortController timeout (default 5s for connection, solver has its own time_limit_s) */
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function callServerSolver(request: SolverRequest): Promise<SolverResult> {
   const base = config.apiBaseURL;
-  const res = await fetch(`${base}/v1/solver/schedule`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Idempotency-Key': crypto.randomUUID(),
+  // Solver timeout = time_limit_s + 5s buffer for network
+  const timeoutMs = (request.config.time_limit_s + 5) * 1000;
+  const res = await fetchWithTimeout(
+    `${base}/v1/solver/schedule`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(request),
     },
-    body: JSON.stringify(request),
-  });
+    timeoutMs,
+  );
   if (!res.ok) {
     throw new Error(`Solver HTTP ${res.status}: ${await res.text().catch(() => 'unknown')}`);
   }
@@ -132,14 +146,22 @@ export async function callServerSolver(request: SolverRequest): Promise<SolverRe
 
 export async function callOptimalPipeline(request: OptimalRequest): Promise<OptimalResult> {
   const base = config.apiBaseURL;
-  const res = await fetch(`${base}/v1/optimal/solve`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Idempotency-Key': crypto.randomUUID(),
+  // Optimal pipeline: solver + recovery + monte carlo — give generous timeout
+  // but cap at 90s to avoid infinite waits when backend is down
+  const solverLimit = request.solver_request.config.time_limit_s;
+  const timeoutMs = Math.min((solverLimit + 30) * 1000, 90_000);
+  const res = await fetchWithTimeout(
+    `${base}/v1/optimal/solve`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(request),
     },
-    body: JSON.stringify(request),
-  });
+    timeoutMs,
+  );
   if (!res.ok) {
     throw new Error(`Optimal HTTP ${res.status}: ${await res.text().catch(() => 'unknown')}`);
   }

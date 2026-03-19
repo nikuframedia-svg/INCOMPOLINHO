@@ -1,0 +1,14 @@
+# Incompol factory rules — persistent configuration
+# These rules are applied BEFORE the CP-SAT solver runs.
+# Type: material_affinity → force SKUs to same machine
+
+rules:
+  - id: F3_262_170
+    name: "MP partilhada 262/170"
+    type: material_affinity
+    skus: ["1092262X100", "1065170X100"]
+    machine: PRM019
+    priority: hard
+    created_by: francisco
+    active: true
+    reason: "Material partilhado — devem correr na mesma máquina para minimizar setups"

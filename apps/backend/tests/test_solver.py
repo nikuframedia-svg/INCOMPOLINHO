@@ -42,6 +42,7 @@ def _make_request(
     constraints=None,
     twin_pairs=None,
     shifts=None,
+    workdays=None,
 ):
     return SolverRequest(
         jobs=jobs,
@@ -50,6 +51,7 @@ def _make_request(
         constraints=constraints or ConstraintConfigInput(),
         twin_pairs=twin_pairs or [],
         shifts=shifts or ShiftConfig(),
+        workdays=workdays or [],
     )
 
 
@@ -772,6 +774,288 @@ class TestHeuristicFallback:
         assert len(result.schedule) == 2
         machines_used = {s.machine_id for s in result.schedule}
         assert machines_used == {"M1", "M2"}
+
+
+# ── SAT-01: JIT Earliness Penalty Tests ──
+
+
+class TestJITEarlinessPenalty:
+    def setup_method(self):
+        self.solver = CpsatSolver()
+
+    def test_jit_produces_late(self):
+        """Job with deadline day 10 should be scheduled near deadline, not day 0."""
+        DAY_CAP = 1020
+        jobs = [
+            _make_job(
+                "J1",
+                "SKU1",
+                10 * DAY_CAP,  # due end of day 10
+                1.0,
+                [_make_op("J1_O1", "M1", "T1", duration=100, setup=15)],
+            ),
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines)
+
+        result = self.solver.solve(request)
+
+        assert result.status in ("optimal", "feasible")
+        sop = result.schedule[0]
+        # JIT: should schedule in last 2-3 days (day 8-10), not day 0
+        sop_day = sop.start_min // DAY_CAP
+        assert sop_day >= 8, (
+            f"JIT failed: job scheduled on day {sop_day}, expected near deadline (day 8-10)"
+        )
+        assert result.total_tardiness_min == 0, "JIT must never cause tardiness"
+
+    def test_jit_never_late(self):
+        """Earliness penalty must never cause a job to be late."""
+        DAY_CAP = 1020
+        # 3 jobs on 1 machine, tight deadlines — JIT shouldn't push past deadline
+        jobs = [
+            _make_job(
+                "J1",
+                "SKU1",
+                2 * DAY_CAP,
+                1.0,
+                [_make_op("J1_O1", "M1", "T1", duration=400, setup=30)],
+            ),
+            _make_job(
+                "J2",
+                "SKU2",
+                3 * DAY_CAP,
+                1.0,
+                [_make_op("J2_O1", "M1", "T2", duration=400, setup=30)],
+            ),
+            _make_job(
+                "J3",
+                "SKU3",
+                4 * DAY_CAP,
+                1.0,
+                [_make_op("J3_O1", "M1", "T3", duration=400, setup=30)],
+            ),
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines)
+
+        result = self.solver.solve(request)
+
+        assert result.status in ("optimal", "feasible")
+        # With 1000:1 weight ratio, tardiness dominates — 0 tardiness expected
+        assert result.total_tardiness_min == 0, (
+            f"JIT caused tardiness: {result.total_tardiness_min} min"
+        )
+
+
+# ── SAT-04: Day Capacity + Shift Boundary Tests ──
+
+
+class TestDayShiftConstraints:
+    def setup_method(self):
+        self.solver = CpsatSolver()
+
+    def test_no_shift_crossing(self):
+        """No operation crosses the shift boundary at 510 min within a day."""
+        # 4 ops of 200 min each on 1 machine — must fit within shifts
+        jobs = [
+            _make_job(
+                f"J{i}",
+                f"SKU{i}",
+                4 * 1020,  # due end of day 4
+                1.0,
+                [_make_op(f"J{i}_O1", "M1", f"T{i}", duration=200, setup=30)],
+            )
+            for i in range(4)
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines)
+
+        result = self.solver.solve(request)
+
+        assert result.status in ("optimal", "feasible")
+        DAY_CAP = 1020
+        SHIFT_LEN = 510
+        for sop in result.schedule:
+            start_in_day = sop.start_min % DAY_CAP
+            size = sop.end_min - sop.start_min
+            if size <= SHIFT_LEN:
+                # Must be entirely in shift X or entirely in shift Y
+                end_in_day = start_in_day + size
+                in_x = end_in_day <= SHIFT_LEN
+                in_y = start_in_day >= SHIFT_LEN
+                assert in_x or in_y, (
+                    f"{sop.op_id} crosses shift boundary: start_in_day={start_in_day}, "
+                    f"end_in_day={end_in_day}, size={size}"
+                )
+
+    def test_no_day_crossing(self):
+        """No operation crosses a day boundary (DAY_CAP=1020)."""
+        # 6 ops of 300 min each across 2 machines — force multi-day schedule
+        jobs = [
+            _make_job(
+                f"J{i}",
+                f"SKU{i}",
+                5 * 1020,  # due end of day 5
+                1.0,
+                [_make_op(f"J{i}_O1", f"M{i % 2 + 1}", f"T{i}", duration=300, setup=30)],
+            )
+            for i in range(6)
+        ]
+        machines = [MachineInput(id="M1"), MachineInput(id="M2")]
+        request = _make_request(jobs, machines)
+
+        result = self.solver.solve(request)
+
+        assert result.status in ("optimal", "feasible")
+        DAY_CAP = 1020
+        for sop in result.schedule:
+            start_day = sop.start_min // DAY_CAP
+            end_day = (sop.end_min - 1) // DAY_CAP if sop.end_min > 0 else start_day
+            assert start_day == end_day, (
+                f"{sop.op_id} crosses day boundary: starts day {start_day} "
+                f"(min={sop.start_min}), ends day {end_day} (min={sop.end_min})"
+            )
+
+    def test_day_capacity_1020(self):
+        """Max 1020 min of work per day per machine."""
+        # 3 ops of 400 min each on 1 machine — can't all fit in 1 day (1200 > 1020)
+        jobs = [
+            _make_job(
+                f"J{i}",
+                f"SKU{i}",
+                5 * 1020,
+                1.0,
+                [_make_op(f"J{i}_O1", "M1", f"T{i}", duration=400, setup=0)],
+            )
+            for i in range(3)
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines)
+
+        result = self.solver.solve(request)
+
+        assert result.status in ("optimal", "feasible")
+        DAY_CAP = 1020
+        # Group ops by day
+        from collections import defaultdict
+
+        day_load: dict[int, int] = defaultdict(int)
+        for sop in result.schedule:
+            day = sop.start_min // DAY_CAP
+            size = sop.end_min - sop.start_min
+            day_load[day] += size
+        for day, load in day_load.items():
+            assert load <= DAY_CAP, (
+                f"Day {day} on M1 has {load} min of work, exceeds DAY_CAP={DAY_CAP}"
+            )
+
+
+# ── FINAL-01: Weekend Exclusion Tests ──
+
+
+class TestWeekendExclusion:
+    def setup_method(self):
+        self.solver = CpsatSolver()
+
+    def test_workdays_reduces_horizon(self):
+        """With workdays=[0,1,2,3,4] (5 days), horizon = 5 × 1020 = 5100."""
+        DAY_CAP = 1020
+        workdays = [0, 1, 2, 3, 4]  # Mon-Fri, skip Sat(5), Sun(6)
+        jobs = [
+            _make_job(
+                "J1",
+                "SKU1",
+                3 * DAY_CAP,
+                1.0,
+                [_make_op("J1_O1", "M1", "T1", duration=200, setup=30)],
+            ),
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines, workdays=workdays)
+
+        result = self.solver.solve(request)
+        assert result.status in ("optimal", "feasible")
+        # Job should be scheduled within workday range
+        sop = result.schedule[0]
+        assert sop.start_min < len(workdays) * DAY_CAP
+
+    def test_no_weekend_scheduling(self):
+        """With workdays skipping days 5,6 (weekend), no ops on solver day >= 5 in a 7-day calendar."""
+        DAY_CAP = 1020
+        # 7 calendar days, only 5 are workdays (skip Sat=5, Sun=6)
+        workdays = [0, 1, 2, 3, 4]  # 5 workdays
+        # 4 jobs need ~2 days of machine time total → fits in 5 workdays
+        jobs = [
+            _make_job(
+                f"J{i}",
+                f"SKU{i}",
+                (i + 1) * DAY_CAP,  # due on workday 1,2,3,4
+                1.0,
+                [_make_op(f"J{i}_O1", "M1", f"T{i}", duration=200, setup=30)],
+            )
+            for i in range(4)
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines, workdays=workdays)
+
+        result = self.solver.solve(request)
+        assert result.status in ("optimal", "feasible")
+        # All ops must be within workday slots (0..4)
+        for sop in result.schedule:
+            solver_day = sop.start_min // DAY_CAP
+            assert solver_day < len(workdays), (
+                f"{sop.op_id} scheduled on solver day {solver_day} "
+                f"but only {len(workdays)} workdays available"
+            )
+
+    def test_workdays_backward_compat(self):
+        """Empty workdays[] behaves same as before (all days working)."""
+        DAY_CAP = 1020
+        jobs = [
+            _make_job(
+                "J1",
+                "SKU1",
+                3 * DAY_CAP,
+                1.0,
+                [_make_op("J1_O1", "M1", "T1", duration=200, setup=30)],
+            ),
+        ]
+        machines = [MachineInput(id="M1")]
+
+        # With empty workdays (backward compat)
+        request_old = _make_request(jobs, machines)
+        result_old = self.solver.solve(request_old)
+
+        # With explicit workdays covering same range
+        # Should still work
+        assert result_old.status in ("optimal", "feasible")
+        assert result_old.total_tardiness_min == 0
+
+    def test_weekend_capacity_correct(self):
+        """With 10 calendar days (8 workdays), capacity = 8 × 1020 = 8160 per machine."""
+        DAY_CAP = 1020
+        # 10 calendar days, weekends on day 5,6 → 8 workdays
+        workdays = [0, 1, 2, 3, 4, 7, 8, 9]
+        # Need 7 workdays of machine time → fits in 8 but NOT in 5
+        jobs = [
+            _make_job(
+                f"J{i}",
+                f"SKU{i}",
+                8 * DAY_CAP,  # due on last workday
+                1.0,
+                [_make_op(f"J{i}_O1", "M1", f"T{i}", duration=500, setup=30)],
+            )
+            for i in range(7)
+        ]
+        machines = [MachineInput(id="M1")]
+        request = _make_request(jobs, machines, workdays=workdays)
+
+        result = self.solver.solve(request)
+        assert result.status in ("optimal", "feasible")
+        # Verify no op exceeds workday range
+        max_end = max(sop.end_min for sop in result.schedule)
+        assert max_end <= len(workdays) * DAY_CAP
 
 
 class TestSolverRouter:

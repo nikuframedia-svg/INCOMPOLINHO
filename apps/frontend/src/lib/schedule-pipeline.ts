@@ -8,6 +8,7 @@
  * Frontend only does client-side scheduling as fallback.
  */
 
+import { config } from '../config';
 import {
   engineDataToSolverRequest,
   solverResultToBlocks,
@@ -16,6 +17,34 @@ import type { OptimalResult } from '../features/scheduling/api/solverApi';
 import { callOptimalPipeline } from '../features/scheduling/api/solverApi';
 import type { TransformConfigFromSettings } from '../stores/settings-config';
 import { useSettingsStore } from '../stores/useSettingsStore';
+
+/** Fast health check — returns true if backend responds within 2s. */
+let _backendAlive: boolean | null = null;
+let _healthCheckPromise: Promise<boolean> | null = null;
+
+async function isBackendAlive(): Promise<boolean> {
+  if (_backendAlive !== null) return _backendAlive;
+  if (_healthCheckPromise) return _healthCheckPromise;
+  _healthCheckPromise = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2000);
+      const res = await fetch(`${config.apiBaseURL}/health`, { signal: ctrl.signal });
+      clearTimeout(t);
+      _backendAlive = res.ok;
+    } catch {
+      _backendAlive = false;
+    }
+    // Re-check every 30s
+    setTimeout(() => {
+      _backendAlive = null;
+      _healthCheckPromise = null;
+    }, 30_000);
+    return _backendAlive!;
+  })();
+  return _healthCheckPromise;
+}
+
 import type {
   AdvanceAction,
   AutoReplanResult,
@@ -269,14 +298,20 @@ export async function runSchedulePipeline(
       ? DISPATCH_BANDIT.select()
       : (settings.dispatchRule as DispatchRule);
 
+  // ── Health check: skip backend steps if server unreachable ──
+  const wantBackend = settings.useServerSolver || settings.usePythonScheduler;
+  const backendOk = wantBackend ? await isBackendAlive() : false;
+
   // ── STEP 1: Optimal Pipeline (CP-SAT + Recovery + Monte Carlo) ──
-  const optimalResult = await tryOptimalPipeline(data, mrp, dispatchRule, settings);
-  if (optimalResult) {
-    return applyPreStart(optimalResult, data);
+  if (backendOk) {
+    const optimalResult = await tryOptimalPipeline(data, mrp, dispatchRule, settings);
+    if (optimalResult) {
+      return applyPreStart(optimalResult, data);
+    }
   }
 
   // ── STEP 2: Backend Python ATCS pipeline ──
-  if (settings.usePythonScheduler) {
+  if (backendOk && settings.usePythonScheduler) {
     const backendResult = await tryBackendPipeline(ds, planState, tcfg);
     if (backendResult) return backendResult;
   }

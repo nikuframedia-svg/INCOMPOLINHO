@@ -97,6 +97,12 @@ class SolverRequest(BaseModel):
     twin_pairs: list[TwinPairInput] = []
     constraints: ConstraintConfigInput = Field(default_factory=ConstraintConfigInput)
     shifts: ShiftConfig = Field(default_factory=ShiftConfig)
+    workdays: list[int] = Field(
+        default_factory=list,
+        description="Calendar day indices that are workdays (0-based). "
+        "Empty = all days are workdays (backward compat). "
+        "Solver horizon = len(workdays) × DAY_CAP.",
+    )
 
     @model_validator(mode="after")
     def validate_twin_pairs_ops_exist(self) -> SolverRequest:

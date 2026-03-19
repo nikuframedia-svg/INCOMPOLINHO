@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()  # Load .env into os.environ (needed by copilot for PP1_OPENAI_API_KEY)
+# Load .env from the backend root (works regardless of cwd)
+_backend_root = Path(__file__).resolve().parent.parent
+load_dotenv(_backend_root / ".env")
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError

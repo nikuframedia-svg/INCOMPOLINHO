@@ -61,9 +61,21 @@ class CpsatSolver:
                 n_ops=0,
             )
 
-        # 1. Calculate horizon
-        horizon = sum(op.duration_min + op.setup_min for _, op in all_ops)
-        horizon = max(horizon, max(j.due_date_min for j in request.jobs) + 1)
+        # 1. Calculate horizon (rounded up to DAY_CAP multiple for day constraints)
+        DAY_CAP = 1020
+        if request.workdays:
+            # Workday-aware: horizon = number of workdays × DAY_CAP
+            # Due dates are already in workday-indexed time from the bridge
+            n_workdays = len(request.workdays)
+            horizon = n_workdays * DAY_CAP
+            # Ensure horizon covers all due dates
+            max_due = max(j.due_date_min for j in request.jobs)
+            if max_due >= horizon:
+                horizon = ((max_due + DAY_CAP) // DAY_CAP) * DAY_CAP
+        else:
+            horizon = sum(op.duration_min + op.setup_min for _, op in all_ops)
+            horizon = max(horizon, max(j.due_date_min for j in request.jobs) + 1)
+            horizon = ((horizon + DAY_CAP - 1) // DAY_CAP) * DAY_CAP
 
         use_circuit = request.config.use_circuit
 
@@ -223,6 +235,9 @@ class CpsatSolver:
         if constraints.calco_timeline:
             apply_calco_timeline(model, op_calco_map, op_full_intervals)
 
+        # 6b. Day capacity + shift boundary constraints
+        self._add_day_shift_constraints(model, op_vars, twin_op_ids, horizon)
+
         # 7. Objective (with changeover penalty from circuit arcs)
         self._add_objective(model, request, op_vars, horizon, all_setup_arcs)
 
@@ -281,9 +296,12 @@ class CpsatSolver:
     def _add_objective(self, model, request, op_vars, horizon, setup_arcs=None):
         """Add objective function to the model.
 
-        When setup_arcs are provided (circuit mode), adds a changeover penalty:
-        each tool change arc adds +1 to the objective. Tardiness is scaled by
-        1000 so it dominates, but the solver prefers fewer changeovers as tiebreaker.
+        Objective structure (tardiness/weighted_tardiness modes):
+          Minimize(1000 × Σ(tardiness) + 1 × Σ(earliness) + changeover)
+
+        Earliness = max(0, due_date - end_var) penalises producing too early (JIT).
+        Weight 1000:1 ensures tardiness always dominates — JIT never causes delays.
+        Changeover is a tiebreaker (+1 per tool change arc in circuit mode).
         """
         objective = request.config.objective
 
@@ -295,6 +313,17 @@ class CpsatSolver:
             if arc_lits:
                 changeover_penalty = sum(arc_lits)
                 has_changeover = True
+
+        # JIT earliness penalty: push production closer to deadline
+        earliness_vars = []
+        for job in request.jobs:
+            last_op = job.operations[-1]
+            _, end_var, _, _, _, _, _ = op_vars[last_op.id]
+            early = model.NewIntVar(0, horizon, f"early_{job.id}")
+            model.Add(early >= job.due_date_min - end_var)
+            model.Add(early >= 0)
+            earliness_vars.append(early)
+        earliness_term = sum(earliness_vars) if earliness_vars else 0
 
         if objective == "makespan":
             makespan_var = model.NewIntVar(0, horizon, "makespan")
@@ -314,10 +343,10 @@ class CpsatSolver:
                 model.Add(tardy >= end_var - job.due_date_min)
                 model.Add(tardy >= 0)
                 tardiness_vars.append(tardy)
+            obj = 1000 * sum(tardiness_vars) + earliness_term
             if has_changeover:
-                model.Minimize(1000 * sum(tardiness_vars) + changeover_penalty)
-            else:
-                model.Minimize(sum(tardiness_vars))
+                obj = obj + changeover_penalty
+            model.Minimize(obj)
 
         else:  # weighted_tardiness
             weighted_tardy_terms = []
@@ -331,10 +360,54 @@ class CpsatSolver:
                 weighted_tardy = model.NewIntVar(0, horizon * scaled_weight, f"wtardy_{job.id}")
                 model.Add(weighted_tardy == tardy * scaled_weight)
                 weighted_tardy_terms.append(weighted_tardy)
+            obj = 1000 * sum(weighted_tardy_terms) + earliness_term
             if has_changeover:
-                model.Minimize(1000 * sum(weighted_tardy_terms) + changeover_penalty)
-            else:
-                model.Minimize(sum(weighted_tardy_terms))
+                obj = obj + changeover_penalty
+            model.Minimize(obj)
+
+    def _add_day_shift_constraints(self, model, op_vars, twin_op_ids, horizon):
+        """Day capacity + shift boundary constraints.
+
+        Short ops (<=DAY_CAP): must fit within a single day.
+        Short ops (<=SHIFT_LEN): must fit within one shift (X or Y).
+        Large ops (>DAY_CAP): allowed to span days (no day boundary constraint).
+
+        Uses decomposition: start_var = day_var × DAY_CAP + start_in_day.
+        """
+        DAY_CAP = 1020
+        SHIFT_LEN = 510
+        n_days = horizon // DAY_CAP
+
+        for op_id, (start_var, end_var, _, _, _, job, op) in op_vars.items():
+            suffix = f"_{op_id}"
+
+            # Max possible size (production + setup)
+            max_size = op.duration_min + max(op.setup_min, 90)
+
+            # Only apply day/shift constraints if op can fit within a day
+            if max_size <= DAY_CAP:
+                # Day decomposition: start = day × 1020 + offset
+                day_var = model.NewIntVar(0, n_days, f"day{suffix}")
+                start_in_day = model.NewIntVar(0, DAY_CAP - 1, f"sid{suffix}")
+                model.Add(start_var == day_var * DAY_CAP + start_in_day)
+
+                size_var = model.NewIntVar(0, DAY_CAP, f"dsz{suffix}")
+                model.Add(size_var == end_var - start_var)
+
+                # ── DAY BOUNDARY: op must not cross into next day ──
+                model.Add(start_in_day + size_var <= DAY_CAP)
+
+                # ── SHIFT BOUNDARY: short ops must fit in one shift ──
+                if op.duration_min <= SHIFT_LEN:
+                    fits = model.NewBoolVar(f"fits{suffix}")
+                    model.Add(size_var <= SHIFT_LEN).OnlyEnforceIf(fits)
+                    model.Add(size_var > SHIFT_LEN).OnlyEnforceIf(fits.Not())
+
+                    in_x = model.NewBoolVar(f"inx{suffix}")
+                    model.Add(start_in_day + size_var <= SHIFT_LEN).OnlyEnforceIf([fits, in_x])
+                    model.Add(start_in_day >= SHIFT_LEN).OnlyEnforceIf([fits, in_x.Not()])
+            # Large ops (>DAY_CAP): no day/shift boundary — they span multiple days.
+            # The NoOverlap/Circuit constraint still prevents machine conflicts.
 
     def _extract_solution(
         self, solver, op_vars, request, solve_time, status_str, n_ops

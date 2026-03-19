@@ -19,6 +19,11 @@ python-json-logger>=2.0.7
 
 # Utilitários
 python-multipart>=0.0.6
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# LLM (copilot)
+openai>=1.0.0
 
 # XLSX parsing
 openpyxl>=3.1.2
