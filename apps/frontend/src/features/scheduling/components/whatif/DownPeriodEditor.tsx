@@ -38,7 +38,7 @@ export function DownPeriodEditor({
     border: `1px solid ${C.bd}`,
     background: C.bg,
     color: C.t1,
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: 'inherit',
   };
 
@@ -60,12 +60,12 @@ export function DownPeriodEditor({
           marginBottom: 8,
         }}
       >
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>
           Período DOWN:{' '}
           <span style={{ fontFamily: "'JetBrains Mono',monospace", color: C.rd }}>
             {editingDown.id}
           </span>
-          <span style={{ fontSize: 9, fontWeight: 400, color: C.t4, marginLeft: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 400, color: C.t4, marginLeft: 6 }}>
             ({editingDown.type === 'machine' ? 'máquina' : 'ferramenta'})
           </span>
         </span>
@@ -78,7 +78,7 @@ export function DownPeriodEditor({
         </button>
       </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-        <span style={{ fontSize: 10, color: C.t3, minWidth: 30 }}>De:</span>
+        <span style={{ fontSize: 12, color: C.t3, minWidth: 30 }}>De:</span>
         <select
           value={wiDownStartDay}
           onChange={(e) => {
@@ -94,7 +94,7 @@ export function DownPeriodEditor({
             </option>
           ))}
         </select>
-        <span style={{ fontSize: 10, color: C.t4 }}>até</span>
+        <span style={{ fontSize: 12, color: C.t4 }}>até</span>
         <select
           value={wiDownEndDay}
           onChange={(e) => setWiDownEndDay(Number(e.target.value))}
@@ -121,7 +121,7 @@ export function DownPeriodEditor({
             border: 'none',
             background: C.rd,
             color: C.t1,
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -132,7 +132,7 @@ export function DownPeriodEditor({
       </div>
       {currentDown.size > 0 && (
         <div style={{ display: 'flex', gap: 2, marginBottom: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 9, color: C.t4, minWidth: 30 }}>Dias:</span>
+          <span style={{ fontSize: 12, color: C.t4, minWidth: 30 }}>Dias:</span>
           {dates.map((_d: string, i: number) => (
             <div
               key={i}
@@ -145,7 +145,7 @@ export function DownPeriodEditor({
               title={`${dnames[i]} ${dates[i]}${currentDown.has(i) ? ' — DOWN' : ''}`}
             />
           ))}
-          <span style={{ fontSize: 9, color: C.rd, fontWeight: 600, marginLeft: 4 }}>
+          <span style={{ fontSize: 12, color: C.rd, fontWeight: 600, marginLeft: 4 }}>
             {currentDown.size}d
           </span>
         </div>
@@ -166,7 +166,7 @@ export function DownPeriodEditor({
             border: `1px solid ${C.rd}44`,
             background: C.rdS,
             color: C.rd,
-            fontSize: 9,
+            fontSize: 12,
             cursor: 'pointer',
             fontFamily: 'inherit',
             fontWeight: 600,
@@ -185,7 +185,7 @@ export function DownPeriodEditor({
             border: `1px solid ${C.bd}`,
             background: 'transparent',
             color: C.t3,
-            fontSize: 9,
+            fontSize: 12,
             cursor: 'pointer',
             fontFamily: 'inherit',
           }}

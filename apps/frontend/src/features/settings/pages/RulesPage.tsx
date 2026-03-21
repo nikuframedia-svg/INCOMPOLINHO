@@ -152,7 +152,7 @@ export function RulesPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -163,7 +163,7 @@ export function RulesPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -176,7 +176,7 @@ export function RulesPage() {
       >
         Regras SE/ENTÃO (L2)
       </h2>
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         {rules.length} regras · {rules.filter((r) => r.active).length} activas · Condições visuais
         com acções automáticas
       </div>
@@ -186,7 +186,7 @@ export function RulesPage() {
           <button
             className="schedule-comparison__btn schedule-comparison__btn--primary"
             onClick={addRule}
-            style={{ fontSize: 11, marginBottom: 8 }}
+            style={{ fontSize: 12, marginBottom: 8 }}
           >
             + Nova Regra
           </button>

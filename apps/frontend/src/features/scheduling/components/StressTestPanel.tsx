@@ -118,12 +118,12 @@ export function StressTestPanel({ data, blocks, allOps, baselineMetrics }: Stres
         </div>
 
         {[
-          { id: 'ST-001', name: 'Avaria PRM039 (8h)', desc: 'Maquina PRM039 indisponivel 1 dia' },
+          { id: 'ST-001', name: 'Avaria PRM039 (8h)', desc: 'Máquina PRM039 indisponível 1 dia' },
           { id: 'ST-002', name: 'Fornecedor atrasa 3d', desc: 'Todas as deadlines +3 dias' },
           { id: 'ST-003', name: 'Procura +20%', desc: 'Toda a procura aumenta 20%' },
           { id: 'ST-004', name: '2 operadores faltam', desc: 'PG1 perde 2 operadores' },
           { id: 'ST-005', name: 'Rejeicao sobe 5%', desc: 'Produzir 5% mais pecas' },
-          { id: 'ST-006', name: 'Falha energia 2h', desc: '120min perdidos em todas maquinas' },
+          { id: 'ST-006', name: 'Falha energia 2h', desc: '120min perdidos em todas máquinas' },
         ].map((test) => {
           const result = results.find((r) => r.id === test.id);
           const isExpanded = expanded === test.id;

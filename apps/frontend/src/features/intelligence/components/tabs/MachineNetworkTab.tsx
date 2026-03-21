@@ -31,13 +31,13 @@ export function NetworkView({ data }: { data: IntelData }) {
           <div
             style={{ width: 12, height: 12, borderRadius: '50%', background: C.ac, opacity: 0.3 }}
           />
-          <span style={{ color: C.t2, fontSize: 10 }}>PG1</span>
+          <span style={{ color: C.t2, fontSize: 12 }}>PG1</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <div
             style={{ width: 12, height: 12, borderRadius: '50%', background: C.pp, opacity: 0.3 }}
           />
-          <span style={{ color: C.t2, fontSize: 10 }}>PG2</span>
+          <span style={{ color: C.t2, fontSize: 12 }}>PG2</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <div
@@ -49,7 +49,7 @@ export function NetworkView({ data }: { data: IntelData }) {
               background: 'transparent',
             }}
           />
-          <span style={{ color: C.t2, fontSize: 10 }}>Isolated (no alt)</span>
+          <span style={{ color: C.t2, fontSize: 12 }}>Isolated (no alt)</span>
         </div>
       </div>
       <div
@@ -99,7 +99,7 @@ export function NetworkView({ data }: { data: IntelData }) {
                   x={mx}
                   y={my + 3}
                   textAnchor="middle"
-                  style={{ fill: C.t3, fontSize: 8, ...mono }}
+                  style={{ fill: C.t3, fontSize: 12, ...mono }}
                 >
                   {e.weight}T
                 </text>
@@ -136,7 +136,7 @@ export function NetworkView({ data }: { data: IntelData }) {
                   {n.id}
                 </text>
                 {/* Info */}
-                <text x={x} y={y + 10} textAnchor="middle" style={{ fill: C.t3, fontSize: 9 }}>
+                <text x={x} y={y + 10} textAnchor="middle" style={{ fill: C.t3, fontSize: 12 }}>
                   {n.area} | {n.toolCount}T
                 </text>
                 {/* Isolated warning */}
@@ -145,7 +145,7 @@ export function NetworkView({ data }: { data: IntelData }) {
                     x={x}
                     y={y + 22}
                     textAnchor="middle"
-                    style={{ fill: C.rd, fontSize: 8, fontWeight: 600 }}
+                    style={{ fill: C.rd, fontSize: 12, fontWeight: 600 }}
                   >
                     NO ALT
                   </text>

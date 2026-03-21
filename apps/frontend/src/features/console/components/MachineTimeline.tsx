@@ -44,7 +44,7 @@ export function MachineTimeline({
   return (
     <div className="mtl" data-testid="machine-timeline">
       <div className="mtl__header">
-        <span className="mtl__title">Maquinas — {date}</span>
+        <span className="mtl__title">Máquinas — {date}</span>
         <div className="mtl__scale">
           {SCALE_TICKS.map((t) => (
             <span key={t} className="mtl__tick">

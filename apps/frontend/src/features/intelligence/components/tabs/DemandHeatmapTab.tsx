@@ -47,7 +47,7 @@ export function HeatmapView({ data }: { data: IntelData }) {
                   x={LW + di * CW + CW / 2}
                   y={13}
                   textAnchor="middle"
-                  style={{ fill: C.t3, fontSize: 8.5, ...mono }}
+                  style={{ fill: C.t3, fontSize: 12, ...mono }}
                 >
                   {fmtDate(d)}
                 </text>
@@ -69,7 +69,7 @@ export function HeatmapView({ data }: { data: IntelData }) {
                 x={LW - 8}
                 y={TH + mi * CH + CH / 2 + 4}
                 textAnchor="end"
-                style={{ fill: MC[m], fontSize: 11, ...mono, fontWeight: 600 }}
+                style={{ fill: MC[m], fontSize: 12, ...mono, fontWeight: 600 }}
               >
                 {m}
               </text>
@@ -100,7 +100,7 @@ export function HeatmapView({ data }: { data: IntelData }) {
                         textAnchor="middle"
                         style={{
                           fill: cell.pct > 60 ? C.w : C.t2,
-                          fontSize: 8,
+                          fontSize: 12,
                           ...mono,
                           fontWeight: 600,
                           pointerEvents: 'none' as const,
@@ -137,11 +137,11 @@ export function HeatmapView({ data }: { data: IntelData }) {
                     x={tx}
                     y={ty - 22}
                     textAnchor="middle"
-                    style={{ fill: C.t1, fontSize: 9, ...mono }}
+                    style={{ fill: C.t1, fontSize: 12, ...mono }}
                   >
                     {cell.machine} {fmtDate(cell.date)}: {fmtMin(cell.loadMin)}
                   </text>
-                  <text x={tx} y={ty - 10} textAnchor="middle" style={{ fill: C.t3, fontSize: 8 }}>
+                  <text x={tx} y={ty - 10} textAnchor="middle" style={{ fill: C.t3, fontSize: 12 }}>
                     {fmtPct(cell.pct)} load, {cell.skuCount} SKU{cell.skuCount !== 1 ? 's' : ''}
                   </text>
                 </g>

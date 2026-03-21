@@ -29,7 +29,7 @@
 }
 
 .mtl__tick {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-ghost);
   font-family: var(--font-mono);
 }
@@ -64,7 +64,7 @@
 }
 
 .mtl__machine-util {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 

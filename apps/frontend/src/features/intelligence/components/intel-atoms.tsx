@@ -34,8 +34,8 @@ export function MachineLegend({ machines }: { machines: readonly string[] }) {
       {machines.map((m) => (
         <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <div style={{ width: 10, height: 10, borderRadius: 2, background: MC[m] }} />
-          <span style={{ color: C.t2, fontSize: 11, ...mono }}>{m}</span>
-          <span style={{ color: C.t4, fontSize: 9 }}>{AREA[m]}</span>
+          <span style={{ color: C.t2, fontSize: 12, ...mono }}>{m}</span>
+          <span style={{ color: C.t4, fontSize: 12 }}>{AREA[m]}</span>
         </div>
       ))}
     </div>
@@ -53,11 +53,11 @@ export function HeatLegend() {
   ];
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-      <span style={{ color: C.t3, fontSize: 10 }}>Load:</span>
+      <span style={{ color: C.t3, fontSize: 12 }}>Load:</span>
       {stops.map((s) => (
         <div key={s.pct} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
           <div style={{ width: 14, height: 10, borderRadius: 2, background: heatColor(s.pct) }} />
-          <span style={{ color: C.t3, fontSize: 9, ...mono }}>{s.label}</span>
+          <span style={{ color: C.t3, fontSize: 12, ...mono }}>{s.label}</span>
         </div>
       ))}
     </div>

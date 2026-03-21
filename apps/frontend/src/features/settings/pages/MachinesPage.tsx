@@ -48,7 +48,7 @@ export function MachinesPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -61,7 +61,7 @@ export function MachinesPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -75,7 +75,7 @@ export function MachinesPage() {
         Máquinas
       </h2>
 
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         {machines.length} máquinas · {engine.tools.length} ferramentas
         {overrideCount > 0 && (
           <span style={{ marginLeft: 8, color: 'var(--accent)', fontWeight: 600 }}>
@@ -102,12 +102,12 @@ export function MachinesPage() {
                 <td className="setup-matrix__row-label">
                   <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{m.id}</span>
                 </td>
-                <td className="setup-matrix__cell" style={{ fontSize: 10 }}>
+                <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                   <select
                     value={m.area}
                     onChange={(e) => setMachineOverride(m.id, { area: e.target.value })}
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: 'var(--font-mono)',
                       background: 'var(--bg-card)',
                       color: m.area === 'PG1' ? 'var(--accent)' : 'var(--semantic-amber)',
@@ -123,7 +123,7 @@ export function MachinesPage() {
                     <option value="PG2">PG2</option>
                   </select>
                 </td>
-                <td className="setup-matrix__cell" style={{ fontSize: 10 }}>
+                <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                   <select
                     value={m.status}
                     onChange={(e) =>
@@ -132,7 +132,7 @@ export function MachinesPage() {
                       })
                     }
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       background: 'var(--bg-card)',
                       color:
                         m.status === 'running' ? 'var(--accent)' : 'var(--semantic-red)',
@@ -150,11 +150,11 @@ export function MachinesPage() {
                 </td>
                 <td
                   className="setup-matrix__cell"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 >
                   {m.toolCount}
                 </td>
-                <td className="setup-matrix__cell" style={{ fontSize: 9 }}>
+                <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                   {m.isOverridden ? (
                     <span
                       style={{
@@ -176,7 +176,7 @@ export function MachinesPage() {
                     <button
                       onClick={() => clearOverride('machine', m.id)}
                       style={{
-                        fontSize: 9,
+                        fontSize: 12,
                         color: 'var(--text-muted)',
                         background: 'none',
                         border: '1px solid var(--border-subtle)',

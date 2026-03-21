@@ -126,7 +126,7 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            fontSize: 10,
+            fontSize: 12,
             color: 'var(--text-muted)',
           }}
         >
@@ -140,16 +140,16 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
         </label>
       </div>
 
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>SE</div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>SE</div>
       <QueryBuilder fields={RULE_FIELDS} query={rule.query} onQueryChange={handleQueryChange} />
 
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>ENTÃO</div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>ENTÃO</div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <select
           className="constraint-toggles__param-select"
           value={rule.action.type}
           onChange={(e) => handleActionType(e.target.value as RuleActionType)}
-          style={{ fontSize: 11 }}
+          style={{ fontSize: 12 }}
         >
           {ACTION_OPTIONS.map((a) => (
             <option key={a.value} value={a.value}>
@@ -163,7 +163,7 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
             className="constraint-toggles__param-select"
             value={String(rule.action.value)}
             onChange={(e) => handleActionValue(e.target.value)}
-            style={{ fontSize: 11 }}
+            style={{ fontSize: 12 }}
           >
             {PRIORITY_OPTIONS.map((p) => (
               <option key={p} value={p}>
@@ -180,7 +180,7 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
             onChange={(e) => handleActionValue(Number(e.target.value) || 0)}
             style={{
               width: 60,
-              fontSize: 11,
+              fontSize: 12,
               fontFamily: 'var(--font-mono)',
               background: 'var(--bg-raised)',
               border: '1px solid var(--border-subtle)',
@@ -199,7 +199,7 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
             placeholder="Mensagem de alerta..."
             style={{
               flex: 1,
-              fontSize: 11,
+              fontSize: 12,
               background: 'var(--bg-raised)',
               border: '1px solid var(--border-subtle)',
               borderRadius: 4,
@@ -214,11 +214,11 @@ export function RuleEditor({ rule, onChange, onTest, testResult }: RuleEditorPro
         <button
           className="schedule-comparison__btn schedule-comparison__btn--primary"
           onClick={onTest}
-          style={{ fontSize: 11 }}
+          style={{ fontSize: 12 }}
         >
           Testar Regra
         </button>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           v{rule.version} · {rule.versions.length} versões
         </span>
       </div>

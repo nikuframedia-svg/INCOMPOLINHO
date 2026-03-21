@@ -122,7 +122,7 @@ function MachineDetail({ machineId }: { machineId: string }) {
   if (!machine)
     return (
       <div style={{ padding: 16, fontSize: 12, color: 'var(--text-muted)' }}>
-        Maquina nao encontrada.
+        Máquina não encontrada.
       </div>
     );
 
@@ -135,16 +135,16 @@ function MachineDetail({ machineId }: { machineId: string }) {
           value={`${(avgUtil * 100).toFixed(0)}%`}
           variant={avgUtil > 1 ? 'red' : avgUtil > 0.85 ? 'amber' : 'green'}
         />
-        <Stat label="Producao Total" value={`${totalProd.toFixed(0)} min`} />
+        <Stat label="Produção Total" value={`${totalProd.toFixed(0)} min`} />
         <Stat label="Setup Total" value={`${totalSetup.toFixed(0)} min`} />
         <Stat label="Pecas" value={totalPcs.toLocaleString()} />
         <Stat label="Ferramentas" value={String(machineTools.length)} />
-        <Stat label="Operacoes" value={String(machineBlocks.length)} />
+        <Stat label="Operações" value={String(machineBlocks.length)} />
 
         {/* Per-day load bars */}
         {machCap.length > 0 && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
               Carga por dia
             </div>
             {machCap.map((d: DayLoad, di: number) => (
@@ -155,7 +155,7 @@ function MachineDetail({ machineId }: { machineId: string }) {
                 <span
                   style={{
                     width: 24,
-                    fontSize: 9,
+                    fontSize: 12,
                     fontFamily: 'var(--font-mono)',
                     color: 'var(--text-ghost)',
                     textAlign: 'right',
@@ -172,8 +172,8 @@ function MachineDetail({ machineId }: { machineId: string }) {
 
       <Section title="Problemas" defaultOpen={machineViolations.length > 0}>
         {machineViolations.length === 0 ? (
-          <div style={{ fontSize: 11, color: 'var(--semantic-green)' }}>
-            Sem violacoes para esta maquina.
+          <div style={{ fontSize: 12, color: 'var(--semantic-green)' }}>
+            Sem violações para esta máquina.
           </div>
         ) : (
           machineViolations.map((v, i) => (
@@ -239,8 +239,8 @@ function ToolDetail({ toolId }: { toolId: string }) {
   return (
     <>
       <Section title="Detalhe">
-        <Stat label="Maquina Primaria" value={tool.m} />
-        <Stat label="Maquina Alternativa" value={tool.alt || 'Nenhuma'} />
+        <Stat label="Máquina Primária" value={tool.m} />
+        <Stat label="Máquina Alternativa" value={tool.alt || 'Nenhuma'} />
         <Stat label="Rate" value={`${tool.pH} pcs/h`} />
         <Stat label="Setup" value={`${tool.sH}h`} />
         <Stat label="Operadores" value={String(tool.op)} />
@@ -254,7 +254,7 @@ function ToolDetail({ toolId }: { toolId: string }) {
         {totalBacklog > 0 && (
           <Stat label="Backlog" value={totalBacklog.toLocaleString()} variant="amber" />
         )}
-        <Stat label="Operacoes" value={String(toolOps.length)} />
+        <Stat label="Operações" value={String(toolOps.length)} />
         <Stat label="Blocos Agendados" value={String(toolBlocks.length)} />
       </Section>
 
@@ -318,7 +318,7 @@ export function ContextPanel() {
         <div className="ctx-panel__header-body">
           <div className="ctx-panel__header-title">{entity.id}</div>
           <div className="ctx-panel__header-sub">
-            {isMachine ? 'Maquina' : isTool ? 'Ferramenta' : entity.type}
+            {isMachine ? 'Máquina' : isTool ? 'Ferramenta' : entity.type}
           </div>
         </div>
         <button className="ctx-panel__close" onClick={close} data-testid="ctx-panel-close">

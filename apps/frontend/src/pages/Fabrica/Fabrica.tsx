@@ -145,7 +145,7 @@ export function Fabrica() {
             Estado das 6 máquinas Nikufra: capacidade, utilização e operadores por dia.
           </p>
         </div>
-        <span style={{ fontSize: 11, color: C.t3 }}>
+        <span style={{ fontSize: 12, color: C.t3 }}>
           {engine.machines.length} máquinas · 1º Turno (07:00–15:30) 2º Turno (15:30–24:00) · Cap.{' '}
           {factoryCap} min/dia
         </span>
@@ -230,14 +230,14 @@ export function Fabrica() {
                   <span
                     style={{
                       fontFamily: "'JetBrains Mono',monospace",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: C.t1,
                     }}
                   >
                     {m.id}
                   </span>
-                  <span style={{ fontSize: 8, color: C.t3 }}>{m.area}</span>
+                  <span style={{ fontSize: 12, color: C.t3 }}>{m.area}</span>
                 </div>
                 {wdi.map((i, pos) => {
                   const d: DayLoad = mc[i] || { prod: 0, setup: 0, ops: 0, pcs: 0, blk: 0 };
@@ -275,12 +275,12 @@ export function Fabrica() {
           })}
           {/* Total row */}
           <div className="fab__hf-label" style={{ borderTop: `1px solid ${C.bd}` }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: C.t2 }}>TOTAL</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>TOTAL</span>
           </div>
           {dailyTotals.map((t, idx) => (
             <div key={idx} className="fab__hf-cell" style={{ borderTop: `1px solid ${C.bd}` }}>
-              <span style={{ fontSize: 10, fontWeight: 600, color: C.t1 }}>{Math.round(t)}</span>
-              <span style={{ fontSize: 8, color: C.t3 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{Math.round(t)}</span>
+              <span style={{ fontSize: 12, color: C.t3 }}>
                 {((t / factoryCap) * 100).toFixed(0)}%
               </span>
             </div>
@@ -335,7 +335,7 @@ export function Fabrica() {
                       {over ? (
                         <span
                           style={{
-                            fontSize: 8,
+                            fontSize: 12,
                             fontWeight: 600,
                             color: C.rd,
                             background: C.rdS,
@@ -346,7 +346,7 @@ export function Fabrica() {
                           OVER
                         </span>
                       ) : (
-                        <span style={{ fontSize: 8, color: C.ac }}>OK</span>
+                        <span style={{ fontSize: 12, color: C.ac }}>OK</span>
                       )}
                     </td>
                   </tr>

@@ -88,21 +88,21 @@ export function KPIGrid(props: KPIGridProps) {
         }
       />
       <KPICard
-        label="Producao"
+        label="Produção"
         value={totalPcs.toLocaleString()}
         unit="pcs"
-        subtitle={`${totalOps} operacoes`}
+        subtitle={`${totalOps} operações`}
         sparkline={sparklines?.pcs}
         statusColor="var(--accent)"
       />
       <KPICard
-        label="Operacoes"
+        label="Operações"
         value={totalOps}
         sparkline={sparklines?.ops}
         statusColor="var(--accent)"
       />
       <KPICard
-        label="Utilizacao"
+        label="Utilização"
         value={utilE.formatted}
         subtitle={utilE.qualifier}
         contextLine={utilE.context}

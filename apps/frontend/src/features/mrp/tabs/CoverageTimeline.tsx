@@ -28,7 +28,7 @@ export function CoverageTimeline({ rows }: CoverageTimelineProps) {
     <div className="mrp__card" style={{ padding: 12 }}>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t2,
           textTransform: 'uppercase',
@@ -71,7 +71,7 @@ export function CoverageTimeline({ rows }: CoverageTimelineProps) {
                 style={{
                   width: 80,
                   minWidth: 80,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: C.t2,
                   ...mono,
                   overflow: 'hidden',
@@ -105,7 +105,7 @@ export function CoverageTimeline({ rows }: CoverageTimelineProps) {
                 style={{
                   width: 36,
                   minWidth: 36,
-                  fontSize: 10,
+                  fontSize: 12,
                   color,
                   fontWeight: 600,
                   textAlign: 'right',
@@ -129,10 +129,10 @@ export function CoverageTimeline({ rows }: CoverageTimelineProps) {
                     pointerEvents: 'none',
                   }}
                 >
-                  <div style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>{row.sku}</div>
-                  <div style={{ fontSize: 9, color: C.t3, marginBottom: 4 }}>{row.name}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{row.sku}</div>
+                  <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>{row.name}</div>
                   <div
-                    style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, fontSize: 9 }}
+                    style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, fontSize: 12 }}
                   >
                     <span style={{ color: C.t3 }}>Cobertura</span>
                     <span style={{ color, fontWeight: 600 }}>{row.coverageDays} dias</span>
@@ -148,7 +148,7 @@ export function CoverageTimeline({ rows }: CoverageTimelineProps) {
         })}
       </div>
       {sorted.length > VISIBLE_ROWS && (
-        <div style={{ fontSize: 9, color: C.t3, textAlign: 'center', marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: C.t3, textAlign: 'center', marginTop: 6 }}>
           +{sorted.length - VISIBLE_ROWS} SKUs não mostrados
         </div>
       )}

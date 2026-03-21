@@ -105,7 +105,7 @@ export function GanttView({
                   {dnames[i]} {dates[i]}
                 </span>
                 {vc > 0 && (
-                  <span style={{ fontSize: 8, fontWeight: 700, color: C.yl, marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.yl, marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
                     <AlertTriangle size={8} strokeWidth={2.5} />
                     {vc}
                   </span>
@@ -143,7 +143,7 @@ export function GanttView({
           <div style={{ minWidth: 100 + totalW, position: 'relative' }}>
             <TimelineHeader hours={hours} ppm={ppm} selDay={selDay} dnames={dnames} dates={dates} thirdShift={data.thirdShift} />
             {activeM.length === 0 && dayB.length === 0 && (
-              <div style={{ padding: '24px 16px', textAlign: 'center', color: C.t3, fontSize: 11 }}>
+              <div style={{ padding: '24px 16px', textAlign: 'center', color: C.t3, fontSize: 12 }}>
                 {blocks.length === 0
                   ? 'Sem blocos schedulados. Verifique se o ISOP foi carregado.'
                   : `Sem operações para ${dnames[selDay]} ${dates[selDay]}. Seleccione outro dia.`}
@@ -168,7 +168,7 @@ export function GanttView({
                 borderLeft: '2px dashed var(--semantic-red)', zIndex: 15, pointerEvents: 'none',
               }}>
                 <span style={{
-                  position: 'absolute', top: 2, left: 4, fontSize: 8, fontWeight: 700,
+                  position: 'absolute', top: 2, left: 4, fontSize: 12, fontWeight: 700,
                   color: 'var(--semantic-red)', whiteSpace: 'nowrap', background: `${C.s1}CC`, padding: '1px 4px', borderRadius: 3,
                 }}>
                   AGORA — {String(Math.floor(nowMin / 60)).padStart(2, '0')}:{String(nowMin % 60).padStart(2, '0')}
@@ -192,7 +192,7 @@ export function GanttView({
       </Card>
 
       {/* Legend */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: C.t3, padding: '4px 0' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: C.t3, padding: '4px 0' }}>
         {[...new Set(dayB.map((b) => b.toolId))].slice(0, 14).map((tid) => (
           <div key={tid} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
             <div style={{ width: 8, height: 8, borderRadius: 2, background: toolColor(tools, tid) }} />
@@ -226,14 +226,13 @@ export function GanttView({
           background: `${C.ac}88`, borderRadius: 4, border: `2px solid ${C.ac}`,
           opacity: 0.8, display: 'flex', alignItems: 'center', paddingLeft: 4,
         }}>
-          <span style={{ fontSize: 9, color: C.t1, fontWeight: 600 }}>{drag.block.toolId}</span>
+          <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{drag.block.toolId}</span>
         </div>
       )}
 
       {proposedMove && (
         <DeviationPanel
-          move={proposedMove} blocks={blocks} ops={data.ops} machines={data.machines}
-          toolMap={data.toolMap} nDays={data.dates.length} currentMetrics={currentMetrics ?? null}
+          move={proposedMove} blocks={blocks} currentMetrics={currentMetrics ?? null}
           onConfirm={handleDragConfirm} onCancel={clearProposal}
         />
       )}

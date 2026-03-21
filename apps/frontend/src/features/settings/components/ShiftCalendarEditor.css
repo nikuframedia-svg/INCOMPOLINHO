@@ -20,7 +20,7 @@
 .shift-grid__day-label,
 .shift-grid__shift-label {
   padding: 4px 6px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   background: var(--bg-base);
@@ -52,7 +52,7 @@
 }
 
 .shift-grid__ops {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--text-primary);

@@ -55,7 +55,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
         {Object.entries(familyColors).map(([fam, color]) => (
           <div key={fam} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div style={{ width: 10, height: 10, borderRadius: 2, background: color }} />
-            <span style={{ color: C.t2, fontSize: 10, ...mono }}>{fam}</span>
+            <span style={{ color: C.t2, fontSize: 12, ...mono }}>{fam}</span>
           </div>
         ))}
       </div>
@@ -73,7 +73,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                 <span style={{ color: C.t1, fontSize: 14, fontWeight: 600, ...mono }}>
                   {tg.machine}
                 </span>
-                <span style={{ color: C.t3, fontSize: 10 }}>
+                <span style={{ color: C.t3, fontSize: 12 }}>
                   {tg.area} — {tg.currentSequence.length} tools
                 </span>
                 {saved > 0 && (
@@ -81,7 +81,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                     style={{
                       marginLeft: 'auto',
                       color: C.ac,
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       ...mono,
                       padding: '2px 8px',
@@ -95,7 +95,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
               </div>
               {/* Current sequence */}
               <div style={{ marginBottom: 8 }}>
-                <span style={{ ...labelSt, fontSize: 9, display: 'block', marginBottom: 4 }}>
+                <span style={{ ...labelSt, fontSize: 12, display: 'block', marginBottom: 4 }}>
                   CURRENT (DEMAND ORDER)
                 </span>
                 <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -121,7 +121,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                           style={{
                             padding: '3px 6px',
                             borderRadius: 4,
-                            fontSize: 9,
+                            fontSize: 12,
                             ...mono,
                             background: `${familyColors[fam]}22`,
                             color: familyColors[fam],
@@ -134,13 +134,13 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                     );
                   })}
                 </div>
-                <span style={{ color: C.t4, fontSize: 9, marginTop: 2, display: 'block' }}>
+                <span style={{ color: C.t4, fontSize: 12, marginTop: 2, display: 'block' }}>
                   {curChanges} family transition{curChanges !== 1 ? 's' : ''}
                 </span>
               </div>
               {/* Optimal sequence */}
               <div>
-                <span style={{ ...labelSt, fontSize: 9, display: 'block', marginBottom: 4 }}>
+                <span style={{ ...labelSt, fontSize: 12, display: 'block', marginBottom: 4 }}>
                   OPTIMAL (FAMILY GROUPED)
                 </span>
                 <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -166,7 +166,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                           style={{
                             padding: '3px 6px',
                             borderRadius: 4,
-                            fontSize: 9,
+                            fontSize: 12,
                             ...mono,
                             background: `${familyColors[fam]}22`,
                             color: familyColors[fam],
@@ -179,7 +179,7 @@ export function ToolGroupView({ data }: { data: IntelData }) {
                     );
                   })}
                 </div>
-                <span style={{ color: C.t4, fontSize: 9, marginTop: 2, display: 'block' }}>
+                <span style={{ color: C.t4, fontSize: 12, marginTop: 2, display: 'block' }}>
                   {optChanges} family transition{optChanges !== 1 ? 's' : ''}
                 </span>
               </div>

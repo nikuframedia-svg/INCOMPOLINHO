@@ -63,7 +63,7 @@ export function SchedulingHeader({
               background: 'none',
               border: 'none',
               cursor: 'pointer',
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: view === tab.id ? C.ac : C.t3,
               borderBottom: `2px solid ${view === tab.id ? C.ac : 'transparent'}`,
@@ -103,13 +103,13 @@ export function SchedulingHeader({
           </Pill>
         )}
         {downC > 0 && (
-          <Pill color={C.rd} active title={`${downC} maquina${downC > 1 ? 's' : ''} parada${downC > 1 ? 's' : ''} — pode afectar entregas`}>
+          <Pill color={C.rd} active title={`${downC} máquina${downC > 1 ? 's' : ''} parada${downC > 1 ? 's' : ''} — pode afectar entregas`}>
             <span style={dot(C.rd, true)} />
             {downC} DOWN
           </Pill>
         )}
         {movesCount > 0 && (
-          <Pill color={C.ac} active title={`${movesCount} operacao${movesCount > 1 ? 'es' : ''} redistribuida${movesCount > 1 ? 's' : ''} para manter entregas`}>
+          <Pill color={C.ac} active title={`${movesCount} operação${movesCount > 1 ? 'ões' : ''} redistribuída${movesCount > 1 ? 's' : ''} para manter entregas`}>
             <Check
               size={10}
               strokeWidth={2}
@@ -129,7 +129,7 @@ export function SchedulingHeader({
           </Pill>
         )}
         {blkOps > 0 && (
-          <Pill color={C.rd} active title={`${blkOps} operacao${blkOps > 1 ? 'es' : ''} bloqueada${blkOps > 1 ? 's' : ''} — sem maquina disponivel`}>
+          <Pill color={C.rd} active title={`${blkOps} operação${blkOps > 1 ? 'ões' : ''} bloqueada${blkOps > 1 ? 's' : ''} — sem máquina disponível`}>
             {blkOps} bloq
           </Pill>
         )}
@@ -152,7 +152,7 @@ export function SchedulingHeader({
             background: useServer ? C.ac + '18' : 'transparent',
             color: useServer ? C.ac : C.t3,
             cursor: 'pointer',
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             fontFamily: 'inherit',
             letterSpacing: '.02em',

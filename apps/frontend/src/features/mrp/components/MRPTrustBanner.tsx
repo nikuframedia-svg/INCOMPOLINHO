@@ -44,13 +44,13 @@ export function MRPTrustBanner() {
           flexShrink: 0,
         }}
       />
-      <span style={{ fontSize: 11, color: C.t2 }}>
+      <span style={{ fontSize: 12, color: C.t2 }}>
         Confiança dos dados:{' '}
         <span style={{ fontWeight: 700, color: gate.color, ...mono }}>{trustScore.toFixed(2)}</span>
       </span>
-      <span style={{ fontSize: 9, color: C.t3 }}>{gate.label}</span>
+      <span style={{ fontSize: 12, color: C.t3 }}>{gate.label}</span>
       {isLow && (
-        <span style={{ fontSize: 9, color: C.yl, marginLeft: 'auto', fontWeight: 500 }}>
+        <span style={{ fontSize: 12, color: C.yl, marginLeft: 'auto', fontWeight: 500 }}>
           Projecções de stock podem não ser fiáveis
         </span>
       )}

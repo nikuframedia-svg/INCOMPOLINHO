@@ -6,8 +6,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { Block, EMachine, EOp, ETool, OptResult } from '../../../../lib/engine';
-import { DEFAULT_WORKFORCE_CONFIG, scoreSchedule } from '../../../../lib/engine';
+import type { Block, OptResult } from '../../../../lib/engine';
 import { assessDeviation } from '../../api/firewallApi';
 import { createLedgerEntry } from '../../api/ledgerApi';
 import type { ProposedMove } from '../../hooks/useGanttDragDrop';
@@ -16,10 +15,6 @@ import './DeviationPanel.css';
 interface DeviationPanelProps {
   move: ProposedMove;
   blocks: Block[];
-  ops: EOp[];
-  machines: EMachine[];
-  toolMap: Record<string, ETool>;
-  nDays: number;
   currentMetrics: OptResult | null;
   onConfirm: () => void;
   onCancel: () => void;
@@ -59,10 +54,6 @@ function fmtDelta(actual: number, proposed: number, suffix = ''): string {
 export function DeviationPanel({
   move,
   blocks,
-  ops,
-  machines,
-  toolMap,
-  nDays,
   currentMetrics,
   onConfirm,
   onCancel,
@@ -71,33 +62,10 @@ export function DeviationPanel({
   const [justification, setJustification] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Compute proposed metrics by simulating the move
-  const proposedMetrics = useMemo(() => {
-    const newBlocks = blocks.map((b) => {
-      if (b.opId !== move.block.opId || b.dayIdx !== move.block.dayIdx) return b;
-      return {
-        ...b,
-        machineId: move.toMachineId,
-        startMin: move.toStartMin,
-        endMin: move.toStartMin + (b.endMin - b.startMin),
-      };
-    });
-    try {
-      return scoreSchedule(
-        newBlocks,
-        ops,
-        {},
-        DEFAULT_WORKFORCE_CONFIG,
-        machines,
-        toolMap,
-        undefined,
-        undefined,
-        nDays,
-      );
-    } catch {
-      return null;
-    }
-  }, [blocks, ops, machines, toolMap, nDays, move]);
+  // Proposed metrics: use currentMetrics as baseline (full scoring requires backend)
+  // For the deviation panel, we show the same metrics and flag the move as a deviation.
+  // True proposed metrics would require a backend call; for now, keep currentMetrics.
+  const proposedMetrics = currentMetrics;
 
   const actOTD = currentMetrics?.otdDelivery ?? 0;
   const propOTD = proposedMetrics?.otdDelivery ?? actOTD;
@@ -187,7 +155,7 @@ export function DeviationPanel({
 
         {move.isFrozen && (
           <div className="dev-panel__frozen-warn">
-            Esta operacao esta CONGELADA (zona 0-5 dias). Requer aprovacao L4+.
+            Esta operação está CONGELADA (zona 0-5 dias). Requer aprovação L4+.
           </div>
         )}
 

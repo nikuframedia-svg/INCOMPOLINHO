@@ -36,7 +36,7 @@ export function CapacityGrid({
       >
         <div />
         {dates.map((_d, i) => (
-          <div key={i} style={{ textAlign: 'center', fontSize: 9, color: C.t4 }}>
+          <div key={i} style={{ textAlign: 'center', fontSize: 12, color: C.t4 }}>
             {dnames[i]}
           </div>
         ))}
@@ -53,7 +53,7 @@ export function CapacityGrid({
                   <span style={dot(isD ? C.rd : C.ac, isD)} />
                   <span
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: isD ? C.rd : C.t1,
                       fontFamily: 'monospace',
@@ -90,7 +90,7 @@ export function CapacityGrid({
                         <>
                           <div
                             style={{
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: 600,
                               color: C.t1,
                               fontFamily: 'monospace',
@@ -98,12 +98,12 @@ export function CapacityGrid({
                           >
                             {(u * 100).toFixed(0)}%
                           </div>
-                          <div style={{ fontSize: 8, color: C.t4 }}>
+                          <div style={{ fontSize: 12, color: C.t4 }}>
                             {d.pcs > 0 ? `${(d.pcs / 1000).toFixed(0)}K` : ''}
                           </div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 10, color: C.t4 }}>—</div>
+                        <div style={{ fontSize: 12, color: C.t4 }}>—</div>
                       )}
                     </div>
                   );
@@ -139,7 +139,7 @@ export function OperatorsChart({
       <div style={{ display: 'flex', gap: 6 }}>
         {opsByDayFromWorkforce(s.workforceDemand, nDays).map((d, i) => (
           <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-            <div style={{ fontSize: 9, color: C.t4, marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: C.t4, marginBottom: 4 }}>
               {dnames[i]} {dates[i]}
             </div>
             <div
@@ -162,7 +162,7 @@ export function OperatorsChart({
                     justifyContent: 'center',
                   }}
                 >
-                  <span style={{ fontSize: 8, color: C.ac, fontWeight: 600 }}>{d.pg1}</span>
+                  <span style={{ fontSize: 12, color: C.ac, fontWeight: 600 }}>{d.pg1}</span>
                 </div>
               )}
               {d.pg2 > 0 && (
@@ -176,13 +176,13 @@ export function OperatorsChart({
                     justifyContent: 'center',
                   }}
                 >
-                  <span style={{ fontSize: 8, color: C.bl, fontWeight: 600 }}>{d.pg2}</span>
+                  <span style={{ fontSize: 12, color: C.bl, fontWeight: 600 }}>{d.pg2}</span>
                 </div>
               )}
             </div>
             <div
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: d.total > avOps ? C.rd : rc,
                 marginTop: 2,
@@ -190,7 +190,7 @@ export function OperatorsChart({
             >
               {d.total}
             </div>
-            {d.total > avOps && <div style={{ fontSize: 8, color: C.rd }}>+{d.total - avOps}</div>}
+            {d.total > avOps && <div style={{ fontSize: 12, color: C.rd }}>+{d.total - avOps}</div>}
           </div>
         ))}
       </div>
@@ -200,7 +200,7 @@ export function OperatorsChart({
           justifyContent: 'center',
           gap: 12,
           marginTop: 6,
-          fontSize: 9,
+          fontSize: 12,
           color: C.t3,
         }}
       >

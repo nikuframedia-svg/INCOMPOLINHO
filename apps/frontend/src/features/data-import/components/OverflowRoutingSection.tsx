@@ -24,7 +24,7 @@ export function OverflowRoutingSection() {
         <div>
           <div className="carregar-dados__section-title">Overflow e Routing</div>
           <div className="carregar-dados__section-subtitle">
-            Redistribuicao automatica para maquinas alternativas
+            Redistribuição automática para máquinas alternativas
           </div>
         </div>
       </div>
@@ -61,7 +61,7 @@ export function OverflowRoutingSection() {
             className="carregar-dados__mo-field-input"
             data-testid="max-auto-moves"
           />
-          <span className="carregar-dados__param-hint">4 — 32 operacoes</span>
+          <span className="carregar-dados__param-hint">4 — 32 operações</span>
         </div>
         <div className="carregar-dados__param">
           <label className="carregar-dados__param-label">Max iteracoes</label>

@@ -14,7 +14,6 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      engine: ${{ steps.filter.outputs.engine }}
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
     steps:
@@ -23,11 +22,6 @@ jobs:
         id: filter
         with:
           filters: |
-            engine:
-              - 'packages/scheduling-engine/src/**'
-              - 'packages/scheduling-engine/tests/**'
-              - 'packages/scheduling-engine/package.json'
-              - 'packages/scheduling-engine/tsconfig.json'
             frontend:
               - 'apps/frontend/src/**'
               - 'apps/frontend/package.json'
@@ -40,7 +34,7 @@ jobs:
 
   lint-ts:
     needs: detect-changes
-    if: needs.detect-changes.outputs.engine == 'true' || needs.detect-changes.outputs.frontend == 'true'
+    if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,20 +55,6 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - run: uv run ruff check src/
         working-directory: apps/backend
-
-  test-engine:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo test --filter=@prodplan/scheduling-engine
 
   test-frontend:
     needs: detect-changes
@@ -102,7 +82,7 @@ jobs:
 
   build:
     needs: detect-changes
-    if: needs.detect-changes.outputs.engine == 'true' || needs.detect-changes.outputs.frontend == 'true'
+    if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,11 +97,11 @@ jobs:
   ci-gate:
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint-ts, lint-python, test-engine, test-frontend, test-backend, build]
+    needs: [lint-ts, lint-python, test-frontend, test-backend, build]
     steps:
       - name: Check results
         run: |
-          results="${{ needs.lint-ts.result }} ${{ needs.lint-python.result }} ${{ needs.test-engine.result }} ${{ needs.test-frontend.result }} ${{ needs.test-backend.result }} ${{ needs.build.result }}"
+          results="${{ needs.lint-ts.result }} ${{ needs.lint-python.result }} ${{ needs.test-frontend.result }} ${{ needs.test-backend.result }} ${{ needs.build.result }}"
           for r in $results; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
               echo "Job failed or cancelled: $r"

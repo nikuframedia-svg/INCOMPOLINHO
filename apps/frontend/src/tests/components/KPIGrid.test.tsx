@@ -40,9 +40,9 @@ describe('KPIGrid', () => {
   it('renders expected KPI labels', () => {
     render(<KPIGrid {...baseProps} />);
     expect(screen.getByText('OTD-D')).toBeInTheDocument();
-    expect(screen.getByText('Producao')).toBeInTheDocument();
-    expect(screen.getByText('Operacoes')).toBeInTheDocument();
-    expect(screen.getByText('Utilizacao')).toBeInTheDocument();
+    expect(screen.getByText('Produção')).toBeInTheDocument();
+    expect(screen.getByText('Operações')).toBeInTheDocument();
+    expect(screen.getByText('Utilização')).toBeInTheDocument();
     expect(screen.getByText('Setup')).toBeInTheDocument();
     expect(screen.getByText('Alertas')).toBeInTheDocument();
   });

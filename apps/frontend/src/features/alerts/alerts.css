@@ -173,7 +173,7 @@
 }
 
 .alert-row__shelve-badge {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--text-secondary);
   background: var(--bg-raised);

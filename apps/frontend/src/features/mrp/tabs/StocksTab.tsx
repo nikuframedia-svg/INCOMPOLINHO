@@ -109,7 +109,7 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {filtered.length} de {allRows.length} SKUs
         </span>
       </div>
@@ -165,10 +165,10 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                       style={{ background: RISK_COLORS[row.riskLevel] ?? C.t3 }}
                     />
                   </td>
-                  <td style={{ ...mono, fontSize: 10, color: C.t1, fontWeight: 600 }}>{row.sku}</td>
+                  <td style={{ ...mono, fontSize: 12, color: C.t1, fontWeight: 600 }}>{row.sku}</td>
                   <td
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       color: C.t2,
                       maxWidth: 180,
                       overflow: 'hidden',
@@ -178,14 +178,14 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                   >
                     {row.name}
                   </td>
-                  <td style={{ textAlign: 'right', ...mono, fontSize: 10, color: C.t1 }}>
+                  <td style={{ textAlign: 'right', ...mono, fontSize: 12, color: C.t1 }}>
                     {fmtQty(row.currentStock)}
                   </td>
                   <td
                     style={{
                       textAlign: 'right',
                       ...mono,
-                      fontSize: 10,
+                      fontSize: 12,
                       color: row.productionToday > 0 ? C.ac : C.t3,
                     }}
                   >
@@ -195,17 +195,17 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                     style={{
                       textAlign: 'right',
                       ...mono,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: row.stockFinalToday < 0 ? C.rd : C.t1,
                     }}
                   >
                     {fmtQty(row.stockFinalToday)}
                   </td>
-                  <td style={{ textAlign: 'right', ...mono, fontSize: 10, color: C.t2 }}>
+                  <td style={{ textAlign: 'right', ...mono, fontSize: 12, color: C.t2 }}>
                     {row.nextOrderQty > 0 ? fmtQty(row.nextOrderQty) : '-'}
                   </td>
-                  <td style={{ ...mono, fontSize: 10, color: C.t2 }}>
+                  <td style={{ ...mono, fontSize: 12, color: C.t2 }}>
                     {row.nextOrderDeadline ?? '-'}
                   </td>
                   <td
@@ -213,7 +213,7 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                       textAlign: 'right',
                       fontWeight: 600,
                       ...mono,
-                      fontSize: 10,
+                      fontSize: 12,
                       color: covColor,
                     }}
                   >
@@ -225,7 +225,7 @@ export function StocksTab({ engine, mrp, skuView, blocks }: StocksTabProps) {
                       return (
                         <span
                           style={{
-                            fontSize: 8,
+                            fontSize: 12,
                             fontWeight: 600,
                             padding: '2px 6px',
                             borderRadius: 3,

@@ -38,20 +38,20 @@ export function OrderTableRow({
         className={e.status === 'late' ? 'mrp__row--stockout' : ''}
       >
         <td>
-          <span style={{ ...mono, fontSize: 10, fontWeight: 600, color: C.t1 }}>{e.sku}</span>
-          {e.isTwin && <span style={{ fontSize: 8, color: C.yl, marginLeft: 4 }}>Twin</span>}
+          <span style={{ ...mono, fontSize: 12, fontWeight: 600, color: C.t1 }}>{e.sku}</span>
+          {e.isTwin && <span style={{ fontSize: 12, color: C.yl, marginLeft: 4 }}>Twin</span>}
         </td>
-        <td style={{ textAlign: 'right', ...mono, fontSize: 10, color: C.t1 }}>
+        <td style={{ textAlign: 'right', ...mono, fontSize: 12, color: C.t1 }}>
           {fmtQty(e.orderQty)}
         </td>
-        <td style={{ ...mono, fontSize: 10, color: C.t2 }}>{e.deadline ?? '-'}</td>
-        <td style={{ ...mono, fontSize: 10, color: e.gapDays > 0 ? C.rd : C.t2 }}>
+        <td style={{ ...mono, fontSize: 12, color: C.t2 }}>{e.deadline ?? '-'}</td>
+        <td style={{ ...mono, fontSize: 12, color: e.gapDays > 0 ? C.rd : C.t2 }}>
           {e.scheduledEndDate ?? '-'}
         </td>
         <td>
           <span
             style={{
-              fontSize: 8,
+              fontSize: 12,
               fontWeight: 600,
               padding: '2px 6px',
               borderRadius: 3,
@@ -66,7 +66,7 @@ export function OrderTableRow({
           style={{
             textAlign: 'right',
             ...mono,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: e.gapDays > 0 ? C.rd : e.gapDays < 0 ? C.ac : C.t3,
           }}

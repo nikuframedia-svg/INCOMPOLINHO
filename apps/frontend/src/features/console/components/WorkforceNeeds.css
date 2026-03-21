@@ -29,7 +29,7 @@
 .wfn__table th {
   text-align: left;
   padding: var(--space-4) var(--space-8);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-ghost);
   text-transform: uppercase;
@@ -71,5 +71,5 @@
   background: rgba(34, 197, 94, 0.12);
   color: var(--semantic-green);
   font-weight: 500;
-  font-size: 10px;
+  font-size: 12px;
 }

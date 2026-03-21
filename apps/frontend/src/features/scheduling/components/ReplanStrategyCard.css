@@ -41,7 +41,7 @@
 }
 
 .strategy-card__metric-label {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-ghost);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -58,7 +58,7 @@
 }
 
 .strategy-card__rec-text {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
@@ -87,7 +87,7 @@
 
 .strategy-card__btn-label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -105,7 +105,7 @@
 
 .strategy-card__btn-range {
   display: block;
-  font-size: 8px;
+  font-size: 12px;
   color: var(--text-ghost);
   margin-top: 2px;
 }

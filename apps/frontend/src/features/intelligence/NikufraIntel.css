@@ -77,7 +77,7 @@
   border: 1px solid rgba(239, 68, 68, 0.3);
   background: var(--semantic-red-bg);
   color: var(--semantic-red);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }

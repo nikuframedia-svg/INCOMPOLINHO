@@ -42,8 +42,8 @@ export function DecisionAudit({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>Decisões do Engine</span>
-          <span style={{ fontSize: 9, color: C.t3, fontFamily: 'monospace' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>Decisões do Engine</span>
+          <span style={{ fontSize: 12, color: C.t3, fontFamily: 'monospace' }}>
             {decisions.length} total
           </span>
           {Object.entries(DECISION_CATEGORIES).map(([catKey, cat]) => {
@@ -55,7 +55,7 @@ export function DecisionAudit({
                 style={{
                   padding: '1px 6px',
                   borderRadius: 4,
-                  fontSize: 8,
+                  fontSize: 12,
                   fontWeight: 600,
                   background: DECISION_CATEGORY_COLORS[catKey] + '15',
                   color: DECISION_CATEGORY_COLORS[catKey],
@@ -74,7 +74,7 @@ export function DecisionAudit({
             border: `1px solid ${C.bd}`,
             background: 'transparent',
             color: C.t3,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 500,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -96,7 +96,7 @@ export function DecisionAudit({
                 border: 'none',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
-                fontSize: 9,
+                fontSize: 12,
                 fontWeight: 600,
                 background: decFilter === 'all' ? C.ac + '25' : C.s1,
                 color: decFilter === 'all' ? C.ac : C.t3,
@@ -117,7 +117,7 @@ export function DecisionAudit({
                     border: 'none',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
-                    fontSize: 9,
+                    fontSize: 12,
                     fontWeight: 600,
                     background:
                       decFilter === catKey ? DECISION_CATEGORY_COLORS[catKey] + '25' : C.s1,

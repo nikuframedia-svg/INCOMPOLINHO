@@ -52,7 +52,7 @@ export function OrderRow({
         </td>
         <td>
           <span
-            style={{ ...mono, fontSize: 11, fontWeight: 600, color: C.t1, cursor: 'pointer' }}
+            style={{ ...mono, fontSize: 12, fontWeight: 600, color: C.t1, cursor: 'pointer' }}
             onClick={(ev) => {
               ev.stopPropagation();
               openContextPanel({ type: 'tool', id: e.toolCode });
@@ -68,24 +68,24 @@ export function OrderRow({
           )}
         </td>
         <td>
-          <span style={{ fontSize: 10, color: C.t2 }}>{e.skuName}</span>
+          <span style={{ fontSize: 12, color: C.t2 }}>{e.skuName}</span>
         </td>
         <td>
           {e.customerName ? (
             <span className="mrp__enc-client-badge">{e.customerName}</span>
           ) : (
-            <span style={{ fontSize: 10, color: C.t4 }}>-</span>
+            <span style={{ fontSize: 12, color: C.t4 }}>-</span>
           )}
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: e.shortfallQty > 0 ? C.rd : C.t3 }}>
+          <span style={{ ...mono, fontSize: 12, color: e.shortfallQty > 0 ? C.rd : C.t3 }}>
             {e.shortfallQty > 0 ? fmtQty(e.shortfallQty) : '-'}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
           <span
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: e.coverageDays < 1 ? C.rd : e.coverageDays < 3 ? C.yl : C.ac,
             }}
           >
@@ -102,10 +102,10 @@ export function OrderRow({
           <td colSpan={8}>
             <div className="mrp__enc-detail">
               <div style={{ marginBottom: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 500, color: C.t2 }}>
+                <span style={{ fontSize: 12, fontWeight: 500, color: C.t2 }}>
                   Produção agendada
                 </span>
-                <span style={{ fontSize: 9, color: C.t3, marginLeft: 8 }}>
+                <span style={{ fontSize: 12, color: C.t3, marginLeft: 8 }}>
                   Total: <span style={{ ...mono, color: C.t1 }}>{fmtQty(e.totalScheduledQty)}</span>{' '}
                   pcs
                 </span>
@@ -123,7 +123,7 @@ export function OrderRow({
                         {dnames[i]} {dates[i]}
                       </span>
                       {dayQty > 0 && (
-                        <span style={{ ...mono, fontSize: 10, color: C.ac }}>{fmtQty(dayQty)}</span>
+                        <span style={{ ...mono, fontSize: 12, color: C.ac }}>{fmtQty(dayQty)}</span>
                       )}
                     </div>
                   );
@@ -135,7 +135,7 @@ export function OrderRow({
               <div style={{ marginTop: 8 }}>
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: 500,
                     color: C.t2,
                     marginBottom: 4,
@@ -152,10 +152,10 @@ export function OrderRow({
                     >
                       <AlertTriangle size={11} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 10, fontWeight: 500, color: C.t1 }}>{s.title}</div>
-                        <div style={{ fontSize: 9, color: C.t2 }}>{s.suggestedAction}</div>
+                        <div style={{ fontSize: 12, fontWeight: 500, color: C.t1 }}>{s.title}</div>
+                        <div style={{ fontSize: 12, color: C.t2 }}>{s.suggestedAction}</div>
                       </div>
-                      <span style={{ ...mono, fontSize: 9, color: C.t3 }}>
+                      <span style={{ ...mono, fontSize: 12, color: C.t3 }}>
                         {fmtQty(s.impact.qtyAffected)} pcs
                       </span>
                     </div>
@@ -164,7 +164,7 @@ export function OrderRow({
               </div>
             )}
 
-            <div style={{ marginTop: 8, fontSize: 9, color: C.t3, display: 'flex', gap: 16 }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: C.t3, display: 'flex', gap: 16 }}>
               <span>
                 Tool: <span style={{ ...mono, color: C.t2 }}>{e.toolCode}</span>
               </span>

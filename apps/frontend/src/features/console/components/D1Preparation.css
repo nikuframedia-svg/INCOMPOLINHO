@@ -18,7 +18,7 @@
   font-family: var(--font-mono);
 }
 .d1prep__risk-badge {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
   padding: 2px 8px;
@@ -48,7 +48,7 @@
 }
 
 .d1prep__warn-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--semantic-amber);
   text-transform: uppercase;
@@ -80,19 +80,19 @@
   flex-shrink: 0;
 }
 .d1prep__suggestion-text {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
   flex: 1;
 }
 .d1prep__suggestion-impact {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   white-space: nowrap;
 }
 
 .d1prep__causing {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -104,7 +104,7 @@
   gap: var(--space-4);
 }
 .d1prep__coverage-title {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--semantic-red);
   text-transform: uppercase;
@@ -113,7 +113,7 @@
 .d1prep__coverage-item {
   display: flex;
   gap: var(--space-6);
-  font-size: 10px;
+  font-size: 12px;
   padding: var(--space-4) var(--space-8);
   background: var(--semantic-red-bg);
   border-radius: var(--radius-xs);

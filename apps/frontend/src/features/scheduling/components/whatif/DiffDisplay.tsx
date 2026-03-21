@@ -33,7 +33,7 @@ export function DiffDisplay({
           marginBottom: 8,
         }}
       >
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>
           {vA.label} → {vB.label}
         </span>
         <button
@@ -43,7 +43,7 @@ export function DiffDisplay({
           <X size={12} strokeWidth={1.5} />
         </button>
       </div>
-      <div style={{ fontSize: 11, color: C.t2, marginBottom: 8 }}>{diff.summary}</div>
+      <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>{diff.summary}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
         {[
           {
@@ -63,7 +63,7 @@ export function DiffDisplay({
           },
         ].map((k, i) => (
           <div key={i} style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 9, color: C.t4 }}>{k.l}</div>
+            <div style={{ fontSize: 12, color: C.t4 }}>{k.l}</div>
             <div style={{ fontSize: 13, fontWeight: 600, color: k.c, fontFamily: 'monospace' }}>
               {k.v}
             </div>
@@ -71,7 +71,7 @@ export function DiffDisplay({
         ))}
       </div>
       {diff.moved.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 10, color: C.t3 }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: C.t3 }}>
           {diff.moved.length} ops movidas · Churn: {diff.churn.toFixed(0)} min
         </div>
       )}

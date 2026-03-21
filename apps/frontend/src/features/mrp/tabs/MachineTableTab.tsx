@@ -64,7 +64,7 @@ export function MachineTableTab({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {records.length} de {allRecords.length} registos
         </span>
       </div>
@@ -102,10 +102,10 @@ export function MachineTableTab({
                 <Fragment key={m.id}>
                   <tr className="mrp__machine-header">
                     <td colSpan={7 + dates.length}>
-                      <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: C.t1 }}>
+                      <span style={{ ...mono, fontSize: 12, fontWeight: 600, color: C.t1 }}>
                         {m.id}
                       </span>
-                      <span style={{ fontSize: 10, color: C.t3, marginLeft: 8 }}>
+                      <span style={{ fontSize: 12, color: C.t3, marginLeft: 8 }}>
                         {m.area} · {machineRecs.length} tools
                       </span>
                     </td>

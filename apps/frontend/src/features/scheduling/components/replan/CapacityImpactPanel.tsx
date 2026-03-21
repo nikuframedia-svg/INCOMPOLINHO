@@ -62,7 +62,7 @@ export function CapacityImpactPanel({ data, blocks, cap, mSt, moves }: CapacityI
                   const u = tot / DAY_CAP;
                   return (
                     <div key={di} style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 8, color: C.t4 }}>{dnames[di]}</div>
+                      <div style={{ fontSize: 12, color: C.t4 }}>{dnames[di]}</div>
                       <div
                         style={{
                           height: 32,
@@ -94,7 +94,7 @@ export function CapacityImpactPanel({ data, blocks, cap, mSt, moves }: CapacityI
                         )}
                       </div>
                       {tot > 0 && (
-                        <div style={{ fontSize: 8, color: u > 1 ? C.rd : C.ac, fontWeight: 600 }}>
+                        <div style={{ fontSize: 12, color: u > 1 ? C.rd : C.ac, fontWeight: 600 }}>
                           {(u * 100).toFixed(0)}%
                         </div>
                       )}
@@ -107,7 +107,7 @@ export function CapacityImpactPanel({ data, blocks, cap, mSt, moves }: CapacityI
         })}
       {Object.values(mSt).every((s) => s !== 'down') && moves.length === 0 && (
         <Card style={{ padding: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: 10, color: C.t4 }}>Marca DOWN para ver impacto</div>
+          <div style={{ fontSize: 12, color: C.t4 }}>Marca DOWN para ver impacto</div>
         </Card>
       )}
     </div>

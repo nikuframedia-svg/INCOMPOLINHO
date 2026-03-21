@@ -120,13 +120,13 @@ export function IntelligencePage() {
           >
             NIKUFRA INTELLIGENCE
           </h1>
-          <span style={{ color: C.t4, fontSize: 11 }}>100% dados reais ISOP</span>
+          <span style={{ color: C.t4, fontSize: 12 }}>100% dados reais ISOP</span>
         </div>
         <p className="page-desc" style={{ marginBottom: 8 }}>
           Análise avançada: padrões de procura, gargalos, risco por cliente e oportunidades de
           optimização.
         </p>
-        <div style={{ display: 'flex', gap: 16, color: C.t3, fontSize: 11, ...mono }}>
+        <div style={{ display: 'flex', gap: 16, color: C.t3, fontSize: 12, ...mono }}>
           <span>{data.machines.length} machines</span>
           <span>{data.explain.length} SKUs</span>
           <span>{data.workingDates.length} working days</span>
@@ -149,7 +149,7 @@ export function IntelligencePage() {
                 border: 'none',
                 background: tab === t.key ? C.acS : 'transparent',
                 color: disabled ? C.t4 : tab === t.key ? C.ac : C.t3,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: tab === t.key ? 700 : 500,
                 cursor: disabled ? 'not-allowed' : 'pointer',
                 whiteSpace: 'nowrap' as const,

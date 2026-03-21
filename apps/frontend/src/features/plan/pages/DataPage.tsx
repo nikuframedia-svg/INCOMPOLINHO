@@ -49,7 +49,7 @@ export function DataPage() {
                 border: 'none',
                 background: isActive ? `${C.ac}18` : 'transparent',
                 color: isActive ? C.ac : C.t3,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: isActive ? 600 : 500,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -58,7 +58,7 @@ export function DataPage() {
             >
               {t.label}
               {count !== undefined && (
-                <span style={{ fontSize: 9, marginLeft: 4, opacity: 0.7 }}>({count})</span>
+                <span style={{ fontSize: 12, marginLeft: 4, opacity: 0.7 }}>({count})</span>
               )}
             </button>
           );
@@ -67,7 +67,7 @@ export function DataPage() {
           <span
             style={{
               marginLeft: 'auto',
-              fontSize: 9,
+              fontSize: 12,
               color: C.ac,
               fontWeight: 600,
               alignSelf: 'center',

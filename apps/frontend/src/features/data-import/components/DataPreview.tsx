@@ -30,7 +30,7 @@ function SummaryGrid({ meta }: { meta: LoadMeta }) {
       </div>
       <div className="carregar-dados__stat">
         <span className="carregar-dados__stat-value">{meta.machines}</span>
-        <span className="carregar-dados__stat-label">Maquinas</span>
+        <span className="carregar-dados__stat-label">Máquinas</span>
       </div>
       <div className="carregar-dados__stat">
         <span className="carregar-dados__stat-value">{meta.tools}</span>

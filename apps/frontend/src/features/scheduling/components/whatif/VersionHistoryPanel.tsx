@@ -86,7 +86,7 @@ export function VersionHistoryPanel({
                   {v.branchLabel && (
                     <span
                       style={{
-                        fontSize: 9,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: C.pp,
                         background: C.ppS,
@@ -102,7 +102,7 @@ export function VersionHistoryPanel({
                       style={{
                         padding: '2px 8px',
                         borderRadius: 4,
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 600,
                         background: C.acS,
                         color: C.ac,
@@ -114,11 +114,11 @@ export function VersionHistoryPanel({
                     </span>
                   )}
                 </div>
-                <span style={{ fontSize: 11, color: C.t3, fontFamily: 'var(--font-mono)' }}>
+                <span style={{ fontSize: 12, color: C.t3, fontFamily: 'var(--font-mono)' }}>
                   {v.id.slice(0, 8)}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>
                 {new Date(v.timestamp).toLocaleTimeString('pt-PT', {
                   hour: '2-digit',
                   minute: '2-digit',
@@ -137,7 +137,7 @@ export function VersionHistoryPanel({
                       cursor: 'pointer',
                       background: 'transparent',
                       color: C.t2,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: 'inherit',
                     }}
                   >
@@ -157,7 +157,7 @@ export function VersionHistoryPanel({
                       cursor: 'pointer',
                       background: 'transparent',
                       color: C.t2,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: 'inherit',
                     }}
                   >
@@ -183,7 +183,7 @@ export function VersionHistoryPanel({
                     border: `1px solid ${C.bd}`,
                     background: 'transparent',
                     color: C.t3,
-                    fontSize: 9,
+                    fontSize: 12,
                     fontFamily: 'inherit',
                   }}
                 />

@@ -3,7 +3,7 @@
  * Wraps the existing GanttView and adds drag-and-drop with DeviationPanel overlay.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type {
   Block,
   DayLoad,
@@ -12,7 +12,7 @@ import type {
   OptResult,
   ScheduleValidationReport,
 } from '../../../../lib/engine';
-import { DEFAULT_WORKFORCE_CONFIG, scoreSchedule } from '../../../../lib/engine';
+// scoreSchedule removed — metrics come from backend via neMetrics prop
 import { useClassifications } from '../../../../hooks/useClassifications';
 import { useGanttDragDrop } from '../../hooks/useGanttDragDrop';
 import { CapacityHistogram } from './CapacityHistogram';
@@ -41,35 +41,15 @@ export function GanttSplitPane({
   applyMove,
   undoMove,
   validation,
-  allOps,
+  allOps: _allOps,
   neMetrics,
 }: GanttSplitPaneProps) {
   const [selectedOpId, setSelectedOpId] = useState<string | null>(null);
   const [dayIdx, setDayIdx] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const ops = allOps ?? data.ops;
-
-  // Current metrics for deviation comparison
-  const currentMetrics = useMemo(() => {
-    if (neMetrics) return neMetrics;
-    if (blocks.length === 0) return null;
-    try {
-      return scoreSchedule(
-        blocks,
-        ops,
-        data.mSt ?? {},
-        data.workforceConfig ?? DEFAULT_WORKFORCE_CONFIG,
-        data.machines,
-        data.toolMap,
-        undefined,
-        undefined,
-        data.nDays,
-      );
-    } catch {
-      return null;
-    }
-  }, [neMetrics, blocks, ops, data]);
+  // Current metrics from backend (no local scoreSchedule)
+  const currentMetrics = neMetrics ?? null;
 
   const { blockDefinitions } = useClassifications();
   const { proposedMove, clearProposal, pushUndo } = useGanttDragDrop(data.machines, 44, 1);
@@ -122,10 +102,6 @@ export function GanttSplitPane({
         <DeviationPanel
           move={proposedMove}
           blocks={blocks}
-          ops={ops}
-          machines={data.machines}
-          toolMap={data.toolMap}
-          nDays={data.nDays}
           currentMetrics={currentMetrics}
           onConfirm={handleConfirmMove}
           onCancel={clearProposal}

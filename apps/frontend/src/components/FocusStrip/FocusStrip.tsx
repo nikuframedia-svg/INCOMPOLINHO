@@ -16,7 +16,7 @@ export function FocusStrip() {
   const setFocus = useUIStore((s) => s.actions.setFocus);
   const pills: Array<{ key: keyof FocusContext; label: string; value: string }> = [];
 
-  if (focus.machine) pills.push({ key: 'machine', label: 'Maquina', value: focus.machine });
+  if (focus.machine) pills.push({ key: 'machine', label: 'Máquina', value: focus.machine });
   if (focus.day) pills.push({ key: 'day', label: 'Dia', value: focus.day });
   if (focus.toolId) pills.push({ key: 'toolId', label: 'Ferramenta', value: focus.toolId });
   if (focus.scenario) pills.push({ key: 'scenario', label: 'Cenario', value: focus.scenario });

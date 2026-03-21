@@ -25,8 +25,8 @@ export function QuickReplan({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Zap size={14} strokeWidth={1.5} style={{ color: C.ac }} />
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>Auto-Replan Rápido</div>
-            <div style={{ fontSize: 9, color: C.t3 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>Auto-Replan Rápido</div>
+            <div style={{ fontSize: 12, color: C.t3 }}>
               Analisa operações e sugere movimentos de optimização
             </div>
           </div>
@@ -41,7 +41,7 @@ export function QuickReplan({
             border: 'none',
             background: arRunning ? C.s3 : C.ac,
             color: arRunning ? C.t3 : C.bg,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             cursor: arRunning ? 'wait' : 'pointer',
             fontFamily: 'inherit',
@@ -67,13 +67,13 @@ export function QuickReplan({
           {arSummary.actions.length === 0 ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Check size={12} strokeWidth={2} style={{ color: C.ac }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: C.ac }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.ac }}>
                 Plano óptimo — sem acções necessárias
               </span>
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 4 }}>
                 {arSummary.actions.length} acções encontradas · {arSummary.moveCount} movimentos
                 {arSummary.unresolvedCount > 0 && (
                   <span style={{ color: C.rd, marginLeft: 6 }}>
@@ -85,7 +85,7 @@ export function QuickReplan({
                 <div
                   key={ai}
                   style={{
-                    fontSize: 10,
+                    fontSize: 12,
                     color: C.t2,
                     padding: '2px 0',
                     display: 'flex',
@@ -97,7 +97,7 @@ export function QuickReplan({
                     style={{
                       fontFamily: "'JetBrains Mono',monospace",
                       color: C.ac,
-                      fontSize: 8,
+                      fontSize: 12,
                       padding: '1px 4px',
                       borderRadius: 3,
                       background: C.acS,
@@ -113,7 +113,7 @@ export function QuickReplan({
                 </div>
               ))}
               {arSummary.actions.length > 3 && (
-                <div style={{ fontSize: 9, color: C.t4, marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: C.t4, marginTop: 2 }}>
                   +{arSummary.actions.length - 3} mais...
                 </div>
               )}
@@ -127,7 +127,7 @@ export function QuickReplan({
                     border: `1px solid ${C.ac}44`,
                     background: C.acS,
                     color: C.ac,
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: 600,
                     cursor: 'pointer',
                     fontFamily: 'inherit',
@@ -180,7 +180,7 @@ export function CapacityGrid({
       >
         <div />
         {wdi.map((i) => (
-          <div key={i} style={{ textAlign: 'center', fontSize: 9, color: C.t3, fontWeight: 600 }}>
+          <div key={i} style={{ textAlign: 'center', fontSize: 12, color: C.t3, fontWeight: 600 }}>
             {dnames[i]} <span style={{ color: C.t4 }}>{dates[i]}</span>
           </div>
         ))}
@@ -196,7 +196,7 @@ export function CapacityGrid({
                 <span style={dot(mSt[mc.id] === 'down' ? C.rd : C.ac, mSt[mc.id] === 'down')} />
                 <span
                   style={{
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: 600,
                     color: mSt[mc.id] === 'down' ? C.rd : C.t1,
                     fontFamily: 'monospace',
@@ -204,7 +204,7 @@ export function CapacityGrid({
                 >
                   {mc.id}
                 </span>
-                <span style={{ fontSize: 8, color: C.t4 }}>{mc.area}</span>
+                <span style={{ fontSize: 12, color: C.t4 }}>{mc.area}</span>
               </div>
               {wdi.map((di) => {
                 const dc = cap[mc.id]?.[di] || { prod: 0, setup: 0, ops: 0, pcs: 0 };
@@ -236,14 +236,14 @@ export function CapacityGrid({
                       <>
                         <div
                           style={{
-                            fontSize: 9,
+                            fontSize: 12,
                             color: u > 1 ? C.rd : u > 0.85 ? C.yl : C.ac,
                             fontWeight: 600,
                           }}
                         >
                           {(u * 100).toFixed(0)}%
                         </div>
-                        <div style={{ fontSize: 8, color: C.t4 }}>
+                        <div style={{ fontSize: 12, color: C.t4 }}>
                           {dc.ops}op · {(dc.pcs / 1000).toFixed(0)}K
                         </div>
                       </>

@@ -45,7 +45,7 @@ const DEC_CATS: Record<string, DecCat> = {
   AUTO_REPLAN_OVERTIME: { label: 'Turno Extra', Icon: Moon, colorVar: 'var(--semantic-amber)' },
   AUTO_REPLAN_THIRD_SHIFT: { label: 'Turno Noite', Icon: Moon, colorVar: 'var(--semantic-amber)' },
   LOAD_LEVEL: { label: 'Resequencia', Icon: Layers, colorVar: 'var(--accent)' },
-  AUTO_REPLAN_SPLIT: { label: 'Divisao', Icon: Scissors, colorVar: 'var(--accent)' },
+  AUTO_REPLAN_SPLIT: { label: 'Divisão', Icon: Scissors, colorVar: 'var(--accent)' },
 };
 
 const DEF_CAT: DecCat = { label: 'Sistema', Icon: Zap, colorVar: 'var(--text-muted)' };
@@ -164,11 +164,11 @@ export function ShiftSummary({ dayData, allBlocks, shift, onNavigateToBlock }: S
 
         {/* 1. Production vs Planned */}
         <div className="shsm__section">
-          <div className="shsm__section-title">Producao vs Planeado</div>
+          <div className="shsm__section-title">Produção vs Planeado</div>
           <table className="shsm__table">
             <thead>
               <tr>
-                <th>Maquina</th>
+                <th>Máquina</th>
                 <th>Planeado</th>
                 <th>Produzido</th>
                 <th>Delta</th>
@@ -254,7 +254,7 @@ export function ShiftSummary({ dayData, allBlocks, shift, onNavigateToBlock }: S
         {/* 3. Shift Decisions (Firewall) */}
         <div className="shsm__section">
           <div className="shsm__section-title">
-            Decisoes do Turno
+            Decisões do Turno
             {totalDeviationCost > 0 && (
               <span className="shsm__cost-total" style={{ marginLeft: 8 }}>
                 Custo total: +{totalDeviationCost} min
@@ -262,7 +262,7 @@ export function ShiftSummary({ dayData, allBlocks, shift, onNavigateToBlock }: S
             )}
           </div>
           {shiftDecisions.length === 0 ? (
-            <div className="shsm__empty">Todas as decisoes foram automaticas.</div>
+            <div className="shsm__empty">Todas as decisões foram automáticas.</div>
           ) : (
             <div className="shsm__alert-list">
               {shiftDecisions.map((d) => {
@@ -288,7 +288,7 @@ export function ShiftSummary({ dayData, allBlocks, shift, onNavigateToBlock }: S
         <div className="shsm__section">
           <div className="shsm__section-title">Top 5 Prioridades Turno {nextShiftLabel(shift)}</div>
           {nextPriorities.length === 0 ? (
-            <div className="shsm__empty">Sem operacoes no proximo turno.</div>
+            <div className="shsm__empty">Sem operações no próximo turno.</div>
           ) : (
             <div className="shsm__priority-list">
               {nextPriorities.map((b) => (
@@ -336,7 +336,7 @@ export function ShiftSummary({ dayData, allBlocks, shift, onNavigateToBlock }: S
             className="shsm__notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Observacoes para o proximo turno..."
+            placeholder="Observações para o próximo turno..."
           />
         </div>
       </Collapsible>

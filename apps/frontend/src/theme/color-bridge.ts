@@ -9,7 +9,7 @@
 
 // Direct import authorized: color-bridge IS the engine shim layer that lib/engine.ts re-exports.
 // Importing from lib/engine.ts would create a circular dependency.
-import { C as EngineC, TC as EngineTC } from '@prodplan/scheduling-engine';
+import { C as EngineC, TC as EngineTC } from '../lib/scheduling-core/index.js';
 
 /** Resolve a CSS custom property to its computed value */
 function resolveVar(name: string, fallback: string): string {

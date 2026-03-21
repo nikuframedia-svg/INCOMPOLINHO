@@ -40,7 +40,7 @@ export function CTPChart({ timeline, dates, dnames, targetDay }: CTPChartProps) 
         x={PAD.l - 4}
         y={capY + 3}
         textAnchor="end"
-        style={{ fontSize: 8, fill: C.rd, ...mono }}
+        style={{ fontSize: 12, fill: C.rd, ...mono }}
       >
         {DAY_CAP}
       </text>
@@ -78,7 +78,7 @@ export function CTPChart({ timeline, dates, dnames, targetDay }: CTPChartProps) 
               y={H - 8}
               textAnchor="middle"
               style={{
-                fontSize: 8,
+                fontSize: 12,
                 fill: isTarget ? C.ac : C.t3,
                 fontWeight: isTarget ? 700 : 400,
                 ...mono,
@@ -90,7 +90,7 @@ export function CTPChart({ timeline, dates, dnames, targetDay }: CTPChartProps) 
               x={x + colW / 2 - 1}
               y={PAD.t + maxH - existH - newH - 4}
               textAnchor="middle"
-              style={{ fontSize: 8, fill: C.t2, ...mono }}
+              style={{ fontSize: 12, fill: C.t2, ...mono }}
             >
               {bar.existingLoad + bar.newOrderLoad > 0
                 ? Math.round(bar.existingLoad + bar.newOrderLoad)

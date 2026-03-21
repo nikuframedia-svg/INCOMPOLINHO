@@ -1,64 +1,19 @@
 /**
  * SchedulingExtras — Dispatch rule + direction dropdowns for SchedulingConfigPage.
- * Includes UCB1 bandit stats when AUTO mode is selected.
+ * AUTO mode resolves to EDD on the backend (learning engine handles selection server-side).
  */
 
-import { DISPATCH_BANDIT } from '@/lib/engine';
 import type { DispatchRule, PreStartStrategy } from '@/stores/useSettingsStore';
-import { useBanditStore } from '@/stores/useBanditStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 
 const DISPATCH_RULES: { value: DispatchRule; label: string }[] = [
-  { value: 'AUTO', label: 'AUTO — UCB1 Adaptive Selection' },
+  { value: 'AUTO', label: 'AUTO — Selecção adaptativa (backend)' },
   { value: 'ATCS', label: 'ATCS — Apparent Tardiness Cost with Setups' },
   { value: 'EDD', label: 'EDD — Earliest Due Date' },
   { value: 'CR', label: 'CR — Critical Ratio' },
   { value: 'SPT', label: 'SPT — Shortest Processing Time' },
   { value: 'WSPT', label: 'WSPT — Weighted Shortest Processing Time' },
 ];
-
-function BanditStats() {
-  const resetBandit = useBanditStore((s) => s.actions.resetBandit);
-  const stats = DISPATCH_BANDIT.getStats();
-  const currentPick = DISPATCH_BANDIT.select();
-
-  return (
-    <div className="constraint-toggles__param" style={{ marginTop: 8 }}>
-      <span className="constraint-toggles__param-label">
-        UCB1 selecciona: <strong>{currentPick}</strong>
-      </span>
-      <table style={{ width: '100%', fontSize: 12, marginTop: 4, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left', padding: '2px 8px' }}>Regra</th>
-            <th style={{ textAlign: 'right', padding: '2px 8px' }}>Runs</th>
-            <th style={{ textAlign: 'right', padding: '2px 8px' }}>Avg Reward</th>
-            <th style={{ textAlign: 'right', padding: '2px 8px' }}>UCB Score</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stats.map((s) => (
-            <tr key={s.rule}>
-              <td style={{ padding: '2px 8px' }}>{s.rule}</td>
-              <td style={{ textAlign: 'right', padding: '2px 8px' }}>{s.pulls}</td>
-              <td style={{ textAlign: 'right', padding: '2px 8px' }}>{s.avgReward.toFixed(3)}</td>
-              <td style={{ textAlign: 'right', padding: '2px 8px' }}>
-                {s.ucbScore === Infinity ? '\u221E' : s.ucbScore.toFixed(3)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button
-        type="button"
-        onClick={resetBandit}
-        style={{ marginTop: 6, fontSize: 11, cursor: 'pointer' }}
-      >
-        Reset UCB1
-      </button>
-    </div>
-  );
-}
 
 const SOLVER_OBJECTIVES: { value: string; label: string }[] = [
   { value: 'weighted_tardiness', label: 'Weighted Tardiness (minimizar atrasos ponderados)' },
@@ -98,7 +53,11 @@ export function SchedulingExtras() {
         </select>
       </div>
 
-      {dispatchRule === 'AUTO' && <BanditStats />}
+      {dispatchRule === 'AUTO' && (
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
+          AUTO resolve para EDD no backend. Aprendizagem UCB1 gerida pelo servidor.
+        </div>
+      )}
 
       <div className="constraint-toggles__param">
         <span className="constraint-toggles__param-label">Direcção de scheduling</span>
@@ -113,7 +72,7 @@ export function SchedulingExtras() {
       </div>
 
       <div className="constraint-toggles__param">
-        <span className="constraint-toggles__param-label">Buffer pre-producao (dias)</span>
+        <span className="constraint-toggles__param-label">Buffer pré-produção (dias)</span>
         <input
           type="number"
           className="constraint-toggles__param-select"
@@ -124,7 +83,7 @@ export function SchedulingExtras() {
           data-testid="pre-start-buffer-days"
           style={{ width: 80 }}
         />
-        <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 8 }}>
+        <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>
           Dias uteis antes da 1a data ISOP
         </span>
       </div>
@@ -191,7 +150,7 @@ export function SchedulingExtras() {
                 ))}
               </select>
             </div>
-            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4, lineHeight: 1.5 }}>
               CP-SAT e usado para problemas &lt;200 ops. Acima disso, fallback para ATCS client-side.
             </div>
           </>

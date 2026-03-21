@@ -90,7 +90,7 @@ export function SchedulingPage({ initialView = 'plan' }: { initialView?: string 
                 alignItems: 'center',
                 gap: 8,
                 marginBottom: 8,
-                fontSize: 11,
+                fontSize: 12,
                 color: C.rd,
                 fontWeight: 500,
               }}
@@ -113,7 +113,7 @@ export function SchedulingPage({ initialView = 'plan' }: { initialView?: string 
                 <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 2px', color: C.t1 }}>
                   Plano de produção — {eng.engineData.dnames[selDay]} {eng.engineData.dates[selDay]}
                 </h2>
-                <p style={{ fontSize: 11, color: C.t3, margin: 0 }}>
+                <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>
                   {machineCount} prensas · {dayBlocks.length} lotes
                   {problems.length > 0 &&
                     ` · ${problems.length} problema${problems.length !== 1 ? 's' : ''}`}

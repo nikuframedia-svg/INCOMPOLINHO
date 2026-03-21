@@ -51,7 +51,7 @@ export function Tag({ children, color }: { children: React.ReactNode; color: str
   return (
     <span
       style={{
-        fontSize: 9,
+        fontSize: 12,
         fontWeight: 600,
         color,
         letterSpacing: '.04em',
@@ -80,7 +80,7 @@ export function Metric({
     <div style={{ padding: large ? '16px' : '12px 14px' }}>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 12,
           color: C.t3,
           fontWeight: 500,
           marginBottom: 4,
@@ -100,7 +100,7 @@ export function Metric({
       >
         {value}
       </div>
-      {sub && <div style={{ fontSize: 10, color: C.t3, marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }

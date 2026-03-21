@@ -46,6 +46,16 @@ const CTPPage = lazy(() =>
   import('@/features/mrp/pages/CTPPage').then((m) => ({ default: m.CTPPage })),
 );
 
+/* ── Intelligence ── */
+const IntelligencePage = lazy(() =>
+  import('@/pages/Intelligence/Intelligence').then((m) => ({ default: m.Intelligence })),
+);
+
+/* ── Risk ── */
+const RiskPage = lazy(() =>
+  import('@/pages/Risk/Risk').then((m) => ({ default: m.Risk })),
+);
+
 /* ── Settings ── */
 const SettingsPage = lazy(() =>
   import('@/features/settings/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
@@ -122,6 +132,12 @@ export function App() {
                 <Route path="/mrp/orders" element={<OrdersPage />} />
                 <Route path="/mrp/stock/:sku" element={<StockDetailPage />} />
                 <Route path="/mrp/ctp" element={<CTPPage />} />
+
+                {/* Intelligence */}
+                <Route path="/intelligence" element={<IntelligencePage />} />
+
+                {/* Risk */}
+                <Route path="/risk" element={<RiskPage />} />
 
                 {/* Settings */}
                 <Route path="/settings" element={<SettingsPage />} />

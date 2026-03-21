@@ -1,13 +1,13 @@
 # Monte Carlo Robustness Simulation (S-05)
 # Runs N scenarios with perturbed durations/setups/breakdowns.
-# Uses HEURISTIC solver per scenario for speed (<10s total for 1000 scenarios).
+# Uses CP-SAT solver per scenario with short time limit (1s each).
 
 from __future__ import annotations
 
 import random
 import time
 
-from .heuristic_fallback import HeuristicFallback
+from .cpsat_solver import CpsatSolver
 from .perturbation import perturb_request
 from .schemas import SolverRequest
 
@@ -38,7 +38,7 @@ def monte_carlo_otd(
     """
     start_time = time.monotonic()
     rng = random.Random(seed)
-    heuristic = HeuristicFallback()
+    solver = CpsatSolver()
 
     # Build job metadata
     job_due = {j.id: j.due_date_min for j in request.jobs}
@@ -59,7 +59,9 @@ def monte_carlo_otd(
             breakdown_rate=breakdown_rate,
         )
 
-        result = heuristic.solve(perturbed)
+        # Use short time limit for Monte Carlo scenarios
+        perturbed.config.time_limit_s = 1
+        result = solver.solve(perturbed)
 
         # Calculate OTD for this scenario
         n_jobs = len(request.jobs)

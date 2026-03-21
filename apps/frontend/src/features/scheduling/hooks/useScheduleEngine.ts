@@ -7,10 +7,6 @@ export function useScheduleEngine(initialView = 'plan') {
     engineData: core.engineData,
     rushOrders: core.rushOrders,
     mSt: core.mSt,
-    tSt: core.tSt,
-    moves: core.moves,
-    failureEvents: core.failureEvents,
-    replanTimelines: core.replanTimelines,
     appliedReplan: core.appliedReplan,
   });
 

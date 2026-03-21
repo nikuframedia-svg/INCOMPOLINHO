@@ -28,7 +28,7 @@ describe('KPICard', () => {
   });
 
   it('renders unit next to value', () => {
-    render(<KPICard label="Producao" value="12,500" unit="pcs" />);
+    render(<KPICard label="Produção" value="12,500" unit="pcs" />);
     expect(screen.getByText('pcs')).toBeInTheDocument();
   });
 

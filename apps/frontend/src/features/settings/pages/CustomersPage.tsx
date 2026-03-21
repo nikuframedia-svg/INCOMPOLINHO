@@ -115,7 +115,7 @@ export function CustomersPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -128,7 +128,7 @@ export function CustomersPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -142,7 +142,7 @@ export function CustomersPage() {
         Clientes e Prioridades
       </h2>
 
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         {customers.length} clientes · Tier afecta prioridade de alertas e custo de atraso
         {editedCount > 0 && (
           <span style={{ marginLeft: 8, color: 'var(--accent)', fontWeight: 600 }}>
@@ -174,19 +174,19 @@ export function CustomersPage() {
               <tr key={c.code}>
                 <td
                   className="setup-matrix__cell"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500 }}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500 }}
                 >
                   {c.code}
                 </td>
                 <td
                   className="setup-matrix__cell"
-                  style={{ fontSize: 11, color: 'var(--text-primary)' }}
+                  style={{ fontSize: 12, color: 'var(--text-primary)' }}
                 >
                   {c.name}
                 </td>
                 <td
                   className="setup-matrix__cell"
-                  style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 10 }}
+                  style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 >
                   {c.orderCount}
                 </td>
@@ -196,7 +196,7 @@ export function CustomersPage() {
                     onChange={(e) => handleTierChange(c.code, Number(e.target.value))}
                     className="constraint-toggles__param-select"
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       width: 90,
                       textAlign: 'center',
                       color: tierColor(c.tier),
@@ -224,7 +224,7 @@ export function CustomersPage() {
                     style={{
                       width: 50,
                       textAlign: 'center',
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: 'var(--font-mono)',
                       fontWeight: 700,
                       color: multiplierColor(c.multiplier),
@@ -242,7 +242,7 @@ export function CustomersPage() {
                     onChange={(e) => updateSla(c.code, e.target.value)}
                     placeholder="—"
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       width: 100,
                       background: 'transparent',
                       border: '1px solid var(--border-default)',

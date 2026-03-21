@@ -74,7 +74,7 @@ export function DecisionsPanel({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {moves.length > 0 && (
             <Card style={{ padding: 12, background: C.acS, borderColor: C.ac + '22' }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: C.ac, marginBottom: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.ac, marginBottom: 4 }}>
                 Aplicadas ({moves.length})
               </div>
               {moves.map((mv, i) => {
@@ -86,7 +86,7 @@ export function DecisionsPanel({
                   >
                     <span
                       style={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: toolColor(tools, op?.t || ''),
                         fontFamily: 'monospace',
@@ -96,7 +96,7 @@ export function DecisionsPanel({
                     </span>
                     <span
                       style={{
-                        fontSize: 10,
+                        fontSize: 12,
                         color: C.rd,
                         textDecoration: 'line-through',
                         fontFamily: 'monospace',
@@ -109,7 +109,7 @@ export function DecisionsPanel({
                     </span>
                     <span
                       style={{
-                        fontSize: 10,
+                        fontSize: 12,
                         color: C.ac,
                         fontFamily: 'monospace',
                         fontWeight: 600,
@@ -117,7 +117,7 @@ export function DecisionsPanel({
                     >
                       {mv.toM}
                     </span>
-                    <span style={{ flex: 1, fontSize: 9, color: C.t3 }}>{op?.nm}</span>
+                    <span style={{ flex: 1, fontSize: 12, color: C.t3 }}>{op?.nm}</span>
                     <Pill color={C.rd} active onClick={() => undoMove(mv.opId)} size="sm" aria-label={`Desfazer movimentação de ${op?.t ?? mv.opId}`}>
                       <Undo2 size={9} strokeWidth={1.5} />
                     </Pill>
@@ -129,8 +129,8 @@ export function DecisionsPanel({
 
           {decs.length === 0 && moves.length === 0 && (
             <Card style={{ padding: 40, textAlign: 'center' }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.t3 }}>Sem ações pendentes</div>
-              <div style={{ fontSize: 10, color: C.t4, marginTop: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.t3 }}>Sem ações pendentes</div>
+              <div style={{ fontSize: 12, color: C.t4, marginTop: 4 }}>
                 Marca máquinas/ferramentas DOWN para ativar
               </div>
             </Card>

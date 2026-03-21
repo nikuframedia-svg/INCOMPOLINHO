@@ -8,7 +8,7 @@ import { Link, useParams } from 'react-router-dom';
 import { EmptyState } from '@/components/Common/EmptyState';
 import { SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { useScheduleData } from '@/hooks/useScheduleData';
-import { C, computeMRP, computeMRPSkuView, computeROPSku } from '@/lib/engine';
+import { C } from '@/lib/engine';
 import { useDataStore } from '@/stores/useDataStore';
 import { StockEventTable } from '../components/StockEventTable';
 import { StockProjectionChart } from '../components/StockProjectionChart';
@@ -23,7 +23,7 @@ function InfoField({ label, value, color }: { label: string; value: string; colo
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span
-        style={{ fontSize: 9, color: C.t3, textTransform: 'uppercase', letterSpacing: '.03em' }}
+        style={{ fontSize: 12, color: C.t3, textTransform: 'uppercase', letterSpacing: '.03em' }}
       >
         {label}
       </span>
@@ -34,21 +34,13 @@ function InfoField({ label, value, color }: { label: string; value: string; colo
 
 export function StockDetailPage() {
   const { sku } = useParams<{ sku: string }>();
-  const { engine, blocks, loading, error } = useScheduleData();
+  const { engine, blocks, loading, error, mrpSkuView: skuView, mrpRopSku: ropSummary } = useScheduleData();
   const trustScore = useDataStore((s) => s.meta?.trustScore);
-
-  const mrp = useMemo(() => (engine ? computeMRP(engine) : null), [engine]);
-  const skuView = useMemo(() => (mrp ? computeMRPSkuView(mrp) : null), [mrp]);
 
   const skuRec = useMemo(() => {
     if (!skuView || !sku) return null;
     return skuView.skuRecords.find((r) => r.sku === sku) ?? null;
   }, [skuView, sku]);
-
-  const ropSummary = useMemo(() => {
-    if (!mrp || !engine) return null;
-    return computeROPSku(mrp, engine, 95);
-  }, [mrp, engine]);
 
   const safetyStock = useMemo(() => {
     if (!ropSummary || !sku) return undefined;
@@ -79,10 +71,10 @@ export function StockDetailPage() {
     );
   }
 
-  if (error || !engine || !mrp || !skuRec || !chartData) {
+  if (error || !engine || !skuRec || !chartData) {
     return (
       <div style={{ padding: 24 }}>
-        <Link to="/mrp" style={{ fontSize: 11, color: C.ac, textDecoration: 'none' }}>
+        <Link to="/mrp" style={{ fontSize: 12, color: C.ac, textDecoration: 'none' }}>
           ← MRP
         </Link>
         <EmptyState
@@ -102,7 +94,7 @@ export function StockDetailPage() {
       <Link
         to="/mrp"
         style={{
-          fontSize: 11,
+          fontSize: 12,
           color: C.ac,
           textDecoration: 'none',
           marginBottom: 12,
@@ -118,7 +110,7 @@ export function StockDetailPage() {
           <span style={{ fontSize: 16, fontWeight: 700, color: C.t1, ...mono }}>{skuRec.sku}</span>
           <span style={{ fontSize: 12, color: C.t2 }}>{skuRec.name}</span>
           {skuRec.twin && (
-            <span style={{ fontSize: 9, color: C.yl, fontWeight: 600 }}>Gémea: {skuRec.twin}</span>
+            <span style={{ fontSize: 12, color: C.yl, fontWeight: 600 }}>Gémea: {skuRec.twin}</span>
           )}
         </div>
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
@@ -147,7 +139,7 @@ export function StockDetailPage() {
             alignItems: 'center',
             gap: 8,
             padding: '6px 12px',
-            fontSize: 10,
+            fontSize: 12,
             color: C.t2,
             marginTop: 4,
             marginBottom: 12,
@@ -164,7 +156,7 @@ export function StockDetailPage() {
           />
           Confiança desta projecção:{' '}
           <span style={{ fontWeight: 700, color: confColor, ...mono }}>{confidence}%</span>
-          <span style={{ fontSize: 9, color: C.t3 }}>(baseado em TrustIndex + horizonte)</span>
+          <span style={{ fontSize: 12, color: C.t3 }}>(baseado em TrustIndex + horizonte)</span>
         </div>
       )}
 

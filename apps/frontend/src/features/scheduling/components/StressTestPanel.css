@@ -73,7 +73,7 @@
 }
 
 .stress-panel__test-id {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--text-ghost);
@@ -86,13 +86,13 @@
 }
 
 .stress-panel__test-name {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
 .stress-panel__test-desc {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-ghost);
 }
 
@@ -120,7 +120,7 @@
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-ghost);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -137,14 +137,14 @@
   grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 6px;
   padding: 8px 10px 4px 52px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .stress-panel__detail-label {
   font-weight: 600;
   color: var(--text-ghost);
   text-transform: uppercase;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.04em;
 }
 
@@ -179,7 +179,7 @@
 }
 
 .stress-panel__fragility-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -187,7 +187,7 @@
 }
 
 .stress-panel__fragility-detail {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
 }
@@ -212,6 +212,6 @@
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.2);
   color: var(--semantic-red);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }

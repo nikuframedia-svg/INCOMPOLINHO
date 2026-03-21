@@ -175,7 +175,7 @@ export function ConsoleDay() {
             {dayData.dayName} — {dayData.date}
           </h1>
           <span className="cday__subtitle">
-            {dayData.blocks.length} blocos · {dayData.machineLoads.length} maquinas
+            {dayData.blocks.length} blocos · {dayData.machineLoads.length} máquinas
           </span>
         </div>
         <span
@@ -194,7 +194,7 @@ export function ConsoleDay() {
           subtitle={dayData.totalPcs > 10000 ? 'Dia de alta carga' : 'Volume normal'}
         />
         <KPICard
-          label="Producao"
+          label="Produção"
           value={fmtMin(dayData.totalProdMin)}
           unit="min"
           subtitle={`${dayData.blocks.length} blocos em ${dayData.machineLoads.length} maq.`}
@@ -206,7 +206,7 @@ export function ConsoleDay() {
           subtitle={formatSetupTime(dayData.totalSetupMin, dayData.blocks.length).qualifier}
         />
         <KPICard
-          label="Utilizacao"
+          label="Utilização"
           value={`${(dayData.factoryUtil * 100).toFixed(0)}`}
           unit="%"
           statusColor={utilColor(dayData.factoryUtil)}
@@ -245,7 +245,7 @@ export function ConsoleDay() {
 
       <Collapsible title="Pendentes" defaultOpen={pending.length > 0} badge={`${pending.length}`}>
         {pending.length === 0 ? (
-          <div className="cday__empty">Sem operacoes pendentes.</div>
+          <div className="cday__empty">Sem operações pendentes.</div>
         ) : (
           <div className="cday__ops-list">
             {pending.map((b) => (
@@ -265,7 +265,7 @@ export function ConsoleDay() {
 
       <Collapsible title="Concluidas" defaultOpen={false} badge={`${completed.length}`}>
         {completed.length === 0 ? (
-          <div className="cday__empty">Sem operacoes concluidas.</div>
+          <div className="cday__empty">Sem operações concluídas.</div>
         ) : (
           <div className="cday__ops-list">
             {completed.map((b) => (

@@ -30,7 +30,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
         </Tag>
         <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{d.title}</span>
       </div>
-      <div style={{ fontSize: 10, color: C.t3, marginBottom: 6 }}>{d.desc}</div>
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 6 }}>{d.desc}</div>
 
       {d.type === 'replan' && imp && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -56,10 +56,10 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
             ] as Array<{ l: string; v: unknown; c?: string }>
           ).map((m, i) => (
             <div key={i} style={{ background: C.bg, borderRadius: 6, padding: '4px 8px' }}>
-              <div style={{ fontSize: 8, color: C.t4 }}>{m.l}</div>
+              <div style={{ fontSize: 12, color: C.t4 }}>{m.l}</div>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: m.c || C.t1,
                   fontFamily: 'monospace',
@@ -75,7 +75,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
       {!!imp?.stockRisk && (
         <div
           style={{
-            fontSize: 10,
+            fontSize: 12,
             color: C.yl,
             fontWeight: 600,
             marginBottom: 4,
@@ -88,7 +88,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
         </div>
       )}
       {!!imp?.sharedMP && (
-        <div style={{ fontSize: 10, color: C.cy, marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: C.cy, marginBottom: 4 }}>
           MP partilhada — oportunidade agrupar
         </div>
       )}
@@ -100,7 +100,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
             .slice(0, 6)
             .map((dl) => (
               <div key={dl.day} style={{ flex: 1, textAlign: 'center' }}>
-                <div style={{ fontSize: 8, color: C.t4 }}>{dnames[dl.day]}</div>
+                <div style={{ fontSize: 12, color: C.t4 }}>{dnames[dl.day]}</div>
                 <div
                   style={{
                     height: 24,
@@ -131,7 +131,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
                 </div>
                 <div
                   style={{
-                    fontSize: 8,
+                    fontSize: 12,
                     color: dl.util > 1 ? C.rd : C.ac,
                     fontWeight: 600,
                   }}
@@ -152,7 +152,7 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
             border: `1px solid ${C.pp}33`,
             background: xai === d.id ? C.ppS : 'transparent',
             color: C.pp,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -203,12 +203,12 @@ export function DecisionCard({ d, dnames, xai, setXai, applyMove, sC }: Decision
                 borderBottom: i < d.reasoning.length - 1 ? `1px solid ${C.bd}` : 'none',
               }}
             >
-              <span style={{ fontSize: 10, color: C.pp, fontWeight: 600, minWidth: 16 }}>
+              <span style={{ fontSize: 12, color: C.pp, fontWeight: 600, minWidth: 16 }}>
                 {i + 1}.
               </span>
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: 12,
                   color: r.startsWith('\u2192')
                     ? C.ac
                     : r.startsWith('\u26A0')

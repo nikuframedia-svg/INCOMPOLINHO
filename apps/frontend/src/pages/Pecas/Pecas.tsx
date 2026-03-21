@@ -149,7 +149,7 @@ export function Pecas() {
             Todas as peças (SKUs) com stock, procura, backlog e cobertura de produção.
           </p>
         </div>
-        <span style={{ fontSize: 11, color: C.t3 }}>
+        <span style={{ fontSize: 12, color: C.t3 }}>
           {totalSKUs} SKUs · {engine.ops.length} operações
         </span>
       </div>
@@ -227,7 +227,7 @@ export function Pecas() {
           />
           <span>Só backlog</span>
         </label>
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {filteredRows.length} resultados
         </span>
       </div>
@@ -368,7 +368,7 @@ function SCard({ label, value, color }: { label: string; value: string; color: s
     <div className="pec__scard" style={{ borderLeft: `3px solid ${color}` }}>
       <span
         style={{
-          fontSize: 8,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t3,
           textTransform: 'uppercase',

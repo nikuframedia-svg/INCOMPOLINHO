@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from src.domain.solver.cpsat_solver import CpsatSolver
-from src.domain.solver.heuristic_fallback import HeuristicFallback
 from src.domain.solver.router_logic import SolverRouter
 from src.domain.solver.schemas import (
     ConstraintConfigInput,
@@ -733,49 +732,6 @@ class TestCombinedConstraints:
         )
 
 
-class TestHeuristicFallback:
-    def setup_method(self):
-        self.solver = HeuristicFallback()
-
-    def test_heuristic_basic(self):
-        """Heuristic produces valid schedule."""
-        jobs = [
-            _make_job("J1", "SKU1", 200, 1.0, [_make_op("J1_O1", "M1", duration=60)]),
-            _make_job("J2", "SKU2", 300, 2.0, [_make_op("J2_O1", "M1", duration=60)]),
-        ]
-        machines = [MachineInput(id="M1")]
-        request = _make_request(jobs, machines)
-
-        result = self.solver.solve(request)
-
-        assert result.solver_used == "heuristic"
-        assert result.status == "feasible"
-        assert len(result.schedule) == 2
-
-    def test_heuristic_empty(self):
-        """Empty input → empty schedule."""
-        request = _make_request([], [MachineInput(id="M1")])
-        result = self.solver.solve(request)
-
-        assert result.n_ops == 0
-        assert result.status == "optimal"
-
-    def test_heuristic_multi_machine(self):
-        """Heuristic handles multiple machines."""
-        jobs = [
-            _make_job("J1", "SKU1", 200, 1.0, [_make_op("J1_O1", "M1", duration=60)]),
-            _make_job("J2", "SKU2", 200, 1.0, [_make_op("J2_O1", "M2", duration=60)]),
-        ]
-        machines = [MachineInput(id="M1"), MachineInput(id="M2")]
-        request = _make_request(jobs, machines)
-
-        result = self.solver.solve(request)
-
-        assert len(result.schedule) == 2
-        machines_used = {s.machine_id for s in result.schedule}
-        assert machines_used == {"M1", "M2"}
-
-
 # ── SAT-01: JIT Earliness Penalty Tests ──
 
 
@@ -1079,10 +1035,10 @@ class TestSolverRouter:
         result = self.router.solve(request)
         assert result.solver_used == "cpsat"
 
-    def test_router_large_uses_heuristic(self):
-        """>800 ops → heuristic fallback."""
+    def test_router_large_uses_cpsat(self):
+        """>200 ops → CP-SAT with 60s time limit."""
         jobs = []
-        for i in range(810):
+        for i in range(210):
             jobs.append(
                 _make_job(
                     f"J{i}",
@@ -1093,11 +1049,11 @@ class TestSolverRouter:
                 )
             )
         machines = [MachineInput(id=f"M{i}") for i in range(5)]
-        request = _make_request(jobs, machines, time_limit=5)
+        request = _make_request(jobs, machines, time_limit=60)
 
         result = self.router.solve(request)
-        assert result.solver_used == "heuristic"
-        assert result.n_ops == 810
+        assert result.solver_used == "cpsat"
+        assert result.n_ops == 210
 
     def test_router_empty(self):
         """0 jobs → handled gracefully."""

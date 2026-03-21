@@ -47,7 +47,7 @@ export function SetupMatrixPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -58,7 +58,7 @@ export function SetupMatrixPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -73,12 +73,12 @@ export function SetupMatrixPage() {
       </h2>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Filtrar por máquina:</label>
+        <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Filtrar por máquina:</label>
         <select
           className="constraint-toggles__param-select"
           value={machineFilter}
           onChange={(e) => setMachineFilter(e.target.value)}
-          style={{ fontSize: 11 }}
+          style={{ fontSize: 12 }}
         >
           <option value="">Todas ({engine.tools.length} ferramentas)</option>
           {machines.map((m) => (
@@ -88,7 +88,7 @@ export function SetupMatrixPage() {
           ))}
         </select>
         {overrideCount > 0 && (
-          <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
             {overrideCount} editado{overrideCount > 1 ? 's' : ''}
           </span>
         )}

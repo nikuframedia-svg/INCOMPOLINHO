@@ -47,14 +47,14 @@ export function CapacityHistogram({ cap, machines, dayIdx }: CapacityHistogramPr
       xAxis: {
         type: 'category' as const,
         data: names,
-        axisLabel: { fontSize: 10, color: 'var(--text-muted)' },
+        axisLabel: { fontSize: 12, color: 'var(--text-muted)' },
         axisLine: { show: false },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value' as const,
         max: 120,
-        axisLabel: { fontSize: 9, color: 'var(--text-secondary)', formatter: '{value}%' },
+        axisLabel: { fontSize: 12, color: 'var(--text-secondary)', formatter: '{value}%' },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
       },
       series: [
@@ -85,7 +85,7 @@ export function CapacityHistogram({ cap, machines, dayIdx }: CapacityHistogramPr
 
   return (
     <div className="cap-hist" data-testid="capacity-histogram">
-      <div className="cap-hist__title">Utilizacao por Maquina</div>
+      <div className="cap-hist__title">Utilização por Máquina</div>
       <ReactEChartsCore
         echarts={echarts}
         option={option}

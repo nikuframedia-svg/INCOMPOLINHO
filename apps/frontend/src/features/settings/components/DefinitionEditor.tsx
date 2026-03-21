@@ -110,7 +110,7 @@ export function DefinitionEditor({ definition, onChange, impactPreview }: Defini
         {definition.versions.length > 0 && (
           <button
             className="constraint-toggles__param-select"
-            style={{ cursor: 'pointer', fontSize: 10, padding: '2px 8px' }}
+            style={{ cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}
             onClick={rollback}
           >
             Reverter

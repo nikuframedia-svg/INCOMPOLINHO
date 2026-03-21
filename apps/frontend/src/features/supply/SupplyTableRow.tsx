@@ -54,7 +54,7 @@ export function SupplyTableRow({
         </td>
         <td>
           <span
-            style={{ ...mono, fontSize: 11, fontWeight: 600, color: C.t1, cursor: 'pointer' }}
+            style={{ ...mono, fontSize: 12, fontWeight: 600, color: C.t1, cursor: 'pointer' }}
             onClick={(e) => {
               e.stopPropagation();
               openContextPanel({ type: 'tool', id: row.toolCode });
@@ -66,7 +66,7 @@ export function SupplyTableRow({
         </td>
         <td>
           <span
-            style={{ fontSize: 10, color: C.t2 }}
+            style={{ fontSize: 12, color: C.t2 }}
             title={row.skus.map((s) => `${s.sku}: ${s.name}`).join('\n')}
           >
             {skuLabel}
@@ -74,7 +74,7 @@ export function SupplyTableRow({
         </td>
         <td>
           <span
-            style={{ ...mono, fontSize: 10, color: C.t2, cursor: 'pointer' }}
+            style={{ ...mono, fontSize: 12, color: C.t2, cursor: 'pointer' }}
             onClick={(e) => {
               e.stopPropagation();
               openContextPanel({ type: 'machine', id: row.machine });
@@ -95,47 +95,47 @@ export function SupplyTableRow({
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: stockColor }}>
+          <span style={{ ...mono, fontSize: 12, color: stockColor }}>
             {fmtQty(row.currentStock)}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: row.backlog > 0 ? C.yl : C.t4 }}>
+          <span style={{ ...mono, fontSize: 12, color: row.backlog > 0 ? C.yl : C.t4 }}>
             {row.backlog > 0 ? fmtQty(row.backlog) : '-'}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: row.belowSS ? C.rd : C.t3 }}>
+          <span style={{ ...mono, fontSize: 12, color: row.belowSS ? C.rd : C.t3 }}>
             {row.safetyStock > 0 ? fmtQty(row.safetyStock) : '-'}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: row.belowROP ? C.yl : C.t3 }}>
+          <span style={{ ...mono, fontSize: 12, color: row.belowROP ? C.yl : C.t3 }}>
             {row.rop > 0 ? fmtQty(row.rop) : '-'}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: covColor }}>
+          <span style={{ ...mono, fontSize: 12, color: covColor }}>
             {row.totalDemand > 0 ? `${row.coverageDays.toFixed(1)}d` : '-'}
           </span>
         </td>
         <td>
           {row.stockoutDay !== null ? (
-            <span style={{ ...mono, fontSize: 10, color: C.rd, fontWeight: 600 }}>
+            <span style={{ ...mono, fontSize: 12, color: C.rd, fontWeight: 600 }}>
               D{row.stockoutDay}
               {row.stockoutDate && (
                 <span style={{ fontWeight: 400, color: C.t3 }}> ({row.stockoutDate})</span>
               )}
             </span>
           ) : (
-            <span style={{ fontSize: 10, color: C.t4 }}>—</span>
+            <span style={{ fontSize: 12, color: C.t4 }}>—</span>
           )}
         </td>
         <td>
           <span className={`supply__badge ${statusBadge.cls}`}>{statusBadge.label}</span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: row.totalPlannedQty > 0 ? C.ac : C.t4 }}>
+          <span style={{ ...mono, fontSize: 12, color: row.totalPlannedQty > 0 ? C.ac : C.t4 }}>
             {row.totalPlannedQty > 0 ? fmtQty(row.totalPlannedQty) : '-'}
           </span>
         </td>
@@ -180,7 +180,7 @@ export function SupplyTableRow({
                       </div>
                       <div
                         style={{
-                          fontSize: 9,
+                          fontSize: 12,
                           color: C.t3,
                           ...mono,
                           whiteSpace: 'nowrap',
@@ -193,11 +193,11 @@ export function SupplyTableRow({
                     </div>
                   ))
                 ) : (
-                  <div style={{ fontSize: 11, color: C.t3, padding: '4px 0' }}>
+                  <div style={{ fontSize: 12, color: C.t3, padding: '4px 0' }}>
                     Sem acções pendentes
                   </div>
                 )}
-                <div style={{ fontSize: 9, color: C.t3, display: 'flex', gap: 14, marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: C.t3, display: 'flex', gap: 14, marginTop: 4 }}>
                   <span>Rate: {row.ratePerHour} p/h</span>
                   <span>Backlog: {row.backlog > 0 ? fmtQty(row.backlog) : '-'}</span>
                   <span>Demand total: {fmtQty(row.totalDemand)}</span>

@@ -40,20 +40,20 @@ export function ClientGroup({
             <ChevronRight size={12} color={C.t3} />
           )}
           <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{group.customerName}</span>
-          <span style={{ fontSize: 9, color: C.t3, ...mono }}>{group.customerCode}</span>
+          <span style={{ fontSize: 12, color: C.t3, ...mono }}>{group.customerCode}</span>
         </span>
         <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: C.t2 }}>{group.totalOrders} encomendas</span>
+          <span style={{ fontSize: 12, color: C.t2 }}>{group.totalOrders} encomendas</span>
           {group.criticalCount > 0 && (
-            <span style={{ fontSize: 9, color: C.rd, fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>
               {group.criticalCount} criticas
             </span>
           )}
           {group.warningCount > 0 && (
-            <span style={{ fontSize: 9, color: C.yl }}>{group.warningCount} em risco</span>
+            <span style={{ fontSize: 12, color: C.yl }}>{group.warningCount} em risco</span>
           )}
           {group.totalShortfall > 0 && (
-            <span style={{ ...mono, fontSize: 10, color: C.rd }}>
+            <span style={{ ...mono, fontSize: 12, color: C.rd }}>
               Deficit: {fmtQty(group.totalShortfall)}
             </span>
           )}

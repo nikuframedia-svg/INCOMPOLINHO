@@ -72,9 +72,9 @@ export function DataImportPage() {
             <CalendarDays size={16} />
           </div>
           <div>
-            <div className="carregar-dados__section-title">ISOP — Plano de Producao</div>
+            <div className="carregar-dados__section-title">ISOP — Plano de Produção</div>
             <div className="carregar-dados__section-subtitle">
-              Demand, clientes, stock, WIP, atraso, datas de producao
+              Demand, clientes, stock, WIP, atraso, datas de produção
             </div>
           </div>
         </div>

@@ -19,7 +19,7 @@
   border: 1px solid var(--border-subtle);
   background: var(--bg-raised);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 12px;
   font-family: inherit;
 }
 
@@ -29,7 +29,7 @@
 }
 
 .tools-tab__count {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-ghost);
   margin-left: auto;
 }
@@ -37,12 +37,12 @@
 .tools-tab__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .tools-tab__table th {
   text-align: left;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-ghost);
   text-transform: uppercase;

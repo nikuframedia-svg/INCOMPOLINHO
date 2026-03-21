@@ -1,5 +1,5 @@
 /**
- * ConsolePage — Centro de Comando Diario
+ * ConsolePage — Centro de Comando Diário
  *
  * Main landing page. Select a day from the planning horizon and see
  * KPIs, machines, operations, operators, alerts, decisions, D+1, transparency.
@@ -130,9 +130,9 @@ export function ConsolePage() {
     if (!dayData) return '';
     const alertCount = dayData.violations.length + dayData.infeasibilities.length;
     if (alertCount === 0) {
-      return `Dia ${dayData.dayName} ${dayData.date} — ${dayData.okBlocks.length} operacoes escalonadas sem problemas.`;
+      return `Dia ${dayData.dayName} ${dayData.date} — ${dayData.okBlocks.length} operações escalonadas sem problemas.`;
     }
-    return `Dia ${dayData.dayName} ${dayData.date} — ${alertCount} alerta(s): ${dayData.infeasibilities.length} infeasivel(eis), ${dayData.violations.length} violacao(oes).`;
+    return `Dia ${dayData.dayName} ${dayData.date} — ${alertCount} alerta(s): ${dayData.infeasibilities.length} inviável(eis), ${dayData.violations.length} violação(ões).`;
   }, [dayData]);
 
   // Interactions
@@ -196,7 +196,7 @@ export function ConsolePage() {
       addToast(`${latest.machineId} parada. Atraso <30min — plano ajustado automaticamente.`, 'info');
     } else {
       addToast(
-        `${latest.machineId} parada. Atraso estimado >30min — vai a pagina Scheduling para redistribuir carga.`,
+        `${latest.machineId} parada. Atraso estimado >30min — vai à página Scheduling para redistribuir carga.`,
         'warning',
         6000,
       );
@@ -210,10 +210,10 @@ export function ConsolePage() {
         <div className="cmd__header">
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 600, color: C.t1, margin: 0 }}>
-              Centro de Comando Diario
+              Centro de Comando Diário
             </h1>
             <p className="page-desc">
-              Visao completa por dia: maquinas, operacoes, operadores, alertas e decisoes.
+              Visão completa por dia: máquinas, operações, operadores, alertas e decisões.
             </p>
           </div>
         </div>
@@ -246,10 +246,10 @@ export function ConsolePage() {
         <div className="cmd__header">
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 600, color: C.t1, margin: 0 }}>
-              Centro de Comando Diario
+              Centro de Comando Diário
             </h1>
             <p className="page-desc">
-              Visao completa por dia: maquinas, operacoes, operadores, alertas e decisoes.
+              Visão completa por dia: máquinas, operações, operadores, alertas e decisões.
             </p>
           </div>
         </div>
@@ -271,14 +271,14 @@ export function ConsolePage() {
       <div className="cmd__header">
         <div>
           <h1 style={{ fontSize: 18, fontWeight: 600, color: C.t1, margin: 0 }}>
-            Centro de Comando Diario
+            Centro de Comando Diário
           </h1>
           <p className="page-desc">
-            Visao completa por dia: maquinas, operacoes, operadores, alertas e decisoes.
+            Visão completa por dia: máquinas, operações, operadores, alertas e decisões.
           </p>
         </div>
-        <span style={{ fontSize: 11, color: C.t3, fontFamily: 'var(--font-mono)' }}>
-          {dayData.nDays} dias · {allBlocks.length} blocos · {engine.machines.length} maquinas
+        <span style={{ fontSize: 12, color: C.t3, fontFamily: 'var(--font-mono)' }}>
+          {dayData.nDays} dias · {allBlocks.length} blocos · {engine.machines.length} máquinas
         </span>
       </div>
 
@@ -297,7 +297,7 @@ export function ConsolePage() {
 
         <Link
           to={`/console/day/${dayData.date.split('/').join('_')}`}
-          style={{ fontSize: 11, color: C.ac, textDecoration: 'none', alignSelf: 'flex-end' }}
+          style={{ fontSize: 12, color: C.ac, textDecoration: 'none', alignSelf: 'flex-end' }}
         >
           Ver dia completo →
         </Link>
@@ -385,12 +385,7 @@ export function ConsolePage() {
             operatorCapacity={dayData.operatorCapacity}
           />
 
-          <D1Preparation
-            forecast={dayData.d1Forecast}
-            blocks={allBlocks}
-            workforceConfig={engine.workforceConfig}
-            workdays={engine.workdays}
-          />
+          <D1Preparation forecast={dayData.d1Forecast} />
         </div>
       </div>
 

@@ -10,7 +10,8 @@ import type {
   ImpactReport,
   MoveAction,
 } from '../../../lib/engine';
-import { analyzeAllFailures, cascadingReplan } from '../../../lib/engine';
+import { scheduleReplanApi } from '../../../lib/api';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
 import { useToastStore } from '../../../stores/useToastStore';
 
 export interface FailureState {
@@ -47,7 +48,7 @@ export function useFailureManagement(
   data: EngineData,
   blocks: Block[],
   wdi: number[],
-  buildArInput: () => unknown,
+  _buildArInput: () => unknown,
   applyMove: (opId: string, toM: string) => void,
   onReplanComplete?: (info: {
     trigger: string;
@@ -87,7 +88,45 @@ export function useFailureManagement(
     };
     const newF = [...failures, f];
     setFailures(newF);
-    setFailureImpacts(analyzeAllFailures(newF, blocks, data.nDays));
+    // Simple local impact estimation: count blocks affected by each failure
+    const impacts: ImpactReport[] = newF.map((fe) => {
+      const affected = blocks.filter(
+        (b) =>
+          b.dayIdx >= fe.startDay &&
+          b.dayIdx <= fe.endDay &&
+          ((fe.resourceType === 'machine' && b.machineId === fe.resourceId) ||
+            (fe.resourceType === 'tool' && b.toolId === fe.resourceId)),
+      );
+      const totalQty = affected.reduce((s, b) => s + (b.qty ?? 0), 0);
+      const totalMin = affected.reduce((s, b) => s + (b.endMin - b.startMin), 0);
+      return {
+        failureEvent: fe,
+        impactedBlocks: affected.map((b) => ({
+          opId: b.opId,
+          toolId: b.toolId,
+          sku: b.sku,
+          machineId: b.machineId,
+          dayIdx: b.dayIdx,
+          shift: (b.startMin < 510 ? 'X' : 'Y') as 'X' | 'Y',
+          scheduledQty: b.qty ?? 0,
+          qtyAtRisk: b.qty ?? 0,
+          minutesAtRisk: b.endMin - b.startMin,
+          hasAlternative: false,
+          altMachine: null,
+        })),
+        summary: {
+          totalBlocksAffected: affected.length,
+          totalQtyAtRisk: totalQty,
+          totalMinutesAtRisk: totalMin,
+          blocksWithAlternative: 0,
+          blocksWithoutAlternative: affected.length,
+          opsAffected: new Set(affected.map((b) => b.opId)).size,
+          skusAffected: new Set(affected.map((b) => b.sku)).size,
+        },
+        dailyImpact: [],
+      } satisfies ImpactReport;
+    });
+    setFailureImpacts(impacts);
     setShowFailureForm(false);
     setFfDesc('');
   }, [
@@ -107,56 +146,71 @@ export function useFailureManagement(
     (id: string) => {
       const newF = failures.filter((f) => f.id !== id);
       setFailures(newF);
-      setFailureImpacts(newF.length > 0 ? analyzeAllFailures(newF, blocks, data.nDays) : []);
+      setFailureImpacts(newF.length > 0 ? failureImpacts.filter((i) => i.failureEvent.id !== id) : []);
     },
-    [failures, blocks, data.nDays],
+    [failures, failureImpacts],
   );
 
-  const runCascadingReplan = useCallback(() => {
+  const runCascadingReplan = useCallback(async () => {
     if (failures.length === 0) return;
     setCascRunning(true);
-    setTimeout(() => {
-      const input = buildArInput();
-      try {
-        const result = cascadingReplan(
-          input as Parameters<typeof cascadingReplan>[0],
-          failures,
-          blocks,
+    try {
+      const nikufraData = getCachedNikufraData();
+      if (!nikufraData) throw new Error('No schedule data cached');
+
+      const disruption = {
+        type: 'cascading_failure' as const,
+        resource_id: failures[0].resourceId,
+        start_day: Math.min(...failures.map((f) => f.startDay)),
+        end_day: Math.max(...failures.map((f) => f.endDay)),
+        failures: failures.map((f) => ({
+          resource_type: f.resourceType,
+          resource_id: f.resourceId,
+          start_day: f.startDay,
+          end_day: f.endDay,
+          severity: f.severity,
+        })),
+      };
+
+      const response = await scheduleReplanApi({
+        blocks: blocks as unknown as Record<string, unknown>[],
+        disruption,
+        settings: { nikufra_data: nikufraData },
+      });
+
+      const mvs = ((response.auto_moves ?? []) as unknown as MoveAction[]);
+      for (const mv of mvs) applyMove(mv.opId, mv.toM);
+      useToastStore
+        .getState()
+        .actions.addToast(
+          `Replan cascata: ${mvs.length} movimentos`,
+          mvs.length > 0 ? 'success' : 'warning',
+          5000,
         );
-        const mvs = result.mitigationMoves;
-        for (const mv of mvs) applyMove(mv.opId, mv.toM);
-        useToastStore
-          .getState()
-          .actions.addToast(
-            `Replan cascata: ${mvs.length} movimentos, ${result.unrecoverableBlocks.length} irrecuperáveis`,
-            result.unrecoverableBlocks.length > 0 ? 'warning' : 'success',
-            5000,
-          );
-        const triggerDesc = failures.map((f) => f.resourceId).join(', ');
-        const stratLabel =
-          selectedStrategy === 'right_shift'
-            ? 'RIGHT-SHIFT'
-            : selectedStrategy === 'match_up'
-              ? 'MATCH-UP'
-              : selectedStrategy === 'full_regen'
-                ? 'REGEN'
-                : 'PARCIAL';
-        onReplanComplete?.({
-          trigger: `Avaria ${triggerDesc}`,
-          triggerType: failures[0]?.resourceType === 'machine' ? 'machine_down' : 'tool_down',
-          strategy: selectedStrategy || 'partial',
-          strategyLabel: stratLabel,
-          movesCount: mvs.length,
-          moves: mvs.map((mv) => ({ opId: mv.opId, toM: mv.toM })),
-        });
-      } catch (e) {
-        useToastStore
-          .getState()
-          .actions.addToast(`Erro: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
-      }
-      setCascRunning(false);
-    }, 0);
-  }, [failures, blocks, buildArInput, applyMove, selectedStrategy, onReplanComplete]);
+      const triggerDesc = failures.map((f) => f.resourceId).join(', ');
+      const stratLabel =
+        selectedStrategy === 'right_shift'
+          ? 'RIGHT-SHIFT'
+          : selectedStrategy === 'match_up'
+            ? 'MATCH-UP'
+            : selectedStrategy === 'full_regen'
+              ? 'REGEN'
+              : 'PARCIAL';
+      onReplanComplete?.({
+        trigger: `Avaria ${triggerDesc}`,
+        triggerType: failures[0]?.resourceType === 'machine' ? 'machine_down' : 'tool_down',
+        strategy: selectedStrategy || 'partial',
+        strategyLabel: stratLabel,
+        movesCount: mvs.length,
+        moves: mvs.map((mv) => ({ opId: mv.opId, toM: mv.toM })),
+      });
+    } catch (e) {
+      useToastStore
+        .getState()
+        .actions.addToast(`Erro: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+    }
+    setCascRunning(false);
+  }, [failures, blocks, applyMove, selectedStrategy, onReplanComplete]);
 
   return {
     state: {

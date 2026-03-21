@@ -63,7 +63,7 @@ export function SchedulingBanners({
               animation: 'pulse 1s infinite',
             }}
           />
-          <span style={{ fontSize: 10, color: C.ac, fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: C.ac, fontWeight: 600 }}>
             A recalcular schedule...
           </span>
         </div>

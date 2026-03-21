@@ -448,6 +448,10 @@ class CpsatSolver:
 
             # In circuit mode, actual setup is determined by sequence.
             # Report setup_min from the original op spec (for reference).
+            DAY_CAP_LOCAL = 1020
+            start_in_day = start_val % DAY_CAP_LOCAL
+            op_shift = "X" if start_in_day < 510 else "Y"
+
             schedule.append(
                 ScheduledOp(
                     op_id=op_id,
@@ -461,6 +465,7 @@ class CpsatSolver:
                     tardiness_min=tardiness,
                     is_twin_production=op_id in twin_lookup,
                     twin_partner_op_id=twin_lookup.get(op_id),
+                    shift=op_shift,
                 )
             )
 

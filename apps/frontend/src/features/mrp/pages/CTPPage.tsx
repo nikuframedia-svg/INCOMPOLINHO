@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { EmptyState } from '@/components/Common/EmptyState';
 import { SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { useScheduleData } from '@/hooks/useScheduleData';
-import { C, computeMRP } from '@/lib/engine';
+import { C } from '@/lib/engine';
 import { useDataStore } from '@/stores/useDataStore';
 import { CTPChart } from '../components/CTPChart';
 import { CTPForm } from '../components/CTPForm';
@@ -28,7 +28,7 @@ function TrustWarning({ score }: { score: number }) {
         background: `${C.yl}14`,
         border: `1px solid ${C.yl}30`,
         borderRadius: 4,
-        fontSize: 10,
+        fontSize: 12,
         color: C.yl,
         display: 'flex',
         alignItems: 'center',
@@ -45,20 +45,20 @@ function TrustWarning({ score }: { score: number }) {
 function CommitmentRow({ c }: { c: CTPCommitment }) {
   return (
     <tr>
-      <td style={{ ...mono, fontSize: 10, color: C.t1 }}>{c.sku}</td>
-      <td style={{ fontSize: 10, color: C.t2 }}>{c.customer ?? '-'}</td>
-      <td style={{ ...mono, fontSize: 10, color: C.t1, textAlign: 'right' }}>
+      <td style={{ ...mono, fontSize: 12, color: C.t1 }}>{c.sku}</td>
+      <td style={{ fontSize: 12, color: C.t2 }}>{c.customer ?? '-'}</td>
+      <td style={{ ...mono, fontSize: 12, color: C.t1, textAlign: 'right' }}>
         {fmtQty(c.quantity)}
       </td>
-      <td style={{ ...mono, fontSize: 10, color: C.ac }}>{c.promisedDate}</td>
-      <td style={{ ...mono, fontSize: 10, color: C.t2 }}>{c.machine}</td>
-      <td style={{ ...mono, fontSize: 10, color: C.t3 }}>{c.confidencePercent}%</td>
+      <td style={{ ...mono, fontSize: 12, color: C.ac }}>{c.promisedDate}</td>
+      <td style={{ ...mono, fontSize: 12, color: C.t2 }}>{c.machine}</td>
+      <td style={{ ...mono, fontSize: 12, color: C.t3 }}>{c.confidencePercent}%</td>
     </tr>
   );
 }
 
 export function CTPPage() {
-  const { engine, loading, error } = useScheduleData();
+  const { engine, mrp, loading, error } = useScheduleData();
   const trustScore = useDataStore((s) => s.meta?.trustScore) ?? 0.5;
 
   const [sku, setSku] = useState('');
@@ -67,8 +67,6 @@ export function CTPPage() {
   const [customer, setCustomer] = useState('');
   const [commitments, setCommitments] = useState<CTPCommitment[]>([]);
   const [ran, setRan] = useState(false);
-
-  const mrp = useMemo(() => (engine ? computeMRP(engine) : null), [engine]);
 
   const scenarios = useMemo(() => {
     if (!ran || !sku || !mrp || !engine) return [];
@@ -120,7 +118,7 @@ export function CTPPage() {
   if (error || !engine || !mrp) {
     return (
       <div style={{ padding: 24 }}>
-        <Link to="/mrp" style={{ fontSize: 11, color: C.ac, textDecoration: 'none' }}>
+        <Link to="/mrp" style={{ fontSize: 12, color: C.ac, textDecoration: 'none' }}>
           ← MRP
         </Link>
         <EmptyState icon="error" title="Sem dados" description={error || 'Importe ISOP.'} />
@@ -133,7 +131,7 @@ export function CTPPage() {
       <Link
         to="/mrp"
         style={{
-          fontSize: 11,
+          fontSize: 12,
           color: C.ac,
           textDecoration: 'none',
           marginBottom: 12,
@@ -213,7 +211,7 @@ export function CTPPage() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
               Cenários ({scenarios.length})
             </div>
             {scenarios.map((s) => (
@@ -229,7 +227,7 @@ export function CTPPage() {
 
           {bestScenario.result.capacityTimeline.length > 0 && (
             <div className="mrp__card" style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 500, color: C.t2, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: C.t2, marginBottom: 8 }}>
                 Timeline de Capacidade — {bestScenario.machine}
               </div>
               <CTPChart
@@ -251,7 +249,7 @@ export function CTPPage() {
 
       {commitments.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
             Compromissos Registados ({commitments.length})
           </div>
           <table className="mrp__table">

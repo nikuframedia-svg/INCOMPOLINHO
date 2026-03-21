@@ -70,7 +70,7 @@ export function SetupMatrixEditor({ tools }: SetupMatrixEditorProps) {
         style={{
           display: 'flex',
           gap: 16,
-          fontSize: 10,
+          fontSize: 12,
           color: 'var(--text-secondary)',
           marginBottom: 12,
         }}
@@ -88,7 +88,7 @@ export function SetupMatrixEditor({ tools }: SetupMatrixEditorProps) {
         <span>
           Max: <span style={{ fontFamily: 'var(--font-mono)' }}>{stats.maxSetup}m</span>
         </span>
-        <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 500 }}>Dados ISOP</span>
+        <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}>Dados ISOP</span>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -142,12 +142,12 @@ export function SetupMatrixEditor({ tools }: SetupMatrixEditorProps) {
                           style={{
                             width: 40,
                             textAlign: 'center',
-                            fontSize: 10,
+                            fontSize: 12,
                             fontFamily: 'var(--font-mono)',
                           }}
                         />
                       ) : (
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>{val}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{val}</span>
                       )}
                     </td>
                   );
@@ -159,7 +159,7 @@ export function SetupMatrixEditor({ tools }: SetupMatrixEditorProps) {
       </div>
 
       <div
-        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 9, color: 'var(--text-muted)' }}
+        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)' }}
       >
         <span>
           <span

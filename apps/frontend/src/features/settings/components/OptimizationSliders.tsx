@@ -6,7 +6,7 @@ import './OptimizationSliders.css';
 const SLIDER_KEYS: { key: keyof ConfigWeights; label: string }[] = [
   { key: 'otd', label: 'OTD-D (entrega)' },
   { key: 'setup', label: 'Min. Setups' },
-  { key: 'utilization', label: 'Utilizacao' },
+  { key: 'utilization', label: 'Utilização' },
 ];
 
 export function OptimizationSliders() {

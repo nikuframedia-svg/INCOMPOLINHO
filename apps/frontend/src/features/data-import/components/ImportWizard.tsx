@@ -75,7 +75,7 @@ export function ImportWizard({ open, presets, onClose }: ImportWizardProps) {
           <div className="import-wizard__stat-grid">
             <div className="import-wizard__stat">
               <span className="import-wizard__stat-value">{stats.machines}</span>
-              <span className="import-wizard__stat-label">Maquinas</span>
+              <span className="import-wizard__stat-label">Máquinas</span>
             </div>
             <div className="import-wizard__stat">
               <span className="import-wizard__stat-value">{stats.skus}</span>
@@ -92,8 +92,8 @@ export function ImportWizard({ open, presets, onClose }: ImportWizardProps) {
           </div>
           {bottleneckMachine.id && (
             <p className="import-wizard__hint">
-              Maquina mais carregada: <strong>{bottleneckMachine.id}</strong> (
-              {bottleneckMachine.orderCount} operacoes)
+              Máquina mais carregada: <strong>{bottleneckMachine.id}</strong> (
+              {bottleneckMachine.orderCount} operações)
             </p>
           )}
           <div className="import-wizard__actions">
@@ -123,7 +123,7 @@ export function ImportWizard({ open, presets, onClose }: ImportWizardProps) {
               {topClient.name || topClient.id}
             </span>
             <span className="import-wizard__client-count">
-              {topClient.orderCount} operacoes
+              {topClient.orderCount} operações
             </span>
           </div>
           <p className="import-wizard__text">Definir como prioridade maxima?</p>

@@ -58,7 +58,7 @@
 }
 
 .ctx-panel__header-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -115,7 +115,7 @@
 }
 
 .ctx-panel__section-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -146,12 +146,12 @@
 }
 
 .ctx-panel__stat-label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
 .ctx-panel__stat-value {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
   font-family: var(--font-mono);
@@ -191,7 +191,7 @@
 }
 
 .ctx-panel__violation-text {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.4;
 }
@@ -265,7 +265,7 @@
 }
 
 .ctx-panel__bar-label {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   flex-shrink: 0;

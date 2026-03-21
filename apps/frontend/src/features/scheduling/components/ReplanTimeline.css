@@ -26,7 +26,7 @@
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-ghost);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -93,7 +93,7 @@
 }
 
 .replan-timeline__time {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--text-ghost);
@@ -101,13 +101,13 @@
 }
 
 .replan-timeline__trigger {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
 .replan-timeline__detail {
-  font-size: 9px;
+  font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-ghost);
 }
@@ -118,7 +118,7 @@
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-ghost);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -134,7 +134,7 @@
 }
 
 .replan-timeline__undone-label {
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-ghost);
   font-style: italic;

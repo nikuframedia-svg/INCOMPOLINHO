@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/Common/EmptyState';
 import { SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { useScheduleData } from '@/hooks/useScheduleData';
 import type { Block, EngineData } from '@/lib/engine';
-import { C, computeMRP, computeMRPSkuView } from '@/lib/engine';
+import { C } from '@/lib/engine';
 import { KCard } from '../components/KCard';
 import { OrderTableRow } from '../components/OrderTableRow';
 import { mono } from '../utils/mrp-helpers';
@@ -40,20 +40,20 @@ function ClientAccordion({
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {open ? <ChevronDown size={12} color={C.t3} /> : <ChevronRight size={12} color={C.t3} />}
           <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{group.customerName}</span>
-          <span style={{ fontSize: 9, color: C.t3, ...mono }}>{group.customerCode}</span>
+          <span style={{ fontSize: 12, color: C.t3, ...mono }}>{group.customerCode}</span>
         </span>
         <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: C.t2 }}>{group.totalOrders} encomendas</span>
-          <span style={{ ...mono, fontSize: 10, fontWeight: 700, color: otdColor }}>
+          <span style={{ fontSize: 12, color: C.t2 }}>{group.totalOrders} encomendas</span>
+          <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: otdColor }}>
             {group.otdPercent}%
           </span>
           {group.lateCount > 0 && (
-            <span style={{ fontSize: 9, color: C.rd, fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>
               {group.lateCount} late
             </span>
           )}
           {group.atRiskCount > 0 && (
-            <span style={{ fontSize: 9, color: C.yl }}>{group.atRiskCount} at-risk</span>
+            <span style={{ fontSize: 12, color: C.yl }}>{group.atRiskCount} at-risk</span>
           )}
         </span>
       </div>
@@ -88,11 +88,8 @@ function ClientAccordion({
 }
 
 export function OrdersPage() {
-  const { engine, blocks, loading, error } = useScheduleData();
+  const { engine, blocks, loading, error, mrp, mrpSkuView: skuView } = useScheduleData();
   const [search, setSearch] = useState('');
-
-  const mrp = useMemo(() => (engine ? computeMRP(engine) : null), [engine]);
-  const skuView = useMemo(() => (mrp ? computeMRPSkuView(mrp) : null), [mrp]);
   const allEntries = useMemo(() => {
     if (!engine || !mrp || !skuView) return [];
     return computeOrderEntries(engine, mrp, skuView, blocks);
@@ -118,7 +115,7 @@ export function OrdersPage() {
   if (error || !engine || !mrp || !skuView) {
     return (
       <div style={{ padding: 24 }}>
-        <Link to="/mrp" style={{ fontSize: 11, color: C.ac, textDecoration: 'none' }}>
+        <Link to="/mrp" style={{ fontSize: 12, color: C.ac, textDecoration: 'none' }}>
           ← MRP
         </Link>
         <EmptyState icon="error" title="Sem dados" description={error || 'Importe ISOP.'} />
@@ -136,7 +133,7 @@ export function OrdersPage() {
       <Link
         to="/mrp"
         style={{
-          fontSize: 11,
+          fontSize: 12,
           color: C.ac,
           textDecoration: 'none',
           marginBottom: 12,
@@ -179,7 +176,7 @@ export function OrdersPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {filtered.length} de {allEntries.length} encomendas · {clientGroups.length} clientes
         </span>
       </div>

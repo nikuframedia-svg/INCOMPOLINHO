@@ -157,8 +157,8 @@ export function OperationsTable({
         </tbody>
       </table>
       {sorted.length === 0 && (
-        <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-muted)', fontSize: 11 }}>
-          Sem operacoes neste dia.
+        <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>
+          Sem operações neste dia.
         </div>
       )}
     </div>

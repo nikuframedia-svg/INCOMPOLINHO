@@ -36,7 +36,7 @@ export function CrossClientView({ data }: { data: IntelData }) {
         {Object.entries(cc).map(([code, color]) => (
           <div key={code} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div style={{ width: 10, height: 10, borderRadius: 2, background: color }} />
-            <span style={{ color: C.t2, fontSize: 10, ...mono }}>{code}</span>
+            <span style={{ color: C.t2, fontSize: 12, ...mono }}>{code}</span>
           </div>
         ))}
       </div>
@@ -45,15 +45,15 @@ export function CrossClientView({ data }: { data: IntelData }) {
           <div key={sku.sku} style={cardSt}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
               <span style={{ color: C.t1, fontSize: 13, fontWeight: 600, ...mono }}>{sku.sku}</span>
-              <span style={{ color: MC[sku.machine] || C.t3, fontSize: 11, ...mono }}>
+              <span style={{ color: MC[sku.machine] || C.t3, fontSize: 12, ...mono }}>
                 {sku.machine}
               </span>
-              <span style={{ color: C.t3, fontSize: 10 }}>{sku.tool}</span>
-              <span style={{ marginLeft: 'auto', color: C.t2, fontSize: 11, ...mono }}>
+              <span style={{ color: C.t3, fontSize: 12 }}>{sku.tool}</span>
+              <span style={{ marginLeft: 'auto', color: C.t2, fontSize: 12, ...mono }}>
                 {fmtQty(sku.totalDemand)} pcs | {sku.requiredHours.toFixed(1)}h
               </span>
             </div>
-            <div style={{ color: C.t3, fontSize: 10, marginBottom: 6 }}>{sku.name}</div>
+            <div style={{ color: C.t3, fontSize: 12, marginBottom: 6 }}>{sku.name}</div>
             {/* Stacked demand bar */}
             <div
               style={{
@@ -79,7 +79,7 @@ export function CrossClientView({ data }: { data: IntelData }) {
                     }}
                   >
                     {pct > 15 && (
-                      <span style={{ color: C.s1, fontSize: 8, fontWeight: 600, ...mono }}>
+                      <span style={{ color: C.s1, fontSize: 12, fontWeight: 600, ...mono }}>
                         {c.code}
                       </span>
                     )}
@@ -94,8 +94,8 @@ export function CrossClientView({ data }: { data: IntelData }) {
                   <div
                     style={{ width: 6, height: 6, borderRadius: '50%', background: cc[c.code] }}
                   />
-                  <span style={{ color: C.t2, fontSize: 10, ...mono }}>{c.code}</span>
-                  <span style={{ color: C.t3, fontSize: 9 }}>{fmtQty(c.totalDemand)} pcs</span>
+                  <span style={{ color: C.t2, fontSize: 12, ...mono }}>{c.code}</span>
+                  <span style={{ color: C.t3, fontSize: 12 }}>{fmtQty(c.totalDemand)} pcs</span>
                 </div>
               ))}
             </div>

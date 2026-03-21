@@ -115,7 +115,7 @@ export function ShiftCalendarEditor({
             key={key}
             className="constraint-toggles__param-select"
             onClick={() => handleTemplate(key)}
-            style={{ cursor: 'pointer', padding: '4px 12px', fontSize: 11 }}
+            style={{ cursor: 'pointer', padding: '4px 12px', fontSize: 12 }}
           >
             {label}
           </button>
@@ -128,7 +128,7 @@ export function ShiftCalendarEditor({
             style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}
           >
             {machine}
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
               {laborGroupMap[machine] ?? 'Grandes'}
             </span>
           </div>
@@ -176,7 +176,7 @@ export function ShiftCalendarEditor({
             background: 'var(--semantic-red-bg, rgba(239,68,68,0.1))',
             border: '1px solid var(--semantic-red)',
             borderRadius: 4,
-            fontSize: 10,
+            fontSize: 12,
             color: 'var(--semantic-red)',
             marginTop: 8,
           }}

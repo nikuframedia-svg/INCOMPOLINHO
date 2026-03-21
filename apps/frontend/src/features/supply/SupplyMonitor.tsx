@@ -3,7 +3,7 @@ import { EmptyState } from '../../components/Common/EmptyState';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { Term } from '../../components/Common/Tooltip';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C, computeActionMessages, computeMRP, computeROP } from '../../lib/engine';
+import { C } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { KCard } from './KCard';
 import './SupplyMonitor.css';
@@ -13,19 +13,12 @@ import { computeSupplyRows } from './supply-compute';
 const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
 export function SupplyMonitor() {
-  const { engine, loading, error } = useScheduleData();
+  const { engine, mrp, mrpRop: rop, mrpActions: actionData, loading, error } = useScheduleData();
   const panelOpen = useUIStore((s) => s.contextPanelOpen);
   const [search, setSearch] = useState('');
   const [machineFilter, setMachineFilter] = useState('all');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const mrp = useMemo(() => (engine ? computeMRP(engine) : null), [engine]);
-  const rop = useMemo(() => (mrp && engine ? computeROP(mrp, engine, 95) : null), [mrp, engine]);
-  const actionData = useMemo(
-    () => (mrp && engine ? computeActionMessages(mrp, engine) : null),
-    [mrp, engine],
-  );
 
   const allRows = useMemo(() => {
     if (!mrp || !rop || !actionData || !engine) return [];
@@ -116,7 +109,7 @@ export function SupplyMonitor() {
             Risco de abastecimento: ferramentas em perigo de ruptura de stock.
           </p>
         </div>
-        <span style={{ fontSize: 11, color: C.t3, ...mono }}>
+        <span style={{ fontSize: 12, color: C.t3, ...mono }}>
           {engine.dates[0]} — {engine.dates[engine.dates.length - 1]} · {allRows.length} tools ·{' '}
           {engine.ops.length} ops
         </span>
@@ -204,7 +197,7 @@ export function SupplyMonitor() {
           <option value="medium">Médio ({riskCounts.medium})</option>
           <option value="ok">OK ({riskCounts.ok})</option>
         </select>
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {filteredRows.length} de {allRows.length} items
         </span>
       </div>

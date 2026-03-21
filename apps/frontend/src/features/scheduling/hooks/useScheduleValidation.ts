@@ -1,5 +1,11 @@
-import { useMemo } from 'react';
+/**
+ * useScheduleValidation — Schedule validation from backend analytics.
+ *
+ * Uses backendAnalytics.validation and backendAnalytics.coverage
+ * instead of calling validateSchedule()/auditCoverage() locally.
+ */
 
+import { useMemo } from 'react';
 import type {
   Block,
   CoverageAuditResult,
@@ -7,7 +13,7 @@ import type {
   EOp,
   ScheduleValidationReport,
 } from '../../../lib/engine';
-import { auditCoverage, validateSchedule } from '../../../lib/engine';
+import { useScheduleData } from '../../../hooks/useScheduleData';
 
 export interface FeasibilitySummary {
   totalOps: number;
@@ -25,24 +31,21 @@ export interface ScheduleValidationResult {
 
 export function useScheduleValidation(
   blocks: Block[],
-  allOps: EOp[],
+  _allOps: EOp[],
   engineData: EngineData | null,
 ): ScheduleValidationResult {
-  const validation = useMemo(() => {
-    if (!engineData) return null;
-    return validateSchedule(
-      blocks,
-      engineData.machines,
-      engineData.toolMap,
-      allOps,
-      engineData.thirdShift,
-    );
-  }, [blocks, engineData, allOps]);
+  // Use backend-computed validation and coverage (no local computation)
+  const scheduleData = useScheduleData();
 
-  const audit = useMemo(() => {
-    if (!engineData) return null;
-    return auditCoverage(blocks, allOps, engineData.toolMap, engineData.twinGroups);
-  }, [blocks, allOps, engineData]);
+  const validation = useMemo(
+    () => (scheduleData.validation as ScheduleValidationReport | null) ?? null,
+    [scheduleData.validation],
+  );
+
+  const audit = useMemo(
+    () => (scheduleData.coverageAudit as CoverageAuditResult | null) ?? null,
+    [scheduleData.coverageAudit],
+  );
 
   const feasibility = useMemo(() => {
     if (!blocks.length || !engineData) return null;

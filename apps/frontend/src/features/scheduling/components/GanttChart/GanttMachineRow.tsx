@@ -99,14 +99,14 @@ export const GanttMachineRow = memo(function GanttMachineRow({
             {mc.id}
           </span>
         </div>
-        <div style={{ fontSize: 9, color: stateColor, fontWeight: 600 }}>
+        <div style={{ fontSize: 12, color: stateColor, fontWeight: 600 }}>
           {stateText}
         </div>
-        <div style={{ fontSize: 9, color: C.t3 }}>
+        <div style={{ fontSize: 12, color: C.t3 }}>
           {mB.length} lote{mB.length !== 1 ? 's' : ''}
         </div>
         {avgPH != null && (
-          <div style={{ fontSize: 9, color: C.t3, fontFamily: 'monospace' }}>
+          <div style={{ fontSize: 12, color: C.t3, fontFamily: 'monospace' }}>
             {avgPH.toLocaleString()} pç/h
           </div>
         )}

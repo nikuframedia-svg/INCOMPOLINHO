@@ -46,7 +46,7 @@ export function ExplainView({ data }: { data: IntelData }) {
               border: `1px solid ${filter === f ? C.ac : C.bd}`,
               background: filter === f ? C.acS : 'transparent',
               color: filter === f ? C.ac : C.t3,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
@@ -87,7 +87,7 @@ export function ExplainView({ data }: { data: IntelData }) {
                 <span
                   style={{
                     color: C.t4,
-                    fontSize: 10,
+                    fontSize: 12,
                     transform: isOpen ? 'rotate(90deg)' : 'none',
                     transition: 'transform 0.15s',
                     display: 'inline-block',
@@ -98,10 +98,10 @@ export function ExplainView({ data }: { data: IntelData }) {
                 <span style={{ color: C.t1, fontSize: 12, ...mono, fontWeight: 600 }}>
                   {node.sku}
                 </span>
-                <span style={{ color: MC[node.machine] || C.t3, fontSize: 11, ...mono }}>
+                <span style={{ color: MC[node.machine] || C.t3, fontSize: 12, ...mono }}>
                   {node.machine}
                 </span>
-                <span style={{ color: C.t3, fontSize: 10 }}>{node.tool}</span>
+                <span style={{ color: C.t3, fontSize: 12 }}>{node.tool}</span>
                 <span style={{ marginLeft: 'auto' }}>
                   {node.steps.map((s, i) => (
                     <span
@@ -150,7 +150,7 @@ export function ExplainView({ data }: { data: IntelData }) {
                           alignItems: 'center',
                           justifyContent: 'center',
                           color: step.ok ? C.ac : C.yl,
-                          fontSize: 10,
+                          fontSize: 12,
                           fontWeight: 600,
                           ...mono,
                         }}
@@ -158,20 +158,20 @@ export function ExplainView({ data }: { data: IntelData }) {
                         {step.step}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: C.t2, fontSize: 11, marginBottom: 2 }}>
+                        <div style={{ color: C.t2, fontSize: 12, marginBottom: 2 }}>
                           {step.question}
                         </div>
                         <div style={{ color: C.t1, fontSize: 12, fontWeight: 600, ...mono }}>
                           {step.answer}
                         </div>
-                        <div style={{ color: C.t4, fontSize: 10, marginTop: 2 }}>
+                        <div style={{ color: C.t4, fontSize: 12, marginTop: 2 }}>
                           {step.evidence}
                         </div>
                       </div>
                       <div
                         style={{
                           color: step.ok ? C.ac : C.yl,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: 600,
                           minWidth: 16,
                         }}

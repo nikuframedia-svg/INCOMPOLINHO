@@ -75,7 +75,7 @@ function AcceptDelayModal({
         Aceitar Atraso — {entry.sku}
       </div>
 
-      <div style={{ fontSize: 11, color: C.t2, marginBottom: 6 }}>
+      <div style={{ fontSize: 12, color: C.t2, marginBottom: 6 }}>
         Custo estimado:{' '}
         <strong style={{ color: C.rd }}>{cost} EUR</strong>
         <span style={{ opacity: 0.7 }}> ({entry.delayDays}d x 50 x (6 - Tier {entry.clientTier}))</span>
@@ -86,7 +86,7 @@ function AcceptDelayModal({
         onChange={(e) => setReason(e.target.value as typeof reason)}
         style={{
           width: '100%',
-          fontSize: 11,
+          fontSize: 12,
           padding: '4px 6px',
           marginBottom: 6,
           background: 'var(--bg-base)',
@@ -109,7 +109,7 @@ function AcceptDelayModal({
         rows={2}
         style={{
           width: '100%',
-          fontSize: 11,
+          fontSize: 12,
           padding: '4px 6px',
           marginBottom: 6,
           background: 'var(--bg-base)',
@@ -124,7 +124,7 @@ function AcceptDelayModal({
         <button
           type="button"
           onClick={onCancel}
-          style={{ fontSize: 11, padding: '3px 10px', cursor: 'pointer' }}
+          style={{ fontSize: 12, padding: '3px 10px', cursor: 'pointer' }}
         >
           Cancelar
         </button>
@@ -133,7 +133,7 @@ function AcceptDelayModal({
           disabled={!canSubmit || submitting}
           onClick={() => onConfirm(reason, justification.trim())}
           style={{
-            fontSize: 11,
+            fontSize: 12,
             padding: '3px 10px',
             cursor: canSubmit && !submitting ? 'pointer' : 'not-allowed',
             background: canSubmit && !submitting ? C.rd : 'var(--bg-card)',
@@ -184,16 +184,16 @@ function EntryRow({
         </span>
         <strong style={{ color: C.t1 }}>{entry.sku}</strong>
         {entry.clNm && (
-          <span style={{ color: tierColor, fontSize: 11 }}>
+          <span style={{ color: tierColor, fontSize: 12 }}>
             {entry.clNm} (T{entry.clientTier})
           </span>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: C.t3 }}>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: C.t3 }}>
           {entry.deadlineDate ?? `D${entry.deadline}`}
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, fontSize: 11, color: C.t2, marginTop: 2 }}>
+      <div style={{ display: 'flex', gap: 8, fontSize: 12, color: C.t2, marginTop: 2 }}>
         <span>Atraso +{entry.delayDays}d</span>
         <span>{entry.shortfall} pcs em falta</span>
         <span>{entry.machineId}</span>
@@ -208,7 +208,7 @@ function EntryRow({
             type="button"
             onClick={() => onAcceptDelay(entry.opId)}
             style={{
-              fontSize: 10,
+              fontSize: 12,
               padding: '2px 8px',
               cursor: 'pointer',
               background: 'rgba(239,68,68,0.1)',
@@ -224,7 +224,7 @@ function EntryRow({
               type="button"
               onClick={() => onNavigate(entry.opId)}
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 padding: '2px 8px',
                 cursor: 'pointer',
                 background: 'transparent',
@@ -316,7 +316,7 @@ export function DeliveryRiskPanel({ lateDeliveries, onNavigateToBlock }: Deliver
             display: 'flex',
             gap: 12,
             padding: '6px 8px',
-            fontSize: 11,
+            fontSize: 12,
             color: C.t2,
             borderBottom: '1px solid var(--border)',
           }}
@@ -357,7 +357,7 @@ export function DeliveryRiskPanel({ lateDeliveries, onNavigateToBlock }: Deliver
               type="button"
               onClick={() => setShowResolved(!showResolved)}
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 color: C.t3,
                 background: 'none',
                 border: 'none',

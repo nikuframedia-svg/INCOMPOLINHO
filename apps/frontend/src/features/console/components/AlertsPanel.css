@@ -42,7 +42,7 @@
 }
 
 .alerts__severity {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -71,13 +71,13 @@
 }
 
 .alerts__meta {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
 .alerts__fix {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
   font-style: italic;
 }
@@ -93,7 +93,7 @@
   margin-bottom: var(--space-8);
 }
 .alerts__feasibility-label {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -128,13 +128,13 @@
   gap: var(--space-2);
 }
 .alerts__cta-label {
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 .alerts__cta-text {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
 }

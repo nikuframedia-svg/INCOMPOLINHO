@@ -23,7 +23,7 @@ function violationToSentence(v: ScheduleViolation, dnames: string[], dates: stri
 
   switch (v.type) {
     case 'TOOL_UNIQUENESS':
-      return `${machineStr}: Conflito de ferramenta — ${toolStr} esta em 2 maquinas ao mesmo tempo.`;
+      return `${machineStr}: Conflito de ferramenta — ${toolStr} está em 2 máquinas ao mesmo tempo.`;
     case 'SETUP_CREW_OVERLAP':
       return `${machineStr}: Dois setups sobrepostos — so ha uma equipa de setup.`;
     case 'MACHINE_OVERCAPACITY':
@@ -41,11 +41,11 @@ function violationToSentence(v: ScheduleViolation, dnames: string[], dates: stri
 function violationConsequence(v: ScheduleViolation): string | undefined {
   switch (v.type) {
     case 'TOOL_UNIQUENESS':
-      return 'Uma das maquinas tera de esperar — atraso em cascata.';
+      return 'Uma das máquinas terá de esperar — atraso em cascata.';
     case 'SETUP_CREW_OVERLAP':
       return 'Um dos setups tera de ser adiado.';
     case 'MACHINE_OVERCAPACITY':
-      return 'Producao pode nao concluir no turno planeado.';
+      return 'Produção pode não concluir no turno planeado.';
     case 'DEADLINE_MISS':
       return 'Entrega ao cliente pode atrasar.';
     default:
@@ -94,8 +94,8 @@ export function useDayProblems(
         id: `down-${mId}`,
         severity: 'critical',
         machineId: mId,
-        text: `${mId}: Maquina parada — ${affected} lote${affected !== 1 ? 's' : ''} afectado${affected !== 1 ? 's' : ''} neste dia.`,
-        consequence: 'Producao parada ate recuperacao. Lotes podem necessitar redistribuicao.',
+        text: `${mId}: Máquina parada — ${affected} lote${affected !== 1 ? 's' : ''} afectado${affected !== 1 ? 's' : ''} neste dia.`,
+        consequence: 'Produção parada até recuperação. Lotes podem necessitar redistribuição.',
       });
     }
 

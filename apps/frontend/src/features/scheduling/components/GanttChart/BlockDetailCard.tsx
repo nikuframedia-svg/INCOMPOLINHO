@@ -63,8 +63,8 @@ export function BlockDetailCard({
             {b.toolId} <span style={{ color: C.t2 }}>—</span>{' '}
             <span style={{ color: C.t1 }}>{b.sku}</span>
           </div>
-          <div style={{ fontSize: 10, color: C.t2, marginTop: 2 }}>{b.nm}</div>
-          <div style={{ fontSize: 10, color: C.t3, marginTop: 1 }}>
+          <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{b.nm}</div>
+          <div style={{ fontSize: 12, color: C.t3, marginTop: 1 }}>
             <span style={{ fontWeight: 600, fontFamily: 'monospace', color: C.t1 }}>
               {b.machineId}
             </span>
@@ -97,7 +97,7 @@ export function BlockDetailCard({
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: '3px 12px',
-          fontSize: 10,
+          fontSize: 12,
         }}
       >
         <KV k="Quantidade" v={`${b.qty.toLocaleString()} pcs`} />
@@ -124,12 +124,12 @@ export function BlockDetailCard({
       {(b.type === 'blocked' || b.overflow) && (
         <div style={{ padding: '0 12px 6px' }}>
           {b.type === 'blocked' && (
-            <div style={{ fontSize: 10, color: C.rd, fontWeight: 600 }}>
+            <div style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>
               BLOQUEADA — {b.reason === 'tool_down' ? 'ferramenta avariada' : 'máquina parada'}
             </div>
           )}
           {b.overflow && (
-            <div style={{ fontSize: 10, color: C.yl, fontWeight: 600 }}>
+            <div style={{ fontSize: 12, color: C.yl, fontWeight: 600 }}>
               OVERFLOW — +{b.overflowMin?.toFixed(0)}min além do turno
             </div>
           )}
@@ -141,7 +141,7 @@ export function BlockDetailCard({
         <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.bd}` }}>
           <div
             style={{
-              fontSize: 9,
+              fontSize: 12,
               fontWeight: 600,
               color: col,
               display: 'flex',
@@ -153,7 +153,7 @@ export function BlockDetailCard({
             <Layers size={10} strokeWidth={1.5} /> Co-Produção
           </div>
           {b.outputs.map((o, i) => (
-            <div key={i} style={{ fontSize: 10, color: C.t2 }}>
+            <div key={i} style={{ fontSize: 12, color: C.t2 }}>
               {o.sku} —{' '}
               <span style={{ color: C.t1, fontWeight: 600 }}>
                 {o.qty.toLocaleString()} pcs
@@ -177,7 +177,7 @@ export function BlockDetailCard({
           <>
             <div
               style={{
-                fontSize: 9,
+                fontSize: 12,
                 color: C.ac,
                 fontWeight: 600,
                 display: 'flex',
@@ -197,7 +197,7 @@ export function BlockDetailCard({
                 border: `1px solid ${C.yl}33`,
                 background: C.ylS,
                 color: C.yl,
-                fontSize: 9,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -220,7 +220,7 @@ export function BlockDetailCard({
               border: 'none',
               background: C.ac,
               color: C.bg,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
               fontFamily: 'inherit',

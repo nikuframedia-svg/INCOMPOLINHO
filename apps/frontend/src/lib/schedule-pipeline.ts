@@ -1,51 +1,15 @@
 /**
- * schedule-pipeline.ts — Scheduling pipeline with backend-first strategy.
+ * schedule-pipeline.ts — Scheduling pipeline via backend CP-SAT.
  *
- * PRIMARY: Backend pipeline (/v1/pipeline/schedule) — sends NikufraData JSON.
- * FALLBACK: Client-side TS engine (autoRouteOverflow) — when backend down.
- *
- * The backend handles: transform → MRP → scheduling → copilot state.
- * Frontend only does client-side scheduling as fallback.
+ * SINGLE PATH: Backend CP-SAT pipeline (/v1/pipeline/schedule/full).
+ * No client-side computation — backend returns everything including EngineData.
  */
 
-import { config } from '../config';
-import {
-  engineDataToSolverRequest,
-  solverResultToBlocks,
-} from '../features/scheduling/api/solver-bridge';
-import type { OptimalResult } from '../features/scheduling/api/solverApi';
-import { callOptimalPipeline } from '../features/scheduling/api/solverApi';
 import type { TransformConfigFromSettings } from '../stores/settings-config';
 import { useSettingsStore } from '../stores/useSettingsStore';
-import { fetchWithTimeout } from './fetchWithTimeout';
-
-/** Fast health check — returns true if backend responds within 2s. */
-let _backendAlive: boolean | null = null;
-let _healthCheckPromise: Promise<boolean> | null = null;
-
-async function isBackendAlive(): Promise<boolean> {
-  if (_backendAlive !== null) return _backendAlive;
-  if (_healthCheckPromise) return _healthCheckPromise;
-  _healthCheckPromise = (async () => {
-    try {
-      const res = await fetchWithTimeout(`${config.apiBaseURL}/health`, {}, 2_000);
-      _backendAlive = res.ok;
-    } catch {
-      _backendAlive = false;
-    }
-    // Re-check every 30s
-    setTimeout(() => {
-      _backendAlive = null;
-      _healthCheckPromise = null;
-    }, 30_000);
-    return _backendAlive!;
-  })();
-  return _healthCheckPromise;
-}
 
 import type {
   AdvanceAction,
-  AutoReplanResult,
   Block,
   DecisionEntry,
   DispatchRule,
@@ -53,21 +17,14 @@ import type {
   FeasibilityReport,
   MoveAction,
   MRPResult,
-  PlanState,
-  TransformConfig,
   TransparencyReport,
 } from './engine';
-import {
-  autoReplan,
-  autoRouteOverflow,
-  computeMRP,
-  computeSupplyPriority,
-  DEFAULT_AUTO_REPLAN_CONFIG,
-  DISPATCH_BANDIT,
-  transformPlanState,
-} from './engine';
+
+import { type FullScheduleResponse, scheduleFullApi } from './api';
 
 export interface CacheEntry {
+  /** Raw nikufra_data — pass to backend endpoints (optimize, what-if, replan) */
+  nikufraData: Record<string, unknown>;
   engine: EngineData;
   blocks: Block[];
   autoMoves: MoveAction[];
@@ -75,322 +32,128 @@ export interface CacheEntry {
   decisions: DecisionEntry[];
   feasibilityReport: FeasibilityReport | null;
   transparencyReport: TransparencyReport | null;
-  mrp: MRPResult;
+  mrp: MRPResult | null;
   /** The actual dispatch rule used (resolves AUTO to concrete rule) */
   resolvedDispatchRule: DispatchRule;
   /** True when feasibility report includes THIRD_SHIFT remediation */
   thirdShiftRecommended: boolean;
-  /** Monte Carlo robustness data from optimal pipeline (null if not available) */
-  robustness?: OptimalResult['robustness'];
+  /** Backend-computed analytics */
+  backendAnalytics: {
+    score: Record<string, unknown> | null;
+    validation: Record<string, unknown> | null;
+    coverage: Record<string, unknown> | null;
+    cap: Record<string, unknown[]> | null;
+    mrpFull: Record<string, unknown> | null;
+    lateDeliveries: Record<string, unknown> | null;
+    mrpSkuView: Record<string, unknown> | null;
+    mrpRop: Record<string, unknown> | null;
+    mrpRopSku: Record<string, unknown> | null;
+    mrpActions: Record<string, unknown> | null;
+    mrpCoverageSku: Record<string, unknown> | null;
+    mrpCoverageMatrix: Record<string, unknown> | null;
+    quickValidate: Record<string, unknown> | null;
+    genDecisions: Record<string, unknown>[] | null;
+    workforceForecast: Record<string, unknown> | null;
+  };
 }
 
 export interface DataSourceLike {
-  getPlanState: () => Promise<PlanState>;
-  /** NikufraData for backend pipeline (if available) */
+  /** NikufraData for backend pipeline */
   getNikufraData?: () => Record<string, unknown> | null;
+  /** Legacy — kept for interface compatibility but no longer used */
+  getPlanState?: () => Promise<unknown>;
 }
 
 /**
- * Try the backend pipeline first — sends NikufraData to /v1/pipeline/schedule.
- * Returns CacheEntry on success, null if backend unavailable.
- */
-async function tryBackendPipeline(
-  ds: DataSourceLike,
-  planState: PlanState,
-  tcfg: TransformConfigFromSettings,
-): Promise<CacheEntry | null> {
-  // Need NikufraData for backend pipeline
-  const nikufraData = ds.getNikufraData?.();
-  if (!nikufraData) return null;
-
-  const settings = useSettingsStore.getState();
-
-  try {
-    const { callBackendPipeline } = await import('../features/scheduling/api/pipelineApi');
-
-    const settingsPayload = {
-      dispatchRule: settings.dispatchRule === 'AUTO' ? 'EDD' : settings.dispatchRule,
-      thirdShift: planState.thirdShift ?? settings.thirdShiftDefault,
-      maxTier: 4,
-      orderBased: true,
-      demandSemantics: tcfg.demandSemantics || 'raw_np',
-    };
-
-    const response = await callBackendPipeline(nikufraData, settingsPayload);
-
-    if (!response.blocks || response.blocks.length === 0) {
-      // Backend returned empty — check for errors
-      if (response.parse_warnings?.some((w: string) => w.startsWith('Erro'))) {
-        console.warn('[schedule-pipeline] Backend pipeline error:', response.parse_warnings);
-        return null;
-      }
-    }
-
-    // We still need local EngineData for analytics (cap, score, validate, etc.)
-    const transformConfig: TransformConfig = {
-      moStrategy: tcfg.moStrategy,
-      moNominalPG1: tcfg.moNominalPG1,
-      moNominalPG2: tcfg.moNominalPG2,
-      moCustomPG1: tcfg.moCustomPG1,
-      moCustomPG2: tcfg.moCustomPG2,
-      demandSemantics: tcfg.demandSemantics || 'raw_np',
-      preStartBufferDays: tcfg.preStartBufferDays,
-    };
-    const data = transformPlanState(planState, transformConfig);
-    const mrp = computeMRP(data);
-
-    const dispatchRule: DispatchRule =
-      settings.dispatchRule === 'AUTO'
-        ? DISPATCH_BANDIT.select()
-        : (settings.dispatchRule as DispatchRule);
-
-    const thirdShiftRecommended = !!response.feasibility_report?.remediations?.some(
-      (r: { type: string }) => r.type === 'THIRD_SHIFT',
-    );
-
-    console.info(
-      `[schedule-pipeline] Backend pipeline OK: ${response.n_blocks} blocks in ${response.solve_time_s}s`,
-    );
-
-    return {
-      engine: data,
-      blocks: response.blocks,
-      autoMoves: response.auto_moves ?? [],
-      autoAdvances: response.auto_advances ?? [],
-      decisions: response.decisions ?? [],
-      feasibilityReport: response.feasibility_report ?? null,
-      transparencyReport: null,
-      mrp,
-      resolvedDispatchRule: dispatchRule,
-      thirdShiftRecommended,
-    };
-  } catch (e) {
-    _backendAlive = false;
-    console.warn(
-      '[schedule-pipeline] Backend pipeline unavailable, falling back to client-side:',
-      e instanceof Error ? e.message : String(e),
-    );
-    return null;
-  }
-}
-
-/**
- * Try the optimal pipeline (CP-SAT + Recovery + Monte Carlo).
- * Returns CacheEntry on success, null if backend unavailable.
- */
-async function tryOptimalPipeline(
-  data: EngineData,
-  mrp: MRPResult,
-  dispatchRule: DispatchRule,
-  settings: ReturnType<typeof useSettingsStore.getState>,
-): Promise<CacheEntry | null> {
-  if (!settings.useServerSolver) return null;
-
-  try {
-    const request = engineDataToSolverRequest(data, {
-      oee: settings.oee,
-      timeLimit: settings.serverSolverTimeLimit,
-      objective: settings.serverSolverObjective,
-    });
-
-    const optimalResult = await callOptimalPipeline({
-      solver_request: request,
-      frozen_ops: [],
-      alt_machines: null,
-      run_monte_carlo: true,
-      n_scenarios: 200,
-    });
-
-    const blocks = solverResultToBlocks(optimalResult.solver_result, data);
-
-    console.info(
-      `[schedule-pipeline] Optimal pipeline OK: ${blocks.length} blocks, ` +
-        `solver=${optimalResult.solver_result.solver_used}, ` +
-        `status=${optimalResult.solver_result.status}, ` +
-        `tardiness=${optimalResult.solver_result.total_tardiness_min}min, ` +
-        `recovery=${optimalResult.recovery_used ? `L${optimalResult.recovery_level}` : 'none'}, ` +
-        `P(OTD=100%)=${optimalResult.robustness?.p_otd_100 ?? 'N/A'}%`,
-    );
-
-    return {
-      engine: data,
-      blocks,
-      autoMoves: [],
-      autoAdvances: [],
-      decisions: [],
-      feasibilityReport: null,
-      transparencyReport: null,
-      mrp,
-      resolvedDispatchRule: dispatchRule,
-      thirdShiftRecommended: false,
-      robustness: optimalResult.robustness,
-    };
-  } catch (e) {
-    _backendAlive = false;
-    console.warn(
-      '[schedule-pipeline] Optimal pipeline failed:',
-      e instanceof Error ? e.message : String(e),
-    );
-    return null;
-  }
-}
-
-/**
- * Run the full scheduling pipeline:
- * 1. Try optimal pipeline (CP-SAT + Recovery + Monte Carlo)
- * 2. Try backend Python ATCS pipeline
- * 3. Fallback: client-side TS engine (autoRouteOverflow)
+ * Run the full scheduling pipeline via backend CP-SAT solver.
+ *
+ * 1. Get NikufraData from data source
+ * 2. POST to /v1/pipeline/schedule/full
+ * 3. Backend returns blocks + EngineData + all analytics
+ * 4. Return CacheEntry — zero local computation
  */
 export async function runSchedulePipeline(
   ds: DataSourceLike,
   tcfg: TransformConfigFromSettings,
 ): Promise<CacheEntry> {
-  let planState;
-  try {
-    planState = await ds.getPlanState();
-  } catch (e) {
-    throw new Error(`Falha ao carregar dados: ${e instanceof Error ? e.message : String(e)}`);
+  // NikufraData is required for backend pipeline
+  const nikufraData = ds.getNikufraData?.();
+  if (!nikufraData) {
+    throw new Error(
+      'NikufraData não disponível — o backend é obrigatório para scheduling. Carregue um ficheiro ISOP.',
+    );
   }
 
   const settings = useSettingsStore.getState();
 
-  // ── Always transform locally (needed for analytics + fallbacks) ──
-  const transformConfig: TransformConfig = {
-    moStrategy: tcfg.moStrategy,
-    moNominalPG1: tcfg.moNominalPG1,
-    moNominalPG2: tcfg.moNominalPG2,
-    moCustomPG1: tcfg.moCustomPG1,
-    moCustomPG2: tcfg.moCustomPG2,
-    demandSemantics: tcfg.demandSemantics,
-    preStartBufferDays: tcfg.preStartBufferDays,
+  // ── Call backend (returns everything — blocks, engine_data, analytics) ──
+  const settingsPayload = {
+    dispatchRule: settings.dispatchRule === 'AUTO' ? 'EDD' : settings.dispatchRule,
+    thirdShift: settings.thirdShiftDefault,
+    maxTier: 4,
+    orderBased: true,
+    demandSemantics: tcfg.demandSemantics || 'raw_np',
   };
 
-  if (!transformConfig.demandSemantics) {
-    transformConfig.demandSemantics = 'raw_np';
-    console.warn('[schedule-pipeline] demandSemantics was falsy — forced to raw_np');
-  }
+  const response: FullScheduleResponse = await scheduleFullApi(
+    { nikufra_data: nikufraData, settings: settingsPayload },
+    30_000,
+  );
 
-  const data = transformPlanState(planState, transformConfig);
-
-  if (transformConfig.demandSemantics === 'raw_np') {
-    const hasInput = planState.operations.some((o) =>
-      o.daily_qty.some((v) => v != null && v !== 0),
-    );
-    const hasDemand = data.ops.some((o) => o.d.some((v) => v > 0));
-    if (hasInput && !hasDemand) {
-      console.warn(
-        '[schedule-pipeline] ZERO_DEMAND: rawNPtoOrderDemand produced 0 demand.',
-        'demandSemantics:',
-        transformConfig.demandSemantics,
-        'sample daily_qty:',
-        planState.operations[0]?.daily_qty.slice(0, 5),
-        'sample engine d:',
-        data.ops[0]?.d.slice(0, 5),
-      );
+  // ── Validate response ──
+  if (!response.blocks || response.blocks.length === 0) {
+    if (response.parse_warnings?.some((w: string) => w.startsWith('Erro'))) {
+      throw new Error(`Pipeline errors: ${response.parse_warnings.join('; ')}`);
     }
   }
 
-  const mrp = computeMRP(data);
-  const supplyBoosts = computeSupplyPriority(data, mrp);
+  // ── Use backend-provided EngineData (camelCase from Python by_alias=True) ──
+  const data = (response.engine_data ?? {}) as unknown as EngineData;
 
   const dispatchRule: DispatchRule =
     settings.dispatchRule === 'AUTO'
-      ? DISPATCH_BANDIT.select()
+      ? 'EDD'
       : (settings.dispatchRule as DispatchRule);
 
-  // ── Health check: skip backend steps if server unreachable ──
-  const wantBackend = settings.useServerSolver || settings.usePythonScheduler;
-  const backendOk = wantBackend ? await isBackendAlive() : false;
+  console.info(
+    `[schedule-pipeline] CP-SAT: ${response.n_blocks} blocks in ${response.solve_time_s}s (${response.solver_used})`,
+  );
 
-  // ── STEP 1: Optimal Pipeline (CP-SAT + Recovery + Monte Carlo) ──
-  if (backendOk) {
-    const optimalResult = await tryOptimalPipeline(data, mrp, dispatchRule, settings);
-    if (optimalResult) {
-      return applyPreStart(optimalResult, data);
-    }
-  }
+  const feas = response.feasibility_report as Record<string, unknown> | null;
+  const remediations = feas?.remediations as Array<{ type: string }> | undefined;
 
-  // ── STEP 2: Backend Python ATCS pipeline ──
-  if (backendOk && settings.usePythonScheduler) {
-    const backendResult = await tryBackendPipeline(ds, planState, tcfg);
-    if (backendResult) return backendResult;
-  }
-
-  // ── STEP 3: Client-side TS engine ──
-  let resultBlocks: Block[];
-  let resultMoves: MoveAction[] = [];
-  let resultAdvances: AdvanceAction[] = [];
-  let resultDecisions: DecisionEntry[] = [];
-  let resultFeasibility: FeasibilityReport | null = null;
-  let resultTransparency: TransparencyReport | null = null;
-
-  if (settings.enableAutoReplan) {
-    const replanResult: AutoReplanResult = autoReplan(
-      {
-        ops: data.ops,
-        mSt: data.mSt,
-        tSt: data.tSt,
-        moves: [],
-        machines: data.machines,
-        toolMap: data.toolMap,
-        workdays: data.workdays,
-        nDays: data.nDays,
-        workforceConfig: data.workforceConfig,
-        rule: dispatchRule,
-        supplyBoosts: supplyBoosts.size > 0 ? supplyBoosts : undefined,
-        thirdShift: planState.thirdShift ?? settings.thirdShiftDefault,
-        machineTimelines: data.machineTimelines,
-        toolTimelines: data.toolTimelines,
-        dates: data.dates,
-        twinValidationReport: data.twinValidationReport,
-        orderBased: data.orderBased,
-      },
-      { ...DEFAULT_AUTO_REPLAN_CONFIG, ...settings.autoReplanConfig },
-    );
-    resultBlocks = replanResult.blocks;
-    resultMoves = replanResult.autoMoves;
-    resultAdvances = replanResult.autoAdvances ?? [];
-    resultDecisions = replanResult.decisions;
-    resultFeasibility = replanResult.scheduleResult?.feasibilityReport ?? null;
-    resultTransparency = replanResult.scheduleResult?.transparencyReport ?? null;
-  } else {
-    const overflowResult = autoRouteOverflow({
-      ops: data.ops,
-      mSt: data.mSt,
-      tSt: data.tSt,
-      userMoves: [],
-      machines: data.machines,
-      toolMap: data.toolMap,
-      workdays: data.workdays,
-      nDays: data.nDays,
-      workforceConfig: data.workforceConfig,
-      rule: dispatchRule,
-      supplyBoosts: supplyBoosts.size > 0 ? supplyBoosts : undefined,
-      thirdShift: planState.thirdShift ?? settings.thirdShiftDefault,
-      machineTimelines: data.machineTimelines,
-      toolTimelines: data.toolTimelines,
-      twinValidationReport: data.twinValidationReport,
-      dates: data.dates,
-      orderBased: data.orderBased,
-    });
-    resultBlocks = overflowResult.blocks;
-    resultMoves = overflowResult.autoMoves;
-    resultAdvances = overflowResult.autoAdvances ?? [];
-    resultDecisions = overflowResult.decisions ?? [];
-    resultFeasibility = overflowResult.feasibilityReport ?? null;
-  }
+  // Backend MRP result (null if backend MRP failed or not available)
+  const mrp = (response.mrp ?? null) as unknown as MRPResult | null;
 
   const entry: CacheEntry = {
+    nikufraData,
     engine: data,
-    blocks: resultBlocks,
-    autoMoves: resultMoves,
-    autoAdvances: resultAdvances,
-    decisions: resultDecisions,
-    feasibilityReport: resultFeasibility,
-    transparencyReport: resultTransparency,
+    blocks: response.blocks as unknown as Block[],
+    autoMoves: (response.auto_moves ?? []) as unknown as MoveAction[],
+    autoAdvances: (response.auto_advances ?? []) as unknown as AdvanceAction[],
+    decisions: (response.decisions ?? []) as unknown as DecisionEntry[],
+    feasibilityReport: (response.feasibility_report ?? null) as unknown as FeasibilityReport | null,
+    transparencyReport: null,
     mrp,
     resolvedDispatchRule: dispatchRule,
-    thirdShiftRecommended: !!resultFeasibility?.remediations?.some((r) => r.type === 'THIRD_SHIFT'),
+    thirdShiftRecommended: remediations?.some((r) => r.type === 'THIRD_SHIFT') ?? false,
+    backendAnalytics: {
+      score: response.score ?? null,
+      validation: response.validation ?? null,
+      coverage: response.coverage ?? null,
+      cap: response.cap ?? null,
+      mrpFull: response.mrp ?? null,
+      lateDeliveries: response.late_deliveries ?? null,
+      mrpSkuView: response.mrp_sku_view ?? null,
+      mrpRop: response.mrp_rop ?? null,
+      mrpRopSku: response.mrp_rop_sku ?? null,
+      mrpActions: response.mrp_actions ?? null,
+      mrpCoverageSku: response.mrp_coverage_sku ?? null,
+      mrpCoverageMatrix: response.mrp_coverage_matrix ?? null,
+      quickValidate: response.quick_validate ?? null,
+      genDecisions: response.gen_decisions ?? null,
+      workforceForecast: response.workforce_forecast ?? null,
+    },
   };
 
   return applyPreStart(entry, data);
@@ -403,7 +166,7 @@ function applyPreStart(entry: CacheEntry, data: EngineData): CacheEntry {
     for (const b of entry.blocks) {
       if (b.dayIdx < preN) {
         b.preStart = true;
-        b.preStartReason = `Producao antecipada ${preN - b.dayIdx} dia(s) antes do ISOP`;
+        b.preStartReason = `Produção antecipada ${preN - b.dayIdx} dia(s) antes do ISOP`;
       }
     }
   }

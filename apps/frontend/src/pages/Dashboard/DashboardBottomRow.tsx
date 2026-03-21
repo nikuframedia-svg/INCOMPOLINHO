@@ -49,7 +49,7 @@ export function DashboardBottomRow({
     <>
       <div className="dash__bottom-row">
         <div className="dash__ops-card">
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 6 }}>
             Operadores por Dia
           </div>
           {wdi.map((i) => {
@@ -67,7 +67,7 @@ export function DashboardBottomRow({
                 <span
                   style={{
                     width: 28,
-                    fontSize: 9,
+                    fontSize: 12,
                     fontFamily: "'JetBrains Mono',monospace",
                     color: C.t3,
                     textAlign: 'right',
@@ -103,7 +103,7 @@ export function DashboardBottomRow({
                 <span
                   style={{
                     width: 40,
-                    fontSize: 9,
+                    fontSize: 12,
                     fontFamily: "'JetBrains Mono',monospace",
                     color: overCap ? C.rd : C.t2,
                     textAlign: 'right',
@@ -115,10 +115,10 @@ export function DashboardBottomRow({
             );
           })}
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <span style={{ fontSize: 8, color: C.ac }}>
+            <span style={{ fontSize: 12, color: C.ac }}>
               ■ <Term code="PG1" label="PG1" />
             </span>
-            <span style={{ fontSize: 8, color: C.bl }}>
+            <span style={{ fontSize: 12, color: C.bl }}>
               ■ <Term code="PG2" label="PG2" />
             </span>
           </div>
@@ -131,7 +131,7 @@ export function DashboardBottomRow({
             badge={backlogOps.length > 0 ? `${backlogOps.length}` : undefined}
           >
             {backlogOps.length === 0 ? (
-              <div style={{ fontSize: 10, color: C.ac, padding: 8 }}>
+              <div style={{ fontSize: 12, color: C.ac, padding: 8 }}>
                 Sem atrasos pendentes — todas as encomendas dentro do prazo.
               </div>
             ) : (
@@ -191,14 +191,14 @@ export function DashboardBottomRow({
       {(metrics.overflows > 0 || metrics.setupCount > 0) && (
         <div className="dash__bottom-row" style={{ marginTop: 16 }}>
           <div className="dash__ops-card">
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
               Setup & Capacidade
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <div
                   style={{
-                    fontSize: 9,
+                    fontSize: 12,
                     color: C.t3,
                     textTransform: 'uppercase',
                     letterSpacing: '.04em',
@@ -217,14 +217,14 @@ export function DashboardBottomRow({
                 >
                   {metrics.setupCount}
                 </div>
-                <div style={{ fontSize: 9, color: C.t3 }}>
+                <div style={{ fontSize: 12, color: C.t3 }}>
                   {Math.round(metrics.setupMin)} min total
                 </div>
               </div>
               <div>
                 <div
                   style={{
-                    fontSize: 9,
+                    fontSize: 12,
                     color: C.t3,
                     textTransform: 'uppercase',
                     letterSpacing: '.04em',
@@ -243,14 +243,14 @@ export function DashboardBottomRow({
                 >
                   {metrics.overflows}
                 </div>
-                <div style={{ fontSize: 9, color: C.t3 }}>
+                <div style={{ fontSize: 12, color: C.t3 }}>
                   Cap. var: {(metrics.capVar * 100).toFixed(0)}%
                 </div>
               </div>
             </div>
           </div>
           <div className="dash__ops-card">
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
               Setups por Turno
             </div>
             <div style={{ display: 'flex', gap: 16 }}>
@@ -261,7 +261,7 @@ export function DashboardBottomRow({
                   <div key={sh}>
                     <div
                       style={{
-                        fontSize: 9,
+                        fontSize: 12,
                         color: C.t3,
                         textTransform: 'uppercase',
                         marginBottom: 2,

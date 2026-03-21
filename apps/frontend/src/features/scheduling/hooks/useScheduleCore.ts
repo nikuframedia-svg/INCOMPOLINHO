@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDataSource } from '../../../hooks/useDataSource';
+import { useScheduleData, invalidateScheduleCache } from '../../../hooks/useScheduleData';
 import type { AutoReplanResult, EngineData, EOp, MoveAction } from '../../../lib/engine';
-import { transformPlanState } from '../../../lib/engine';
-import { useDataStore } from '../../../stores/useDataStore';
 import { useReplanStore } from '../../../stores/useReplanStore';
-import { getTransformConfig } from '../../../stores/useSettingsStore';
 import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleFilters } from './useScheduleFilters';
 
 export function useScheduleCore(initialView = 'plan') {
   const ds = useDataSource();
-  const hasHydrated = useDataStore((s) => s._hasHydrated);
-  const [engineData, setEngineData] = useState<EngineData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use backend-computed schedule data (no client-side transformPlanState)
+  const scheduleData = useScheduleData();
+  const engineData = scheduleData.engine;
+  const loading = scheduleData.loading;
+  const error = scheduleData.error;
+
   const { state: filters, actions: filterActions } = useScheduleFilters(engineData);
   const { mSt, tSt, failureEvents, isScheduling, replanTimelines } = filters;
   const {
@@ -35,41 +35,22 @@ export function useScheduleCore(initialView = 'plan') {
   const prevOpsRef = useRef<EOp[] | null>(null);
   const [appliedReplan, setAppliedReplan] = useState<AutoReplanResult | null>(null);
 
-  const loadData = useCallback(async () => {
-    if (!ds.getPlanState) {
-      setError('Planning engine not available in this data source');
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const tcfg = getTransformConfig();
-      const data = transformPlanState(await ds.getPlanState(), {
-        moStrategy: tcfg.moStrategy,
-        moNominalPG1: tcfg.moNominalPG1,
-        moNominalPG2: tcfg.moNominalPG2,
-        moCustomPG1: tcfg.moCustomPG1,
-        moCustomPG2: tcfg.moCustomPG2,
-        demandSemantics: tcfg.demandSemantics,
-      });
-      setEngineData(data);
-      filterActions.resetFilters(data.machines);
+  // Reset filters when engineData changes (replaces old loadData logic)
+  const prevEngineRef = useRef<EngineData | null>(null);
+  useEffect(() => {
+    if (engineData && engineData !== prevEngineRef.current) {
+      prevEngineRef.current = engineData;
+      filterActions.resetFilters(engineData.machines);
       setMoves([]);
       setAppliedReplan(null);
       setIsopBanner(null);
-      prevOpsRef.current = data.ops;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load plan state');
-    } finally {
-      setLoading(false);
+      prevOpsRef.current = engineData.ops;
     }
-  }, [ds]);
+  }, [engineData]);
 
-  useEffect(() => {
-    if (!hasHydrated) return;
-    loadData();
-  }, [loadData, hasHydrated]);
+  const loadData = useCallback(() => {
+    invalidateScheduleCache();
+  }, []);
 
   const applyMove = useCallback(
     (opId: string, toM: string) =>

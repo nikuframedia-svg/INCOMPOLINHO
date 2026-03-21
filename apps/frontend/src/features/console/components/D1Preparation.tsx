@@ -7,8 +7,8 @@
 import { useMemo } from 'react';
 import { Collapsible } from '@/components/Common/Collapsible';
 import { StatusBanner } from '@/components/Common/StatusBanner';
-import type { Block, WorkforceConfig, WorkforceForecast } from '@/lib/engine';
-import { C, computeD1WorkforceRisk, fmtMin } from '@/lib/engine';
+import type { WorkforceForecast } from '@/lib/engine';
+import { C, fmtMin } from '@/lib/engine';
 import './D1Preparation.css';
 
 const SUGGESTION_ICONS: Record<string, string> = {
@@ -20,28 +20,28 @@ const SUGGESTION_ICONS: Record<string, string> = {
 
 interface D1PreparationProps {
   forecast: WorkforceForecast | null;
-  blocks?: Block[];
-  workforceConfig?: WorkforceConfig;
-  workdays?: boolean[];
 }
 
-export function D1Preparation({ forecast, blocks, workforceConfig, workdays }: D1PreparationProps) {
+export function D1Preparation({ forecast }: D1PreparationProps) {
   const hasContent = forecast && forecast.nextWorkingDayIdx !== -1;
 
+  // D1 risk derived from forecast warnings (no local engine computation)
   const d1Risk = useMemo(() => {
-    if (!blocks || !workforceConfig || !workdays) return 0;
-    return computeD1WorkforceRisk(blocks, workforceConfig, workdays);
-  }, [blocks, workforceConfig, workdays]);
+    if (!forecast || !forecast.hasWarnings) return 0;
+    const totalExcess = forecast.warnings.reduce((sum, w) => sum + (w.excess ?? 0), 0);
+    const totalCap = forecast.warnings.reduce((sum, w) => sum + (w.capacity ?? 1), 0);
+    return totalCap > 0 ? Math.min(1, totalExcess / totalCap) : 0;
+  }, [forecast]);
 
   return (
     <div data-testid="d1-preparation">
       <Collapsible
-        title="Preparacao D+1"
+        title="Preparação D+1"
         defaultOpen={forecast?.hasWarnings ?? false}
         badge={forecast?.hasWarnings ? 'alerta' : undefined}
       >
         {!hasContent ? (
-          <div className="d1prep__empty">Sem dados de previsao D+1.</div>
+          <div className="d1prep__empty">Sem dados de previsão D+1.</div>
         ) : (
           <>
             <div className="d1prep__header">

@@ -22,14 +22,14 @@ interface DecisionCategory {
 }
 
 const DECISION_CATEGORIES: Record<string, DecisionCategory> = {
-  AUTO_REPLAN_MOVE: { label: 'Realocacao', Icon: ArrowLeftRight, colorVar: 'var(--accent)' },
-  ALTERNATIVE_MACHINE: { label: 'Realocacao', Icon: ArrowLeftRight, colorVar: 'var(--accent)' },
-  AUTO_REPLAN_ADVANCE: { label: 'Antecipacao', Icon: FastForward, colorVar: 'var(--accent)' },
-  ADVANCE_PRODUCTION: { label: 'Antecipacao', Icon: FastForward, colorVar: 'var(--accent)' },
+  AUTO_REPLAN_MOVE: { label: 'Realocação', Icon: ArrowLeftRight, colorVar: 'var(--accent)' },
+  ALTERNATIVE_MACHINE: { label: 'Realocação', Icon: ArrowLeftRight, colorVar: 'var(--accent)' },
+  AUTO_REPLAN_ADVANCE: { label: 'Antecipação', Icon: FastForward, colorVar: 'var(--accent)' },
+  ADVANCE_PRODUCTION: { label: 'Antecipação', Icon: FastForward, colorVar: 'var(--accent)' },
   AUTO_REPLAN_OVERTIME: { label: 'Turno Extra', Icon: Moon, colorVar: 'var(--semantic-amber)' },
   AUTO_REPLAN_THIRD_SHIFT: { label: 'Turno Noite', Icon: Moon, colorVar: 'var(--semantic-amber)' },
   LOAD_LEVEL: { label: 'Resequencia', Icon: Layers, colorVar: 'var(--accent)' },
-  AUTO_REPLAN_SPLIT: { label: 'Divisao', Icon: Scissors, colorVar: 'var(--accent)' },
+  AUTO_REPLAN_SPLIT: { label: 'Divisão', Icon: Scissors, colorVar: 'var(--accent)' },
 };
 
 const DEFAULT_CATEGORY: DecisionCategory = {
@@ -69,12 +69,12 @@ export function ActiveDecisions({ decisions, onNavigateToBlock }: ActiveDecision
   return (
     <div data-testid="active-decisions">
       <Collapsible
-        title="Decisoes"
+        title="Decisões"
         defaultOpen={decisions.length > 0}
         badge={decisions.length > 0 ? `${decisions.length}` : undefined}
       >
         {decisions.length === 0 ? (
-          <div className="adec__empty">Sem decisoes para este dia.</div>
+          <div className="adec__empty">Sem decisões para este dia.</div>
         ) : (
           <div className="adec__list">
             {decisions.map((d) => {

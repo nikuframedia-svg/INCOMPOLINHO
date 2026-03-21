@@ -76,13 +76,13 @@ export function RiskView({ data }: { data: IntelData }) {
                   <div style={{ color: C.t1, fontSize: 13, fontWeight: 600, ...mono }}>
                     {client.clientCode}
                   </div>
-                  <div style={{ color: C.t3, fontSize: 10 }}>{client.clientName}</div>
+                  <div style={{ color: C.t3, fontSize: 12 }}>{client.clientName}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ color: C.t1, fontSize: 14, fontWeight: 600, ...mono }}>
                     {client.totalSKUs}
                   </div>
-                  <div style={{ color: C.t3, fontSize: 9 }}>
+                  <div style={{ color: C.t3, fontSize: 12 }}>
                     {client.atRiskSKUs > 0 ? (
                       <span style={{ color: C.rd }}>{client.atRiskSKUs} at risk</span>
                     ) : (
@@ -93,7 +93,7 @@ export function RiskView({ data }: { data: IntelData }) {
                 <span
                   style={{
                     color: C.t4,
-                    fontSize: 10,
+                    fontSize: 12,
                     transform: isOpen ? 'rotate(90deg)' : 'none',
                     transition: 'transform 0.15s',
                   }}
@@ -128,7 +128,7 @@ export function RiskView({ data }: { data: IntelData }) {
                       <span
                         style={{
                           color: C.t1,
-                          fontSize: 11,
+                          fontSize: 12,
                           ...mono,
                           flex: 1,
                           minWidth: 0,
@@ -139,14 +139,14 @@ export function RiskView({ data }: { data: IntelData }) {
                       >
                         {sku.sku}
                       </span>
-                      <span style={{ color: MC[sku.machine] || C.t3, fontSize: 10, ...mono }}>
+                      <span style={{ color: MC[sku.machine] || C.t3, fontSize: 12, ...mono }}>
                         {sku.machine}
                       </span>
-                      <span style={{ color: C.t3, fontSize: 9 }}>
+                      <span style={{ color: C.t3, fontSize: 12 }}>
                         {sku.firstDeficitDate ? `${sku.daysToDeficit}d` : 'ok'}
                       </span>
                       {sku.maxDeficit > 0 && (
-                        <span style={{ color: C.rd, fontSize: 9, ...mono }}>
+                        <span style={{ color: C.rd, fontSize: 12, ...mono }}>
                           {fmtQty(sku.maxDeficit)}
                         </span>
                       )}

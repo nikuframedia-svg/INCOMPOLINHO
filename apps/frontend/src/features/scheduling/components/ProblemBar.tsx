@@ -74,9 +74,9 @@ export function ProblemBar({ problems }: { problems: DayProblem[] }) {
               }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ fontSize: 11, color: C.t1, lineHeight: 1.4 }}>{p.text}</span>
+              <span style={{ fontSize: 12, color: C.t1, lineHeight: 1.4 }}>{p.text}</span>
               {p.consequence && (
-                <span style={{ display: 'block', fontSize: 10, color: C.t3, marginTop: 2 }}>
+                <span style={{ display: 'block', fontSize: 12, color: C.t3, marginTop: 2 }}>
                   {p.consequence}
                 </span>
               )}
@@ -94,7 +94,7 @@ export function ProblemBar({ problems }: { problems: DayProblem[] }) {
             background: 'none',
             border: 'none',
             color: borderColor,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
             fontFamily: 'inherit',

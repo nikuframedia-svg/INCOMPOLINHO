@@ -95,7 +95,7 @@ export function Dashboard() {
             atrasos.
           </p>
         </div>
-        <span style={{ fontSize: 11, color: C.t3, fontFamily: "'JetBrains Mono',monospace" }}>
+        <span style={{ fontSize: 12, color: C.t3, fontFamily: "'JetBrains Mono',monospace" }}>
           {engine.dates[0]} — {engine.dates[engine.dates.length - 1]} · {engine.ops.length}{' '}
           operações · {engine.machines.length} máquinas
         </span>
@@ -122,7 +122,7 @@ export function Dashboard() {
               : `OTD-D ${metrics.otdDelivery.toFixed(1)}% — entregas em risco`}
           </span>
           {metrics.overflows > 0 && (
-            <span style={{ fontSize: 10, color: C.yl, marginLeft: 'auto' }}>
+            <span style={{ fontSize: 12, color: C.yl, marginLeft: 'auto' }}>
               {metrics.overflows} overflow{metrics.overflows > 1 ? 's' : ''}
             </span>
           )}
@@ -188,7 +188,7 @@ export function Dashboard() {
                     >
                       {m.id}
                     </span>
-                    <span style={{ fontSize: 9, color: C.t3 }}>{m.area}</span>
+                    <span style={{ fontSize: 12, color: C.t3 }}>{m.area}</span>
                   </div>
                   {wdi.map((i, pos) => {
                     const d: DayLoad = mc[i] || { prod: 0, setup: 0, ops: 0, pcs: 0, blk: 0 };

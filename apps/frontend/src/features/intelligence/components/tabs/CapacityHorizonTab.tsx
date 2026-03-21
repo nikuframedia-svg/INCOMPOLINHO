@@ -53,7 +53,7 @@ export function HorizonView({ data }: { data: IntelData }) {
                   x={PAD.l - 6}
                   y={y + 3}
                   textAnchor="end"
-                  style={{ fill: C.t4, fontSize: 8, ...mono }}
+                  style={{ fill: C.t4, fontSize: 12, ...mono }}
                 >
                   {fmtMin(v)}
                 </text>
@@ -80,7 +80,7 @@ export function HorizonView({ data }: { data: IntelData }) {
             strokeDasharray="6,3"
             opacity={0.7}
           />
-          <text x={W - PAD.r + 4} y={capY + 3} style={{ fill: C.rd, fontSize: 8, ...mono }}>
+          <text x={W - PAD.r + 4} y={capY + 3} style={{ fill: C.rd, fontSize: 12, ...mono }}>
             CAP
           </text>
           {/* Bars */}
@@ -169,7 +169,7 @@ export function HorizonView({ data }: { data: IntelData }) {
                     x={tx}
                     y={PAD.t + 9}
                     textAnchor="middle"
-                    style={{ fill: C.t1, fontSize: 9, ...mono }}
+                    style={{ fill: C.t1, fontSize: 12, ...mono }}
                   >
                     {bar.fmtDate} {bar.dayName}: {fmtMin(bar.total)}
                     {!bar.isWorking ? ' (off)' : ''}

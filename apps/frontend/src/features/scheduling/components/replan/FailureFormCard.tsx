@@ -37,7 +37,7 @@ export function FailureFormCard({
   runCascadingReplan,
 }: FailureFormCardProps) {
   const labelStyle = {
-    fontSize: 9,
+    fontSize: 12,
     color: C.t4,
     marginBottom: 3,
     fontWeight: 600,
@@ -51,7 +51,7 @@ export function FailureFormCard({
     border: `1px solid ${C.bd}`,
     background: C.s2,
     color: C.t1,
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: 'inherit',
   } as const;
 
@@ -77,7 +77,7 @@ export function FailureFormCard({
             border: `1px solid ${C.rd}33`,
             background: showFailureForm ? C.rdS : 'transparent',
             color: C.rd,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -131,7 +131,7 @@ export function FailureFormCard({
                   border: `1px solid ${C.bd}`,
                   background: C.s2,
                   color: C.t1,
-                  fontSize: 10,
+                  fontSize: 12,
                   fontFamily: 'inherit',
                 }}
               >
@@ -201,12 +201,12 @@ export function FailureFormCard({
                       border: `1px solid ${C.bd}`,
                       background: C.s2,
                       color: C.t1,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: "'JetBrains Mono',monospace",
                       textAlign: 'center',
                     }}
                   />
-                  <span style={{ fontSize: 10, color: C.t3 }}>%</span>
+                  <span style={{ fontSize: 12, color: C.t3 }}>%</span>
                 </div>
               </div>
             )}
@@ -224,7 +224,7 @@ export function FailureFormCard({
                     </option>
                   ))}
                 </select>
-                <span style={{ fontSize: 9, color: C.t4 }}>—</span>
+                <span style={{ fontSize: 12, color: C.t4 }}>—</span>
                 <select
                   value={ffEndDay}
                   onChange={(e) => setFfEndDay(Number(e.target.value))}
@@ -255,7 +255,7 @@ export function FailureFormCard({
                 border: `1px solid ${C.bd}`,
                 background: C.s2,
                 color: C.t1,
-                fontSize: 10,
+                fontSize: 12,
                 fontFamily: 'inherit',
               }}
             />
@@ -269,7 +269,7 @@ export function FailureFormCard({
               border: 'none',
               background: ffResId ? C.rd : C.s3,
               color: ffResId ? C.t1 : C.t4,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               cursor: ffResId ? 'pointer' : 'default',
               fontFamily: 'inherit',

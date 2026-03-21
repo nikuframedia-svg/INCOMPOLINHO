@@ -5,8 +5,8 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { AutoReplanResult, Block, EngineData, EOp, MoveAction, ObjectiveProfile } from '../../../lib/engine';
-import { genDecisions, quickValidate } from '../../../lib/engine';
+import type { AutoReplanResult, Block, EngineData, EOp, MoveAction, ObjectiveProfile, QuickValidateResult, ReplanProposal } from '../../../lib/engine';
+import { useScheduleData } from '../../../hooks/useScheduleData';
 import type { AutoReplanActions, AutoReplanState } from './useAutoReplan';
 import { useAutoReplan } from './useAutoReplan';
 import type { FailureActions, FailureState } from './useFailureManagement';
@@ -24,8 +24,8 @@ export interface ReplanControlState
   xai: string | null;
   editingDown: { type: 'machine' | 'tool'; id: string } | null;
   blockCountByMachine: Record<string, number>;
-  decs: ReturnType<typeof genDecisions>;
-  qv: ReturnType<typeof quickValidate>;
+  decs: ReplanProposal[];
+  qv: QuickValidateResult | null;
 }
 
 export interface ReplanControlActions
@@ -62,8 +62,6 @@ export function useReplanControl(
     moves: MoveAction[];
   }) => void,
 ): { state: ReplanControlState; actions: ReplanControlActions } {
-  const { machines, toolMap: TM, focusIds, tools } = data;
-
   // Shared state
   const [xai, setXai] = useState<string | null>(null);
   const [editingDown, setEditingDown] = useState<{ type: 'machine' | 'tool'; id: string } | null>(
@@ -101,12 +99,16 @@ export function useReplanControl(
   );
   const ro = useRushOrders(data.ops, ar.state.wdi, setRushOrders);
 
-  // Derived
+  // Use backend-computed analytics (no local genDecisions/quickValidate)
+  const backendData = useScheduleData();
   const decs = useMemo(
-    () => genDecisions(allOps, mSt, tSt, moves, blocks, machines, TM, focusIds, tools),
-    [allOps, mSt, tSt, moves, blocks, machines, TM, focusIds, tools],
+    () => (backendData.genDecisions as unknown as ReplanProposal[]) ?? [],
+    [backendData.genDecisions],
   );
-  const qv = useMemo(() => quickValidate(blocks, machines, TM), [blocks, machines, TM]);
+  const qv = useMemo(
+    () => (backendData.quickValidate as unknown as QuickValidateResult) ?? null,
+    [backendData.quickValidate],
+  );
 
   return {
     state: {

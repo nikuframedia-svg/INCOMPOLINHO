@@ -72,7 +72,7 @@ export async function postMachineUp(
     event_type: 'MACHINE_UP',
     resource_code: machineId,
     start_time: new Date().toISOString(),
-    reason: 'Maquina recuperada',
+    reason: 'Máquina recuperada',
     event_metadata: { andon: true, recoveryOf: downEventId },
   };
 

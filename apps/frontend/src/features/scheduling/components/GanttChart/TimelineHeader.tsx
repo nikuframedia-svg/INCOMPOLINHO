@@ -28,7 +28,7 @@ export const TimelineHeader = memo(function TimelineHeader({ hours, ppm, selDay,
           minWidth: 100,
           padding: '8px 10px',
           borderRight: `1px solid ${C.bd}`,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t2,
         }}
@@ -51,7 +51,7 @@ export const TimelineHeader = memo(function TimelineHeader({ hours, ppm, selDay,
             >
               <span
                 style={{
-                  fontSize: 9,
+                  fontSize: 12,
                   color: h % 2 === 0 ? C.t3 : C.t4,
                   fontFamily: 'monospace',
                   position: 'absolute',
@@ -95,7 +95,7 @@ export const TimelineHeader = memo(function TimelineHeader({ hours, ppm, selDay,
         >
           <span
             style={{
-              fontSize: 8,
+              fontSize: 12,
               color: C.yl,
               position: 'absolute',
               top: 2,
@@ -111,7 +111,7 @@ export const TimelineHeader = memo(function TimelineHeader({ hours, ppm, selDay,
             position: 'absolute',
             top: 2,
             left: 4,
-            fontSize: 8,
+            fontSize: 12,
             color: C.ac,
             fontWeight: 600,
             opacity: 0.6,
@@ -142,7 +142,7 @@ export const TimelineHeader = memo(function TimelineHeader({ hours, ppm, selDay,
             >
               <span
                 style={{
-                  fontSize: 8,
+                  fontSize: 12,
                   color: C.t3,
                   position: 'absolute',
                   top: 2,

@@ -47,7 +47,7 @@ export function ValidationPanel({
         }}
       >
         <Check size={12} strokeWidth={2} style={{ color: C.ac }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.ac }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.ac }}>
           Schedule válido — 0 violações
         </span>
       </div>
@@ -73,7 +73,7 @@ export function ValidationPanel({
             strokeWidth={2}
             style={{ color: validation.valid ? C.yl : C.rd }}
           />
-          <span style={{ fontSize: 11, fontWeight: 600, color: validation.valid ? C.yl : C.rd }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: validation.valid ? C.yl : C.rd }}>
             {validation.violations.length} violaç{validation.violations.length === 1 ? 'ão' : 'ões'}
           </span>
           {critC > 0 && <Tag color={C.rd}>{critC} crít</Tag>}
@@ -103,7 +103,7 @@ export function ValidationPanel({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                   <span
                     style={{
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: 700,
                       color: sevColor[v.severity],
                       textTransform: 'uppercase',
@@ -115,7 +115,7 @@ export function ValidationPanel({
                   {dayLabel(v) && (
                     <span
                       style={{
-                        fontSize: 8,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: C.t3,
                         background: C.s2,
@@ -127,11 +127,11 @@ export function ValidationPanel({
                       {dayLabel(v)}
                     </span>
                   )}
-                  <span style={{ fontSize: 10, fontWeight: 600, color: C.t1 }}>{v.title}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{v.title}</span>
                 </div>
                 <div
                   style={{
-                    fontSize: 9,
+                    fontSize: 12,
                     color: C.t2,
                     marginTop: 1,
                     fontFamily: "'JetBrains Mono',monospace",
@@ -140,7 +140,7 @@ export function ValidationPanel({
                   {v.detail}
                 </div>
                 {v.suggestedFix && (
-                  <div style={{ fontSize: 9, color: C.ac, marginTop: 1 }}>{v.suggestedFix}</div>
+                  <div style={{ fontSize: 12, color: C.ac, marginTop: 1 }}>{v.suggestedFix}</div>
                 )}
                 {v.action && applyMove && (
                   <button
@@ -150,7 +150,7 @@ export function ValidationPanel({
                     }}
                     style={{
                       marginTop: 2,
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: C.bg,
                       background: C.ac,

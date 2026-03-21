@@ -64,7 +64,7 @@ export function MachineDownPicker({
               }}
             >
               {m.id}
-              <div style={{ fontSize: 9, fontWeight: 400, color: C.t3, marginTop: 2 }}>
+              <div style={{ fontSize: 12, fontWeight: 400, color: C.t3, marginTop: 2 }}>
                 {m.area}
               </div>
             </button>
@@ -99,7 +99,7 @@ export function MachineDownPicker({
                   }}
                 >
                   {p.label}
-                  <div style={{ fontSize: 9, fontWeight: 400, color: C.t3, marginTop: 2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 400, color: C.t3, marginTop: 2 }}>
                     Camada {layer}
                   </div>
                 </button>
@@ -145,7 +145,7 @@ export function MachineDownPicker({
           <div style={{ fontSize: 12, fontWeight: 600, color: replanResult.emergencyNightShift ? C.rd : C.ac }}>
             Camada {replanResult.layer}: {LAYER_LABELS[replanResult.layer]}
           </div>
-          <div style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: C.t2, marginTop: 4 }}>
             {replanResult.blocks.length} blocos resequenciados
             {replanResult.emergencyNightShift && ' — turno noite de emergência necessário'}
           </div>
@@ -166,7 +166,7 @@ export function MachineDownPicker({
             border: `1px solid ${C.bd}`,
             background: 'transparent',
             color: C.t3,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 500,
             cursor: 'pointer',
             fontFamily: 'inherit',

@@ -34,7 +34,7 @@
 }
 
 .kpi-grid__label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -51,7 +51,7 @@
 }
 
 .kpi-grid__sub {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }

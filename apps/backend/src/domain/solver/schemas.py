@@ -140,6 +140,7 @@ class ScheduledOp(BaseModel):
     tardiness_min: int
     is_twin_production: bool = False
     twin_partner_op_id: str | None = None
+    shift: str = "X"  # "X" or "Y" — computed from start_min position within day
 
 
 class SolverResult(BaseModel):

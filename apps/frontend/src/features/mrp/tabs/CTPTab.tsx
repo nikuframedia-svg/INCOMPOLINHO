@@ -67,7 +67,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
   return (
     <>
       <div className="mrp__card" style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 12 }}>
           Capable-to-Promise — Verificar viabilidade de encomenda
         </div>
         <div className="mrp__ctp-form">
@@ -119,7 +119,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
           <div
             style={{
               marginTop: 8,
-              fontSize: 10,
+              fontSize: 12,
               color: C.t2,
               display: 'flex',
               gap: 16,
@@ -154,7 +154,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
               borderRadius: 4,
               background: `${C.ac}12`,
               border: `1px solid ${C.ac}26`,
-              fontSize: 10,
+              fontSize: 12,
               color: C.ac,
               display: 'flex',
               alignItems: 'center',
@@ -171,7 +171,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
 
         {/* Existing demand context */}
         {selectedMrpRecord && (
-          <div style={{ marginTop: 8, fontSize: 9, color: C.t3 }}>
+          <div style={{ marginTop: 8, fontSize: 12, color: C.t3 }}>
             <span style={{ color: C.t2, fontWeight: 500 }}>Demand existente: </span>
             {selectedMrpRecord.buckets.map((b, i) => (
               <span key={i} style={{ marginRight: 6 }}>
@@ -188,7 +188,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
       {result && (
         <>
           {/* Primary machine result */}
-          <div style={{ fontSize: 10, fontWeight: 500, color: C.t2, marginBottom: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: C.t2, marginBottom: 4 }}>
             Máquina Principal: <span style={{ ...mono, color: C.t1 }}>{result.machine}</span>
           </div>
           <div className="mrp__ctp-result">
@@ -231,7 +231,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
           </div>
 
           <div className="mrp__card" style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, color: C.t2, marginBottom: 12 }}>{result.reason}</div>
+            <div style={{ fontSize: 12, color: C.t2, marginBottom: 12 }}>{result.reason}</div>
             <CTPChart
               timeline={result.capacityTimeline}
               dates={engine.dates}
@@ -245,7 +245,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
             <>
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: 500,
                   color: C.t2,
                   marginBottom: 4,
@@ -256,7 +256,7 @@ export function CTPTab({ mrp, engine, skuView }: CTPTabProps) {
                 {altResult.earliestFeasibleDay !== null &&
                   result.earliestFeasibleDay !== null &&
                   altResult.earliestFeasibleDay < result.earliestFeasibleDay && (
-                    <span style={{ fontSize: 9, color: C.ac, marginLeft: 8 }}>
+                    <span style={{ fontSize: 12, color: C.ac, marginLeft: 8 }}>
                       {result.earliestFeasibleDay - altResult.earliestFeasibleDay} dia(s) mais cedo
                     </span>
                   )}

@@ -5,13 +5,14 @@
  */
 
 import { create } from 'zustand';
-import { type ChatMessage, sendCopilotMessage } from './copilotApi';
+import { type ChatMessage, type CopilotWidget, sendCopilotMessage } from './copilotApi';
 
 export interface DisplayMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   toolCalls?: number;
+  widgets?: CopilotWidget[];
   timestamp: number;
 }
 
@@ -70,6 +71,7 @@ export const useCopilotStore = create<CopilotStore>((set, get) => ({
           role: 'assistant',
           content: response.response,
           toolCalls: response.tool_calls_made,
+          widgets: response.widgets?.length ? response.widgets : undefined,
           timestamp: Date.now(),
         };
 

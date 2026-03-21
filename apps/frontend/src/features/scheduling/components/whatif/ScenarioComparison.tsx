@@ -35,10 +35,10 @@ export function ScenarioResultCards({
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: rankColor(i) }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: rankColor(i) }}>
               {rankLabel(i)}
             </span>
-            <span style={{ fontSize: 9, color: C.t4 }}>{s.label}</span>
+            <span style={{ fontSize: 12, color: C.t4 }}>{s.label}</span>
           </div>
           <div
             style={{
@@ -54,7 +54,7 @@ export function ScenarioResultCards({
           </div>
           <div
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: s.otdDelivery < 90 ? C.rd : C.t3,
               marginTop: 2,
               fontFamily: 'monospace',
@@ -62,7 +62,7 @@ export function ScenarioResultCards({
           >
             OTD-D {s.otdDelivery.toFixed(1)}%
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 9, color: C.t3 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 12, color: C.t3 }}>
             <span>{s.setupCount} setups</span>
             <span>{s.moves.length} moves</span>
             <span style={{ color: C.yl }}>{s.tardinessDays.toFixed(1)}d tard.</span>
@@ -91,7 +91,7 @@ export function QualityWarnings({ qv }: { qv: QualityViolations }) {
         size={13}
         style={{ color: qv.criticalCount > 0 ? C.rd : C.yl, flexShrink: 0 }}
       />
-      <span style={{ fontSize: 10, fontWeight: 600, color: qv.criticalCount > 0 ? C.rd : C.yl }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: qv.criticalCount > 0 ? C.rd : C.yl }}>
         {qv.criticalCount > 0
           ? `${qv.criticalCount} conflito${qv.criticalCount > 1 ? 's' : ''} crítico${qv.criticalCount > 1 ? 's' : ''}`
           : ''}
@@ -99,7 +99,7 @@ export function QualityWarnings({ qv }: { qv: QualityViolations }) {
         {qv.highCount > 0 ? `${qv.highCount} alerta${qv.highCount > 1 ? 's' : ''}` : ''}
       </span>
       {qv.warnings.length > 0 && (
-        <span style={{ fontSize: 9, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
       )}
     </div>
   );

@@ -199,7 +199,7 @@ function ResourcePickers({
 }) {
   return (
     <>
-      <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Máquinas</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Máquinas</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
         {focusIds.map((id) => {
           const downDays = getResourceDownDays('machine', id);
@@ -225,7 +225,7 @@ function ResourcePickers({
           );
         })}
       </div>
-      <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Ferramentas</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Ferramentas</div>
       <div
         style={{
           display: 'flex',

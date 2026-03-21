@@ -22,9 +22,7 @@ import type {
   ZoneShiftDemand,
 } from './engine';
 import {
-  computeWorkforceForecast,
   DAY_CAP,
-  DEFAULT_WORKFORCE_CONFIG,
   opsByDayFromWorkforce,
 } from './engine';
 
@@ -176,24 +174,9 @@ export function deriveDayData(input: DeriveDayDataInput): DayData {
   const failureJustifications =
     transparencyReport?.failureJustifications.filter((j) => dayOpIds.has(j.opId)) ?? [];
 
-  // D+1 forecast
-  let d1Forecast: WorkforceForecast | null = null;
-  if (transparencyReport?.workforceForecast && idx === 0) {
-    d1Forecast = transparencyReport.workforceForecast;
-  } else if (allBlocks.length > 0) {
-    try {
-      d1Forecast = computeWorkforceForecast({
-        blocks: allBlocks,
-        workforceConfig: engine.workforceConfig ?? DEFAULT_WORKFORCE_CONFIG,
-        workdays: engine.workdays,
-        dates: engine.dates,
-        toolMap: engine.toolMap,
-        fromDayIdx: idx,
-      });
-    } catch {
-      d1Forecast = null;
-    }
-  }
+  // D+1 forecast — from backend analytics (no local computation)
+  const d1Forecast: WorkforceForecast | null =
+    transparencyReport?.workforceForecast ?? null;
 
   return {
     dayIdx: idx,

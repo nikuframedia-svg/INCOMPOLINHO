@@ -14,6 +14,8 @@ import {
   Database,
   ShoppingCart,
   Clock,
+  Brain,
+  ShieldAlert,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -68,6 +70,20 @@ const NAV_MODULES: NavModule[] = [
       { label: 'CTP', path: '/mrp/ctp', icon: Clock },
     ],
   },
+  {
+    id: 'intelligence',
+    label: 'Análise',
+    icon: Brain,
+    basePath: '/intelligence',
+    items: [{ label: 'Intelligence', path: '/intelligence', icon: Brain }],
+  },
+  {
+    id: 'risk',
+    label: 'Risco',
+    icon: ShieldAlert,
+    basePath: '/risk',
+    items: [{ label: 'Mapa de Risco', path: '/risk', icon: ShieldAlert }],
+  },
 ];
 
 export function Sidebar() {
@@ -89,6 +105,8 @@ export function Sidebar() {
     if (path === '/console') return location.pathname === '/console';
     if (path === '/plan') return location.pathname === '/plan';
     if (path === '/mrp') return location.pathname === '/mrp';
+    if (path === '/intelligence') return location.pathname === '/intelligence';
+    if (path === '/risk') return location.pathname === '/risk';
     return location.pathname.startsWith(path);
   }
 
@@ -211,11 +229,11 @@ export function Sidebar() {
           <Link
             to="/settings"
             className={`sidebar__settings-btn ${isSettingsActive ? 'sidebar__settings-btn--active' : ''}`}
-            title={collapsed ? 'Settings' : undefined}
-            aria-label="Settings"
+            title={collapsed ? 'Definições' : undefined}
+            aria-label="Definições"
           >
             <Settings size={16} />
-            {!collapsed && <span>Settings</span>}
+            {!collapsed && <span>Definições</span>}
           </Link>
           <button
             type="button"

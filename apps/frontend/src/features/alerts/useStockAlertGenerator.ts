@@ -43,8 +43,8 @@ function buildConsequence(rec: MRPRecord): string {
 }
 
 function buildCorrectiveAction(rec: MRPRecord): string {
-  if (rec.altMachine) return `Transferir para ${rec.altMachine} ou antecipar producao`;
-  return 'Antecipar producao ou rever prioridades';
+  if (rec.altMachine) return `Transferir para ${rec.altMachine} ou antecipar produção`;
+  return 'Antecipar produção ou rever prioridades';
 }
 
 function buildAlert(rec: MRPRecord, priority: AlertPriority): Alert {

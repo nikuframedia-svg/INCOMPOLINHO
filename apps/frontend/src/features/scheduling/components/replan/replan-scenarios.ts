@@ -35,7 +35,7 @@ export const SCENARIOS: {
     id: 'optimize',
     icon: RefreshCw,
     label: 'Optimizar plano',
-    desc: 'Redistribui operacoes para melhorar OTD-D e reduzir setups',
+    desc: 'Redistribui operações para melhorar OTD-D e reduzir setups',
     color: C.ac,
   },
 ];

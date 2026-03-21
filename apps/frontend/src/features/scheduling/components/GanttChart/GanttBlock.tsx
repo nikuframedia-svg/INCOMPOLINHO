@@ -59,7 +59,7 @@ export const GanttBlock = memo(function GanttBlock({
             justifyContent: 'center',
           }}
         >
-          <span style={{ fontSize: 8, color: col, fontWeight: 700 }}>
+          <span style={{ fontSize: 12, color: col, fontWeight: 700 }}>
             {(() => {
               const sw = Math.max((b.setupE! - b.setupS!) * ppm, 4);
               const sd = Math.round(b.setupE! - b.setupS!);
@@ -104,7 +104,7 @@ export const GanttBlock = memo(function GanttBlock({
       >
         <span
           style={{
-            fontSize: 9,
+            fontSize: 12,
             color: C.t1,
             fontWeight: 600,
             whiteSpace: 'nowrap',
@@ -209,8 +209,8 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
         width: 240,
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: col }}>{b.toolId}</div>
-      <div style={{ fontSize: 9, color: C.t2, marginBottom: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: col }}>{b.toolId}</div>
+      <div style={{ fontSize: 12, color: C.t2, marginBottom: 6 }}>
         {b.nm} · {b.sku}
       </div>
       <div
@@ -218,7 +218,7 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: '4px 12px',
-          fontSize: 9,
+          fontSize: 12,
         }}
       >
         {(
@@ -242,7 +242,7 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
       {b.moved && (
         <div
           style={{
-            fontSize: 9,
+            fontSize: 12,
             color: C.ac,
             marginTop: 4,
             fontWeight: 600,
@@ -264,7 +264,7 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
         >
           <div
             style={{
-              fontSize: 9,
+              fontSize: 12,
               color: col,
               fontWeight: 600,
               marginBottom: 3,
@@ -276,7 +276,7 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
             <Layers size={9} strokeWidth={1.5} /> Co-Produção
           </div>
           {b.outputs.map((o, oi) => (
-            <div key={oi} style={{ fontSize: 9, color: C.t3 }}>
+            <div key={oi} style={{ fontSize: 12, color: C.t3 }}>
               {o.sku}{' '}
               <span style={{ color: C.t1, fontWeight: 600 }}>{o.qty.toLocaleString()} pcs</span>
             </div>
@@ -286,17 +286,17 @@ function BlockTooltip({ b, col, data, classifications }: { b: Block; col: string
       {classifications && classifications.size > 0 && (
         <div style={{ borderTop: `1px solid ${col}33`, marginTop: 6, paddingTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {classifications.has('atrasado') && (
-            <span style={{ fontSize: 8, fontWeight: 700, color: C.rd, background: `${C.rd}18`, padding: '1px 5px', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.rd, background: `${C.rd}18`, padding: '1px 5px', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
               <Clock size={7} strokeWidth={2.5} /> Atrasado
             </span>
           )}
           {classifications.has('urgente') && (
-            <span style={{ fontSize: 8, fontWeight: 700, color: C.yl, background: `${C.yl}18`, padding: '1px 5px', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.yl, background: `${C.yl}18`, padding: '1px 5px', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
               <Zap size={7} strokeWidth={2.5} /> Urgente
             </span>
           )}
           {classifications.has('robusto') && (
-            <span style={{ fontSize: 8, fontWeight: 700, color: C.ac, background: `${C.ac}18`, padding: '1px 5px', borderRadius: 3 }}>Robusto</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.ac, background: `${C.ac}18`, padding: '1px 5px', borderRadius: 3 }}>Robusto</span>
           )}
         </div>
       )}

@@ -84,8 +84,8 @@ export function KPISummaryCards({
           l: 'Bloqueadas',
           v: blkN,
           s: blkN > 0
-            ? `${blkN} operacao${blkN > 1 ? 'es' : ''} sem maquina viavel — intervencao necessaria`
-            : 'Todas as operacoes com maquina atribuida',
+            ? `${blkN} operação${blkN > 1 ? 'ões' : ''} sem máquina viável — intervenção necessária`
+            : 'Todas as operações com máquina atribuída',
           c: blkN > 0 ? C.rd : C.ac,
         },
         ...(definitionCounts
@@ -112,7 +112,7 @@ export function KPISummaryCards({
 export function CoverageBar({ audit }: { audit: CoverageAuditResult }) {
   return (
     <Card style={{ padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
         Detalhe da Cobertura
       </div>
       {/* Segmented bar */}
@@ -136,7 +136,7 @@ export function CoverageBar({ audit }: { audit: CoverageAuditResult }) {
               justifyContent: 'center',
             }}
           >
-            <span style={{ fontSize: 8, color: C.t1, fontWeight: 600 }}>{audit.fullyCovered}</span>
+            <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{audit.fullyCovered}</span>
           </div>
         )}
         {audit.partiallyCovered > 0 && (
@@ -149,7 +149,7 @@ export function CoverageBar({ audit }: { audit: CoverageAuditResult }) {
               justifyContent: 'center',
             }}
           >
-            <span style={{ fontSize: 8, color: C.bg, fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.bg, fontWeight: 600 }}>
               {audit.partiallyCovered}
             </span>
           </div>
@@ -164,11 +164,11 @@ export function CoverageBar({ audit }: { audit: CoverageAuditResult }) {
               justifyContent: 'center',
             }}
           >
-            <span style={{ fontSize: 8, color: C.t1, fontWeight: 600 }}>{audit.zeroCovered}</span>
+            <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{audit.zeroCovered}</span>
           </div>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 12, fontSize: 9, color: C.t3 }}>
+      <div style={{ display: 'flex', gap: 12, fontSize: 12, color: C.t3 }}>
         <span>
           <span
             style={{
@@ -212,7 +212,7 @@ export function CoverageBar({ audit }: { audit: CoverageAuditResult }) {
           {audit.zeroCovered} sem cobertura
         </span>
       </div>
-      <div style={{ marginTop: 8, fontSize: 10, color: C.t2, fontFamily: 'monospace' }}>
+      <div style={{ marginTop: 8, fontSize: 12, color: C.t2, fontFamily: 'monospace' }}>
         {formatCoverage(audit.globalCoveragePct, audit.totalDemand, audit.totalProduced).context}
       </div>
     </Card>
@@ -248,12 +248,12 @@ export function FeasibilityScore({ feasibility }: { feasibility: FeasibilitySumm
           </span>
         </div>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>Viabilidade do Plano</div>
-          <div style={{ fontSize: 10, color: C.t3 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>Viabilidade do Plano</div>
+          <div style={{ fontSize: 12, color: C.t3 }}>
             {feasibility.feasibleOps} de {feasibility.totalOps} operações viáveis
           </div>
           {feasibility.infeasibleOps > 0 && (
-            <div style={{ fontSize: 10, color: C.rd, fontWeight: 500 }}>
+            <div style={{ fontSize: 12, color: C.rd, fontWeight: 500 }}>
               {feasibility.infeasibleOps} inviáveis
             </div>
           )}
@@ -266,7 +266,7 @@ export function FeasibilityScore({ feasibility }: { feasibility: FeasibilitySumm
             borderRadius: 4,
             background: C.rdS,
             border: `1px solid ${C.rd}33`,
-            fontSize: 10,
+            fontSize: 12,
             color: C.rd,
             fontWeight: 500,
           }}

@@ -40,7 +40,7 @@ export function ShiftsPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -70,7 +70,7 @@ export function ShiftsPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -116,7 +116,7 @@ export function ShiftsPage() {
         {thirdShiftRecommended && !thirdShiftDefault && (
           <div
             style={{
-              fontSize: 11,
+              fontSize: 12,
               color: 'var(--semantic-warning, #FF8C00)',
               fontWeight: 600,
             }}
@@ -139,7 +139,7 @@ export function ShiftsPage() {
           </span>
           <button
             className="constraint-toggles__param-select"
-            style={{ cursor: 'pointer', fontSize: 10, padding: '3px 10px' }}
+            style={{ cursor: 'pointer', fontSize: 12, padding: '3px 10px' }}
             onClick={() => setShowForm(!showForm)}
           >
             {showForm ? 'Cancelar' : '+ Adicionar'}
@@ -149,7 +149,7 @@ export function ShiftsPage() {
         {showForm && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-end' }}>
             <div>
-              <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block' }}>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block' }}>
                 Data
               </label>
               <input
@@ -157,18 +157,18 @@ export function ShiftsPage() {
                 value={formDate}
                 onChange={(e) => setFormDate(e.target.value)}
                 className="constraint-toggles__param-select"
-                style={{ fontSize: 10 }}
+                style={{ fontSize: 12 }}
               />
             </div>
             <div>
-              <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block' }}>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block' }}>
                 Máquina
               </label>
               <select
                 value={formMachine}
                 onChange={(e) => setFormMachine(e.target.value)}
                 className="constraint-toggles__param-select"
-                style={{ fontSize: 10 }}
+                style={{ fontSize: 12 }}
               >
                 <option value="">—</option>
                 {machines.map((m) => (
@@ -179,7 +179,7 @@ export function ShiftsPage() {
               </select>
             </div>
             <div>
-              <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block' }}>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block' }}>
                 Motivo
               </label>
               <input
@@ -188,14 +188,14 @@ export function ShiftsPage() {
                 onChange={(e) => setFormReason(e.target.value)}
                 placeholder="Feriado, manutenção..."
                 className="constraint-toggles__param-select"
-                style={{ fontSize: 10, width: 160 }}
+                style={{ fontSize: 12, width: 160 }}
               />
             </div>
             <button
               className="constraint-toggles__param-select"
               style={{
                 cursor: 'pointer',
-                fontSize: 10,
+                fontSize: 12,
                 padding: '3px 10px',
                 background: 'var(--accent)',
                 color: 'var(--bg-base)',
@@ -210,7 +210,7 @@ export function ShiftsPage() {
         )}
 
         {exceptions.length === 0 && !showForm && (
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Sem excepções definidas</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sem excepções definidas</div>
         )}
         {exceptions.map((ex) => (
           <div
@@ -218,7 +218,7 @@ export function ShiftsPage() {
             style={{
               display: 'flex',
               gap: 12,
-              fontSize: 10,
+              fontSize: 12,
               color: 'var(--text-secondary)',
               padding: '4px 0',
               borderBottom: '1px solid var(--border-default)',

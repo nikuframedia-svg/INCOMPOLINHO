@@ -54,7 +54,7 @@ export function DecisionItem({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span
               style={{
-                fontSize: 9,
+                fontSize: 12,
                 fontWeight: 600,
                 color: catColor,
                 fontFamily: 'monospace',
@@ -68,12 +68,12 @@ export function DecisionItem({
                 const op = opById[d.opId];
                 return (
                   <>
-                    <span style={{ fontSize: 9, color: C.t2, fontFamily: 'monospace' }}>
+                    <span style={{ fontSize: 12, color: C.t2, fontFamily: 'monospace' }}>
                       {d.opId}
                     </span>
                     {op?.sku && (
                       <span
-                        style={{ fontSize: 8, color: C.t3, fontFamily: 'monospace', opacity: 0.8 }}
+                        style={{ fontSize: 12, color: C.t3, fontFamily: 'monospace', opacity: 0.8 }}
                       >
                         {op.sku}
                       </span>
@@ -82,15 +82,15 @@ export function DecisionItem({
                 );
               })()}
             {d.toolId && (
-              <span style={{ fontSize: 8, color: C.t3, fontFamily: 'monospace' }}>{d.toolId}</span>
+              <span style={{ fontSize: 12, color: C.t3, fontFamily: 'monospace' }}>{d.toolId}</span>
             )}
             {d.machineId && (
-              <span style={{ fontSize: 9, color: C.t3, fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 12, color: C.t3, fontFamily: 'monospace' }}>
                 {'\u2192'} {d.machineId}
               </span>
             )}
             {d.dayIdx != null && (
-              <span style={{ fontSize: 8, color: C.t4, fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 12, color: C.t4, fontFamily: 'monospace' }}>
                 {dates[d.dayIdx] ?? `d${d.dayIdx}`}
                 {dnames[d.dayIdx] ? ` ${dnames[d.dayIdx]}` : ''}
               </span>
@@ -122,7 +122,7 @@ export function DecisionItem({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                   <span
                     style={{
-                      fontSize: 9,
+                      fontSize: 12,
                       color: C.t3,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
@@ -133,12 +133,12 @@ export function DecisionItem({
                     {op.nm}
                   </span>
                   {edd != null && (
-                    <span style={{ fontSize: 8, color: C.yl, fontWeight: 500 }}>
+                    <span style={{ fontSize: 12, color: C.yl, fontWeight: 500 }}>
                       EDD: {dates[edd] ?? `d${edd}`}
                     </span>
                   )}
                   {tool && (
-                    <span style={{ fontSize: 8, color: C.t4, fontFamily: 'monospace' }}>
+                    <span style={{ fontSize: 12, color: C.t4, fontFamily: 'monospace' }}>
                       {tool.pH.toLocaleString()} pcs/h
                     </span>
                   )}
@@ -148,14 +148,14 @@ export function DecisionItem({
         </div>
       </div>
       {isExpanded && (
-        <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 9 }}>
+        <div style={{ marginTop: 6, paddingLeft: 16, fontSize: 12 }}>
           {d.detail && <div style={{ color: C.t2, marginBottom: 3 }}>{d.detail}</div>}
           {d.shift && <div style={{ color: C.t3 }}>Turno: {d.shift}</div>}
           {d.alternatives && d.alternatives.length > 0 && (
             <div style={{ marginTop: 4 }}>
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: C.t3,
                   textTransform: 'uppercase',
@@ -178,7 +178,7 @@ export function DecisionItem({
                     alignItems: 'center',
                   }}
                 >
-                  <span style={{ fontFamily: 'monospace', color: C.bl, fontSize: 8 }}>
+                  <span style={{ fontFamily: 'monospace', color: C.bl, fontSize: 12 }}>
                     {alt.actionType}
                   </span>
                   <span style={{ color: C.t2, flex: 1 }}>{alt.description}</span>

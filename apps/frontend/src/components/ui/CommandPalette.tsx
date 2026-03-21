@@ -183,7 +183,7 @@ export function CommandPalette() {
           />
           <kbd
             style={{
-              fontSize: 10,
+              fontSize: 12,
               fontFamily: 'var(--font-mono)',
               padding: '2px 6px',
               background: 'rgba(255,255,255,0.06)',
@@ -235,7 +235,7 @@ export function CommandPalette() {
               >
                 <Icon size={16} style={{ opacity: 0.6, flexShrink: 0 }} />
                 <span style={{ flex: 1 }}>{item.label}</span>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{item.section}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.section}</span>
               </button>
             );
           })}

@@ -1,9 +1,11 @@
-"""Copilot API — chat endpoint with GPT-4o function calling."""
+"""Copilot API — chat endpoint with GPT-4o function calling + widgets."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -16,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 copilot_router = APIRouter(prefix="/copilot", tags=["copilot"])
 
+# Map tool names → widget types for frontend rendering
+TOOL_WIDGET_MAP: dict[str, str] = {
+    "ver_carga_maquinas": "machine_load",
+    "ver_producao_hoje": "production_table",
+    "ver_alertas": "alerts_list",
+    "ver_robustez": "robustness",
+    "explicar_referencia": "sku_detail",
+    "ver_decisoes": "decisions_table",
+    "recalcular_plano": "kpi_compare",
+    "sugerir_melhorias": "suggestions",
+}
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -26,9 +40,16 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+def _parse_tool_result(raw: str) -> dict[str, Any] | None:
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 @copilot_router.post("/chat")
 async def copilot_chat(request: ChatRequest) -> dict:
-    """Chat with the copilot. Supports function calling loop."""
+    """Chat with the copilot. Supports function calling loop + widget data."""
     api_key = os.environ.get("PP1_OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         raise HTTPException(
@@ -44,8 +65,11 @@ async def copilot_chat(request: ChatRequest) -> dict:
     client = openai.OpenAI(api_key=api_key)
 
     system_prompt = build_system_prompt()
-    messages = [{"role": "system", "content": system_prompt}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     messages.extend({"role": m.role, "content": m.content} for m in request.messages)
+
+    # Collect widget data from tool calls
+    widgets: list[dict[str, Any]] = []
 
     # Function calling loop (max 5 iterations to prevent runaway)
     for _ in range(5):
@@ -72,16 +96,24 @@ async def copilot_chat(request: ChatRequest) -> dict:
                         "content": result,
                     }
                 )
+                # Capture widget data if this tool produces a widget
+                widget_type = TOOL_WIDGET_MAP.get(tool_call.function.name)
+                if widget_type:
+                    parsed = _parse_tool_result(result)
+                    if parsed and "error" not in parsed:
+                        widgets.append({"type": widget_type, "data": parsed})
             continue
 
         return {
             "response": choice.message.content or "",
             "tool_calls_made": len(messages) - len(request.messages) - 1,
+            "widgets": widgets,
         }
 
     return {
         "response": "Atingi o limite de iterações. Tenta reformular o pedido.",
         "tool_calls_made": 5,
+        "widgets": widgets,
     }
 
 

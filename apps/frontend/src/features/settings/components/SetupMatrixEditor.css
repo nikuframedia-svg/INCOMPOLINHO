@@ -3,7 +3,7 @@
 .setup-matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .setup-matrix th,
@@ -14,14 +14,14 @@
 
 .setup-matrix__corner {
   background: var(--bg-base);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
 }
 
 .setup-matrix__header {
   background: var(--bg-base);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
   white-space: nowrap;
@@ -29,7 +29,7 @@
 
 .setup-matrix__row-label {
   background: var(--bg-base);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
   font-family: var(--font-mono);
@@ -64,7 +64,7 @@
 .skill-matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .skill-matrix th,
@@ -75,13 +75,13 @@
 
 .skill-matrix__corner {
   background: var(--bg-base);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .skill-matrix__header {
   background: var(--bg-base);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   text-align: center;
   font-weight: 500;
@@ -89,7 +89,7 @@
 
 .skill-matrix__row-label {
   background: var(--bg-base);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .skill-matrix__cell {

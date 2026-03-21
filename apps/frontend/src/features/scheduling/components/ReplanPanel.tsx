@@ -7,7 +7,9 @@ import { ChevronDown } from 'lucide-react';
 import type React from 'react';
 import { useCallback, useState } from 'react';
 import type { AutoReplanResult, Block, DayLoad, EngineData, EOp, MoveAction, OptResult, ReplanDispatchResult } from '../../../lib/engine';
-import { type buildResourceTimelines, C, dispatchReplan } from '../../../lib/engine';
+import { type buildResourceTimelines, C } from '../../../lib/engine';
+import { scheduleReplanApi } from '../../../lib/api';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
 import { useReplanOrchestrator } from '../hooks/useReplanOrchestrator';
 import { OBJECTIVE_PROFILES } from './constants';
 import { ReplanKPIPreview } from './ReplanKPIPreview';
@@ -101,44 +103,41 @@ export function ReplanView({
   const { setXai, setEditingDown } = rpcActions;
 
   const handleDispatchReplan = useCallback(
-    (machineId: string, delayMin: number) => {
+    async (machineId: string, delayMin: number) => {
       setReplanRunning(true);
       setReplanResult(null);
       try {
-        const machineBlocks = blocks.filter((b) => b.machineId === machineId && b.type === 'ok');
-        const perturbedOpId = machineBlocks[0]?.opId ?? allOps.find((o) => o.m === machineId)?.id ?? '';
-        const result = dispatchReplan({
-          blocks,
-          previousBlocks: blocks,
-          perturbedOpId,
-          delayMin,
-          machineId,
-          scheduleInput: {
-            ops: data.ops,
-            mSt,
-            tSt,
-            moves,
-            machines: data.machines,
-            toolMap: data.toolMap,
-            workdays: data.workdays,
-            nDays: data.nDays,
-            workforceConfig: data.workforceConfig,
-            twinValidationReport: data.twinValidationReport,
-            dates: data.dates,
-            orderBased: data.orderBased,
-            machineTimelines: data.machineTimelines,
-            toolTimelines: data.toolTimelines,
+        const nikufraData = getCachedNikufraData();
+        if (!nikufraData) throw new Error('No schedule data cached');
+
+        const response = await scheduleReplanApi({
+          blocks: blocks as unknown as Record<string, unknown>[],
+          disruption: {
+            type: delayMin >= 510 ? 'catastrophe' : 'breakdown',
+            resource_id: machineId,
+            start_day: 0,
+            end_day: Math.ceil(delayMin / 510),
           },
-          TM,
-          eventType: 'breakdown',
-          isCatastrophe: delayMin >= 510,
+          settings: { nikufra_data: nikufraData },
         });
-        setReplanResult(result);
+        const r = response as unknown as Record<string, unknown>;
+        const resMoves = ((r.auto_moves ?? []) as unknown as MoveAction[]).map((mv) => ({
+          opId: mv.opId,
+          toM: mv.toM,
+        }));
+        setReplanResult({
+          layer: (r.strategy as string) ?? 'partial',
+          blocks: (response.blocks ?? blocks) as unknown as Block[],
+          emergencyNightShift: false,
+          layerResult: { moves: resMoves },
+        } as unknown as ReplanDispatchResult);
+      } catch {
+        // Silently fail — user sees no result
       } finally {
         setReplanRunning(false);
       }
     },
-    [blocks, allOps, data, mSt, tSt, moves, TM],
+    [blocks],
   );
 
   if (!advancedMode) {
@@ -175,7 +174,7 @@ export function ReplanView({
           border: `1px solid ${C.bd}`,
           background: 'transparent',
           color: C.t3,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 500,
           cursor: 'pointer',
           fontFamily: 'inherit',
@@ -190,7 +189,7 @@ export function ReplanView({
         Modo Simples
       </button>
 
-      <QualityBanner qv={qv} />
+      {qv && <QualityBanner qv={qv} />}
 
       <ResourceDownCard
         machines={machines}
@@ -329,14 +328,10 @@ export function ReplanView({
         optN={rpc.optN}
         optProfile={rpc.optProfile}
         optMoveable={rpc.optMoveable}
-        saRunning={rpc.saRunning}
-        saProgress={rpc.saProgress}
         setOptN={rpcActions.setOptN}
         setOptProfile={rpcActions.setOptProfile}
         setOptResults={rpcActions.setOptResults}
         runOpt={rpcActions.runOpt}
-        runSA={rpcActions.runSA}
-        cancelSA={rpcActions.cancelSA}
         applyOptResult={rpcActions.applyOptResult}
         profiles={OBJECTIVE_PROFILES}
       />

@@ -66,7 +66,7 @@ export const useUIStore = create<UIStoreState>()(
       contextEntity: null,
       temporalZoom: 'day',
       selectedDayIdx: 0,
-      theme: 'dark',
+      theme: 'light',
       sidebarCollapsed: false,
       sidebarMobileOpen: false,
       mrpRiskCount: 0,

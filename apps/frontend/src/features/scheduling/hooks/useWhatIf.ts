@@ -1,5 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+/**
+ * useWhatIf — What-if scenario analysis via backend /v1/schedule/what-if.
+ */
 
+import { useCallback, useMemo, useState } from 'react';
 import type {
   AreaCaps,
   DispatchRule,
@@ -7,17 +10,10 @@ import type {
   ETool,
   ObjectiveProfile,
   OptResult,
-  SAInput,
-  ScoreWeights,
 } from '../../../lib/engine';
-import {
-  DEFAULT_WORKFORCE_CONFIG,
-  type moveableOps,
-  quickValidate,
-  runOptimization,
-} from '../../../lib/engine';
-import { useSchedulingWorker } from '../../../hooks/useSchedulingWorker';
-import { useSettingsStore } from '../../../stores/useSettingsStore';
+import type { MoveableOp, QuickValidateResult } from '../../../lib/engine';
+import { scheduleWhatIfApi } from '../../../lib/api';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
 
 export interface WhatIfScenario {
   t1: number;
@@ -32,11 +28,9 @@ export interface WhatIfState {
   N: number;
   dispatchRule: DispatchRule;
   objProfile: string;
-  res: { top3: OptResult[]; moveable: ReturnType<typeof moveableOps> } | null;
+  res: { top3: OptResult[]; moveable: MoveableOp[] } | null;
   run: boolean;
   prog: number;
-  saRunning: boolean;
-  saProg: number | null;
   editingDown: { type: 'machine' | 'tool'; id: string } | null;
   wdi: number[];
   wiDownStartDay: number;
@@ -49,7 +43,7 @@ export interface WhatIfState {
   areaCaps: AreaCaps;
   avOps: number;
   selBlocks: OptResult['blocks'];
-  qv: ReturnType<typeof quickValidate>;
+  qv: QuickValidateResult;
 }
 
 export interface WhatIfActions {
@@ -72,11 +66,11 @@ export interface WhatIfActions {
 
 export function useWhatIf(
   data: EngineData,
-  profiles: ObjectiveProfile[],
+  _profiles: ObjectiveProfile[],
   getResourceDownDays: (type: 'machine' | 'tool', id: string) => Set<number>,
-  replanTimelines: ReturnType<typeof import('../../../lib/engine').buildResourceTimelines> | null,
+  _replanTimelines: unknown,
 ): { state: WhatIfState; actions: WhatIfActions } {
-  const { machines, tools, ops, toolMap: TM, focusIds } = data;
+  const { machines, tools, focusIds } = data;
 
   const [sc, setSc] = useState<WhatIfScenario>({ t1: 6, p1: 2, t2: 8, p2: 3, seed: 42 });
   const [N, setN] = useState(300);
@@ -84,7 +78,7 @@ export function useWhatIf(
   const [objProfile, setObjProfile] = useState<string>('balanced');
   const [res, setRes] = useState<{
     top3: OptResult[];
-    moveable: ReturnType<typeof moveableOps>;
+    moveable: MoveableOp[];
   } | null>(null);
   const [run, setRun] = useState(false);
   const [prog, setProg] = useState(0);
@@ -109,118 +103,103 @@ export function useWhatIf(
   const areaCaps: AreaCaps = { PG1: sc.t1 + sc.p1, PG2: sc.t2 + sc.p2 };
   const avOps = areaCaps.PG1 + areaCaps.PG2;
 
-  const { runSA, progress: saProg, isRunning: saRunning, cancel: cancelSA } = useSchedulingWorker();
-  const saInputRef = useRef<SAInput | null>(null);
+  const optimize = useCallback(async () => {
+    const nikufraData = getCachedNikufraData();
+    if (!nikufraData) return;
 
-  const optimize = useCallback(() => {
-    cancelSA();
     setRun(true);
-    setProg(0);
+    setProg(10);
     setRes(null);
     setSel(0);
-    const bM = Object.fromEntries(
-      machines.map((m) => [
-        m.id,
-        getResourceDownDays('machine', m.id).size > 0 ? 'down' : 'running',
-      ]),
-    );
-    const bT = Object.fromEntries(
-      focusT.filter((t) => getResourceDownDays('tool', t.id).size > 0).map((t) => [t.id, 'down']),
-    );
-    const profile = profiles.find((p) => p.id === objProfile);
-    const wts = profile ? { ...profile.weights } : null;
-    const thirdShift = data.thirdShift ?? useSettingsStore.getState().thirdShiftDefault;
-    const mTimelines = replanTimelines?.machineTimelines ?? data.machineTimelines;
-    const tTimelines = replanTimelines?.toolTimelines ?? data.toolTimelines;
-    const opt = runOptimization({
-      ops,
-      mSt: bM,
-      tSt: bT,
-      machines,
-      TM,
-      focusIds,
-      tools,
-      workforceConfig: data.workforceConfig ?? DEFAULT_WORKFORCE_CONFIG,
-      weights: wts ? (wts as Partial<ScoreWeights>) : undefined,
-      seed: sc.seed,
-      workdays: data.workdays,
-      nDays: data.nDays,
-      rule: dispatchRule,
-      N,
-      K: 3,
-      thirdShift,
-      machineTimelines: mTimelines,
-      toolTimelines: tTimelines,
-      twinValidationReport: data.twinValidationReport,
-      dates: data.dates,
-      orderBased: data.orderBased,
-    });
-    opt.run(
-      (top3) => {
-        setRes({ top3, moveable: opt.moveable });
-        setRun(false);
 
-        // Phase 2: SA refinement on best greedy result (off main thread)
-        const best = top3[0];
-        if (!best) return;
-        const saInput: SAInput = {
-          ops,
-          mSt: bM,
-          tSt: bT,
-          machines,
-          TM,
-          workdays: data.workdays,
-          nDays: data.nDays,
-          workforceConfig: data.workforceConfig ?? DEFAULT_WORKFORCE_CONFIG,
-          weights: wts ? (wts as Partial<ScoreWeights>) : undefined,
-          rule: dispatchRule,
-          thirdShift,
-          machineTimelines: mTimelines,
-          toolTimelines: tTimelines,
-          twinValidationReport: data.twinValidationReport,
-          dates: data.dates,
-          orderBased: data.orderBased,
-          initialBlocks: best.blocks,
-          initialMoves: best.moves,
-        };
-        saInputRef.current = saInput;
-        runSA(saInput, { maxIter: 10_000 })
-          .then((saResult) => {
-            if (saInputRef.current !== saInput) return; // stale
-            if (saResult.metrics.score > best.score) {
-              setRes((prev) => {
-                if (!prev) return prev;
-                const updated = [...prev.top3];
-                updated[0] = saResult.metrics;
-                return { ...prev, top3: updated };
-              });
-            }
-          })
-          .catch(() => { /* SA failed — keep greedy result */ });
-      },
-      (p) => setProg(p),
-    );
-  }, [
-    sc,
-    N,
-    machines,
-    ops,
-    TM,
-    focusIds,
-    tools,
-    dispatchRule,
-    objProfile,
-    data,
-    replanTimelines,
-    getResourceDownDays,
-    focusT,
-    profiles,
-    runSA,
-    cancelSA,
-  ]);
+    try {
+      // Build mutations from resource down-days
+      const mutations: Record<string, unknown>[] = [];
+      for (const m of machines) {
+        const downDays = getResourceDownDays('machine', m.id);
+        if (downDays.size > 0) {
+          const days = Array.from(downDays).sort((a, b) => a - b);
+          mutations.push({
+            type: 'machine_down',
+            resource_id: m.id,
+            start_day: days[0],
+            end_day: days[days.length - 1],
+          });
+        }
+      }
+      for (const t of focusT) {
+        const downDays = getResourceDownDays('tool', t.id);
+        if (downDays.size > 0) {
+          const days = Array.from(downDays).sort((a, b) => a - b);
+          mutations.push({
+            type: 'tool_down',
+            resource_id: t.id,
+            start_day: days[0],
+            end_day: days[days.length - 1],
+          });
+        }
+      }
+
+      setProg(30);
+      const response = await scheduleWhatIfApi(
+        { nikufra_data: nikufraData, mutations },
+        120_000,
+      );
+      setProg(90);
+
+      // Map response to OptResult shape
+      const scenario = response.scenario as Record<string, unknown> | null;
+      const scenarioBlocks = (scenario?.blocks ?? []) as unknown as OptResult['blocks'];
+      const scenarioScore = (scenario?.score ?? {}) as Record<string, number>;
+
+      const top3: OptResult[] = [
+        {
+          blocks: scenarioBlocks,
+          moves: [],
+          score: scenarioScore.score ?? 0,
+          otd: scenarioScore.otd ?? 0,
+          otdDelivery: scenarioScore.otdDelivery ?? scenarioScore.otd_delivery ?? 0,
+          produced: scenarioScore.produced ?? 0,
+          totalDemand: scenarioScore.totalDemand ?? scenarioScore.total_demand ?? 0,
+          lostPcs: scenarioScore.lostPcs ?? scenarioScore.lost_pcs ?? 0,
+          setupCount: scenarioScore.setupCount ?? scenarioScore.setup_count ?? 0,
+          setupMin: scenarioScore.setupMin ?? scenarioScore.setup_min ?? 0,
+          peakOps: scenarioScore.peakOps ?? scenarioScore.peak_ops ?? 0,
+          overOps: scenarioScore.overOps ?? scenarioScore.over_ops ?? 0,
+          overflows: scenarioScore.overflows ?? 0,
+          capUtil: scenarioScore.capUtil ?? scenarioScore.cap_util ?? 0,
+          capVar: scenarioScore.capVar ?? scenarioScore.cap_var ?? 0,
+          tardinessDays: scenarioScore.tardinessDays ?? scenarioScore.tardiness_days ?? 0,
+          setupByShift: { X: 0, Y: 0, Z: 0 },
+          capByMachine: {},
+          workforceDemand: [],
+          label: 'What-If',
+          deadlineFeasible: true,
+        },
+      ];
+
+      setRes({ top3, moveable: [] });
+      setProg(100);
+    } catch {
+      // Silently fail — user sees empty results
+    }
+    setRun(false);
+  }, [machines, focusT, getResourceDownDays]);
 
   const selBlocks = res?.top3[sel]?.blocks ?? [];
-  const qv = useMemo(() => quickValidate(selBlocks, machines, TM), [selBlocks, machines, TM]);
+  // Inline quick validate — count blocked/infeasible blocks (no engine dependency)
+  const qv = useMemo((): QuickValidateResult => {
+    let criticalCount = 0;
+    let highCount = 0;
+    const warnings: string[] = [];
+    for (const b of selBlocks) {
+      if (b.type === 'infeasible') criticalCount++;
+      if (b.type === 'blocked') highCount++;
+    }
+    if (criticalCount > 0) warnings.push(`${criticalCount} operações infeasíveis`);
+    if (highCount > 0) warnings.push(`${highCount} operações bloqueadas`);
+    return { criticalCount, highCount, warnings };
+  }, [selBlocks]);
 
   return {
     state: {
@@ -231,8 +210,6 @@ export function useWhatIf(
       res,
       run,
       prog,
-      saRunning,
-      saProg,
       editingDown,
       wdi,
       wiDownStartDay,

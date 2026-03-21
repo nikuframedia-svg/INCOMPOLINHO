@@ -87,7 +87,7 @@ export function OperatorSkillMatrix({ operators, machines }: OperatorSkillMatrix
               {machines.map((m) => (
                 <th key={m} className="skill-matrix__header">
                   <div>{m}</div>
-                  <div style={{ fontSize: 9, fontWeight: 400, color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-muted)' }}>
                     {qualifiedCount(m)} qualif.
                   </div>
                 </th>
@@ -99,7 +99,7 @@ export function OperatorSkillMatrix({ operators, machines }: OperatorSkillMatrix
               <tr key={op.id}>
                 <td className="skill-matrix__row-label">
                   <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{op.name}</span>
-                  <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
                     {op.group}
                   </span>
                 </td>
@@ -113,7 +113,7 @@ export function OperatorSkillMatrix({ operators, machines }: OperatorSkillMatrix
                       onClick={() => cycleSkill(op.id, m)}
                       style={{ cursor: 'pointer', background: cfg.bg, textAlign: 'center' }}
                     >
-                      <span style={{ fontSize: 10, fontWeight: 600, color: cfg.color }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: cfg.color }}>
                         {cfg.short}
                       </span>
                     </td>
@@ -126,7 +126,7 @@ export function OperatorSkillMatrix({ operators, machines }: OperatorSkillMatrix
       </div>
 
       <div
-        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 9, color: 'var(--text-muted)' }}
+        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)' }}
       >
         {CYCLE.map((level) => {
           const cfg = SKILL_CFG[level];
@@ -148,7 +148,7 @@ export function OperatorSkillMatrix({ operators, machines }: OperatorSkillMatrix
         })}
       </div>
 
-      <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-secondary)' }}>
+      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
         Cobertura média:{' '}
         <span
           style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}

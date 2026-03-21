@@ -54,7 +54,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
   if (versions.length < 2) {
     return (
       <Card style={{ padding: 24, textAlign: 'center' }}>
-        <div style={{ fontSize: 11, color: C.t4 }}>
+        <div style={{ fontSize: 12, color: C.t4 }}>
           Guarde pelo menos 2 versões para comparar planos.
         </div>
       </Card>
@@ -63,7 +63,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
 
   const vSel = (val: string | null, onChange: (v: string | null) => void, label: string) => (
     <div style={{ flex: 1 }}>
-      <div style={{ fontSize: 9, color: C.t4, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 12, color: C.t4, marginBottom: 4 }}>{label}</div>
       <select
         value={val ?? ''}
         onChange={(e) => onChange(e.target.value || null)}
@@ -74,7 +74,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
           border: `1px solid ${C.bd}`,
           background: C.bg,
           color: C.t1,
-          fontSize: 11,
+          fontSize: 12,
           fontFamily: 'inherit',
         }}
       >
@@ -144,7 +144,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
               },
             ].map((k, i) => (
               <Card key={i} style={{ textAlign: 'center', padding: 10 }}>
-                <div style={{ fontSize: 9, color: C.t4, marginBottom: 2 }}>{k.l}</div>
+                <div style={{ fontSize: 12, color: C.t4, marginBottom: 2 }}>{k.l}</div>
                 <div
                   style={{
                     fontSize: 16,
@@ -160,7 +160,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
           </div>
 
           {/* Summary */}
-          <div style={{ fontSize: 11, color: C.t2, padding: '4px 8px' }}>
+          <div style={{ fontSize: 12, color: C.t2, padding: '4px 8px' }}>
             {diff.diff.summary} · Churn: {diff.diff.churn.toFixed(0)} min
           </div>
 
@@ -178,23 +178,23 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
                   alignItems: 'center',
                 }}
               >
-                <div style={{ fontSize: 9, color: C.t4, fontWeight: 600 }}>Op</div>
-                <div style={{ fontSize: 9, color: C.t4, fontWeight: 600 }}>De</div>
+                <div style={{ fontSize: 12, color: C.t4, fontWeight: 600 }}>Op</div>
+                <div style={{ fontSize: 12, color: C.t4, fontWeight: 600 }}>De</div>
                 <div />
-                <div style={{ fontSize: 9, color: C.t4, fontWeight: 600 }}>Para</div>
-                <div style={{ fontSize: 9, color: C.t4, fontWeight: 600 }}>Dia</div>
+                <div style={{ fontSize: 12, color: C.t4, fontWeight: 600 }}>Para</div>
+                <div style={{ fontSize: 12, color: C.t4, fontWeight: 600 }}>Dia</div>
                 {diff.diff.moved.map((mv, i) => (
                   <React.Fragment key={i}>
-                    <div style={{ fontSize: 10, fontFamily: 'monospace', color: C.t1 }}>
+                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: C.t1 }}>
                       {mv.opId.slice(0, 10)}
                     </div>
-                    <div style={{ fontSize: 10, fontFamily: 'monospace', color: C.rd }}>
+                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: C.rd }}>
                       {mv.fromM}
                     </div>
                     <ArrowRight size={10} style={{ color: C.t4 }} />
                     <div
                       style={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontFamily: 'monospace',
                         color: C.ac,
                         fontWeight: 600,
@@ -202,7 +202,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
                     >
                       {mv.toM}
                     </div>
-                    <div style={{ fontSize: 10, fontFamily: 'monospace', color: C.t3 }}>
+                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: C.t3 }}>
                       {mv.fromDay !== mv.toDay ? `${mv.fromDay}→${mv.toDay}` : `d${mv.toDay}`}
                     </div>
                   </React.Fragment>
@@ -227,7 +227,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
               >
                 <div />
                 {data.dates.map((_d, i) => (
-                  <div key={i} style={{ textAlign: 'center', fontSize: 9, color: C.t4 }}>
+                  <div key={i} style={{ textAlign: 'center', fontSize: 12, color: C.t4 }}>
                     {data.dnames[i]}
                   </div>
                 ))}
@@ -235,7 +235,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
                   <React.Fragment key={row.mid}>
                     <div
                       style={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: C.t1,
                         fontFamily: 'monospace',
@@ -268,7 +268,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
                         >
                           <div
                             style={{
-                              fontSize: 10,
+                              fontSize: 12,
                               fontWeight: 600,
                               color: d.delta === 0 ? C.t4 : d.delta > 0 ? C.rd : C.ac,
                               fontFamily: 'monospace',
@@ -277,7 +277,7 @@ export function PlanComparePanel({ data }: { data: EngineData }) {
                             {d.delta > 0 ? '+' : ''}
                             {d.delta}%
                           </div>
-                          <div style={{ fontSize: 8, color: C.t4 }}>
+                          <div style={{ fontSize: 12, color: C.t4 }}>
                             {d.a}→{d.b}
                           </div>
                         </div>

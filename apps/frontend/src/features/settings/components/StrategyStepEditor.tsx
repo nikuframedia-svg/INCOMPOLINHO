@@ -20,7 +20,7 @@ export interface StrategyStep {
 }
 
 const FILTER_OPTIONS: { value: StepFilter; label: string }[] = [
-  { value: 'all', label: 'Todas as operacoes' },
+  { value: 'all', label: 'Todas as operações' },
   { value: 'deadline_close', label: 'Deadline < 5 dias' },
   { value: 'deadline_far', label: 'Deadline >= 5 dias' },
   { value: 'capacity_free', label: 'Capacidade livre' },
@@ -103,7 +103,7 @@ export function StrategyStepEditor({
             className="constraint-toggles__param-select"
             value={step.filter}
             onChange={(e) => update({ filter: e.target.value as StepFilter })}
-            style={{ fontSize: 11, width: '100%' }}
+            style={{ fontSize: 12, width: '100%' }}
           >
             {FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -118,7 +118,7 @@ export function StrategyStepEditor({
             className="constraint-toggles__param-select"
             value={step.rule}
             onChange={(e) => update({ rule: e.target.value as DispatchRule })}
-            style={{ fontSize: 11, width: '100%' }}
+            style={{ fontSize: 12, width: '100%' }}
           >
             {RULE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -133,7 +133,7 @@ export function StrategyStepEditor({
             className="constraint-toggles__param-select"
             value={step.direction}
             onChange={(e) => update({ direction: e.target.value as 'forward' | 'backward' })}
-            style={{ fontSize: 11, width: '100%' }}
+            style={{ fontSize: 12, width: '100%' }}
           >
             <option value="forward">Forward</option>
             <option value="backward">Backward</option>
@@ -145,7 +145,7 @@ export function StrategyStepEditor({
             className="constraint-toggles__param-select"
             value={step.guard}
             onChange={(e) => update({ guard: e.target.value as StepGuard })}
-            style={{ fontSize: 11, width: '100%' }}
+            style={{ fontSize: 12, width: '100%' }}
           >
             {GUARD_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -180,7 +180,7 @@ export function StrategyStepEditor({
           />
         </div>
         <div className="strategy-step__slider-group">
-          <label>Utilizacao: {step.weights.utilization}</label>
+          <label>Utilização: {step.weights.utilization}</label>
           <input
             type="range"
             className="opt-sliders__track"

@@ -111,7 +111,7 @@ export const MachineCard = memo(function MachineCard({ status, downtime, onAndon
             </span>
           )}
           {blocksAtRisk > 0 && (
-            <span className="msg__down-consequence" style={{ fontSize: 10, color: 'var(--semantic-red)', marginTop: 4, display: 'block' }}>
+            <span className="msg__down-consequence" style={{ fontSize: 12, color: 'var(--semantic-red)', marginTop: 4, display: 'block' }}>
               Afecta {blocksAtRisk} encomenda{blocksAtRisk > 1 ? 's' : ''} esta semana
             </span>
           )}
@@ -128,11 +128,11 @@ export const MachineCard = memo(function MachineCard({ status, downtime, onAndon
       ) : isIdle ? (
         /* ── Idle state — no production, no Andon alarm ── */
         <div className="msg__idle-body">
-          <span className="msg__idle-label">Sem producao hoje</span>
+          <span className="msg__idle-label">Sem produção hoje</span>
           <span className="msg__idle-sub">
             {nextBlock
-              ? `Proxima operacao: ${nextBlock.toolId}${clientMap?.[nextBlock.opId] ? ` (${clientMap[nextBlock.opId]})` : ''} — ${fmtMin(nextBlock.startMin)}`
-              : 'Maquina disponivel — sem ordens atribuidas'}
+              ? `Próxima operação: ${nextBlock.toolId}${clientMap?.[nextBlock.opId] ? ` (${clientMap[nextBlock.opId]})` : ''} — ${fmtMin(nextBlock.startMin)}`
+              : 'Máquina disponível — sem ordens atribuídas'}
           </span>
         </div>
       ) : (
@@ -151,7 +151,7 @@ export const MachineCard = memo(function MachineCard({ status, downtime, onAndon
                 </span>
               </>
             ) : (
-              <span className="msg__idle">Sem producao</span>
+              <span className="msg__idle">Sem produção</span>
             )}
           </div>
 

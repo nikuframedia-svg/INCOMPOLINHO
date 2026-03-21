@@ -48,7 +48,7 @@ export function StockProjectionChart({ chartData, trustScore }: StockProjectionC
                 symbol: 'none',
                 label: {
                   formatter: 'Safety Stock',
-                  fontSize: 9,
+                  fontSize: 12,
                   color: C.yl,
                   position: 'insideEndTop',
                 },
@@ -93,7 +93,7 @@ export function StockProjectionChart({ chartData, trustScore }: StockProjectionC
         trigger: 'axis',
         backgroundColor: C.s3,
         borderColor: C.bd,
-        textStyle: { fontSize: 10, color: C.t1 },
+        textStyle: { fontSize: 12, color: C.t1 },
         formatter: (params: { name: string; value: number; seriesName: string }[]) => {
           const main = params.find((p) => p.seriesName === 'Stock Projectado');
           if (!main) return '';
@@ -111,14 +111,14 @@ export function StockProjectionChart({ chartData, trustScore }: StockProjectionC
       xAxis: {
         type: 'category',
         data: dates,
-        axisLabel: { fontSize: 9, color: C.t3, rotate: 45 },
+        axisLabel: { fontSize: 12, color: C.t3, rotate: 45 },
         axisLine: { lineStyle: { color: C.bd } },
       },
       yAxis: {
         type: 'value',
         name: 'Stock (pcs)',
-        nameTextStyle: { fontSize: 9, color: C.t3 },
-        axisLabel: { fontSize: 9, color: C.t3 },
+        nameTextStyle: { fontSize: 12, color: C.t3 },
+        axisLabel: { fontSize: 12, color: C.t3 },
         splitLine: { lineStyle: { color: `${C.t4}22` } },
       },
       series,
@@ -129,7 +129,7 @@ export function StockProjectionChart({ chartData, trustScore }: StockProjectionC
     <div className="mrp__card" style={{ padding: 12 }}>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t2,
           textTransform: 'uppercase',

@@ -33,7 +33,7 @@ export function StockEventTable({ events }: StockEventTableProps) {
     <div className="mrp__card">
       <div
         style={{
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t2,
           textTransform: 'uppercase',
@@ -58,11 +58,11 @@ export function StockEventTable({ events }: StockEventTableProps) {
             const cfg = TYPE_CONFIG[ev.type];
             return (
               <tr key={`${ev.dayIndex}-${ev.type}-${i}`}>
-                <td style={{ ...mono, fontSize: 10, color: C.t2 }}>{ev.dateLabel}</td>
+                <td style={{ ...mono, fontSize: 12, color: C.t2 }}>{ev.dateLabel}</td>
                 <td>
                   <span
                     style={{
-                      fontSize: 8,
+                      fontSize: 12,
                       fontWeight: 600,
                       padding: '2px 6px',
                       borderRadius: 3,
@@ -77,7 +77,7 @@ export function StockEventTable({ events }: StockEventTableProps) {
                   style={{
                     textAlign: 'right',
                     ...mono,
-                    fontSize: 10,
+                    fontSize: 12,
                     color: cfg.color,
                     fontWeight: 600,
                   }}
@@ -89,14 +89,14 @@ export function StockEventTable({ events }: StockEventTableProps) {
                   style={{
                     textAlign: 'right',
                     ...mono,
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: 600,
                     color: ev.stockAfter < 0 ? C.rd : C.t1,
                   }}
                 >
                   {fmtQty(ev.stockAfter)}
                 </td>
-                <td style={{ ...mono, fontSize: 10, color: C.t3 }}>{ev.machineId ?? '-'}</td>
+                <td style={{ ...mono, fontSize: 12, color: C.t3 }}>{ev.machineId ?? '-'}</td>
               </tr>
             );
           })}

@@ -26,7 +26,6 @@ export default defineConfig({
           'zustand-vendor': ['zustand'],
           'date-vendor': ['date-fns'],
           'excel-vendor': ['xlsx'],
-          'chart-vendor': ['recharts'],
         },
       },
     },

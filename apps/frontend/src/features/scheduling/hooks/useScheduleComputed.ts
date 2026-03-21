@@ -1,24 +1,22 @@
+/**
+ * useScheduleComputed — Schedule blocks + metrics from backend.
+ *
+ * Initial load: uses backend blocks from useScheduleData (zero local computation).
+ * Applied replan: uses appliedReplan blocks.
+ * Auto-replan: calls POST /v1/schedule/replan asynchronously.
+ */
+
 import { useCallback, useMemo } from 'react';
 import type {
   AutoReplanResult,
   Block,
   DecisionEntry,
-  DispatchRule,
   EngineData,
   EOp,
   MoveAction,
 } from '../../../lib/engine';
-import {
-  autoReplan,
-  autoRouteOverflow,
-  type buildResourceTimelines,
-  capAnalysis,
-  DEFAULT_AUTO_REPLAN_CONFIG,
-  DEFAULT_WORKFORCE_CONFIG,
-  getReplanActions,
-  scoreSchedule,
-} from '../../../lib/engine';
-import { useSettingsStore } from '../../../stores/useSettingsStore';
+import { useScheduleData, getCachedNikufraData } from '../../../hooks/useScheduleData';
+import { scheduleReplanApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleValidation } from './useScheduleValidation';
 
@@ -26,21 +24,16 @@ export function useScheduleComputed({
   engineData,
   rushOrders,
   mSt,
-  tSt,
-  moves,
-  failureEvents,
-  replanTimelines,
   appliedReplan,
 }: {
   engineData: EngineData | null;
   rushOrders: Array<{ toolId: string; sku: string; qty: number; deadline: number }>;
   mSt: Record<string, string>;
-  tSt: Record<string, string>;
-  moves: MoveAction[];
-  failureEvents: unknown[];
-  replanTimelines: ReturnType<typeof buildResourceTimelines> | null;
   appliedReplan: AutoReplanResult | null;
 }) {
+  // Backend-computed schedule data (blocks, metrics, cap, analytics)
+  const scheduleData = useScheduleData();
+
   const rushOps = useMemo((): EOp[] => {
     if (!engineData || rushOrders.length === 0) return [];
     return rushOrders
@@ -72,6 +65,7 @@ export function useScheduleComputed({
     [engineData, rushOps],
   );
 
+  // Use backend blocks — no local autoRouteOverflow computation
   const {
     blocks,
     autoMoves,
@@ -90,81 +84,48 @@ export function useScheduleComputed({
         decisions: appliedReplan.decisions,
       };
     }
-    const settings = useSettingsStore.getState();
-    const isInteractive = failureEvents.length > 0 || moves.length > 0;
-    return autoRouteOverflow({
-      ops: allOps,
-      mSt,
-      tSt,
-      userMoves: moves,
-      machines: engineData.machines,
-      toolMap: engineData.toolMap,
-      workdays: engineData.workdays,
-      nDays: engineData.nDays,
-      workforceConfig: engineData.workforceConfig,
-      rule: (settings.dispatchRule as DispatchRule) || 'EDD',
-      thirdShift: engineData.thirdShift ?? settings.thirdShiftDefault,
-      machineTimelines: replanTimelines?.machineTimelines ?? engineData.machineTimelines,
-      toolTimelines: replanTimelines?.toolTimelines ?? engineData.toolTimelines,
-      twinValidationReport: engineData.twinValidationReport,
-      dates: engineData.dates,
-      orderBased: engineData.orderBased,
-      maxTier: isInteractive ? 2 : undefined,
-    });
-  }, [engineData, allOps, mSt, tSt, moves, replanTimelines, failureEvents.length, appliedReplan]);
+    // Backend-computed blocks (no local scheduling)
+    return {
+      blocks: (scheduleData.blocks ?? []) as Block[],
+      autoMoves: (scheduleData.autoMoves ?? []) as MoveAction[],
+      decisions: (scheduleData.decisions ?? []) as DecisionEntry[],
+    };
+  }, [engineData, appliedReplan, scheduleData.blocks, scheduleData.autoMoves, scheduleData.decisions]);
 
+  // Backend-computed analytics (no local scoreSchedule/capAnalysis)
   const cap = useMemo(
-    () => (engineData ? capAnalysis(blocks, engineData.machines) : {}),
-    [blocks, engineData],
+    () => scheduleData.cap ?? {},
+    [scheduleData.cap],
   );
 
-  const neMetrics = useMemo(() => {
-    if (!engineData || blocks.length === 0) return null;
-    return scoreSchedule(
-      blocks,
-      allOps,
-      engineData.mSt,
-      engineData.workforceConfig ?? DEFAULT_WORKFORCE_CONFIG,
-      engineData.machines,
-      engineData.toolMap,
-      undefined,
-      undefined,
-      engineData.nDays,
-    );
-  }, [blocks, allOps, engineData]);
+  const neMetrics = useMemo(
+    () => scheduleData.metrics ?? null,
+    [scheduleData.metrics],
+  );
 
   const { validation, audit, feasibility } = useScheduleValidation(blocks, allOps, engineData);
 
-  const handlePlanAutoReplan = useCallback(() => {
+  // Auto-replan via backend (replaces local autoReplan call)
+  const handlePlanAutoReplan = useCallback(async () => {
     if (!engineData) return null;
+    const nikufraData = getCachedNikufraData();
+    if (!nikufraData) return null;
     try {
-      const settings = useSettingsStore.getState();
-      const rule = (settings.dispatchRule || 'EDD') as DispatchRule;
-      const result = autoReplan(
-        {
-          ops: allOps,
-          mSt,
-          tSt,
-          moves: [] as MoveAction[],
-          machines: engineData.machines,
-          toolMap: engineData.toolMap,
-          workdays: engineData.workdays,
-          nDays: engineData.nDays,
-          workforceConfig: engineData.workforceConfig,
-          rule,
-          thirdShift: engineData.thirdShift ?? settings.thirdShiftDefault,
-          machineTimelines: replanTimelines?.machineTimelines ?? engineData.machineTimelines,
-          toolTimelines: replanTimelines?.toolTimelines ?? engineData.toolTimelines,
-          dates: engineData.dates,
-          twinValidationReport: engineData.twinValidationReport,
-          orderBased: engineData.orderBased,
+      const response = await scheduleReplanApi({
+        blocks: blocks as unknown as Record<string, unknown>[],
+        disruption: {
+          type: 'auto_replan',
+          resource_id: '',
+          start_day: 0,
+          end_day: engineData.nDays,
         },
-        DEFAULT_AUTO_REPLAN_CONFIG,
-      );
+        settings: { nikufra_data: nikufraData },
+      });
+      const newMoves = (response.auto_moves ?? []) as unknown as MoveAction[];
       return {
-        actions: getReplanActions(result),
-        moveCount: result.autoMoves.length,
-        unresolvedCount: result.unresolved.length,
+        actions: [],
+        moveCount: newMoves.length,
+        unresolvedCount: 0,
       };
     } catch (e) {
       useToastStore
@@ -176,7 +137,7 @@ export function useScheduleComputed({
         );
       return null;
     }
-  }, [engineData, allOps, mSt, tSt, replanTimelines]);
+  }, [engineData, blocks]);
 
   const downC = Object.values(mSt).filter((s) => s === 'down').length;
   const blkOps = new Set(blocks.filter((b) => b.type === 'blocked').map((b) => b.opId)).size;

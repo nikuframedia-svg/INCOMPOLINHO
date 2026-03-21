@@ -78,7 +78,7 @@ export function SetupTable({
         style={{
           display: 'flex',
           gap: 16,
-          fontSize: 10,
+          fontSize: 12,
           color: 'var(--text-secondary)',
           marginBottom: 12,
         }}
@@ -125,7 +125,7 @@ export function SetupTable({
                   <td className="setup-matrix__row-label" title={t.nm}>
                     {t.id}
                   </td>
-                  <td className="setup-matrix__cell" style={{ fontSize: 10 }}>
+                  <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                     {t.m}
                   </td>
                   <td
@@ -155,12 +155,12 @@ export function SetupTable({
                         style={{
                           width: 50,
                           textAlign: 'center',
-                          fontSize: 10,
+                          fontSize: 12,
                           fontFamily: 'var(--font-mono)',
                         }}
                       />
                     ) : (
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                         {displayMinutes}
                       </span>
                     )}
@@ -191,7 +191,7 @@ export function SetupTable({
                         style={{
                           width: 60,
                           textAlign: 'center',
-                          fontSize: 10,
+                          fontSize: 12,
                           fontFamily: 'var(--font-mono)',
                         }}
                       />
@@ -199,7 +199,7 @@ export function SetupTable({
                       <span
                         style={{
                           fontFamily: 'var(--font-mono)',
-                          fontSize: 10,
+                          fontSize: 12,
                           color: t.pH > 0 ? 'var(--text-primary)' : 'var(--semantic-red)',
                         }}
                       >
@@ -207,7 +207,7 @@ export function SetupTable({
                       </span>
                     )}
                   </td>
-                  <td className="setup-matrix__cell" style={{ fontSize: 9 }}>
+                  <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                     {isOverridden ? (
                       <span
                         style={{
@@ -234,7 +234,7 @@ export function SetupTable({
                           if (isRateOverridden) onClearRateOverride(t.id);
                         }}
                         style={{
-                          fontSize: 9,
+                          fontSize: 12,
                           color: 'var(--text-muted)',
                           background: 'none',
                           border: '1px solid var(--border-subtle)',
@@ -256,7 +256,7 @@ export function SetupTable({
       </div>
 
       <div
-        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 9, color: 'var(--text-muted)' }}
+        style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)' }}
       >
         <span>
           <span

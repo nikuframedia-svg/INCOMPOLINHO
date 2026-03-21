@@ -68,7 +68,7 @@ export function FabricaMachineCards({
               </span>
               <span
                 style={{
-                  fontSize: 8,
+                  fontSize: 12,
                   fontWeight: 600,
                   padding: '1px 5px',
                   borderRadius: 3,
@@ -123,7 +123,7 @@ export function FabricaMachineCards({
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                fontSize: 9,
+                fontSize: 12,
                 color: C.t2,
               }}
             >
@@ -139,7 +139,7 @@ export function FabricaMachineCards({
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                fontSize: 9,
+                fontSize: 12,
                 color: C.t3,
                 marginTop: 1,
               }}
@@ -152,7 +152,7 @@ export function FabricaMachineCards({
               </span>
             </div>
             {m.totalBlk > 0 && (
-              <div style={{ fontSize: 8, fontWeight: 600, color: C.rd, marginTop: 2 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.rd, marginTop: 2 }}>
                 {m.totalBlk} bloqueada(s)
               </div>
             )}

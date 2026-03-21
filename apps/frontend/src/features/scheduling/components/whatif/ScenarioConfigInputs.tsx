@@ -15,7 +15,7 @@ export function OperatorInputs({
 }) {
   return (
     <>
-      <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 5 }}>Operadores</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 5 }}>Operadores</div>
       <div
         style={{
           display: 'grid',
@@ -31,7 +31,7 @@ export function OperatorInputs({
           { l: 'PG2 Pool', k: 'p2' as const },
         ].map((f) => (
           <div key={f.k}>
-            <div style={{ fontSize: 9, color: C.t4, marginBottom: 2 }}>{f.l}</div>
+            <div style={{ fontSize: 12, color: C.t4, marginBottom: 2 }}>{f.l}</div>
             <input
               type="number"
               value={sc[f.k]}
@@ -69,7 +69,7 @@ export function IterationsPicker({
 }) {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-      <div style={{ fontSize: 9, color: C.t4 }}>Iterações</div>
+      <div style={{ fontSize: 12, color: C.t4 }}>Iterações</div>
       {[100, 300, 500, 1000].map((n) => (
         <Pill
           key={n}
@@ -99,7 +99,7 @@ export function SeedInput({
 }) {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-      <div style={{ fontSize: 9, color: C.t4 }}>Seed</div>
+      <div style={{ fontSize: 12, color: C.t4 }}>Seed</div>
       <input
         type="number"
         value={sc.seed}
@@ -114,12 +114,12 @@ export function SeedInput({
           border: `1px solid ${C.bd}`,
           background: C.bg,
           color: C.t1,
-          fontSize: 11,
+          fontSize: 12,
           fontFamily: 'monospace',
           textAlign: 'center',
         }}
       />
-      <div style={{ fontSize: 8, color: C.t4 }}>Mesma seed = resultados reprodutiveis</div>
+      <div style={{ fontSize: 12, color: C.t4 }}>Mesma seed = resultados reprodutiveis</div>
     </div>
   );
 }
@@ -135,7 +135,7 @@ export function HeuristicPicker({
 }) {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-      <div style={{ fontSize: 9, color: C.t4 }}>Heurística</div>
+      <div style={{ fontSize: 12, color: C.t4 }}>Heurística</div>
       {(['EDD', 'CR', 'WSPT', 'SPT'] as const).map((r) => (
         <Pill
           key={r}
@@ -167,7 +167,7 @@ export function ObjectivePicker({
 }) {
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-      <div style={{ fontSize: 9, color: C.t4 }}>Objectivo</div>
+      <div style={{ fontSize: 12, color: C.t4 }}>Objectivo</div>
       {objectiveProfiles.map((p) => (
         <Pill
           key={p.id}
@@ -199,7 +199,7 @@ export function QuickScenarios({
 }) {
   return (
     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-      <div style={{ fontSize: 9, color: C.t4, width: '100%', marginBottom: 2 }}>
+      <div style={{ fontSize: 12, color: C.t4, width: '100%', marginBottom: 2 }}>
         Cenarios Rapidos
       </div>
       <Pill

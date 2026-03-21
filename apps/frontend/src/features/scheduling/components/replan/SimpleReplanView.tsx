@@ -74,7 +74,7 @@ export function SimpleReplanView({
                   <div style={{ fontSize: 13, fontWeight: 600, color: isDown ? C.rd : C.t1, fontFamily: 'monospace' }}>
                     {m.id}
                   </div>
-                  <div style={{ fontSize: 10, color: isDown ? C.rd : C.ac, fontWeight: 500 }}>
+                  <div style={{ fontSize: 12, color: isDown ? C.rd : C.ac, fontWeight: 500 }}>
                     {isDown ? `Parada ${downDays.size}d` : 'Operacional'}
                   </div>
                 </div>
@@ -83,7 +83,7 @@ export function SimpleReplanView({
           })}
         </div>
         {downCount > 0 && (
-          <div style={{ marginTop: 8, fontSize: 11, color: C.rd, fontWeight: 500 }}>
+          <div style={{ marginTop: 8, fontSize: 12, color: C.rd, fontWeight: 500 }}>
             {downCount} máquina{downCount > 1 ? 's' : ''} com problemas — replanear para
             redistribuir carga
           </div>
@@ -95,7 +95,7 @@ export function SimpleReplanView({
         <div style={{ fontSize: 14, fontWeight: 600, color: C.t1, marginBottom: 4 }}>
           O que aconteceu?
         </div>
-        <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
           Seleccione o cenário e o sistema resolve automaticamente
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
@@ -133,7 +133,7 @@ export function SimpleReplanView({
                   <div style={{ fontSize: 12, fontWeight: 600, color: isSel ? sc.color : C.t1 }}>
                     {sc.label}
                   </div>
-                  <div style={{ fontSize: 10, color: C.t3, marginTop: 1 }}>{sc.desc}</div>
+                  <div style={{ fontSize: 12, color: C.t3, marginTop: 1 }}>{sc.desc}</div>
                 </div>
               </button>
             );
@@ -157,7 +157,7 @@ export function SimpleReplanView({
           <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
             Registar indisponibilidade de ferramenta
           </div>
-          <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
             Vai abrir o formulário detalhado para seleccionar a ferramenta e período
           </div>
           <button
@@ -178,7 +178,7 @@ export function SimpleReplanView({
           <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
             Adicionar encomenda urgente
           </div>
-          <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
             Vai abrir o formulário para especificar a ferramenta, quantidade e prazo
           </div>
           <button
@@ -199,8 +199,8 @@ export function SimpleReplanView({
           <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
             Optimização automática
           </div>
-          <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>
-            Analisa o plano actual, redistribui operacoes entre maquinas e apresenta as melhorias
+          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
+            Analisa o plano actual, redistribui operações entre máquinas e apresenta as melhorias
             possiveis com impacto em OTD-D e setups
           </div>
           <button
@@ -217,17 +217,17 @@ export function SimpleReplanView({
             {arRunning ? 'A optimizar...' : 'Optimizar plano'}
           </button>
           {arResult != null && arActionsCount === 0 && (
-            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: C.acS, fontSize: 11, fontWeight: 600, color: C.ac }}>
+            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: C.acS, fontSize: 12, fontWeight: 600, color: C.ac }}>
               O plano actual ja esta na melhor configuracao possivel — sem redistribuicoes que
               melhorem OTD-D ou setups
             </div>
           )}
           {arResult != null && arActionsCount > 0 && (
-            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: `${C.ac}12`, border: `1px solid ${C.ac}33`, fontSize: 11, color: C.ac, fontWeight: 500 }}>
+            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: `${C.ac}12`, border: `1px solid ${C.ac}33`, fontSize: 12, color: C.ac, fontWeight: 500 }}>
               {arActionsCount} melhorias encontradas.{' '}
               <button
                 onClick={onSwitchAdvanced}
-                style={{ background: 'none', border: 'none', color: C.ac, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: 0 }}
+                style={{ background: 'none', border: 'none', color: C.ac, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
               >
                 Ver detalhes
               </button>
@@ -241,7 +241,7 @@ export function SimpleReplanView({
           <div style={{ fontSize: 13, fontWeight: 600, color: C.ac }}>
             {moves.length} alteraç{moves.length > 1 ? 'ões' : 'ão'} pendente{moves.length > 1 ? 's' : ''}
           </div>
-          <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>
             Mude para o modo avançado para rever e aplicar as alterações
           </div>
         </Card>
@@ -252,7 +252,7 @@ export function SimpleReplanView({
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           padding: '10px 16px', borderRadius: 8, border: `1px solid ${C.bd}`,
-          background: 'transparent', color: C.t3, fontSize: 11, fontWeight: 500,
+          background: 'transparent', color: C.t3, fontSize: 12, fontWeight: 500,
           cursor: 'pointer', fontFamily: 'inherit',
         }}
       >

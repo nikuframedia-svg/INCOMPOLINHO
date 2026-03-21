@@ -125,7 +125,7 @@ function MovesCard({
         Movimentos <Tag color={rc}>{s.moves.length}</Tag>
       </div>
       {s.moves.length === 0 ? (
-        <div style={{ fontSize: 10, color: C.t4, padding: 12, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: C.t4, padding: 12, textAlign: 'center' }}>
           Sem movimentos — plano original
         </div>
       ) : (
@@ -144,7 +144,7 @@ function MovesCard({
             >
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: toolColor(tools, op?.t || ''),
                   fontFamily: 'monospace',
@@ -155,7 +155,7 @@ function MovesCard({
               </span>
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: 12,
                   color: C.rd,
                   fontFamily: 'monospace',
                   textDecoration: 'line-through',
@@ -168,13 +168,13 @@ function MovesCard({
               >
                 <ArrowRight size={12} strokeWidth={1.5} />
               </span>
-              <span style={{ fontSize: 10, color: rc, fontFamily: 'monospace', fontWeight: 600 }}>
+              <span style={{ fontSize: 12, color: rc, fontFamily: 'monospace', fontWeight: 600 }}>
                 {mv.toM}
               </span>
               <span
                 style={{
                   flex: 1,
-                  fontSize: 9,
+                  fontSize: 12,
                   color: C.t3,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -190,7 +190,7 @@ function MovesCard({
       {moveable.length > 0 && (
         <div
           style={{
-            fontSize: 9,
+            fontSize: 12,
             color: C.t4,
             marginTop: 6,
             padding: '6px 0',
@@ -270,14 +270,14 @@ function ComparisonTable({
         <div />
         {top3.map((_, i) => (
           <div key={i} style={{ textAlign: 'center', padding: 4 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: rankColor(i) }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: rankColor(i) }}>
               {rankLabel(i)}
             </span>
           </div>
         ))}
         {rows.map((row, ri) => (
           <React.Fragment key={ri}>
-            <div style={{ fontSize: 10, color: C.t3, padding: '4px 0', fontWeight: 500 }}>
+            <div style={{ fontSize: 12, color: C.t3, padding: '4px 0', fontWeight: 500 }}>
               {row.l}
             </div>
             {top3.map((s2, ci) => {
@@ -287,7 +287,7 @@ function ComparisonTable({
                   key={ci}
                   style={{
                     textAlign: 'center',
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: isBest ? 800 : 500,
                     color: isBest ? rankColor(ci) : C.t2,
                     fontFamily: 'monospace',

@@ -15,7 +15,7 @@
 }
 
 .transp__section-label {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -50,40 +50,40 @@
 }
 
 .transp__reason {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
 }
 
 .transp__constraints {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--semantic-red);
 }
 
 .transp__missing {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
 
 .transp__capacity {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
 .transp__produced {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .transp__suggestion {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
   font-style: italic;
 }
 
 .transp__more {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-ghost);
   text-align: center;
   padding: var(--space-4);

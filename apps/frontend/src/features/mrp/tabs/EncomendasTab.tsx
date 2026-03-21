@@ -162,7 +162,7 @@ export function EncomendasTab({ engine, mrp, skuView, blocks }: EncomendasTabPro
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {filteredEntries.length} de {allEntries.length} encomendas
         </span>
       </div>

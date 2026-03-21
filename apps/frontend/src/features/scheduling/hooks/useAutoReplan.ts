@@ -1,29 +1,22 @@
 /**
  * useAutoReplan — Auto-replan state and actions.
  *
- * Manages AR strategies, undo/redo, simulation, and apply-all.
+ * Manages AR strategies via backend /v1/schedule/replan API.
+ * All scheduling logic is backend-only (CP-SAT).
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type {
   AlternativeAction,
-  AutoReplanConfig,
   AutoReplanResult,
-  DispatchRule,
   EngineData,
   EOp,
   MoveAction,
   ReplanActionDetail,
   ReplanSimulation,
 } from '../../../lib/engine';
-import {
-  applyAlternative,
-  autoReplan,
-  DEFAULT_AUTO_REPLAN_CONFIG,
-  getReplanActions,
-  simulateWithout,
-  undoReplanActions,
-} from '../../../lib/engine';
+import { scheduleReplanApi } from '../../../lib/api';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
 import { useSettingsStore } from '../../../stores/useSettingsStore';
 import { useToastStore } from '../../../stores/useToastStore';
 
@@ -62,11 +55,11 @@ export interface AutoReplanActions {
 
 export function useAutoReplan(
   data: EngineData,
-  allOps: EOp[],
+  _allOps: EOp[],
   mSt: Record<string, string>,
-  tSt: Record<string, string>,
+  _tSt: Record<string, string>,
   applyMove: (opId: string, toM: string) => void,
-  replanTimelines: ReturnType<typeof import('../../../lib/engine').buildResourceTimelines> | null,
+  _replanTimelines: unknown,
   setAppliedReplan: (result: AutoReplanResult | null) => void,
   onReplanComplete?: (info: {
     trigger: string;
@@ -95,138 +88,101 @@ export function useAutoReplan(
   const [arDayTo, setArDayTo] = useState(() => wdi[wdi.length - 1] ?? data.nDays - 1);
   const [arExpanded, setArExpanded] = useState<string | null>(null);
   const [arShowExclude, setArShowExclude] = useState(false);
-  const arInputRef = useRef<unknown>(null);
 
   const buildArInput = useCallback(() => {
     const settings = useSettingsStore.getState();
-    const rule = (settings.dispatchRule || 'EDD') as DispatchRule;
     return {
-      ops: allOps,
       mSt,
-      tSt,
-      moves: [] as MoveAction[],
       machines: data.machines,
-      toolMap: data.toolMap,
       workdays: data.workdays,
       nDays: data.nDays,
-      workforceConfig: data.workforceConfig,
-      rule,
       thirdShift: data.thirdShift ?? settings.thirdShiftDefault,
-      machineTimelines: replanTimelines?.machineTimelines ?? data.machineTimelines,
-      toolTimelines: replanTimelines?.toolTimelines ?? data.toolTimelines,
-      dates: data.dates,
-      twinValidationReport: data.twinValidationReport,
-      orderBased: data.orderBased,
     };
-  }, [data, allOps, mSt, tSt, replanTimelines]);
+  }, [data, mSt]);
 
-  const runAutoReplan = useCallback(() => {
+  const runAutoReplan = useCallback(async () => {
     setArRunning(true);
     setArSim(null);
     setArSimId(null);
-    setTimeout(() => {
-      const input = buildArInput();
-      const excludeOpIds = allOps.filter((o) => arExclude.has(o.t)).map((o) => o.id);
-      const config: Partial<AutoReplanConfig> = {
-        ...DEFAULT_AUTO_REPLAN_CONFIG,
-        excludeOps: excludeOpIds,
-      };
-      try {
-        const result = autoReplan(input, config as AutoReplanConfig);
-        const actions = getReplanActions(result);
-        arInputRef.current = input;
-        setArResult(result);
-        setArActions(actions);
-      } catch (e) {
-        useToastStore
-          .getState()
-          .actions.addToast(
-            `Erro no auto-replan: ${e instanceof Error ? e.message : String(e)}`,
-            'error',
-            5000,
-          );
-      }
-      setArRunning(false);
-    }, 0);
-  }, [buildArInput, allOps, arExclude]);
-
-  const handleArUndo = useCallback(
-    (decisionId: string) => {
-      if (!arInputRef.current || !arResult) return;
-      try {
-        const inp = arInputRef.current as Parameters<typeof undoReplanActions>[0];
-        const newResult = undoReplanActions(inp, arResult, [decisionId]);
-        setArResult(newResult);
-        setArActions(getReplanActions(newResult));
-        setArSim(null);
-        setArSimId(null);
-        useToastStore.getState().actions.addToast('Acção desfeita', 'success', 3000);
-      } catch (e) {
-        useToastStore
-          .getState()
-          .actions.addToast(`Erro: ${e instanceof Error ? e.message : String(e)}`, 'error', 4000);
-      }
-    },
-    [arResult],
-  );
-
-  const handleArAlt = useCallback(
-    (decisionId: string, alt: AlternativeAction) => {
-      if (!arInputRef.current || !arResult) return;
-      try {
-        const inp = arInputRef.current as Parameters<typeof applyAlternative>[0];
-        const newResult = applyAlternative(inp, arResult, decisionId, alt);
-        setArResult(newResult);
-        setArActions(getReplanActions(newResult));
-        setArSim(null);
-        setArSimId(null);
-        useToastStore.getState().actions.addToast('Alternativa aplicada', 'success', 3000);
-      } catch (e) {
-        useToastStore
-          .getState()
-          .actions.addToast(`Erro: ${e instanceof Error ? e.message : String(e)}`, 'error', 4000);
-      }
-    },
-    [arResult],
-  );
-
-  const handleArSimulate = useCallback(
-    (decisionId: string) => {
-      if (!arInputRef.current || !arResult) return;
-      try {
-        const inp = arInputRef.current as Parameters<typeof simulateWithout>[0];
-        const sim = simulateWithout(inp, arResult, [decisionId]);
-        setArSim(sim);
-        setArSimId(decisionId);
-      } catch (e) {
-        useToastStore
-          .getState()
-          .actions.addToast(
-            `Erro na simulação: ${e instanceof Error ? e.message : String(e)}`,
-            'error',
-            4000,
-          );
-      }
-    },
-    [arResult],
-  );
-
-  const handleArUndoAll = useCallback(() => {
-    if (!arInputRef.current || !arResult || arActions.length === 0) return;
     try {
-      const inp = arInputRef.current as Parameters<typeof undoReplanActions>[0];
-      const allIds = arActions.map((a) => a.decisionId);
-      const newResult = undoReplanActions(inp, arResult, allIds);
-      setArResult(newResult);
-      setArActions(getReplanActions(newResult));
-      setArSim(null);
-      setArSimId(null);
+      const nikufraData = getCachedNikufraData();
+      if (!nikufraData) throw new Error('No schedule data cached');
+
+      // Find first down machine for disruption
+      const downMachine = Object.entries(mSt).find(([, st]) => st === 'down')?.[0] ?? data.machines[0]?.id ?? '';
+
+      const response = await scheduleReplanApi({
+        blocks: [] as unknown as Record<string, unknown>[],
+        disruption: {
+          type: 'breakdown',
+          resource_id: downMachine,
+          start_day: downStartDay,
+          end_day: downEndDay,
+        },
+        settings: { nikufra_data: nikufraData },
+      });
+
+      const r = response as unknown as Record<string, unknown>;
+      const resMoves = ((r.auto_moves ?? []) as unknown as MoveAction[]).map((mv) => ({
+        opId: mv.opId,
+        toM: mv.toM,
+      }));
+
+      const result: AutoReplanResult = {
+        blocks: (response.blocks ?? []) as unknown as AutoReplanResult['blocks'],
+        scheduleResult: { blocks: [], decisions: [], kpis: {} },
+        actions: [],
+        autoMoves: resMoves as MoveAction[],
+        autoAdvances: [],
+        overtimeActions: [],
+        splitActions: [],
+        thirdShiftActivated: false,
+        unresolved: [],
+        registry: null,
+        decisions: (r.decisions ?? []) as AutoReplanResult['decisions'],
+      };
+
+      setArResult(result);
+      setArActions([]);
     } catch (e) {
       useToastStore
         .getState()
-        .actions.addToast(`Erro: ${e instanceof Error ? e.message : String(e)}`, 'error', 4000);
+        .actions.addToast(
+          `Erro no auto-replan: ${e instanceof Error ? e.message : String(e)}`,
+          'error',
+          5000,
+        );
     }
-  }, [arResult, arActions]);
+    setArRunning(false);
+  }, [buildArInput, mSt, data.machines, downStartDay, downEndDay]);
+
+  const handleArUndo = useCallback(
+    (_decisionId: string) => {
+      useToastStore.getState().actions.addToast('Undo via backend — em desenvolvimento', 'info', 3000);
+    },
+    [],
+  );
+
+  const handleArAlt = useCallback(
+    (_decisionId: string, _alt: AlternativeAction) => {
+      useToastStore.getState().actions.addToast('Alternativa via backend — em desenvolvimento', 'info', 3000);
+    },
+    [],
+  );
+
+  const handleArSimulate = useCallback(
+    (_decisionId: string) => {
+      useToastStore.getState().actions.addToast('Simulação via backend — em desenvolvimento', 'info', 3000);
+    },
+    [],
+  );
+
+  const handleArUndoAll = useCallback(() => {
+    setArResult(null);
+    setArActions([]);
+    setArSim(null);
+    setArSimId(null);
+  }, []);
 
   const handleArApplyAll = useCallback(() => {
     if (!arResult) return;

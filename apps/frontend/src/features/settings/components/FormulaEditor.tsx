@@ -91,7 +91,7 @@ export function FormulaEditor({ formula, onChange, previewData }: FormulaEditorP
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
           {formula.label}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
           {formula.description}
         </div>
       </div>
@@ -108,7 +108,7 @@ export function FormulaEditor({ formula, onChange, previewData }: FormulaEditorP
       {parseError && <div className="formula-editor__error">{parseError}</div>}
 
       <div>
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
           Variáveis disponíveis:
         </div>
         <div className="formula-editor__vars">
@@ -139,7 +139,7 @@ export function FormulaEditor({ formula, onChange, previewData }: FormulaEditorP
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              fontSize: 9,
+              fontSize: 12,
               color: 'var(--text-muted)',
               fontFamily: 'var(--font-mono)',
               marginTop: 2,
@@ -151,7 +151,7 @@ export function FormulaEditor({ formula, onChange, previewData }: FormulaEditorP
         </div>
       )}
 
-      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
         v{formula.version} · {formula.versions.length} versões anteriores
       </div>
     </div>

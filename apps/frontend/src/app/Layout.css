@@ -75,7 +75,7 @@
 }
 
 .app-header__search-pill kbd {
-  font-size: 10px;
+  font-size: 12px;
   font-family: var(--font-mono);
   padding: 1px 5px;
   background: rgba(255, 255, 255, 0.06);

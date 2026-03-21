@@ -42,7 +42,7 @@ export function UrgencyView({ data }: { data: IntelData }) {
         {Object.entries(cc).map(([code, color]) => (
           <div key={code} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
-            <span style={{ color: C.t3, fontSize: 9, ...mono }}>{code}</span>
+            <span style={{ color: C.t3, fontSize: 12, ...mono }}>{code}</span>
           </div>
         ))}
       </div>
@@ -61,14 +61,14 @@ export function UrgencyView({ data }: { data: IntelData }) {
           <text
             x={PAD.l + 8}
             y={PAD.t + 16}
-            style={{ fill: C.rd, fontSize: 10, fontWeight: 600, opacity: 0.6 }}
+            style={{ fill: C.rd, fontSize: 12, fontWeight: 600, opacity: 0.6 }}
           >
             CRITICAL
           </text>
           <text
             x={W - PAD.r - 70}
             y={PAD.t + PH - 8}
-            style={{ fill: C.ac, fontSize: 10, fontWeight: 600, opacity: 0.6 }}
+            style={{ fill: C.ac, fontSize: 12, fontWeight: 600, opacity: 0.6 }}
           >
             MONITOR
           </text>
@@ -90,7 +90,7 @@ export function UrgencyView({ data }: { data: IntelData }) {
                   x={xScale(v)}
                   y={H - 10}
                   textAnchor="middle"
-                  style={{ fill: C.t3, fontSize: 9, ...mono }}
+                  style={{ fill: C.t3, fontSize: 12, ...mono }}
                 >
                   {v}d
                 </text>
@@ -113,7 +113,7 @@ export function UrgencyView({ data }: { data: IntelData }) {
                   x={PAD.l - 6}
                   y={yScale(v) + 3}
                   textAnchor="end"
-                  style={{ fill: C.t3, fontSize: 8, ...mono }}
+                  style={{ fill: C.t3, fontSize: 12, ...mono }}
                 >
                   {fmtQty(v)}
                 </text>
@@ -125,7 +125,7 @@ export function UrgencyView({ data }: { data: IntelData }) {
             x={PAD.l + PW / 2}
             y={H - 2}
             textAnchor="middle"
-            style={{ fill: C.t2, fontSize: 10 }}
+            style={{ fill: C.t2, fontSize: 12 }}
           >
             Days to Deficit
           </text>
@@ -133,7 +133,7 @@ export function UrgencyView({ data }: { data: IntelData }) {
             x={12}
             y={PAD.t + PH / 2}
             textAnchor="middle"
-            style={{ fill: C.t2, fontSize: 10 }}
+            style={{ fill: C.t2, fontSize: 12 }}
             transform={`rotate(-90, 12, ${PAD.t + PH / 2})`}
           >
             Max Deficit (pcs)
@@ -184,11 +184,11 @@ export function UrgencyView({ data }: { data: IntelData }) {
                     x={tx}
                     y={ty - 26}
                     textAnchor="middle"
-                    style={{ fill: C.t1, fontSize: 9, ...mono, fontWeight: 600 }}
+                    style={{ fill: C.t1, fontSize: 12, ...mono, fontWeight: 600 }}
                   >
                     {p.sku}
                   </text>
-                  <text x={tx} y={ty - 14} textAnchor="middle" style={{ fill: C.t2, fontSize: 8 }}>
+                  <text x={tx} y={ty - 14} textAnchor="middle" style={{ fill: C.t2, fontSize: 12 }}>
                     {p.daysToDeficit}d to deficit | {fmtQty(p.maxDeficit)} pcs | {p.machine}
                   </text>
                 </g>

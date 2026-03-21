@@ -2,7 +2,7 @@
  * OptimalRoutingCard — Optimization results, GA/SA controls, routing display.
  */
 
-import { Sparkles, Zap } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import React from 'react';
 import { C } from '../../../../lib/engine';
 import { Card, Pill, toolColor } from '../atoms';
@@ -17,14 +17,10 @@ export function OptimalRoutingCard({
   optN,
   optProfile,
   optMoveable,
-  saRunning,
-  saProgress,
   setOptN,
   setOptProfile,
   setOptResults,
   runOpt,
-  runSA,
-  cancelSA,
   applyOptResult,
   profiles,
 }: OptimalRoutingCardProps) {
@@ -45,7 +41,7 @@ export function OptimalRoutingCard({
             style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4, color: C.pp }}
           />
           Optimização{' '}
-          <span style={{ fontSize: 10, color: C.t4, fontWeight: 400 }}>
+          <span style={{ fontSize: 12, color: C.t4, fontWeight: 400 }}>
             {optMoveable.length} operações móveis
           </span>
         </div>
@@ -63,7 +59,7 @@ export function OptimalRoutingCard({
         <div>
           <div
             style={{
-              fontSize: 9,
+              fontSize: 12,
               color: C.t4,
               marginBottom: 2,
               fontWeight: 600,
@@ -93,7 +89,7 @@ export function OptimalRoutingCard({
         <div>
           <div
             style={{
-              fontSize: 9,
+              fontSize: 12,
               color: C.t4,
               marginBottom: 2,
               fontWeight: 600,
@@ -131,7 +127,7 @@ export function OptimalRoutingCard({
             border: 'none',
             background: optRunning ? C.s3 : C.pp,
             color: optRunning ? C.t3 : C.t1,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             cursor: optRunning ? 'wait' : 'pointer',
             fontFamily: 'inherit',
@@ -144,52 +140,7 @@ export function OptimalRoutingCard({
           />
           {optRunning ? `A optimizar... ${Math.round(optProgress * 100)}%` : 'Otimizar'}
         </button>
-        <button
-          onClick={saRunning ? cancelSA : runSA}
-          disabled={optRunning}
-          data-testid="run-sa"
-          style={{
-            padding: '8px 20px',
-            borderRadius: 6,
-            border: 'none',
-            background: saRunning ? C.s3 : 'var(--accent-dark, #1a6b3a)',
-            color: saRunning ? C.t3 : C.t1,
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: optRunning ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit',
-          }}
-        >
-          <Zap
-            size={11}
-            strokeWidth={1.5}
-            style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }}
-          />
-          {saRunning
-            ? `Optimização ${saProgress != null ? `${saProgress}%` : '...'} (cancelar)`
-            : 'Optimização Rápida'}
-        </button>
       </div>
-
-      {/* SA Progress Bar */}
-      {saRunning && saProgress != null && (
-        <div style={{ marginBottom: 6 }}>
-          <div style={{ height: 4, borderRadius: 2, background: C.s3, overflow: 'hidden' }}>
-            <div
-              style={{
-                height: '100%',
-                width: `${saProgress}%`,
-                background: 'var(--accent-dark, #1a6b3a)',
-                borderRadius: 2,
-                transition: 'width 0.3s ease',
-              }}
-            />
-          </div>
-          <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-            Optimização em execução — {saProgress}%
-          </div>
-        </div>
-      )}
 
       {/* Moveable ops summary */}
       {optMoveable.length > 0 && !optResults.length && (
@@ -199,14 +150,14 @@ export function OptimalRoutingCard({
               display: 'grid',
               gridTemplateColumns: '70px 60px 50px 50px 1fr',
               gap: '2px 8px',
-              fontSize: 10,
+              fontSize: 12,
             }}
           >
-            <div style={{ color: C.t4, fontSize: 9, fontWeight: 600 }}>Ferramenta</div>
-            <div style={{ color: C.t4, fontSize: 9, fontWeight: 600 }}>Principal</div>
-            <div style={{ color: C.t4, fontSize: 9, fontWeight: 600 }}>Alternativa</div>
-            <div style={{ color: C.t4, fontSize: 9, fontWeight: 600 }}>Peças</div>
-            <div style={{ color: C.t4, fontSize: 9, fontWeight: 600 }}>Horas</div>
+            <div style={{ color: C.t4, fontSize: 12, fontWeight: 600 }}>Ferramenta</div>
+            <div style={{ color: C.t4, fontSize: 12, fontWeight: 600 }}>Principal</div>
+            <div style={{ color: C.t4, fontSize: 12, fontWeight: 600 }}>Alternativa</div>
+            <div style={{ color: C.t4, fontSize: 12, fontWeight: 600 }}>Peças</div>
+            <div style={{ color: C.t4, fontSize: 12, fontWeight: 600 }}>Horas</div>
             {optMoveable.slice(0, 12).map((mo) => (
               <React.Fragment key={mo.opId}>
                 <div
@@ -234,7 +185,7 @@ export function OptimalRoutingCard({
             ))}
           </div>
           {optMoveable.length > 12 && (
-            <div style={{ fontSize: 9, color: C.t4, textAlign: 'center', marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: C.t4, textAlign: 'center', marginTop: 4 }}>
               +{optMoveable.length - 12} mais
             </div>
           )}
@@ -245,7 +196,7 @@ export function OptimalRoutingCard({
       <OptResultsList optResults={optResults} applyOptResult={applyOptResult} />
 
       {optMoveable.length === 0 && (
-        <div style={{ fontSize: 10, color: C.t4, textAlign: 'center', padding: 8 }}>
+        <div style={{ fontSize: 12, color: C.t4, textAlign: 'center', padding: 8 }}>
           Sem operações móveis — todas as ferramentas estão na mesma máquina
         </div>
       )}

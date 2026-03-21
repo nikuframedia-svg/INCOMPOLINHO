@@ -45,7 +45,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 8px;
   outline: none;
 }
@@ -57,7 +57,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 8px;
   width: 180px;
   outline: none;
@@ -82,11 +82,11 @@
 .supply__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 .supply__table th {
   text-align: left;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -138,7 +138,7 @@
   align-items: center;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   font-family: "JetBrains Mono", monospace;
   letter-spacing: 0.02em;
@@ -172,7 +172,7 @@
   width: 20px;
   height: 18px;
   border-radius: var(--radius-xs);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   font-family: "JetBrains Mono", monospace;
 }
@@ -197,7 +197,7 @@
   min-width: 18px;
   height: 18px;
   border-radius: 9px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   font-family: "JetBrains Mono", monospace;
 }
@@ -247,17 +247,17 @@
   border-left-color: #6b7280;
 }
 .supply__action-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
 }
 .supply__action-desc {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin-top: 1px;
 }
 .supply__action-suggestion {
-  font-size: 10px;
+  font-size: 12px;
   font-family: "JetBrains Mono", monospace;
   color: var(--accent);
   margin-top: 3px;
@@ -272,7 +272,7 @@
   height: 14px;
   border-radius: 7px;
   background: rgba(239, 68, 68, 0.1);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
   color: #ef4444;
   margin-left: 3px;

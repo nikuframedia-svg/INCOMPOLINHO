@@ -82,7 +82,7 @@ export const mono: React.CSSProperties = {
 };
 export const labelSt: React.CSSProperties = {
   color: C.t3,
-  fontSize: 10,
+  fontSize: 12,
   fontWeight: 500,
   textTransform: 'uppercase' as const,
   letterSpacing: '0.06em',

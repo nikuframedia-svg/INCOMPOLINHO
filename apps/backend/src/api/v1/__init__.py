@@ -17,10 +17,9 @@ from .nikufra import nikufra_router
 from .optimal import optimal_router
 from .pipeline import pipeline_router
 from .plan import router as plan_router
-from .scheduling import scheduling_router
+from .schedule import schedule_router
 from .settings import settings_router
 from .snapshots import router as snapshots_router
-from .solver import solver_router
 from .stock_alerts import stock_alerts_router
 from .version import router as version_router
 
@@ -42,8 +41,7 @@ router.include_router(ledger_router)
 router.include_router(firewall_router)
 router.include_router(dqa_router)
 router.include_router(learning_router)
-router.include_router(scheduling_router)
+router.include_router(schedule_router)
 router.include_router(settings_router)
-router.include_router(solver_router)
 router.include_router(optimal_router)
 router.include_router(stock_alerts_router)

@@ -43,7 +43,7 @@ export function OptResultsList({ optResults, applyOptResult }: OptResultsListPro
                 #{ri + 1}
               </span>
             </div>
-            <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
+            <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
               <span style={{ color: C.t3 }}>
                 OTD-D{' '}
                 <span
@@ -93,7 +93,7 @@ export function OptResultsList({ optResults, applyOptResult }: OptResultsListPro
                 </span>
               </span>
             </div>
-            {r.label && <span style={{ fontSize: 9, color: C.t4 }}>{r.label}</span>}
+            {r.label && <span style={{ fontSize: 12, color: C.t4 }}>{r.label}</span>}
           </div>
           <button
             onClick={() => applyOptResult(r)}
@@ -104,7 +104,7 @@ export function OptResultsList({ optResults, applyOptResult }: OptResultsListPro
               border: 'none',
               background: ri === 0 ? C.pp : C.s3,
               color: C.t1,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
               fontFamily: 'inherit',

@@ -65,7 +65,7 @@ export function WorkforceNeeds({ forecast, operatorCapacity }: WorkforceNeedsPro
         badge={hasGap ? 'gap' : hasNightShift ? 'noite' : undefined}
       >
         {!hasContent ? (
-          <div className="wfn__empty">Sem previsao de workforce para D+1.</div>
+          <div className="wfn__empty">Sem previsão de workforce para D+1.</div>
         ) : (
           <>
             <div className="wfn__header">

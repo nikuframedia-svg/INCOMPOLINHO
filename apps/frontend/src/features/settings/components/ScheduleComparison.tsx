@@ -27,7 +27,7 @@ const KPIS: KPIDef[] = [
     higherIsBetter: false,
   },
   { label: 'Total Setup', key: 'totalSetupMin', unit: 'min', decimals: 0, higherIsBetter: false },
-  { label: 'Utilizacao', key: 'utilizationPct', unit: '%', decimals: 1, higherIsBetter: true },
+  { label: 'Utilização', key: 'utilizationPct', unit: '%', decimals: 1, higherIsBetter: true },
   { label: 'Overflow', key: 'overflowCount', unit: '', decimals: 0, higherIsBetter: false },
 ];
 

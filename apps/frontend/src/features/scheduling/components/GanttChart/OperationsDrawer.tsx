@@ -44,7 +44,7 @@ export function OperationsDrawer({
           <div style={{ fontSize: 14, fontWeight: 600, color: C.t1 }}>
             Operações planeadas — {dnames[dayIdx]} {dates[dayIdx]}
           </div>
-          <div style={{ fontSize: 11, color: C.t3, fontWeight: 400 }}>
+          <div style={{ fontSize: 12, color: C.t3, fontWeight: 400 }}>
             {dayBlocks.length} operações · {machineCount} máquinas
           </div>
         </div>

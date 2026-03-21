@@ -21,7 +21,7 @@ export function KCard({
     <div className="supply__kcard" style={{ borderLeft: `3px solid ${color}` }}>
       <span
         style={{
-          fontSize: 9,
+          fontSize: 12,
           fontWeight: 500,
           color: C.t3,
           textTransform: 'uppercase',
@@ -33,7 +33,7 @@ export function KCard({
       <span style={{ fontSize: 22, fontWeight: 700, color, ...mono, lineHeight: 1.1 }}>
         {value}
       </span>
-      <span style={{ fontSize: 9, color: C.t3 }}>{sub}</span>
+      <span style={{ fontSize: 12, color: C.t3 }}>{sub}</span>
     </div>
   );
 }

@@ -4,16 +4,11 @@ WORKDIR /app
 
 # Copy workspace config
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
-COPY packages/scheduling-engine/package.json packages/scheduling-engine/
 COPY apps/frontend/package.json apps/frontend/
 
 # Install pnpm and dependencies
 RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
 RUN pnpm install --frozen-lockfile
-
-# Build scheduling-engine first
-COPY packages/scheduling-engine/ packages/scheduling-engine/
-RUN pnpm --filter @prodplan/scheduling-engine build
 
 # Copy frontend source (will be overridden by volume mount in dev)
 COPY apps/frontend/ apps/frontend/

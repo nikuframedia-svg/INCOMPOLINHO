@@ -24,7 +24,7 @@ export function RushOrderCard({
   removeRushOrder,
 }: RushOrderCardProps) {
   const labelStyle = {
-    fontSize: 9,
+    fontSize: 12,
     color: C.t4,
     marginBottom: 2,
     fontWeight: 600,
@@ -38,7 +38,7 @@ export function RushOrderCard({
     border: `1px solid ${C.bd}`,
     background: C.s2,
     color: C.t1,
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: 'inherit',
   } as const;
 
@@ -104,7 +104,7 @@ export function RushOrderCard({
               border: `1px solid ${C.bd}`,
               background: C.s2,
               color: C.t1,
-              fontSize: 10,
+              fontSize: 12,
               fontFamily: "'JetBrains Mono',monospace",
               textAlign: 'center',
             }}
@@ -133,7 +133,7 @@ export function RushOrderCard({
             border: 'none',
             background: roTool ? C.yl : C.s3,
             color: roTool ? C.bg : C.t4,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             cursor: roTool ? 'pointer' : 'default',
             fontFamily: 'inherit',
@@ -163,7 +163,7 @@ export function RushOrderCard({
           >
             <span
               style={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: toolColor(tools, ro.toolId),
                 fontFamily: "'JetBrains Mono',monospace",
@@ -171,10 +171,10 @@ export function RushOrderCard({
             >
               {ro.toolId}
             </span>
-            <span style={{ fontSize: 10, color: C.t2 }}>{ro.sku}</span>
+            <span style={{ fontSize: 12, color: C.t2 }}>{ro.sku}</span>
             <span
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: C.t1,
                 fontFamily: "'JetBrains Mono',monospace",
@@ -182,8 +182,8 @@ export function RushOrderCard({
             >
               {ro.qty.toLocaleString()} pcs
             </span>
-            <span style={{ fontSize: 10, color: C.t3 }}>{hrs.toFixed(1)}h</span>
-            <span style={{ fontSize: 10, color: C.yl, fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.t3 }}>{hrs.toFixed(1)}h</span>
+            <span style={{ fontSize: 12, color: C.yl, fontWeight: 600 }}>
               até {dnames[ro.deadline]} {dates[ro.deadline]}
             </span>
             <span style={{ flex: 1 }} />
@@ -204,7 +204,7 @@ export function RushOrderCard({
       })}
 
       {rushOrders.length === 0 && (
-        <div style={{ fontSize: 10, color: C.t4, textAlign: 'center', padding: 8 }}>
+        <div style={{ fontSize: 12, color: C.t4, textAlign: 'center', padding: 8 }}>
           Sem encomendas urgentes
         </div>
       )}

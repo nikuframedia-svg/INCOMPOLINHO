@@ -48,7 +48,7 @@ export function SetupCrewView({ data }: { data: IntelData }) {
                 x={xScale(t)}
                 y={PAD.t - 6}
                 textAnchor="middle"
-                style={{ fill: C.t4, fontSize: 8, ...mono }}
+                style={{ fill: C.t4, fontSize: 12, ...mono }}
               >
                 {timeStr(t)}
               </text>
@@ -69,7 +69,7 @@ export function SetupCrewView({ data }: { data: IntelData }) {
             x={xScale((S0 + T1) / 2)}
             y={PAD.t - 14}
             textAnchor="middle"
-            style={{ fill: C.t4, fontSize: 8, fontWeight: 600 }}
+            style={{ fill: C.t4, fontSize: 12, fontWeight: 600 }}
           >
             Shift X
           </text>
@@ -77,7 +77,7 @@ export function SetupCrewView({ data }: { data: IntelData }) {
             x={xScale((T1 + S1) / 2)}
             y={PAD.t - 14}
             textAnchor="middle"
-            style={{ fill: C.t4, fontSize: 8, fontWeight: 600 }}
+            style={{ fill: C.t4, fontSize: 12, fontWeight: 600 }}
           >
             Shift Y
           </text>
@@ -101,7 +101,7 @@ export function SetupCrewView({ data }: { data: IntelData }) {
                   x={PAD.l - 8}
                   y={y + ROW_H / 2 + 4}
                   textAnchor="end"
-                  style={{ fill: C.t2, fontSize: 10, ...mono }}
+                  style={{ fill: C.t2, fontSize: 12, ...mono }}
                 >
                   {date ? fmtDate(date) : `D${di + 1}`}
                 </text>
@@ -179,11 +179,11 @@ export function SetupCrewView({ data }: { data: IntelData }) {
                     x={tx}
                     y={ty - 18}
                     textAnchor="middle"
-                    style={{ fill: C.t1, fontSize: 9, ...mono }}
+                    style={{ fill: C.t1, fontSize: 12, ...mono }}
                   >
                     {slot.machine} — {slot.toolCode}
                   </text>
-                  <text x={tx} y={ty - 8} textAnchor="middle" style={{ fill: C.t3, fontSize: 8 }}>
+                  <text x={tx} y={ty - 8} textAnchor="middle" style={{ fill: C.t3, fontSize: 12 }}>
                     {timeStr(slot.startMin)}–{timeStr(slot.endMin)} ({fmtMin(slot.durationMin)})
                     Shift {slot.shift}
                   </text>

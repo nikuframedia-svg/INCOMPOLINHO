@@ -69,7 +69,7 @@ export function FailureListItems({
                       ? `PARCIAL ${Math.round(f.capacityFactor * 100)}%`
                       : `DEGRADADA ${Math.round(f.capacityFactor * 100)}%`}
                 </Tag>
-                <span style={{ fontSize: 10, color: C.t3 }}>
+                <span style={{ fontSize: 12, color: C.t3 }}>
                   {dnames[f.startDay]} {dates[f.startDay]}
                   {f.startDay !== f.endDay ? ` — ${dnames[f.endDay]} ${dates[f.endDay]}` : ''}
                 </span>
@@ -88,10 +88,10 @@ export function FailureListItems({
               </button>
             </div>
             {f.description && (
-              <div style={{ fontSize: 10, color: C.t3, marginBottom: 4 }}>{f.description}</div>
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>{f.description}</div>
             )}
             {imp && imp.summary.totalBlocksAffected > 0 && (
-              <div style={{ display: 'flex', gap: 10, fontSize: 10, color: C.t2 }}>
+              <div style={{ display: 'flex', gap: 10, fontSize: 12, color: C.t2 }}>
                 <span>
                   <span style={{ fontWeight: 600, color: C.rd }}>
                     {imp.summary.totalBlocksAffected}
@@ -111,7 +111,7 @@ export function FailureListItems({
               </div>
             )}
             {imp && imp.summary.totalBlocksAffected === 0 && (
-              <div style={{ fontSize: 10, color: C.ac }}>Sem impacto no schedule actual</div>
+              <div style={{ fontSize: 12, color: C.ac }}>Sem impacto no schedule actual</div>
             )}
           </div>
         );
@@ -129,7 +129,7 @@ export function FailureListItems({
             border: 'none',
             background: cascRunning ? C.s3 : C.rd,
             color: cascRunning ? C.t3 : C.t1,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             cursor: cascRunning ? 'wait' : 'pointer',
             fontFamily: 'inherit',
@@ -141,7 +141,7 @@ export function FailureListItems({
       )}
 
       {failures.length === 0 && !showFailureForm && (
-        <div style={{ fontSize: 10, color: C.t4, textAlign: 'center', padding: 8 }}>
+        <div style={{ fontSize: 12, color: C.t4, textAlign: 'center', padding: 8 }}>
           Sem avarias registadas
         </div>
       )}

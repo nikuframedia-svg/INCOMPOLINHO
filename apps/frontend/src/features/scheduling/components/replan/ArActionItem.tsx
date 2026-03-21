@@ -38,7 +38,7 @@ export function ArActionItem({
   const sc2 = STRAT_COLOR[act.strategy] || C.t3;
   const btnBase = {
     borderRadius: 4,
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
     fontFamily: 'inherit',
@@ -61,11 +61,11 @@ export function ArActionItem({
         style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}
       >
         <Tag color={sc2}>{act.strategy.replace(/_/g, ' ')}</Tag>
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>{act.summary}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>{act.summary}</span>
         {act.reversible && (
           <span
             style={{
-              fontSize: 8,
+              fontSize: 12,
               color: C.ac,
               fontWeight: 600,
               background: C.acS,
@@ -76,11 +76,11 @@ export function ArActionItem({
             REVERSÍVEL
           </span>
         )}
-        <span style={{ fontSize: 9, color: C.t4, fontFamily: "'JetBrains Mono',monospace" }}>
+        <span style={{ fontSize: 12, color: C.t4, fontFamily: "'JetBrains Mono',monospace" }}>
           {act.opId}
         </span>
       </div>
-      <div style={{ fontSize: 10, color: C.t3, marginBottom: 8 }}>{act.detail}</div>
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 8 }}>{act.detail}</div>
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {act.alternatives.length > 0 && (
@@ -142,8 +142,8 @@ export function ArActionItem({
               }}
             >
               <div>
-                <div style={{ fontSize: 10, color: C.t1 }}>{alt.description}</div>
-                <div style={{ fontSize: 9, color: C.t4 }}>{alt.actionType.replace(/_/g, ' ')}</div>
+                <div style={{ fontSize: 12, color: C.t1 }}>{alt.description}</div>
+                <div style={{ fontSize: 12, color: C.t4 }}>{alt.actionType.replace(/_/g, ' ')}</div>
               </div>
               <button
                 onClick={() => handleArAlt(act.decisionId, alt)}
@@ -153,7 +153,7 @@ export function ArActionItem({
                   border: 'none',
                   background: C.ac,
                   color: C.bg,
-                  fontSize: 9,
+                  fontSize: 12,
                   fontWeight: 600,
                   cursor: 'pointer',
                   fontFamily: 'inherit',
@@ -176,7 +176,7 @@ export function ArActionItem({
             border: `1px solid ${C.bl}22`,
           }}
         >
-          <div style={{ fontSize: 10, fontWeight: 600, color: C.bl, marginBottom: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.bl, marginBottom: 4 }}>
             <Eye
               size={10}
               strokeWidth={1.5}
@@ -184,7 +184,7 @@ export function ArActionItem({
             />
             Simulação: sem esta acção
           </div>
-          <div style={{ display: 'flex', gap: 12, fontSize: 10, color: C.t2 }}>
+          <div style={{ display: 'flex', gap: 12, fontSize: 12, color: C.t2 }}>
             <span>
               Overflow: {arSim.overflowBefore} → {arSim.overflowAfter}{' '}
               <span
@@ -200,13 +200,13 @@ export function ArActionItem({
           </div>
           {arSim.unresolved.length > 0 && (
             <div style={{ marginTop: 4 }}>
-              <div style={{ fontSize: 9, color: C.rd, fontWeight: 600 }}>
+              <div style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>
                 {arSim.unresolved.length} não resolvido{arSim.unresolved.length > 1 ? 's' : ''}
               </div>
               {arSim.unresolved.slice(0, 5).map((u, i) => (
                 <div
                   key={i}
-                  style={{ fontSize: 9, color: C.t3, fontFamily: "'JetBrains Mono',monospace" }}
+                  style={{ fontSize: 12, color: C.t3, fontFamily: "'JetBrains Mono',monospace" }}
                 >
                   {u.opId}: {u.reason} (deficit: {u.deficit})
                 </div>

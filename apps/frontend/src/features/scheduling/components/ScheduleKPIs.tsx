@@ -166,13 +166,13 @@ function AuditBanner({
         <span style={{ fontSize: 12, fontWeight: 600, color: audit.isComplete ? C.ac : C.rd }}>
           {audit.isComplete ? 'Tudo coberto' : `Cobertura ${audit.globalCoveragePct.toFixed(1)}%`}
         </span>
-        <span style={{ fontSize: 10, color: audit.isComplete ? C.ac : C.t2 }}>
+        <span style={{ fontSize: 12, color: audit.isComplete ? C.ac : C.t2 }}>
           {audit.isComplete
             ? `${audit.rows.length} operações — ${audit.rows.filter((r) => r.totalDemand > 0).length} com procura — todas cobertas`
             : `${audit.rows.length} operações — ${audit.totalDemand.toLocaleString()} peças necessárias — ${audit.totalProduced.toLocaleString()} produzidas — ${(audit.totalDemand - audit.totalProduced).toLocaleString()} em falta`}
         </span>
         {!audit.isComplete && (
-          <span style={{ fontSize: 10, color: C.rd, fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>
             {audit.zeroCovered > 0 ? `${audit.zeroCovered} sem produção` : ''}
             {audit.zeroCovered > 0 && audit.partiallyCovered > 0 ? ' · ' : ''}
             {audit.partiallyCovered > 0 ? `${audit.partiallyCovered} parciais` : ''}
@@ -188,7 +188,7 @@ function AuditBanner({
             border: `1px solid ${C.rd}33`,
             background: 'transparent',
             color: C.rd,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -204,7 +204,7 @@ function AuditBanner({
 function AuditDetailTable({ audit }: { audit: CoverageAuditResult }) {
   return (
     <Card style={{ padding: 14, maxHeight: 320, overflow: 'auto' }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 8 }}>
         Operações com cobertura incompleta (
         {audit.rows.filter((r) => r.coveragePct < 100 && r.totalDemand > 0).length})
       </div>
@@ -213,7 +213,7 @@ function AuditDetailTable({ audit }: { audit: CoverageAuditResult }) {
           display: 'grid',
           gridTemplateColumns: '60px 80px 70px 60px 80px 80px 50px 90px',
           gap: '2px 6px',
-          fontSize: 10,
+          fontSize: 12,
         }}
       >
         {['Op', 'SKU', 'Tool', 'Máq.', 'Demand', 'Produzido', '%', 'Razão'].map((h) => (

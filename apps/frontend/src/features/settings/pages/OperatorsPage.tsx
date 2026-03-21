@@ -66,7 +66,7 @@ export function OperatorsPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -77,7 +77,7 @@ export function OperatorsPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -92,12 +92,12 @@ export function OperatorsPage() {
       </h2>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Filtrar por máquina:</label>
+        <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Filtrar por máquina:</label>
         <select
           className="constraint-toggles__param-select"
           value={machineFilter}
           onChange={(e) => setMachineFilter(e.target.value)}
-          style={{ fontSize: 11 }}
+          style={{ fontSize: 12 }}
         >
           <option value="">Todas ({engine.tools.length} ferramentas)</option>
           {machineIds.map((m) => (
@@ -107,7 +107,7 @@ export function OperatorsPage() {
           ))}
         </select>
         {overrideCount > 0 && (
-          <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
             {overrideCount} editado{overrideCount > 1 ? 's' : ''}
           </span>
         )}
@@ -130,7 +130,7 @@ export function OperatorsPage() {
                 <td className="setup-matrix__row-label" title={t.nm}>
                   {t.id}
                 </td>
-                <td className="setup-matrix__cell" style={{ fontSize: 10 }}>
+                <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                   {t.m}
                 </td>
                 <td
@@ -143,7 +143,7 @@ export function OperatorsPage() {
                     value={t.op}
                     onChange={(e) => setToolOverride(t.id, { op: Number(e.target.value) })}
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       fontFamily: 'var(--font-mono)',
                       background: 'var(--bg-card)',
                       color: 'var(--text-primary)',
@@ -159,7 +159,7 @@ export function OperatorsPage() {
                     ))}
                   </select>
                 </td>
-                <td className="setup-matrix__cell" style={{ fontSize: 9 }}>
+                <td className="setup-matrix__cell" style={{ fontSize: 12 }}>
                   {t.isOverridden ? (
                     <span
                       style={{
@@ -181,7 +181,7 @@ export function OperatorsPage() {
                     <button
                       onClick={() => clearFieldOverride('tool', t.id, 'op')}
                       style={{
-                        fontSize: 9,
+                        fontSize: 12,
                         color: 'var(--text-muted)',
                         background: 'none',
                         border: '1px solid var(--border-subtle)',
@@ -211,7 +211,7 @@ export function OperatorsPage() {
       >
         Matriz de Competências
       </h3>
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         {operators.length} operadores · {machineIds.length} máquinas · Click para alterar nível
       </div>
       <OperatorSkillMatrix operators={operators} machines={machineIds} />

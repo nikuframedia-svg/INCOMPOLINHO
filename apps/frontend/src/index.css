@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    PP1 Design System — Glassmorphism Industrial
-   Dark mode only (v2). ISA-101 compliant.
+   Light default + Dark mode toggle. ISA-101 compliant.
    ═══════════════════════════════════════════════════════════ */
 
 /* Reset */
@@ -108,11 +108,11 @@
   --text-metric: 36px;
   --text-body: 14px;
   --text-small: 12px;
-  --text-badge: 11px;
+  --text-badge: 12px;
 
   /* Legacy aliases */
-  --text-xs: 11px;
-  --text-sm: 12px;
+  --text-xs: 12px;
+  --text-sm: 13px;
   --text-base: 14px;
   --text-md: 15px;
   --text-lg: 20px;
@@ -155,14 +155,81 @@
   /* Grid density */
   --grid-day-min: 44px;
   --grid-day-gap: 3px;
-  --grid-cell-font: 11px;
+  --grid-cell-font: 12px;
   --grid-cell-pad: 5px 3px;
-  --grid-header-font: 11px;
+  --grid-header-font: 12px;
 
   /* Transitions */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
+}
+
+/* ═══ LIGHT THEME — ISA-101 industrial light ═══ */
+
+[data-theme="light"] {
+  /* Core Backgrounds */
+  --bg-void: #ECEEF2;
+  --bg-surface-solid: #F5F6F8;
+  --bg-base: #F5F6F8;
+  --bg-card: #FFFFFF;
+  --bg-raised: rgba(255, 255, 255, 0.85);
+  --bg-overlay: rgba(255, 255, 255, 0.95);
+
+  /* Glass */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --glass-bg-hover: rgba(255, 255, 255, 0.85);
+
+  /* Borders */
+  --border-subtle: rgba(0, 0, 0, 0.04);
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(79, 70, 229, 0.3);
+  --border-active: rgba(79, 70, 229, 0.4);
+
+  /* Text — dark on light */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --text-muted: #9CA3AF;
+  --text-ghost: #D1D5DB;
+
+  /* Accent — slightly darker indigo for light bg contrast */
+  --accent: #6366F1;
+  --accent-hover: #4F46E5;
+  --accent-bg: rgba(99, 102, 241, 0.08);
+  --accent-border: rgba(99, 102, 241, 0.2);
+  --accent-light: #818CF8;
+  --accent-dark: #4338CA;
+
+  /* Semantic — same hues, adjusted opacity for light bg */
+  --semantic-green-bg: rgba(16, 185, 129, 0.1);
+  --semantic-red-bg: rgba(239, 68, 68, 0.08);
+  --semantic-amber-bg: rgba(245, 158, 11, 0.08);
+  --semantic-blue-bg: rgba(59, 130, 246, 0.08);
+  --semantic-cyan-bg: rgba(6, 182, 212, 0.08);
+
+  /* Glow — subtle on light */
+  --glow-ok: 0 0 6px rgba(16, 185, 129, 0.15);
+  --glow-warning: 0 0 6px rgba(245, 158, 11, 0.15);
+  --glow-critical: 0 0 6px rgba(239, 68, 68, 0.15);
+  --glow-accent: 0 2px 8px rgba(99, 102, 241, 0.15);
+  --glow-cyan: 0 0 12px rgba(6, 182, 212, 0.06);
+
+  /* Interactive */
+  --hover-overlay: rgba(0, 0, 0, 0.02);
+  --active-overlay: rgba(0, 0, 0, 0.04);
+  --selected-bg: rgba(99, 102, 241, 0.06);
+
+  /* Shadows — lighter */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-glow: 0 0 12px rgba(99, 102, 241, 0.08);
+  --shadow-overlay: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  /* Icon circles */
+  --icon-circle-accent: rgba(99, 102, 241, 0.1);
+  --icon-circle-blue: rgba(59, 130, 246, 0.1);
+  --icon-circle-green: rgba(16, 185, 129, 0.1);
+  --icon-circle-amber: rgba(245, 158, 11, 0.1);
 }
 
 /* ═══ BASE STYLES ═══ */
@@ -346,7 +413,7 @@ textarea {
   background: rgba(255, 255, 255, 0.03) !important;
   border-bottom: 1px solid var(--glass-border) !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
+  font-size: 12px !important;
   font-weight: 600 !important;
   letter-spacing: 0.03em !important;
   text-transform: uppercase !important;

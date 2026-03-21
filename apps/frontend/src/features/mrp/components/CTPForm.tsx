@@ -94,7 +94,7 @@ export function CTPForm({
               color: sku ? C.ac : C.t3,
               border: `1px solid ${sku ? C.ac : C.t4}40`,
               fontWeight: 600,
-              fontSize: 11,
+              fontSize: 12,
               padding: '6px 16px',
               borderRadius: 4,
             }}

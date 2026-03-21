@@ -112,14 +112,10 @@ export interface OptimalRoutingCardProps {
     totalPcs: number;
     hrs: number;
   }>;
-  saRunning: boolean;
-  saProgress: number | null;
   setOptN: React.Dispatch<React.SetStateAction<number>>;
   setOptProfile: React.Dispatch<React.SetStateAction<string>>;
   setOptResults: React.Dispatch<React.SetStateAction<OptResult[]>>;
   runOpt: () => void;
-  runSA: () => void;
-  cancelSA: () => void;
   applyOptResult: (r: OptResult) => void;
   profiles: ObjectiveProfile[];
 }

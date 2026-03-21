@@ -10,9 +10,15 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface CopilotWidget {
+  type: string;
+  data: Record<string, unknown>;
+}
+
 export interface ChatResponse {
   response: string;
   tool_calls_made: number;
+  widgets?: CopilotWidget[];
 }
 
 export async function sendCopilotMessage(messages: ChatMessage[]): Promise<ChatResponse> {

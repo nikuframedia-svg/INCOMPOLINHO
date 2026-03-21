@@ -21,7 +21,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
   const isLate = entry.status === 'late';
 
   return (
-    <div style={{ padding: '12px 16px', fontSize: 10 }}>
+    <div style={{ padding: '12px 16px', fontSize: 12 }}>
       {/* Level 1: Order */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: 14 }}>📦</span>
@@ -32,7 +32,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
           <span style={{ ...mono, color: isLate ? C.rd : C.t2 }}>deadline {entry.deadline}</span>
         )}
         {entry.isTwin && (
-          <span style={{ fontSize: 9, color: C.yl, fontWeight: 600 }}>Twin: {entry.twinSku}</span>
+          <span style={{ fontSize: 12, color: C.yl, fontWeight: 600 }}>Twin: {entry.twinSku}</span>
         )}
       </div>
 
@@ -77,7 +77,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
                       <span style={{ ...mono, color: C.ac }}>{fmtQty(qty)} pcs</span>
                       <span style={{ ...mono, color: blockLate ? C.rd : C.t2 }}>{dateLabel}</span>
                       {blockLate && (
-                        <span style={{ fontSize: 8, color: C.rd, fontWeight: 600 }}>ATRASADO</span>
+                        <span style={{ fontSize: 12, color: C.rd, fontWeight: 600 }}>ATRASADO</span>
                       )}
                     </div>
 
@@ -88,7 +88,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
                         gap: 12,
                         paddingLeft: 22,
                         color: C.t3,
-                        fontSize: 9,
+                        fontSize: 12,
                       }}
                     >
                       <span>🔧 {block.toolId}</span>
@@ -103,7 +103,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
                         style={{
                           paddingLeft: 22,
                           marginTop: 3,
-                          fontSize: 9,
+                          fontSize: 12,
                           color: C.yl,
                         }}
                       >
@@ -127,7 +127,7 @@ export function PeggingTree({ entry, engine, blocks }: PeggingTreeProps) {
           marginTop: 8,
           paddingTop: 6,
           borderTop: `1px solid ${C.bd}`,
-          fontSize: 9,
+          fontSize: 12,
           color: C.t3,
         }}
       >

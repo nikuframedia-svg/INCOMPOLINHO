@@ -9,7 +9,7 @@ const QUICK_SCENARIOS = [
     id: 'optimize',
     icon: RefreshCw,
     label: 'Optimizar plano',
-    desc: 'Equilibra OTD-D, setups e utilizacao — mostra trade-offs',
+    desc: 'Equilibra OTD-D, setups e utilização — mostra trade-offs',
     color: C.ac,
     profile: 'balanced',
   },
@@ -43,8 +43,6 @@ export function SimpleWhatIfView({
   run,
   prog,
   res,
-  saRunning,
-  saProg,
   onOptimize,
   onSelectProfile,
   onSwitchAdvanced,
@@ -55,8 +53,6 @@ export function SimpleWhatIfView({
   run: boolean;
   prog: number;
   res: unknown;
-  saRunning: boolean;
-  saProg: number | null;
   onOptimize: () => void;
   onSelectProfile: (id: string) => void;
   onSwitchAdvanced: () => void;
@@ -95,7 +91,7 @@ export function SimpleWhatIfView({
           Simulação What-If
         </div>
         <div style={{ fontSize: 12, color: C.t3, maxWidth: 420, margin: '0 auto', lineHeight: 1.6 }}>
-          Compara cenarios alternativos lado a lado. Cada opcao mostra o impacto em entregas, setups e utilizacao antes de aplicar.
+          Compara cenarios alternativos lado a lado. Cada opcao mostra o impacto em entregas, setups e utilização antes de aplicar.
         </div>
       </Card>
 
@@ -137,7 +133,7 @@ export function SimpleWhatIfView({
                 </div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.t1 }}>{s.label}</div>
-                  <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{s.desc}</div>
+                  <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{s.desc}</div>
                 </div>
               </div>
             </Card>
@@ -180,7 +176,7 @@ export function SimpleWhatIfView({
               background: 'none',
               border: 'none',
               color: C.t3,
-              fontSize: 11,
+              fontSize: 12,
               cursor: 'pointer',
               fontFamily: 'inherit',
             }}
@@ -199,22 +195,7 @@ export function SimpleWhatIfView({
           <div style={{ width: '100%', height: 8, borderRadius: 4, background: C.s2, overflow: 'hidden', marginBottom: 8 }}>
             <div style={{ height: '100%', width: `${prog}%`, background: C.ac, borderRadius: 4, transition: 'width .15s' }} />
           </div>
-          <div style={{ fontSize: 11, color: C.t3 }}>{prog}% concluído</div>
-        </Card>
-      )}
-
-      {/* SA refinement phase */}
-      {!run && saRunning && (
-        <Card style={{ padding: 20, textAlign: 'center' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.pp, marginBottom: 8 }}>
-            Fase 2 — SA a refinar...
-          </div>
-          <div style={{ width: '100%', height: 6, borderRadius: 3, background: C.s2, overflow: 'hidden', marginBottom: 6 }}>
-            <div style={{ height: '100%', width: `${saProg ?? 0}%`, background: C.pp, borderRadius: 3, transition: 'width .15s' }} />
-          </div>
-          <div style={{ fontSize: 10, color: C.t3 }}>
-            Simulated Annealing — {saProg ?? 0}%
-          </div>
+          <div style={{ fontSize: 12, color: C.t3 }}>{prog}% concluído</div>
         </Card>
       )}
 

@@ -45,8 +45,8 @@ export interface StatusBadgeProps {
 }
 
 const SIZE_STYLES: Record<StatusBadgeSize, { dot: number; fontSize: number; padding: string }> = {
-  small: { dot: 6, fontSize: 10, padding: '1px 6px' },
-  medium: { dot: 8, fontSize: 11, padding: '2px 8px' },
+  small: { dot: 6, fontSize: 12, padding: '1px 6px' },
+  medium: { dot: 8, fontSize: 12, padding: '2px 8px' },
   large: { dot: 10, fontSize: 13, padding: '3px 10px' },
 };
 

@@ -80,8 +80,6 @@ export function WhatIfView({
     focusT,
     areaCaps,
     qv: qvWI,
-    saRunning,
-    saProg,
   } = wi;
   const {
     setSc,
@@ -113,8 +111,6 @@ export function WhatIfView({
           run={run}
           prog={prog}
           res={res}
-          saRunning={saRunning}
-          saProg={saProg}
           onOptimize={optimize}
           onSelectProfile={(_id: string) => {
             setObjProfile(_id);
@@ -230,7 +226,7 @@ export function WhatIfView({
           </div>
           <div
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: C.t4,
               marginTop: 4,
               maxWidth: 400,
@@ -238,7 +234,7 @@ export function WhatIfView({
               lineHeight: 1.6,
             }}
           >
-            Explora {N} configuracoes diferentes, redistribuindo operacoes entre prensas. Apresenta os 3 melhores planos com comparacao lado a lado de OTD-D, setups e utilizacao.
+            Explora {N} configurações diferentes, redistribuindo operações entre prensas. Apresenta os 3 melhores planos com comparação lado a lado de OTD-D, setups e utilização.
           </div>
         </Card>
       )}

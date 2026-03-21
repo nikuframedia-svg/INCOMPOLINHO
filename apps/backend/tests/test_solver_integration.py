@@ -160,7 +160,7 @@ class TestIntegrationMonteCarlo:
         request = _build_incompol_request(n_jobs=20)
         result = monte_carlo_otd(request, n_scenarios=50, seed=42)
         assert result["n_scenarios"] == 50
-        assert result["elapsed_s"] < 10.0  # Should be fast with heuristic
+        assert result["elapsed_s"] < 120.0  # CP-SAT with 1s per scenario
         assert 0 <= result["p_otd_100"] <= 100
 
 

@@ -65,7 +65,7 @@ export function ResourceDownCard({
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: C.t1 }}>
           Replaneamento{' '}
-          <span style={{ fontSize: 10, color: C.t4, fontWeight: 400 }}>Remove & Repair</span>
+          <span style={{ fontSize: 12, color: C.t4, fontWeight: 400 }}>Remove & Repair</span>
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {moves.length > 0 && (
@@ -103,7 +103,7 @@ export function ResourceDownCard({
                 cursor: isSaving ? 'wait' : 'pointer',
                 background: C.ac,
                 color: C.bg,
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 fontFamily: 'inherit',
                 opacity: isSaving ? 0.6 : 1,
@@ -115,7 +115,7 @@ export function ResourceDownCard({
         </div>
       </div>
       <div>
-        <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Máquinas</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 6 }}>Máquinas</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {machines.map((m) => {
             const isD = mSt[m.id] === 'down';
@@ -160,7 +160,7 @@ export function ResourceDownCard({
                   }}
                 >
                   <span style={dot(isD ? C.rd : C.ac, isD)} />
-                  <span style={{ fontSize: 9, fontWeight: 600, color: isD ? C.rd : C.ac }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: isD ? C.rd : C.ac }}>
                     {mDownDays.size > 0 ? `DOWN ${mDownDays.size}d` : 'RUN'}
                   </span>
                 </div>
@@ -175,7 +175,7 @@ export function ResourceDownCard({
                 >
                   {m.id}
                 </div>
-                <div style={{ fontSize: 9, color: C.t4 }}>
+                <div style={{ fontSize: 12, color: C.t4 }}>
                   {m.area} · {n} ops
                 </div>
               </button>
@@ -184,7 +184,7 @@ export function ResourceDownCard({
         </div>
       </div>
       <div style={{ marginTop: 10 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 5 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 5 }}>
           Ferramentas
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>

@@ -15,7 +15,7 @@
 }
 
 .afeed__count {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
 }
@@ -24,7 +24,7 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--radius-xs);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -51,7 +51,7 @@
   position: absolute;
   top: var(--space-8);
   right: var(--space-8);
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-ghost);
   font-family: var(--font-mono);
 }

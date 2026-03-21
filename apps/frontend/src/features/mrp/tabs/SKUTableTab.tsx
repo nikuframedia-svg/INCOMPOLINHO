@@ -72,7 +72,7 @@ export function SKUTableTab({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ fontSize: 10, color: C.t3, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>
           {records.length} de {allRecords.length} SKUs
         </span>
       </div>
@@ -153,7 +153,7 @@ function SKURow({
           )}
         </td>
         <td>
-          <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: C.t1 }}>{r.sku}</span>
+          <span style={{ ...mono, fontSize: 12, fontWeight: 600, color: C.t1 }}>{r.sku}</span>
           {r.isTwin && (
             <span className="mrp__twin-badge" title={`Peça gémea: ${r.twin}`}>
               <Link2 size={10} />
@@ -161,13 +161,13 @@ function SKURow({
           )}
         </td>
         <td>
-          <span style={{ fontSize: 10, color: C.t2 }}>{r.name}</span>
+          <span style={{ fontSize: 12, color: C.t2 }}>{r.name}</span>
           {r.customer && <span className="mrp__customer-tag">{r.customer}</span>}
         </td>
         <td>
           <span
             className="mrp__clickable"
-            style={{ ...mono, fontSize: 10, color: C.t2 }}
+            style={{ ...mono, fontSize: 12, color: C.t2 }}
             onClick={(e) => {
               e.stopPropagation();
               openContextPanel({ type: 'tool', id: r.toolCode });
@@ -180,7 +180,7 @@ function SKURow({
         <td>
           <span
             className="mrp__clickable"
-            style={{ ...mono, fontSize: 10, color: C.t2 }}
+            style={{ ...mono, fontSize: 12, color: C.t2 }}
             onClick={(e) => {
               e.stopPropagation();
               openContextPanel({ type: 'machine', id: r.machine });
@@ -191,12 +191,12 @@ function SKURow({
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: r.currentStock > 0 ? C.ac : C.t3 }}>
+          <span style={{ ...mono, fontSize: 12, color: r.currentStock > 0 ? C.ac : C.t3 }}>
             {fmtQty(r.currentStock)}
           </span>
         </td>
         <td style={{ textAlign: 'right' }}>
-          <span style={{ ...mono, fontSize: 10, color: r.backlog > 0 ? C.rd : C.t3 }}>
+          <span style={{ ...mono, fontSize: 12, color: r.backlog > 0 ? C.rd : C.t3 }}>
             {r.backlog > 0 ? fmtQty(r.backlog) : '-'}
           </span>
         </td>
@@ -217,7 +217,7 @@ function SKURow({
         ))}
         <td style={{ textAlign: 'right' }}>
           <span
-            style={{ ...mono, fontSize: 10, fontWeight: 600, color: totalPOR > 0 ? C.ac : C.t3 }}
+            style={{ ...mono, fontSize: 12, fontWeight: 600, color: totalPOR > 0 ? C.ac : C.t3 }}
           >
             {totalPOR > 0 ? fmtQty(totalPOR) : '-'}
           </span>
@@ -225,7 +225,7 @@ function SKURow({
         <td style={{ textAlign: 'right' }}>
           <span
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: r.coverageDays < 2 ? C.rd : r.coverageDays < 4 ? C.yl : C.ac,
             }}
           >
@@ -303,7 +303,7 @@ function SKURow({
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 8, fontSize: 9, color: C.t3, display: 'flex', gap: 16 }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: C.t3, display: 'flex', gap: 16 }}>
               <span>Rate: {r.ratePerHour} p/h</span>
               <span>Setup: {r.setupHours}h</span>
               <span>Lote: {fmtQty(r.lotEconomicQty)}</span>

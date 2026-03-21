@@ -9,7 +9,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C, computeRiskGrid, type RiskLevel, type RiskRow } from '../../lib/engine';
+import { C, type RiskLevel, type RiskRow } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars } from '../../utils/gridDensity';
 import './Risk.css';
@@ -24,7 +24,7 @@ const RISK_BG: Record<RiskLevel, string> = {
 };
 
 export function Risk() {
-  const { engine, cap, validation, mrp, loading, error } = useScheduleData();
+  const { engine, loading, error } = useScheduleData();
   const openContextPanel = useUIStore((s) => s.actions.openContextPanel);
   const setFocus = useUIStore((s) => s.actions.setFocus);
   const panelOpen = useUIStore((s) => s.contextPanelOpen);
@@ -39,10 +39,11 @@ export function Risk() {
     setFilters((f) => ({ ...f, [key]: !f[key] }));
   }, []);
 
+  const { riskGrid: backendRiskGrid } = useScheduleData();
   const grid = useMemo(() => {
-    if (!engine) return null;
-    return computeRiskGrid(engine, cap, validation, mrp);
-  }, [engine, cap, validation, mrp]);
+    if (!engine || !backendRiskGrid) return null;
+    return backendRiskGrid as { rows: RiskRow[]; dates: string[]; dnames: string[]; summary: { criticalCount: number; highCount: number; mediumCount: number } };
+  }, [engine, backendRiskGrid]);
 
   const filteredRows = useMemo(() => {
     if (!grid)
@@ -262,7 +263,7 @@ function RiskGroup({
             <span
               style={{
                 fontFamily: "'JetBrains Mono',monospace",
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: 'var(--text-primary)',
               }}

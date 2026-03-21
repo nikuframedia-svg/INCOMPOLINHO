@@ -215,7 +215,7 @@ export function StrategyPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -226,7 +226,7 @@ export function StrategyPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -239,19 +239,19 @@ export function StrategyPage() {
       >
         Estrategias Multi-Passo (L6)
       </h2>
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         Estrategia activa: <strong>{activePresetName}</strong> · {steps.length} passos · Cada passo
         filtra, despacha e aplica pesos
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Preset:</span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preset:</span>
         {presets.map((p) => (
           <button
             key={p.id}
             className={`schedule-comparison__btn${p.id === selectedPresetId && !isCustom ? ' schedule-comparison__btn--primary' : ''}`}
             onClick={() => selectPreset(p.id)}
-            style={{ fontSize: 11 }}
+            style={{ fontSize: 12 }}
           >
             {p.name}
           </button>
@@ -259,7 +259,7 @@ export function StrategyPage() {
         {isCustom && (
           <span
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: 'var(--semantic-warning)',
               fontStyle: 'italic',
             }}
@@ -287,11 +287,11 @@ export function StrategyPage() {
         <button
           className="schedule-comparison__btn schedule-comparison__btn--primary"
           onClick={addStep}
-          style={{ fontSize: 11 }}
+          style={{ fontSize: 12 }}
         >
           + Adicionar Passo
         </button>
-        <button className="schedule-comparison__btn" onClick={runTest} style={{ fontSize: 11 }}>
+        <button className="schedule-comparison__btn" onClick={runTest} style={{ fontSize: 12 }}>
           Testar Estrategia
         </button>
       </div>
@@ -308,7 +308,7 @@ export function StrategyPage() {
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
-            Resultado: {testResult.total} operacoes distribuidas
+            Resultado: {testResult.total} operações distribuídas
           </div>
           {testResult.stepCounts.map((count, i) => (
             <div key={steps[i]?.id ?? i} style={{ marginLeft: 8 }}>
@@ -336,7 +336,7 @@ export function StrategyPage() {
               borderRadius: 4,
               color: 'var(--text-primary)',
               padding: '4px 8px',
-              fontSize: 11,
+              fontSize: 12,
               width: 200,
             }}
           />
@@ -344,7 +344,7 @@ export function StrategyPage() {
             className="schedule-comparison__btn"
             onClick={saveAsPreset}
             disabled={!savePresetName.trim()}
-            style={{ fontSize: 11 }}
+            style={{ fontSize: 12 }}
           >
             Salvar como Preset
           </button>

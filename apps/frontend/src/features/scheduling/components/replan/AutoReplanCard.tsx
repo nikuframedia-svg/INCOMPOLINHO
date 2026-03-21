@@ -43,7 +43,7 @@ export function AutoReplanCard({
     border: `1px solid ${C.bd}`,
     background: C.bg,
     color: C.t1,
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: 'inherit',
   } as const;
 
@@ -60,14 +60,14 @@ export function AutoReplanCard({
         >
           <div style={{ fontSize: 13, fontWeight: 600, color: C.t1 }}>
             Auto-Replan{' '}
-            <span style={{ fontSize: 10, color: C.t4, fontWeight: 400 }}>5 estratégias</span>
+            <span style={{ fontSize: 12, color: C.t4, fontWeight: 400 }}>5 estratégias</span>
           </div>
           {arActions.length > 0 && <Tag color={C.ac}>{arActions.length} acções</Tag>}
         </div>
 
         {/* Date range */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 10, color: C.t3, minWidth: 56 }}>Horizonte:</span>
+          <span style={{ fontSize: 12, color: C.t3, minWidth: 56 }}>Horizonte:</span>
           <select
             value={arDayFrom}
             onChange={(e) => {
@@ -82,7 +82,7 @@ export function AutoReplanCard({
               </option>
             ))}
           </select>
-          <span style={{ fontSize: 10, color: C.t4 }}>até</span>
+          <span style={{ fontSize: 12, color: C.t4 }}>até</span>
           <select
             value={arDayTo}
             onChange={(e) => {
@@ -109,7 +109,7 @@ export function AutoReplanCard({
               border: `1px solid ${C.bd}`,
               background: 'transparent',
               color: C.t3,
-              fontSize: 9,
+              fontSize: 12,
               cursor: 'pointer',
               fontFamily: 'inherit',
             }}
@@ -128,7 +128,7 @@ export function AutoReplanCard({
               border: `1px solid ${arExclude.size > 0 ? C.yl + '44' : C.bd}`,
               background: arExclude.size > 0 ? C.ylS : 'transparent',
               color: arExclude.size > 0 ? C.yl : C.t3,
-              fontSize: 10,
+              fontSize: 12,
               cursor: 'pointer',
               fontFamily: 'inherit',
               display: 'inline-flex',
@@ -257,7 +257,7 @@ export function AutoReplanCard({
               />
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 12, fontSize: 10, color: C.t3 }}>
+          <div style={{ display: 'flex', gap: 12, marginTop: 12, fontSize: 12, color: C.t3 }}>
             <span>{arResult.autoMoves.length} movimentos</span>
             <span>{arResult.autoAdvances?.length ?? 0} adiantamentos</span>
             <span>{arResult.decisions.length} decisões</span>
@@ -278,7 +278,7 @@ export function AutoReplanCard({
           }}
         >
           <Check size={12} strokeWidth={2} style={{ color: C.ac }} />
-          <span style={{ fontSize: 11, fontWeight: 600, color: C.ac }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.ac }}>
             Auto-replan concluído — sem acções necessárias
           </span>
         </div>

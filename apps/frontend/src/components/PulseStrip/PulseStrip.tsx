@@ -116,7 +116,7 @@ export function PulseStrip() {
         variant: metrics.otdDelivery >= 95 ? 'green' : metrics.otdDelivery >= 85 ? 'amber' : 'red',
       },
       {
-        label: 'Producao',
+        label: 'Produção',
         value:
           metrics.produced > 1000
             ? `${(metrics.produced / 1000).toFixed(1)}K`
@@ -125,7 +125,7 @@ export function PulseStrip() {
         sparkData: dailyPcs,
       },
       {
-        label: 'Utilizacao',
+        label: 'Utilização',
         value: `${(metrics.capUtil * 100).toFixed(0)}%`,
         variant: metrics.capUtil > 0.85 ? 'amber' : 'teal',
         sparkData: dailyUtils.map((u) => u * 100),

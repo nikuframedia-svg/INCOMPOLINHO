@@ -29,7 +29,7 @@ export function emptyStateMessage(
       return {
         title: 'Sem dados MRP',
         description:
-          'Importa o ficheiro ISOP na pagina Planning para gerar a analise de materiais. ' +
+          'Importa o ficheiro ISOP na página Planning para gerar a análise de materiais. ' +
           'O PP1 calcula stocks, cobertura e riscos automaticamente.',
         actionLabel: 'Ir para Planning',
       };
@@ -46,7 +46,7 @@ export function emptyStateMessage(
         title: 'Sem replaneamento activo',
         description:
           'Usa os cenarios rapidos para simular avarias, encomendas urgentes ou optimizacao. ' +
-          'O PP1 calcula o impacto e sugere solucoes.',
+          'O PP1 calcula o impacto e sugere soluções.',
         actionLabel: 'Escolher cenario',
       };
   }
@@ -90,9 +90,9 @@ export function confirmationText(
     case 'mark_down':
       return {
         title: `Registar paragem${targetMachine ? ` — ${targetMachine}` : ''}`,
-        detail: 'A maquina sera marcada como parada no plano actual.',
+        detail: 'A máquina será marcada como parada no plano actual.',
         consequence:
-          'O PP1 vai recalcular o plano e propor redistribuicao de carga.',
+          'O PP1 vai recalcular o plano e propor redistribuição de carga.',
       };
     default:
       return {
@@ -117,7 +117,7 @@ export function badgeTooltip(
     case 'alerts':
       return `${count} alerta${count > 1 ? 's' : ''} activo${count > 1 ? 's' : ''} — verificar consola`;
     case 'plan':
-      return `${count} operacao${count > 1 ? 'es' : ''} bloqueada${count > 1 ? 's' : ''} ou em overflow`;
+      return `${count} operação${count > 1 ? 'ões' : ''} bloqueada${count > 1 ? 's' : ''} ou em overflow`;
   }
 }
 
@@ -155,7 +155,7 @@ export function toastMessage(
     case 'andon_started':
       return `Paragem registada${machineId ? ` — ${machineId}` : ''}.`;
     case 'andon_recovered':
-      return `${machineId ?? 'Maquina'} recuperada. Plano actualizado.`;
+      return `${machineId ?? 'Máquina'} recuperada. Plano actualizado.`;
     case 'optimized':
       return `Plano optimizado.${otdDelta ? ` OTD-D ${otdDelta > 0 ? 'subiu' : 'desceu'} ${Math.abs(otdDelta!).toFixed(0)}%.` : ''}${count ? ` ${count} lotes reordenados.` : ''}`;
     default:

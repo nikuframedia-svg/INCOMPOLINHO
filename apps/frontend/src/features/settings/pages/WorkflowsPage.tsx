@@ -19,7 +19,7 @@ const DEFAULT_WORKFLOWS: WorkflowRow[] = [
     approval: true,
     contrafactual: true,
     ledger: true,
-    approver: 'Chefe Producao',
+    approver: 'Chefe Produção',
   },
   {
     id: 'w2',
@@ -76,7 +76,7 @@ const DECISION_ACTIONS = [
   'Mover op zona slushy',
   'Mover op zona liquid',
   'Split lote',
-  'Trocar maquina',
+  'Trocar máquina',
   'Adiar encomenda',
   'Antecipar encomenda',
   'Resequenciar fila',
@@ -132,7 +132,7 @@ export function WorkflowsPage() {
       <div style={{ padding: 32 }}>
         <Link
           to="/settings"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
         >
           ← Settings
         </Link>
@@ -143,7 +143,7 @@ export function WorkflowsPage() {
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <Link to="/settings" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+      <Link to="/settings" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
         ← Settings
       </Link>
       <h2
@@ -156,7 +156,7 @@ export function WorkflowsPage() {
       >
         Workflows & Aprovacoes (L5)
       </h2>
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
         {rows.length} accoes configuradas · {approvalCount} requerem aprovacao ·{' '}
         {Object.entries(levelBreakdown)
           .sort(([a], [b]) => a.localeCompare(b))
@@ -173,7 +173,7 @@ export function WorkflowsPage() {
               className="constraint-toggles__param-select"
               value={newAction}
               onChange={(e) => setNewAction(e.target.value)}
-              style={{ fontSize: 11, flex: 1, maxWidth: 300 }}
+              style={{ fontSize: 12, flex: 1, maxWidth: 300 }}
             >
               <option value="">Seleccionar accao...</option>
               {DECISION_ACTIONS.filter((a) => !rows.some((r) => r.action === a)).map((a) => (
@@ -186,7 +186,7 @@ export function WorkflowsPage() {
               className="schedule-comparison__btn schedule-comparison__btn--primary"
               onClick={addRow}
               disabled={!newAction.trim()}
-              style={{ fontSize: 11 }}
+              style={{ fontSize: 12 }}
             >
               Adicionar
             </button>
@@ -196,7 +196,7 @@ export function WorkflowsPage() {
                 setShowAddRow(false);
                 setNewAction('');
               }}
-              style={{ fontSize: 11 }}
+              style={{ fontSize: 12 }}
             >
               Cancelar
             </button>
@@ -205,7 +205,7 @@ export function WorkflowsPage() {
           <button
             className="schedule-comparison__btn schedule-comparison__btn--primary"
             onClick={() => setShowAddRow(true)}
-            style={{ fontSize: 11 }}
+            style={{ fontSize: 12 }}
           >
             + Nova Accao
           </button>

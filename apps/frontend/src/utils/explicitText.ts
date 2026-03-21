@@ -60,7 +60,7 @@ export function formatOTD(
       semantic === 'good'
         ? 'Dentro do objectivo'
         : semantic === 'warning'
-          ? 'Atencao necessaria'
+          ? 'Atenção necessária'
           : 'Critico — entregas em risco',
     semantic,
   };
@@ -181,7 +181,7 @@ export function formatAlerts(
     total === 0 ? 'good' : total <= 3 ? 'warning' : 'critical';
 
   const parts: string[] = [];
-  if (violationCount > 0) parts.push(`${violationCount} violacoes`);
+  if (violationCount > 0) parts.push(`${violationCount} violações`);
   if (infeasibleCount > 0) parts.push(`${infeasibleCount} inviaveis`);
   if (overflowCount > 0) parts.push(`${overflowCount} overflow`);
 
@@ -193,7 +193,7 @@ export function formatAlerts(
       total === 0
         ? 'Sem problemas'
         : total <= 3
-          ? 'Atencao'
+          ? 'Atenção'
           : 'Intervencao necessaria',
     semantic,
   };
@@ -306,11 +306,11 @@ export function formatMachineState(
     }
     case 'idle':
       return {
-        label: `${machineId} — Sem producao`,
+        label: `${machineId} — Sem produção`,
         consequence: nextToolId
-          ? `Proxima operacao: ${nextToolId}${nextStartMin != null ? ` as ${fmtMinutes(nextStartMin)}` : ''}`
+          ? `Próxima operação: ${nextToolId}${nextStartMin != null ? ` as ${fmtMinutes(nextStartMin)}` : ''}`
           : 'Sem ordens atribuidas',
-        action: 'Maquina disponivel',
+        action: 'Máquina disponível',
         semantic: 'neutral',
       };
     default:

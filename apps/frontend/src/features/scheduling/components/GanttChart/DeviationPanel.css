@@ -48,7 +48,7 @@
 
 .dev-panel__metrics th {
   text-align: left;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -86,7 +86,7 @@
 }
 
 .dev-panel__label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -123,7 +123,7 @@
 }
 
 .dev-panel__governance {
-  font-size: 10px;
+  font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-ghost);
 }

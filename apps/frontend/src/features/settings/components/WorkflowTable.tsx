@@ -65,7 +65,7 @@ export function WorkflowTable({ rows, onChange }: WorkflowTableProps) {
                   onChange={(e) =>
                     updateRow(row.id, { level: Number(e.target.value) as GovernanceLevel })
                   }
-                  style={{ fontSize: 11 }}
+                  style={{ fontSize: 12 }}
                 >
                   {([0, 1, 2, 3, 4, 5] as GovernanceLevel[]).map((lv) => (
                     <option key={lv} value={lv}>
@@ -119,7 +119,7 @@ export function WorkflowTable({ rows, onChange }: WorkflowTableProps) {
                     borderRadius: 4,
                     color: 'var(--text-primary)',
                     padding: '4px 8px',
-                    fontSize: 11,
+                    fontSize: 12,
                     width: '100%',
                     minWidth: 100,
                   }}

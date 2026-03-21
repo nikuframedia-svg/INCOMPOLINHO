@@ -18,7 +18,7 @@ export function DayOrders({ blocks, onBlockClick }: DayOrdersProps) {
       <Collapsible title="Ordens do Dia" defaultOpen badge={`${blocks.length}`}>
         {blocks.length === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--text-muted)', padding: 8 }}>
-            Sem operacoes escalonadas para este dia.
+            Sem operações escalonadas para este dia.
           </p>
         ) : (
           <table className="dord__table">
@@ -27,7 +27,7 @@ export function DayOrders({ blocks, onBlockClick }: DayOrdersProps) {
                 <th>Ferramenta</th>
                 <th>SKU</th>
                 <th>Nome</th>
-                <th>Maquina</th>
+                <th>Máquina</th>
                 <th>Turno</th>
                 <th style={{ textAlign: 'right' }}>Qtd</th>
                 <th>Inicio</th>

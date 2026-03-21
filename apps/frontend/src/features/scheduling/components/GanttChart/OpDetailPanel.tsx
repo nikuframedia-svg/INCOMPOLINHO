@@ -35,7 +35,7 @@ export function OpDetailPanel({
     <div style={{ borderTop: `1px solid ${C.bd}`, padding: '10px 14px' }}>
       <div
         style={{
-          fontSize: 9,
+          fontSize: 12,
           fontWeight: 600,
           color: C.t4,
           letterSpacing: '.06em',
@@ -57,7 +57,7 @@ export function OpDetailPanel({
         padding: '2px 0',
       }}
     >
-      <span style={{ fontSize: 10, color: C.t3 }}>{k}</span>
+      <span style={{ fontSize: 12, color: C.t3 }}>{k}</span>
       <span
         style={{
           fontSize: 12,
@@ -104,8 +104,8 @@ export function OpDetailPanel({
             {b.toolId} <span style={{ color: C.t2, fontWeight: 500 }}>—</span>{' '}
             <span style={{ color: C.t1 }}>{b.sku}</span>
           </div>
-          <div style={{ fontSize: 11, color: C.t2, marginTop: 2 }}>{b.nm}</div>
-          <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{b.nm}</div>
+          <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>
             <span style={{ fontWeight: 600, fontFamily: 'monospace', color: C.t1 }}>
               {b.machineId}
             </span>
@@ -138,12 +138,12 @@ export function OpDetailPanel({
         {tool && <Row k="pcs/H" v={tool.pH.toLocaleString()} />}
         <Row k="Operadores" v={b.operators} />
         {b.type === 'blocked' && (
-          <div style={{ fontSize: 10, color: C.rd, fontWeight: 600, marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: C.rd, fontWeight: 600, marginTop: 4 }}>
             BLOQUEADA — {b.reason === 'tool_down' ? 'ferramenta avariada' : 'máquina DOWN'}
           </div>
         )}
         {b.overflow && (
-          <div style={{ fontSize: 10, color: C.yl, fontWeight: 600, marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: C.yl, fontWeight: 600, marginTop: 4 }}>
             OVERFLOW — +{b.overflowMin?.toFixed(0)}min
           </div>
         )}
@@ -154,7 +154,7 @@ export function OpDetailPanel({
         <Sec label="Co-Produção">
           <div
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: C.t3,
               marginBottom: 6,
               display: 'flex',
@@ -176,7 +176,7 @@ export function OpDetailPanel({
             >
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: C.t1,
                   fontFamily: "'JetBrains Mono',monospace",
@@ -246,7 +246,7 @@ export function OpDetailPanel({
                 )}
                 <div
                   style={{
-                    fontSize: 8,
+                    fontSize: 12,
                     color: i === selDay ? C.ac : C.t4,
                     fontWeight: i === selDay ? 700 : 400,
                   }}
@@ -286,10 +286,10 @@ export function OpDetailPanel({
                 marginTop: 2,
               }}
             >
-              <span style={{ fontSize: 10, color: C.t3 }}>Utilização</span>
+              <span style={{ fontSize: 12, color: C.t3 }}>Utilização</span>
               <span
                 style={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: util > 1 ? C.rd : util > 0.85 ? C.yl : C.ac,
                   fontFamily: 'monospace',
@@ -326,7 +326,7 @@ export function OpDetailPanel({
           <div style={{ marginBottom: 8 }}>
             <div
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 color: C.ac,
                 fontWeight: 600,
                 marginBottom: 6,
@@ -346,7 +346,7 @@ export function OpDetailPanel({
                 border: `1px solid ${C.yl}33`,
                 background: C.ylS,
                 color: C.yl,
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -371,7 +371,7 @@ export function OpDetailPanel({
               border: 'none',
               background: C.ac,
               color: C.bg,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
               fontFamily: 'inherit',

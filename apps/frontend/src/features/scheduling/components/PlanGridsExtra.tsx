@@ -33,7 +33,7 @@ export function VolumeChart({
               gap: 2,
             }}
           >
-            <span style={{ fontSize: 9, color: C.ac, fontFamily: 'monospace', fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.ac, fontFamily: 'monospace', fontWeight: 600 }}>
               {p > 0 ? `${(p / 1000).toFixed(0)}K` : ''}
             </span>
             <div
@@ -44,7 +44,7 @@ export function VolumeChart({
                 borderRadius: '4px 4px 0 0',
               }}
             />
-            <span style={{ fontSize: 9, color: C.t4 }}>{dates[wdi[idx]]}</span>
+            <span style={{ fontSize: 12, color: C.t4 }}>{dates[wdi[idx]]}</span>
           </div>
         ))}
       </div>
@@ -79,7 +79,7 @@ export function TopBacklogs({
           >
             <span
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: toolColor(tools, o.t),
                 fontFamily: 'monospace',
@@ -91,7 +91,7 @@ export function TopBacklogs({
             <span
               style={{
                 flex: 1,
-                fontSize: 10,
+                fontSize: 12,
                 color: C.t3,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',

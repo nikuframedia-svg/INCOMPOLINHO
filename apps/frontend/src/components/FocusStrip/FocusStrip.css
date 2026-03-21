@@ -13,7 +13,7 @@
   align-items: center;
   padding: 0 16px;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .focus-strip__label {
@@ -22,7 +22,7 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .focus-strip__pills {
@@ -46,7 +46,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
   cursor: default;
@@ -61,7 +61,7 @@
 .focus-strip__pill-value {
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .focus-strip__pill-close {
@@ -90,7 +90,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-ghost);
   cursor: pointer;
   padding: 2px 6px;
@@ -105,7 +105,7 @@
 
 .focus-strip__cmd-key {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
   padding: 1px 4px;
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);

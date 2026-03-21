@@ -5,7 +5,7 @@ import { SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { StatusBanner } from '@/components/Common/StatusBanner';
 import type { MRPRecord, MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
 import { useScheduleData } from '@/hooks/useScheduleData';
-import { C, computeMRP, computeMRPSkuView } from '@/lib/engine';
+import { C } from '@/lib/engine';
 import { useUIActions, useUIStore } from '@/stores/useUIStore';
 import { MRPTrustBanner } from '../components/MRPTrustBanner';
 import { CTPTab } from '../tabs/CTPTab';
@@ -38,7 +38,7 @@ const VIEW_LABELS: Record<ViewMode, string> = {
 };
 
 export function MRPPage() {
-  const { engine, blocks, loading, error, metrics, lateDeliveries } = useScheduleData();
+  const { engine, blocks, loading, error, metrics, lateDeliveries, mrp, mrpSkuView: skuView } = useScheduleData();
   const panelOpen = useUIStore((s) => s.contextPanelOpen);
   const [tab, setTab] = useState<Tab>('stocks');
   const [viewMode, setViewMode] = useState<ViewMode>('sku');
@@ -46,16 +46,6 @@ export function MRPPage() {
   const [machineFilter, setMachineFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const mrp = useMemo(() => {
-    if (!engine) return null;
-    return computeMRP(engine);
-  }, [engine]);
-
-  const skuView = useMemo(() => {
-    if (!mrp) return null;
-    return computeMRPSkuView(mrp);
-  }, [mrp]);
 
   const { setMrpRiskCount } = useUIActions();
   useEffect(() => {
@@ -162,7 +152,7 @@ export function MRPPage() {
           {metrics?.otdDelivery != null && (
             <span
               style={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 700,
                 color:
                   metrics.otdDelivery >= 0.95 ? 'var(--semantic-green)'
@@ -182,7 +172,7 @@ export function MRPPage() {
               )}
             </span>
           )}
-          <span style={{ fontSize: 11, color: C.t3, ...mono }}>
+          <span style={{ fontSize: 12, color: C.t3, ...mono }}>
             {engine.dates[0]} — {engine.dates[engine.dates.length - 1]} · {skuView.summary.totalSkus}{' '}
             SKUs · {mrp.records.length} tools
           </span>

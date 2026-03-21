@@ -28,13 +28,13 @@ export function QualityBanner({
       }}
     >
       <AlertTriangle size={13} style={{ color, flexShrink: 0 }} />
-      <span style={{ fontSize: 10, fontWeight: 600, color }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color }}>
         {critTxt}
         {sep}
         {highTxt}
       </span>
       {qv.warnings.length > 0 && (
-        <span style={{ fontSize: 9, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
+        <span style={{ fontSize: 12, color: C.t3, marginLeft: 'auto' }}>{qv.warnings[0]}</span>
       )}
     </div>
   );

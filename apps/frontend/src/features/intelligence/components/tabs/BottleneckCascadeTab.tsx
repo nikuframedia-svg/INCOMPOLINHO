@@ -55,12 +55,12 @@ export function BottleneckView({ data }: { data: IntelData }) {
                 <span style={{ color: C.t1, fontSize: 14, fontWeight: 600, ...mono }}>
                   {node.machine}
                 </span>
-                <span style={{ color: C.t3, fontSize: 10 }}>{node.area}</span>
+                <span style={{ color: C.t3, fontSize: 12 }}>{node.area}</span>
                 {!node.hasAlternatives && (
                   <span
                     style={{
                       color: C.rd,
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: 600,
                       padding: '2px 6px',
                       background: C.rdS,
@@ -75,7 +75,7 @@ export function BottleneckView({ data }: { data: IntelData }) {
                   <span
                     style={{
                       color: C.rd,
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: 600,
                       padding: '2px 6px',
                       background: C.rdS,
@@ -131,7 +131,7 @@ export function BottleneckView({ data }: { data: IntelData }) {
               {/* Relief paths */}
               {node.reliefPaths.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
-                  <span style={{ ...labelSt, fontSize: 9 }}>RELIEF PATHS</span>
+                  <span style={{ ...labelSt, fontSize: 12 }}>RELIEF PATHS</span>
                   {node.reliefPaths.slice(0, 4).map((rp, i) => (
                     <div
                       key={i}
@@ -144,23 +144,23 @@ export function BottleneckView({ data }: { data: IntelData }) {
                         borderRadius: 4,
                       }}
                     >
-                      <span style={{ color: C.t3, fontSize: 10 }}>→</span>
-                      <span style={{ color: C.t1, fontSize: 11, ...mono }}>{rp.toolCode}</span>
-                      <span style={{ color: C.t3, fontSize: 10 }}>to</span>
+                      <span style={{ color: C.t3, fontSize: 12 }}>→</span>
+                      <span style={{ color: C.t1, fontSize: 12, ...mono }}>{rp.toolCode}</span>
+                      <span style={{ color: C.t3, fontSize: 12 }}>to</span>
                       <span
                         style={{
                           color: MC[rp.altMachine] || C.ac,
-                          fontSize: 11,
+                          fontSize: 12,
                           ...mono,
                           fontWeight: 600,
                         }}
                       >
                         {rp.altMachine}
                       </span>
-                      <span style={{ color: C.t3, fontSize: 9 }}>
+                      <span style={{ color: C.t3, fontSize: 12 }}>
                         ({fmtPct(rp.altLoadPct)} load)
                       </span>
-                      <span style={{ marginLeft: 'auto', color: C.ac, fontSize: 10, ...mono }}>
+                      <span style={{ marginLeft: 'auto', color: C.ac, fontSize: 12, ...mono }}>
                         saves {fmtMin(rp.minutesSaved)}
                       </span>
                     </div>

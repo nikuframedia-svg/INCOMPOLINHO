@@ -50,7 +50,7 @@
 
 .formula-editor__var-chip {
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 12px;
   font-family: var(--font-mono);
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);

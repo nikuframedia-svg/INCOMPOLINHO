@@ -12,7 +12,7 @@ export type MachineState =
   | 'idle';
 
 const STATE_LABELS: Record<MachineState, string> = {
-  running: 'Em producao',
+  running: 'Em produção',
   stopped: 'Parada',
   transition: 'Transicao',
   manual: 'Manual',

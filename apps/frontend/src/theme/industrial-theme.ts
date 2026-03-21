@@ -36,7 +36,7 @@ const sharedComponents = {
     fontSizeSM: 11,
   },
   Badge: {
-    fontSize: 11,
+    fontSize: 12,
   },
   Tabs: {
     itemColor: undefined as string | undefined,

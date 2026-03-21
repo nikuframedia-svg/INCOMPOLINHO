@@ -36,7 +36,7 @@ export function CTPScenarioCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span
           style={{
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: 700,
             padding: '2px 8px',
             borderRadius: 3,
@@ -46,10 +46,10 @@ export function CTPScenarioCard({
         >
           {scenario.label}
         </span>
-        {scenario.isAlt && <span style={{ fontSize: 9, color: C.yl }}>Máquina alternativa</span>}
+        {scenario.isAlt && <span style={{ fontSize: 12, color: C.yl }}>Máquina alternativa</span>}
       </div>
 
-      <div style={{ display: 'flex', gap: 16, fontSize: 10, color: C.t2, marginBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.t2, marginBottom: 6 }}>
         <span>
           Máquina: <span style={{ ...mono, color: C.t1, fontWeight: 600 }}>{scenario.machine}</span>
         </span>
@@ -61,7 +61,7 @@ export function CTPScenarioCard({
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, fontSize: 10, color: C.t2, marginBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.t2, marginBottom: 6 }}>
         <span>
           Requer: <span style={{ ...mono, color: C.t1 }}>{r.requiredMin}m</span>
         </span>
@@ -77,7 +77,7 @@ export function CTPScenarioCard({
       {confidence && (
         <div
           style={{
-            fontSize: 10,
+            fontSize: 12,
             color: C.t1,
             fontWeight: 500,
             padding: '6px 10px',
@@ -91,7 +91,7 @@ export function CTPScenarioCard({
         </div>
       )}
 
-      <div style={{ fontSize: 9, color: C.t3, marginBottom: 8 }}>{r.reason}</div>
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 8 }}>{r.reason}</div>
 
       {r.feasible && onCommit && (
         <button
@@ -103,7 +103,7 @@ export function CTPScenarioCard({
             color: colors.badge,
             border: `1px solid ${colors.border}40`,
             fontWeight: 600,
-            fontSize: 10,
+            fontSize: 12,
             padding: '4px 12px',
             borderRadius: 4,
           }}
