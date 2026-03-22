@@ -283,6 +283,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             db.add(entry)
             db.commit()
         except Exception:
+            logger.exception("Audit DB write failed")
             db.rollback()
             raise
         finally:
@@ -359,6 +360,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return response
         except Exception:
             # Parar timer em caso de erro
+            logger.exception("Unhandled error in request %s %s", request.method, request.url.path)
             timer_stop(timer_id, f"http_request.{request.method.lower()}.{request.url.path}")
             increment(
                 "http_requests_error",

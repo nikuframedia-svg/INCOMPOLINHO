@@ -13,10 +13,13 @@ Output: NikufraData-compatible dict ready for scheduling pipeline.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import openpyxl
 from openpyxl.cell import Cell
@@ -650,6 +653,7 @@ def parse_isop_file(
     try:
         wb = openpyxl.load_workbook(filepath_or_bytes, data_only=data_only)
     except Exception:
+        logger.exception("Failed to open ISOP XLSX file")
         return ISOPParseResult(
             success=False,
             errors=["Ficheiro XLSX inválido — não foi possível abrir."],

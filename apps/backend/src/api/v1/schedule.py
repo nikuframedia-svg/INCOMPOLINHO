@@ -124,7 +124,7 @@ def _solve_and_analyze(
             )
         )
     except Exception:
-        pass
+        logger.exception("score_schedule failed")
     try:
         analytics["validation"] = _to_dict(
             validate_schedule(
@@ -137,7 +137,7 @@ def _solve_and_analyze(
             )
         )
     except Exception:
-        pass
+        logger.exception("validate_schedule failed")
     try:
         analytics["coverage"] = _to_dict(
             audit_coverage(
@@ -148,11 +148,11 @@ def _solve_and_analyze(
             )
         )
     except Exception:
-        pass
+        logger.exception("audit_coverage failed")
     try:
         analytics["cap"] = cap_analysis(blocks=blocks, machines=engine_data.machines)
     except Exception:
-        pass
+        logger.exception("cap_analysis failed")
     try:
         analytics["late_deliveries"] = _to_dict(
             analyze_late_deliveries(
@@ -162,7 +162,7 @@ def _solve_and_analyze(
             )
         )
     except Exception:
-        pass
+        logger.exception("analyze_late_deliveries failed")
 
     return {
         "blocks": [_to_dict(b) for b in blocks],

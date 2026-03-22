@@ -7,11 +7,14 @@ Phase 2 (F3-01): PostgreSQL via SQLAlchemy.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any
 
 from .schema import SettingsModel, SettingsUpdate
+
+logger = logging.getLogger(__name__)
 
 # Default path for settings file
 _DEFAULT_PATH = Path(__file__).parent.parent.parent.parent / "data" / "settings.json"
@@ -33,7 +36,7 @@ class SettingsStore:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
                 self._settings = SettingsModel(**raw)
             except Exception:
-                # Corrupted file — use defaults
+                logger.exception("Failed to load settings from %s, using defaults", self._path)
                 self._settings = SettingsModel()
 
     def _save(self) -> None:

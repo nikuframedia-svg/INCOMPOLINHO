@@ -120,7 +120,7 @@ def _exec_adicionar_regra(args: dict) -> str:
                 }
             )
         except Exception:
-            logger.warning("Auto-recalculate failed after adding rule '%s'", args["name"])
+            logger.exception("Auto-recalculate failed after adding rule '%s'", args["name"])
     return _dumps({"status": "ok", "message": f"Regra '{args['name']}' criada."})
 
 
@@ -140,7 +140,7 @@ def _exec_remover_regra(args: dict) -> str:
                 }
             )
         except Exception:
-            logger.warning("Auto-recalculate failed after removing rule '%s'", args["id"])
+            logger.exception("Auto-recalculate failed after removing rule '%s'", args["id"])
     return _dumps({"status": "ok", "message": f"Regra {args['id']} removida."})
 
 
@@ -265,7 +265,7 @@ def _exec_agrupar_material(args: dict) -> str:
                 }
             )
         except Exception:
-            logger.warning("Auto-recalculate failed after grouping material")
+            logger.exception("Auto-recalculate failed after grouping material")
     return _dumps(
         {
             "status": "ok",
@@ -302,7 +302,7 @@ def _exec_mover_referencia(args: dict) -> str:
                 }
             )
         except Exception:
-            logger.warning("Auto-recalculate failed after moving ref '%s'", sku)
+            logger.exception("Auto-recalculate failed after moving ref '%s'", sku)
     return _dumps({"status": "ok", "message": f"Referência {sku} movida para {target}."})
 
 
