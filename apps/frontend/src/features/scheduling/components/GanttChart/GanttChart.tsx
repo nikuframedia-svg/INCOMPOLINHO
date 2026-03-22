@@ -1,4 +1,3 @@
-import { AlertTriangle, Layers, Lock } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import type {
   Block,
@@ -11,9 +10,11 @@ import { S0 } from '@/domain/types/scheduling';
 import { C } from '@/theme/color-bridge';
 import { useGanttDragDrop } from '../../hooks/useGanttDragDrop';
 import { useGanttInteraction } from '../../hooks/useGanttInteraction';
-import { Card, Pill, Tag, toolColor } from '../atoms';
+import { Card } from '../atoms';
 import { BlockDetailCard } from './BlockDetailCard';
 import { DeviationPanel } from './DeviationPanel';
+import { GanttControls } from './GanttControls';
+import { GanttLegend } from './GanttLegend';
 import { GanttMachineRow } from './GanttMachineRow';
 import { TimelineHeader } from './TimelineHeader';
 
@@ -83,7 +84,6 @@ export function GanttView({
   for (let h = 7; h <= 24; h++) hours.push(h);
   if (data.thirdShift) for (let h = 25; h <= 31; h++) hours.push(h);
 
-  // "Now" line position (only on today = day 0)
   const nowMin = (() => {
     if (selDay !== 0) return null;
     const d = new Date();
@@ -115,94 +115,21 @@ export function GanttView({
       aria-label="Plano de produção Gantt"
       style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
     >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 6,
-        }}
-      >
-        <div
-          className="ne-day-strip"
-          style={{ display: 'flex', gap: 3, overflowX: 'auto', flex: '1 1 0', minWidth: 0 }}
-        >
-          {wdi.map((i) => {
-            const has = blocks.some((b) => b.dayIdx === i && b.type !== 'blocked');
-            const vc = violationsByDay[i] ?? 0;
-            return (
-              <Pill
-                key={i}
-                active={selDay === i}
-                color={C.ac}
-                onClick={() => handleDayChange(i)}
-                size="sm"
-              >
-                <span style={{ opacity: has ? 1 : 0.4 }}>
-                  {dnames[i]} {dates[i]}
-                </span>
-                {vc > 0 && (
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.yl,
-                      marginLeft: 4,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 2,
-                    }}
-                  >
-                    <AlertTriangle size={8} strokeWidth={2.5} />
-                    {vc}
-                  </span>
-                )}
-              </Pill>
-            );
-          })}
-        </div>
-        <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-          <Pill active={!selM} color={C.ac} onClick={() => setSelM(null)}>
-            Todas
-          </Pill>
-          {machines
-            .filter(
-              (m) =>
-                blocks.some((b) => b.dayIdx === selDay && b.machineId === m.id) ||
-                mSt[m.id] === 'down',
-            )
-            .map((m) => {
-              const isDown = mSt[m.id] === 'down';
-              return (
-                <Pill
-                  key={m.id}
-                  active={selM === m.id}
-                  color={isDown ? C.rd : C.ac}
-                  onClick={() => setSelM(selM === m.id ? null : m.id)}
-                >
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: isDown ? C.rd : C.ac,
-                      display: 'inline-block',
-                      marginRight: 4,
-                    }}
-                  />
-                  {m.id}
-                </Pill>
-              );
-            })}
-          <span style={{ width: 1, height: 16, background: C.bd, margin: '0 2px' }} />
-          {[0.6, 1, 1.5, 2].map((z) => (
-            <Pill key={z} active={zoom === z} color={C.bl} onClick={() => setZoom(z)}>
-              {z}×
-            </Pill>
-          ))}
-        </div>
-      </div>
+      <GanttControls
+        wdi={wdi}
+        selDay={selDay}
+        selM={selM}
+        zoom={zoom}
+        dnames={dnames}
+        dates={dates}
+        blocks={blocks}
+        machines={machines}
+        mSt={mSt}
+        violationsByDay={violationsByDay}
+        onDayChange={handleDayChange}
+        onSelM={setSelM}
+        onZoom={setZoom}
+      />
 
       <Card style={{ overflow: 'hidden', position: 'relative' }}>
         <div
@@ -256,7 +183,6 @@ export function GanttView({
                 />
               );
             })}
-            {/* "Now" line — red dashed vertical */}
             {nowMin != null && nowMin >= S0 && (
               <div
                 style={{
@@ -290,7 +216,6 @@ export function GanttView({
             )}
           </div>
         </div>
-        {/* BlockDetailCard — glass overlay */}
         {selBlock && (
           <BlockDetailCard
             block={selBlock}
@@ -304,53 +229,7 @@ export function GanttView({
         )}
       </Card>
 
-      {/* Legend */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 6,
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 12,
-          color: C.t3,
-          padding: '4px 0',
-        }}
-      >
-        {[...new Set(dayB.map((b) => b.toolId))].slice(0, 14).map((tid) => (
-          <div key={tid} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            <div
-              style={{ width: 8, height: 8, borderRadius: 2, background: toolColor(tools, tid) }}
-            />
-            <span style={{ fontFamily: 'monospace' }}>{tid}</span>
-          </div>
-        ))}
-        <span style={{ width: 1, height: 12, background: C.bd }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <div
-            style={{
-              width: 14,
-              height: 8,
-              borderRadius: 2,
-              background: `repeating-linear-gradient(45deg,${C.t3}40,${C.t3}40 2px,${C.t3}70 2px,${C.t3}70 4px)`,
-            }}
-          />
-          <span>Setup</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <div style={{ width: 14, height: 8, borderRadius: 2, border: `2px dashed ${C.rd}88` }} />
-          <span>Congelado</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <Layers size={9} strokeWidth={1.5} style={{ color: C.t3 }} />
-          <span>Co-produção</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <Lock size={9} strokeWidth={1.5} style={{ color: C.rd }} />
-          <span>Frozen</span>
-        </div>
-        {dayBlkN > 0 && <Tag color={C.rd}>{dayBlkN} bloqueadas</Tag>}
-      </div>
+      <GanttLegend dayB={dayB} dayBlkN={dayBlkN} tools={tools} />
 
       {drag.isDragging && drag.block && (
         <div

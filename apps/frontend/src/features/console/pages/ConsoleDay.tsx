@@ -7,7 +7,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Collapsible } from '@/components/Common/Collapsible';
 import { EmptyState } from '@/components/Common/EmptyState';
 import { SkeletonCard, SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { KPICard } from '@/components/Industrial/KPICard';
@@ -18,6 +17,7 @@ import { useScheduleData } from '@/hooks/useScheduleData';
 import { useUIStore } from '@/stores/useUIStore';
 import { formatSetupTime, formatUtilization } from '@/utils/explicitText';
 import { fmtMin } from '@/utils/format';
+import { ConsoleDayOps } from '../components/ConsoleDayOps';
 import { MachineTimeline } from '../components/MachineTimeline';
 import { ShiftSummary } from '../components/ShiftSummary';
 import './ConsoleDay.css';
@@ -233,98 +233,27 @@ export function ConsoleDay() {
 
       {/* Operation lists */}
       {inProgress.length > 0 && (
-        <Collapsible title="Em Curso" defaultOpen badge={`${inProgress.length}`}>
-          <div className="cday__ops-list">
-            {inProgress.map((b) => (
-              <div
-                key={b.opId}
-                className="cday__op-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => handleBlockClick(b)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleBlockClick(b);
-                  }
-                }}
-              >
-                <span className="cday__op-sku">{b.sku}</span>
-                <span className="cday__op-machine">{b.machineId}</span>
-                <span className="cday__op-time">
-                  {fmtMin(b.startMin)}–{fmtMin(b.endMin)}
-                </span>
-                <span className="cday__op-pcs">{b.qty.toLocaleString()} pcs</span>
-                <span className="cday__op-client">{b.nm}</span>
-              </div>
-            ))}
-          </div>
-        </Collapsible>
+        <ConsoleDayOps
+          title="Em Curso"
+          blocks={inProgress}
+          defaultOpen
+          onBlockClick={handleBlockClick}
+        />
       )}
 
-      <Collapsible title="Pendentes" defaultOpen={pending.length > 0} badge={`${pending.length}`}>
-        {pending.length === 0 ? (
-          <div className="cday__empty">Sem operações pendentes.</div>
-        ) : (
-          <div className="cday__ops-list">
-            {pending.map((b) => (
-              <div
-                key={b.opId}
-                className="cday__op-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => handleBlockClick(b)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleBlockClick(b);
-                  }
-                }}
-              >
-                <span className="cday__op-sku">{b.sku}</span>
-                <span className="cday__op-machine">{b.machineId}</span>
-                <span className="cday__op-time">
-                  {fmtMin(b.startMin)}–{fmtMin(b.endMin)}
-                </span>
-                <span className="cday__op-pcs">{b.qty.toLocaleString()} pcs</span>
-                <span className="cday__op-client">{b.nm}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Collapsible>
+      <ConsoleDayOps
+        title="Pendentes"
+        blocks={pending}
+        defaultOpen={pending.length > 0}
+        onBlockClick={handleBlockClick}
+      />
 
-      <Collapsible title="Concluidas" defaultOpen={false} badge={`${completed.length}`}>
-        {completed.length === 0 ? (
-          <div className="cday__empty">Sem operações concluídas.</div>
-        ) : (
-          <div className="cday__ops-list">
-            {completed.map((b) => (
-              <div
-                key={b.opId}
-                className="cday__op-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => handleBlockClick(b)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleBlockClick(b);
-                  }
-                }}
-              >
-                <span className="cday__op-sku">{b.sku}</span>
-                <span className="cday__op-machine">{b.machineId}</span>
-                <span className="cday__op-time">
-                  {fmtMin(b.startMin)}–{fmtMin(b.endMin)}
-                </span>
-                <span className="cday__op-pcs">{b.qty.toLocaleString()} pcs</span>
-                <span className="cday__op-client">{b.nm}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Collapsible>
+      <ConsoleDayOps
+        title="Concluidas"
+        blocks={completed}
+        defaultOpen={false}
+        onBlockClick={handleBlockClick}
+      />
 
       {/* Shift Summary */}
       <ShiftSummary
