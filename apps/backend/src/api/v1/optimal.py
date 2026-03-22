@@ -20,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 optimal_router = APIRouter(prefix="/optimal", tags=["optimal"])
 
-_router = SolverRouter()
+
+def _get_solver() -> SolverRouter:
+    """Create a fresh SolverRouter per request for thread safety."""
+    return SolverRouter()
+
 
 # ── FINAL-04: Factory rules ──
 RULES_PATH = Path(__file__).resolve().parents[3] / "data" / "rules" / "incompol_rules.yaml"
@@ -113,7 +117,7 @@ async def optimal_solve(request: OptimalRequest):
 
     # Step 1: CP-SAT solve
     logger.info("Optimal pipeline: solving %d jobs", len(request.solver_request.jobs))
-    result = _router.solve(request.solver_request)
+    result = _get_solver().solve(request.solver_request)
     recovery_used = False
     recovery_level = 0
 
