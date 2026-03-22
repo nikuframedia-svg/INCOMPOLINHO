@@ -18,14 +18,14 @@ from datetime import date
 import openpyxl
 from openpyxl.styles import Font
 
-from src.domain.nikufra.isop_parser import (
-    _build_column_map,
+from src.domain.nikufra.column_mapper import build_column_map as _build_column_map
+from src.domain.nikufra.helpers import (
     _is_red_color,
     _normalize_code,
     _parse_date_cell,
     _parse_numeric,
-    parse_isop_file,
 )
+from src.domain.nikufra.isop_parser import parse_isop_file
 
 # ── Helpers ──────────────────────────────────────────────────────
 

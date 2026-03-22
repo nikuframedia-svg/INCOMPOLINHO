@@ -1,4 +1,4 @@
-"""ISOP XLSX → NikufraData parser (Python port of frontend isop/ 923 LOC).
+"""ISOP XLSX -> NikufraData parser (Python port of frontend isop/ 923 LOC).
 
 Mirrors the TypeScript parser logic:
   - Dynamic header detection (scan rows 0-15)
@@ -14,20 +14,26 @@ Output: NikufraData-compatible dict ready for scheduling pipeline.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from typing import Any
+
+import openpyxl
+from openpyxl.worksheet.worksheet import Worksheet
+
+from .column_mapper import (
+    build_column_map,
+    find_date_columns,
+    find_header_row,
+    find_workday_flags_row,
+)
+from .constants import DAY_NAMES_PT
+from .helpers import _format_date
+from .row_extractor import ParsedRow, extract_rows
 
 logger = logging.getLogger(__name__)
 
-import openpyxl
-from openpyxl.cell import Cell
-from openpyxl.worksheet.worksheet import Worksheet
-
-from .constants import DAY_NAMES_PT
-
-# ── Machine → Area mapping ──────────────────────────────────────
+# ── Machine -> Area mapping ──────────────────────────────────────
 
 MACHINE_AREA: dict[str, str] = {
     "PRM019": "PG1",
@@ -37,61 +43,6 @@ MACHINE_AREA: dict[str, str] = {
     "PRM039": "PG2",
     "PRM042": "PG2",
 }
-
-
-# ── Column map ──────────────────────────────────────────────────
-
-
-@dataclass
-class ColumnMap:
-    cliente: int = -1
-    nome: int = -1
-    ref_artigo: int = -1
-    designacao: int = -1
-    lote_econ: int = -1
-    prz_fabrico: int = -1
-    maquina: int = -1
-    maq_alt: int = -1
-    ferramenta: int = -1
-    tp_setup: int = -1
-    pecas_h: int = -1
-    n_pessoas: int = -1
-    qtd_exp: int = -1
-    produto_acabado: int = -1
-    stock_a: int = -1
-    wip: int = -1
-    atraso: int = -1
-    estado_maq: int = -1
-    estado_ferr: int = -1
-    peca_gemea: int = -1
-
-
-# ── Parsed row ──────────────────────────────────────────────────
-
-
-@dataclass
-class ParsedRow:
-    customer_code: str = ""
-    customer_name: str = ""
-    parent_sku: str = ""
-    item_sku: str = ""
-    item_name: str = ""
-    lot_economic_qty: int = 0
-    lead_time_days: int = 0
-    resource_code: str = ""
-    alt_resource: str = ""
-    tool_code: str = ""
-    setup_time: float = 0.0
-    rate: float = 0.0
-    operators_required: int = 1
-    qtd_exp: float = 0.0
-    stock: float = 0.0
-    wip: float = 0.0
-    atraso: float = 0.0
-    daily_quantities: list[float | None] = field(default_factory=list)
-    machine_down: bool = False
-    tool_down: bool = False
-    twin: str = ""
 
 
 # ── Trust score result ──────────────────────────────────────────
@@ -120,268 +71,6 @@ class ISOPParseResult:
     meta: dict[str, Any] | None = None
     source_columns: dict[str, bool] | None = None
     errors: list[str] = field(default_factory=list)
-
-
-# ═══════════════════════════════════════════════════════════════
-#  Helpers
-# ═══════════════════════════════════════════════════════════════
-
-
-def _normalize_code(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip().upper()
-
-
-def _normalize_string(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _parse_numeric(value: Any, fallback: float = 0.0) -> float:
-    if value is None:
-        return fallback
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        cleaned = value.replace(",", ".").strip()
-        try:
-            return float(cleaned)
-        except (ValueError, TypeError):
-            return fallback
-    return fallback
-
-
-def _parse_integer(value: Any, fallback: int = 1) -> int:
-    return round(_parse_numeric(value, float(fallback)))
-
-
-def _format_date(d: date) -> str:
-    return d.strftime("%d/%m")
-
-
-def _day_label(d: date) -> str:
-    return DAY_NAMES_PT[d.weekday()]
-
-
-def _parse_date_cell(value: Any) -> date | None:
-    """Parse a date cell from Excel — handles datetime, date, numeric serial, strings."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, (int, float)):
-        # Excel serial date: days since 1899-12-30
-        try:
-            serial = int(value)
-            if serial < 1 or serial > 200000:
-                return None
-            base = datetime(1899, 12, 30)
-            from datetime import timedelta
-
-            return (base + timedelta(days=serial)).date()
-        except (ValueError, OverflowError):
-            return None
-    if isinstance(value, str):
-        s = value.strip()
-        # ISO: YYYY-MM-DD
-        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
-        if m:
-            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        # DD/MM/YYYY
-        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
-        if m:
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-        # DD/MM/YY
-        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2})$", s)
-        if m:
-            yr = int(m.group(3))
-            yr = yr + 2000 if yr < 70 else yr + 1900
-            return date(yr, int(m.group(2)), int(m.group(1)))
-        # DD/MM (assume current year)
-        m = re.match(r"^(\d{1,2})/(\d{1,2})$", s)
-        if m:
-            return date(date.today().year, int(m.group(2)), int(m.group(1)))
-    return None
-
-
-# ── Red cell detection ──────────────────────────────────────────
-
-
-def _is_red_color(rgb: str | None) -> bool:
-    """Detect red tones: high R, low G and B."""
-    if not rgb or not isinstance(rgb, str):
-        return False
-    hex_str = rgb[-6:] if len(rgb) >= 6 else rgb
-    if len(hex_str) != 6:
-        return False
-    try:
-        r = int(hex_str[0:2], 16)
-        g = int(hex_str[2:4], 16)
-        b = int(hex_str[4:6], 16)
-        return r > 180 and g < 100 and b < 100
-    except ValueError:
-        return False
-
-
-def _is_cell_red_highlighted(cell: Cell) -> bool:
-    """Check if a cell has red fill or red font color."""
-    try:
-        # Check fill color
-        if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb:
-            rgb = str(cell.fill.fgColor.rgb)
-            if _is_red_color(rgb):
-                return True
-        if cell.fill and cell.fill.bgColor and cell.fill.bgColor.rgb:
-            rgb = str(cell.fill.bgColor.rgb)
-            if _is_red_color(rgb):
-                return True
-        # Check font color
-        if cell.font and cell.font.color and cell.font.color.rgb:
-            rgb = str(cell.font.color.rgb)
-            if _is_red_color(rgb):
-                return True
-    except (AttributeError, TypeError):
-        pass
-    return False
-
-
-# ═══════════════════════════════════════════════════════════════
-#  Header detection
-# ═══════════════════════════════════════════════════════════════
-
-
-def _find_header_row(
-    ws: Worksheet,
-    max_scan: int = 16,
-) -> tuple[int, list[str]] | None:
-    """Scan rows 0-15 for the header row (must contain 'Referência Artigo' + 'Máquina')."""
-    for ri in range(1, min(ws.max_row + 1, max_scan + 1)):
-        row_cells = list(ws.iter_rows(min_row=ri, max_row=ri, values_only=True))[0]
-        if len(row_cells) < 5:
-            continue
-        strs = [_normalize_string(c) for c in row_cells]
-        has_ref = any(
-            h in s
-            for s in strs
-            for h in (
-                "Referência Artigo",
-                "Referencia Artigo",
-                "REFERÊNCIA ARTIGO",
-                "Ref. Artigo",
-                "REF. ARTIGO",
-            )
-        )
-        has_maq = any(h in s for s in strs for h in ("Máquina", "Maquina", "MÁQUINA", "MAQUINA"))
-        if has_ref and has_maq:
-            return (ri, strs)
-    return None
-
-
-def _build_column_map(headers: list[str]) -> ColumnMap | None:
-    """Map column names to indices (0-based) based on header text patterns."""
-
-    def find(*patterns: str) -> int:
-        for i, h in enumerate(headers):
-            hl = h.lower()
-            for p in patterns:
-                if p.lower() in hl:
-                    return i
-        return -1
-
-    ref_artigo = find("referência artigo", "referencia artigo", "ref. artigo", "ref artigo")
-    maquina = find("máquina", "maquina")
-
-    if ref_artigo < 0 or maquina < 0:
-        return None
-
-    cm = ColumnMap()
-    cm.ref_artigo = ref_artigo
-    cm.maquina = maquina
-    cm.cliente = find("cliente")
-    cm.nome = find("nome")
-    cm.designacao = find("designação", "designacao")
-    cm.lote_econ = find("lote econ", "lote económico", "lote economico")
-    cm.prz_fabrico = find("prz.fabrico", "prz fabrico", "prazo fabrico", "prazo de fabrico")
-    cm.maq_alt = find("máq. alt", "maq. alt", "máquina alt", "maquina alt")
-    cm.ferramenta = find("ferramenta")
-    cm.tp_setup = find("tp.setup", "tp setup", "setup")
-    cm.pecas_h = find(
-        "peças/h",
-        "pecas/h",
-        "pcs/h",
-        "pçs/h",
-        "peças / h",
-        "pecas / h",
-        "cadência",
-        "cadencia",
-        "rate",
-    )
-    cm.n_pessoas = find(
-        "nº pessoas",
-        "n pessoas",
-        "num pessoas",
-        "nº pess",
-        "n. pess",
-        "pessoas",
-    )
-    cm.qtd_exp = find("qtd exp", "qtd. exp", "qtd expedição", "qtd expedicao")
-    cm.produto_acabado = find("produto acabado", "prod. acabado", "prod acabado", "pa", "parent")
-    cm.stock_a = find("stock-a", "stock a", "stock")
-    cm.wip = find("wip")
-    cm.atraso = find("atraso")
-    cm.estado_maq = find(
-        "estado máq",
-        "estado maq",
-        "status máq",
-        "status maq",
-        "estado máquina",
-        "estado maquina",
-    )
-    cm.estado_ferr = find(
-        "estado ferr",
-        "status ferr",
-        "estado ferramenta",
-        "status ferramenta",
-    )
-    cm.peca_gemea = find("peca gemea", "peça gémea", "peça gemea", "pç gemea", "twin")
-    return cm
-
-
-def _find_workday_flags_row(
-    ws: Worksheet,
-    header_row: int,
-    date_col_indices: list[int],
-) -> list[bool] | None:
-    """Find workday flags row (0/1 values in date columns) above header row."""
-    for ri in range(max(1, header_row - 4), header_row):
-        row_vals = list(ws.iter_rows(min_row=ri, max_row=ri, values_only=True))[0]
-        is_01 = True
-        count = 0
-        for ci in date_col_indices:
-            if ci >= len(row_vals):
-                continue
-            v = row_vals[ci]
-            if v is None:
-                continue
-            n = _parse_numeric(v, -1)
-            if n != 0 and n != 1:
-                is_01 = False
-                break
-            count += 1
-        if is_01 and count > 3:
-            return [
-                _parse_numeric(
-                    row_vals[ci] if ci < len(row_vals) else None,
-                    1,
-                )
-                == 1
-                for ci in date_col_indices
-            ]
-    return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -443,6 +132,10 @@ def _compute_trust_score(
 # ═══════════════════════════════════════════════════════════════
 
 
+def _day_label(d: date) -> str:
+    return DAY_NAMES_PT[d.weekday()]
+
+
 def _build_nikufra_data(
     parsed_rows: list[ParsedRow],
     dates: list[date],
@@ -453,7 +146,7 @@ def _build_nikufra_data(
     n_days = len(dates)
 
     # ── Machines ──
-    machine_set: dict[str, str] = {}  # id → area
+    machine_set: dict[str, str] = {}  # id -> area
     for r in parsed_rows:
         if r.resource_code not in machine_set:
             machine_set[r.resource_code] = MACHINE_AREA.get(r.resource_code, "PG1")
@@ -537,7 +230,7 @@ def _build_nikufra_data(
     ops_without_tool = [r for r in parsed_rows if not r.tool_code]
     if ops_without_tool:
         skus = ", ".join(r.item_sku for r in ops_without_tool[:5])
-        suffix = "…" if len(ops_without_tool) > 5 else ""
+        suffix = "..." if len(ops_without_tool) > 5 else ""
         warnings.append(
             f"{len(ops_without_tool)} operação(ões) sem código de ferramenta — "
             f"não serão agendadas: {skus}{suffix}"
@@ -632,8 +325,6 @@ def _build_nikufra_data(
 #  Main parser
 # ═══════════════════════════════════════════════════════════════
 
-_DOWN_PATTERN = re.compile(r"inact|down|avaria|parad|inoper", re.IGNORECASE)
-
 
 def parse_isop_file(
     filepath_or_bytes: Any,
@@ -675,7 +366,7 @@ def parse_isop_file(
     ws: Worksheet = wb[sheet_name]
 
     # 3. Find header row dynamically
-    header_result = _find_header_row(ws)
+    header_result = find_header_row(ws)
     if not header_result:
         return ISOPParseResult(
             success=False,
@@ -688,7 +379,7 @@ def parse_isop_file(
     header_row_idx, headers = header_result  # 1-based row number
 
     # 4. Map columns by header name
-    col_map = _build_column_map(headers)
+    col_map = build_column_map(headers)
     if not col_map:
         return ISOPParseResult(
             success=False,
@@ -700,34 +391,7 @@ def parse_isop_file(
         ws.iter_rows(min_row=header_row_idx, max_row=header_row_idx, values_only=True)
     )[0]
 
-    last_text_col = max(
-        col_map.atraso,
-        col_map.stock_a,
-        col_map.wip,
-        col_map.n_pessoas,
-        col_map.pecas_h,
-        col_map.ferramenta,
-        col_map.qtd_exp,
-        col_map.maquina,
-    )
-    date_search_start = last_text_col + 1 if last_text_col >= 0 else 10
-
-    dates: list[date] = []
-    date_col_indices: list[int] = []  # 0-based indices
-
-    for ci in range(date_search_start, len(header_cells)):
-        d = _parse_date_cell(header_cells[ci])
-        if d:
-            dates.append(d)
-            date_col_indices.append(ci)
-
-    # Fallback: search from column 10
-    if not dates:
-        for ci in range(10, len(header_cells)):
-            d = _parse_date_cell(header_cells[ci])
-            if d:
-                dates.append(d)
-                date_col_indices.append(ci)
+    dates, date_col_indices = find_date_columns(header_cells, col_map)
 
     if not dates:
         return ISOPParseResult(
@@ -736,7 +400,7 @@ def parse_isop_file(
         )
 
     # 6. Parse workday flags
-    workday_flags = _find_workday_flags_row(ws, header_row_idx, date_col_indices)
+    workday_flags = find_workday_flags_row(ws, header_row_idx, date_col_indices)
     if workday_flags is None:
         workday_flags = [d.weekday() < 5 for d in dates]
     if len(workday_flags) != len(dates):
@@ -744,135 +408,7 @@ def parse_isop_file(
 
     # 7. Parse data rows
     data_start_row = header_row_idx + 1  # 1-based
-    parsed_rows: list[ParsedRow] = []
-    warnings: list[str] = []
-
-    for ri in range(data_start_row, ws.max_row + 1):
-        row_cells = [ws.cell(row=ri, column=c + 1) for c in range(ws.max_column)]
-        row_vals = [c.value for c in row_cells]
-
-        if not row_vals or all(v is None for v in row_vals):
-            continue
-
-        item_sku = _normalize_code(
-            row_vals[col_map.ref_artigo] if col_map.ref_artigo < len(row_vals) else None
-        )
-        if not item_sku:
-            continue
-
-        resource_code = _normalize_code(
-            row_vals[col_map.maquina] if col_map.maquina < len(row_vals) else None
-        )
-        if not resource_code:
-            warnings.append(f'Linha {ri}: SKU "{item_sku}" sem máquina — ignorada.')
-            continue
-
-        def _val(idx: int) -> Any:
-            if idx < 0 or idx >= len(row_vals):
-                return None
-            return row_vals[idx]
-
-        def _cell(idx: int) -> Cell | None:
-            if idx < 0 or idx >= len(row_cells):
-                return None
-            return row_cells[idx]
-
-        alt_resource = _normalize_code(_val(col_map.maq_alt))
-        tool_code = _normalize_code(_val(col_map.ferramenta))
-        rate = _parse_numeric(_val(col_map.pecas_h)) if col_map.pecas_h >= 0 else 0.0
-
-        if rate <= 0 and col_map.pecas_h >= 0:
-            warnings.append(
-                f'Linha {ri}: SKU "{item_sku}" rate=0 — incluída mas não será agendada.'
-            )
-
-        # Parse daily NP values + red cell detection
-        invalid_cells = 0
-        daily_quantities: list[float | None] = []
-        for ci in date_col_indices:
-            cell = _cell(ci)
-            raw = cell.value if cell else None
-            if raw is None or (isinstance(raw, str) and raw.strip() == ""):
-                daily_quantities.append(None)
-                continue
-            if isinstance(raw, str):
-                try:
-                    float(raw.replace(",", "."))
-                except ValueError:
-                    invalid_cells += 1
-                    daily_quantities.append(None)
-                    continue
-            val = _parse_numeric(raw)
-            # Red font/fill = demand (positive displayed red → negative NP)
-            if val > 0 and cell is not None and _is_cell_red_highlighted(cell):
-                val = -val
-            daily_quantities.append(val)
-
-        if invalid_cells > 0:
-            warnings.append(
-                f'Linha {ri}: SKU "{item_sku}" tem {invalid_cells} célula(s) de data '
-                "não-numérica(s) — interpretada(s) como 0."
-            )
-
-        # Machine/tool down detection
-        machine_down = False
-        if col_map.estado_maq >= 0:
-            estado = _normalize_string(_val(col_map.estado_maq))
-            if _DOWN_PATTERN.search(estado):
-                machine_down = True
-        maq_cell = _cell(col_map.maquina)
-        if maq_cell and _is_cell_red_highlighted(maq_cell):
-            machine_down = True
-
-        tool_down = False
-        if col_map.estado_ferr >= 0:
-            estado = _normalize_string(_val(col_map.estado_ferr))
-            if _DOWN_PATTERN.search(estado):
-                tool_down = True
-        if col_map.ferramenta >= 0:
-            ferr_cell = _cell(col_map.ferramenta)
-            if ferr_cell and _is_cell_red_highlighted(ferr_cell):
-                tool_down = True
-
-        twin = _normalize_code(_val(col_map.peca_gemea))
-
-        parsed_rows.append(
-            ParsedRow(
-                customer_code=_normalize_code(_val(col_map.cliente))
-                if col_map.cliente >= 0
-                else "",
-                customer_name=_normalize_string(_val(col_map.nome)) if col_map.nome >= 0 else "",
-                parent_sku=_normalize_code(_val(col_map.produto_acabado))
-                if col_map.produto_acabado >= 0
-                else "",
-                item_sku=item_sku,
-                item_name=_normalize_string(_val(col_map.designacao))
-                if col_map.designacao >= 0
-                else item_sku,
-                lot_economic_qty=_parse_integer(_val(col_map.lote_econ), 0)
-                if col_map.lote_econ >= 0
-                else 0,
-                lead_time_days=_parse_integer(_val(col_map.prz_fabrico), 0)
-                if col_map.prz_fabrico >= 0
-                else 0,
-                resource_code=resource_code,
-                alt_resource="" if alt_resource == "-" else alt_resource,
-                tool_code=tool_code,
-                setup_time=_parse_numeric(_val(col_map.tp_setup)) if col_map.tp_setup >= 0 else 0.0,
-                rate=rate,
-                operators_required=_parse_integer(_val(col_map.n_pessoas), 1)
-                if col_map.n_pessoas >= 0
-                else 1,
-                qtd_exp=_parse_numeric(_val(col_map.qtd_exp)) if col_map.qtd_exp >= 0 else 0.0,
-                stock=0.0,
-                wip=_parse_numeric(_val(col_map.wip)) if col_map.wip >= 0 else 0.0,
-                atraso=_parse_numeric(_val(col_map.atraso)) if col_map.atraso >= 0 else 0.0,
-                daily_quantities=daily_quantities,
-                machine_down=machine_down,
-                tool_down=tool_down,
-                twin=twin,
-            )
-        )
+    parsed_rows, warnings = extract_rows(ws, col_map, date_col_indices, data_start_row)
 
     if not parsed_rows:
         return ISOPParseResult(
