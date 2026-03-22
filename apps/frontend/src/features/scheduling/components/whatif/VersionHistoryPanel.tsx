@@ -2,7 +2,7 @@
  * VersionHistoryPanel — Timeline of saved plan versions with commit/diff/branch controls.
  */
 import { Star } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { usePlanVersionStore } from '../../../../stores/usePlanVersionStore';
 import { Card, Tag } from '../atoms';
 import { DiffDisplay } from './DiffDisplay';

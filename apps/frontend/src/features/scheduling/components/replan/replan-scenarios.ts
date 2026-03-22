@@ -1,5 +1,5 @@
 import { Package, RefreshCw, Wrench, Zap } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 export type Scenario = 'machine_down' | 'tool_down' | 'rush_order' | 'optimize';
 

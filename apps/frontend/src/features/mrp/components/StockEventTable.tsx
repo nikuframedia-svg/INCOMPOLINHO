@@ -3,7 +3,7 @@
  * Shows production, shipment, and receipt events with stock after.
  */
 
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import type { StockEvent, StockEventType } from '../utils/stock-detail-compute';
 

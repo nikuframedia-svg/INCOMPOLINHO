@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import type { StockRow } from '../utils/stock-compute';
 import { coverageColor } from '../utils/stock-compute';

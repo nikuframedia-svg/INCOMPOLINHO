@@ -1,7 +1,7 @@
 import { Info } from 'lucide-react';
 import type { MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
-import type { EngineData } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 
 interface CTPContextPanelProps {

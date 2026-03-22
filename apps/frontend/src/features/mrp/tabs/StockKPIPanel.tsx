@@ -2,7 +2,7 @@
  * StockKPIPanel — KPI cards for stock dashboard.
  */
 
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { KCard } from '../components/KCard';
 import { fmtQty } from '../utils/mrp-helpers';
 import type { StockKPIs } from '../utils/stock-compute';

@@ -4,7 +4,7 @@
  */
 
 import type { CTPResult, MRPResult } from '@/domain/mrp/mrp-types';
-import type { EngineData } from '@/lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
 import { computeCTP, computeCTPSku } from '@/utils/mrp-compute-stubs';
 
 export interface CTPScenario {

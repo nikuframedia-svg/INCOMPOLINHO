@@ -1,6 +1,6 @@
 import { AlertTriangle } from 'lucide-react';
-import type { EngineData, ETool, MoveAction, OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { EngineData, ETool, MoveAction, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { QualityViolations } from './whatif-types';
 
 export function ScenarioResultCards({

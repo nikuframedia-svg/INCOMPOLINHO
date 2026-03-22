@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { C, DAY_CAP } from '../../../../lib/engine';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { IntelData } from '../../compute';
 import { MachineLegend, StatRow } from '../intel-atoms';
 import { fmtDate, fmtMin, MC, mono } from '../intel-helpers';

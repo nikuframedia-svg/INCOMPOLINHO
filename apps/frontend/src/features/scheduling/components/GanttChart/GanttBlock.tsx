@@ -1,7 +1,8 @@
 import { AlertTriangle, Clock, Layers, Lock, Zap } from 'lucide-react';
 import React, { memo } from 'react';
-import type { Block, EngineData } from '../../../../lib/engine';
-import { C, S0 } from '../../../../lib/engine';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { S0 } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { BlockTooltip } from './BlockTooltip';
 
 export interface GanttBlockProps {

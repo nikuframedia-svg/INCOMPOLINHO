@@ -5,9 +5,9 @@
 import { Calendar, Cpu } from 'lucide-react';
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { DayLoad } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import type { DayLoad } from '../../lib/engine';
-import { DAY_CAP } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { LoadBar, Section, Stat } from './ContextPanelPrimitives';
 

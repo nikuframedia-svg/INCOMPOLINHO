@@ -3,15 +3,15 @@
  */
 
 import { useCallback, useState } from 'react';
-import { getCachedNikufraData } from '../../../hooks/useScheduleData';
-import { scheduleReplanApi } from '../../../lib/api';
 import type {
   Block,
   EngineData,
   FailureEvent,
   ImpactReport,
   MoveAction,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import { scheduleReplanApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 
 export interface FailureState {

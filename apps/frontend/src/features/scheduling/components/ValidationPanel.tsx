@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
-import type { ScheduleValidationReport, ScheduleViolation } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { ScheduleValidationReport, ScheduleViolation } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, Tag } from './atoms';
 
 export function ValidationPanel({

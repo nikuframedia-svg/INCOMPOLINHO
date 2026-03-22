@@ -1,13 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useClassifications } from '../../../hooks/useClassifications';
 import type {
   Block,
   CoverageAuditResult,
   DayLoad,
   DecisionEntry,
   EngineData,
-} from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { useClassifications } from '../../../hooks/useClassifications';
 import type { FeasibilitySummary } from '../hooks/useScheduleValidation';
 import { Card } from './atoms';
 import { DecisionAudit } from './DecisionAudit';

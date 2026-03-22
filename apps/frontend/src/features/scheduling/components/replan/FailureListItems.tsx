@@ -2,8 +2,8 @@
  * FailureListItems — Renders active failures with impact summaries and the replan button.
  */
 import { X } from 'lucide-react';
-import type { FailureEvent, ImpactReport } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { FailureEvent, ImpactReport } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Tag } from '../atoms';
 
 export interface FailureListItemsProps {

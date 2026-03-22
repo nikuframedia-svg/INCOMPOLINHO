@@ -1,8 +1,8 @@
 /**
  * PlanGridsExtra — VolumeChart and TopBacklogs sub-components for PlanGrids.
  */
-import type { EngineData } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, toolColor } from './atoms';
 
 export function VolumeChart({

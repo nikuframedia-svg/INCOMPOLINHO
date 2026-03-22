@@ -1,8 +1,8 @@
 /** useGanttDragDrop — Drag-and-drop for Gantt blocks with 5px threshold + DeviationPanel integration. */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Block, EMachine } from '../../../lib/engine';
-import { S0, S1 } from '../../../lib/engine';
+import type { Block, EMachine } from '@/domain/types/scheduling';
+import { S0, S1 } from '@/domain/types/scheduling';
 
 export interface DragState {
   isDragging: boolean;

@@ -1,7 +1,8 @@
 import { ArrowRight } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
-import type { EngineData } from '../../../lib/engine';
-import { C, DAY_CAP } from '../../../lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { usePlanVersionStore } from '../../../stores/usePlanVersionStore';
 import { gridDensityVars } from '../../../utils/gridDensity';
 import { computePlanDiff } from '../../../utils/planDiff';

@@ -4,7 +4,7 @@
  */
 
 import { useMemo } from 'react';
-import type { Block, ScheduleValidationReport, ScheduleViolation } from '../../../lib/engine';
+import type { Block, ScheduleValidationReport, ScheduleViolation } from '@/domain/types/scheduling';
 
 export interface DayProblem {
   id: string;

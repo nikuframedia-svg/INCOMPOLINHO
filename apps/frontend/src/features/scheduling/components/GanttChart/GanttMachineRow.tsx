@@ -1,7 +1,8 @@
 import { memo } from 'react';
+import type { Block, DayLoad, EMachine, EngineData, ETool } from '@/domain/types/scheduling';
+import { DAY_CAP, S0, S1, T1 } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { blockKey } from '../../../../domain/configurable-logic-eval';
-import type { Block, DayLoad, EMachine, EngineData, ETool } from '../../../../lib/engine';
-import { C, DAY_CAP, S0, S1, T1 } from '../../../../lib/engine';
 import { dot, toolColor } from '../atoms';
 import { GanttBlock } from './GanttBlock';
 

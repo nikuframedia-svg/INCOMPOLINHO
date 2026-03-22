@@ -1,6 +1,6 @@
 // compute/bottleneck.ts — Feature 3: Bottleneck Cascade
 
-import { DAY_CAP } from '../../../lib/engine';
+import { DAY_CAP } from '@/domain/types/scheduling';
 import { MACHINE_AREA, MACHINES } from './constants';
 import type { HeatmapCell } from './heatmap';
 import { buildRoutingIndex } from './index-builders';

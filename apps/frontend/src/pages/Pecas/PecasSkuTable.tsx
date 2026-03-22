@@ -1,5 +1,5 @@
+import { C, TC } from '@/theme/color-bridge';
 import { Term } from '../../components/Common/Tooltip';
-import { C, TC } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import type { PecaRow, SortDir, SortField } from './pecas-types';
 

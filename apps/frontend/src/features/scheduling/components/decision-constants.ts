@@ -1,5 +1,5 @@
-import type { ReplanActionDetail } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { ReplanActionDetail } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 // Decision type labels & categories (28 types grouped)
 export const DECISION_CATEGORIES: Record<string, { label: string; types: string[] }> = {

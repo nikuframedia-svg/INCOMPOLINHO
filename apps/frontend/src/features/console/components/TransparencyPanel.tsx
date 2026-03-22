@@ -4,7 +4,11 @@
  */
 
 import { Collapsible } from '@/components/Common/Collapsible';
-import type { EngineData, FailureJustification, OrderJustification } from '@/lib/engine';
+import type {
+  EngineData,
+  FailureJustification,
+  OrderJustification,
+} from '@/domain/types/scheduling';
 import './TransparencyPanel.css';
 
 interface TransparencyPanelProps {

@@ -5,8 +5,9 @@
  * Level 3: Tool + completion status
  */
 
-import type { Block, EngineData } from '@/lib/engine';
-import { C, getBlockQtyForOp, getBlocksForOp } from '@/lib/engine';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { getBlockQtyForOp, getBlocksForOp } from '@/utils/block-production';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import type { OrderEntry } from '../utils/orders-compute';
 

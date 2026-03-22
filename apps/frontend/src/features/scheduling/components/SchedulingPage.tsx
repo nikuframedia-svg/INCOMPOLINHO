@@ -1,9 +1,9 @@
 import { List } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { C } from '@/theme/color-bridge';
 import { FeatureErrorBoundary } from '../../../components/Common/FeatureErrorBoundary';
 import { useClassifications } from '../../../hooks/useClassifications';
 import { useScheduleData } from '../../../hooks/useScheduleData';
-import { C } from '../../../lib/engine';
 import { useDayProblems } from '../hooks/useDayProblems';
 import { useScheduleEngine } from '../hooks/useScheduleEngine';
 import { GanttView } from './GanttChart/GanttChart';

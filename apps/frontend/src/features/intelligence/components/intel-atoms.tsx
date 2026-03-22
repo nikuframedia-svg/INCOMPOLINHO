@@ -1,4 +1,4 @@
-import { C } from '../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { AREA, heatColor, labelSt, MC, mono } from './intel-helpers';
 
 export function StatRow({

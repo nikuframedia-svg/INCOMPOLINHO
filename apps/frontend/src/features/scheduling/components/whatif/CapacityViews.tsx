@@ -1,6 +1,7 @@
 import React from 'react';
-import type { EngineData, OptResult } from '../../../../lib/engine';
-import { C, opsByDayFromWorkforce } from '../../../../lib/engine';
+import type { EngineData, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 import { gridDensityVars } from '../../../../utils/gridDensity';
 import { Card, dot } from '../atoms';
 

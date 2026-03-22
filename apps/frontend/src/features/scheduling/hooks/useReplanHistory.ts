@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { MoveAction } from '../../../lib/engine';
+import type { MoveAction } from '@/domain/types/scheduling';
 
 export type ReplanTriggerType =
   | 'machine_down'

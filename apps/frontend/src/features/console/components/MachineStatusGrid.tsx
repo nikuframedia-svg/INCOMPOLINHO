@@ -5,9 +5,9 @@
 
 import { useCallback, useMemo } from 'react';
 import type { MachineState } from '@/components/Industrial/MachineStatusIndicator';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { S0 } from '@/domain/types/scheduling';
 import type { MachineLoad } from '@/hooks/useDayData';
-import type { Block, EngineData } from '@/lib/engine';
-import { S0 } from '@/lib/engine';
 import { useAndonActions, useAndonDowntimes } from '@/stores/useAndonStore';
 import { postMachineUp } from '../api/andonApi';
 import type { MachineStatus } from './MachineCard';

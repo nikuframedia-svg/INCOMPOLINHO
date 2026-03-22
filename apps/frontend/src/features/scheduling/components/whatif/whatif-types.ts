@@ -1,11 +1,5 @@
-import type {
-  Block,
-  buildResourceTimelines,
-  EngineData,
-  EOp,
-  MoveAction,
-  OptResult,
-} from '../../../../lib/engine';
+import type { Block, EngineData, EOp, MoveAction, OptResult } from '@/domain/types/scheduling';
+import type { buildResourceTimelines } from '@/utils/failure-timeline';
 
 export type WhatIfViewProps = {
   data: EngineData;

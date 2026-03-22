@@ -3,8 +3,6 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { getCachedNikufraData } from '../../../hooks/useScheduleData';
-import { scheduleWhatIfApi } from '../../../lib/api';
 import type {
   AreaCaps,
   DispatchRule,
@@ -14,7 +12,9 @@ import type {
   ObjectiveProfile,
   OptResult,
   QuickValidateResult,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import { scheduleWhatIfApi } from '../../../lib/api';
 
 export interface WhatIfScenario {
   t1: number;

@@ -1,5 +1,6 @@
 import { memo } from 'react';
-import { C, S0, S1, S2, T1 } from '../../../../lib/engine';
+import { S0, S1, S2, T1 } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 export interface TimelineHeaderProps {
   hours: number[];

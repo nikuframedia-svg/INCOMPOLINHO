@@ -1,6 +1,6 @@
 // compute/heatmap.ts — Feature 1: Demand Heatmap
 
-import { DAY_CAP } from '../../../lib/engine';
+import { DAY_CAP } from '@/domain/types/scheduling';
 import { MACHINES } from './constants';
 import { buildRoutingIndex, buildSeriesBySkuDate } from './index-builders';
 import type { DateContext, NkData, SnapshotFixture } from './types';

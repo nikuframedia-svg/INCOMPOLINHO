@@ -4,7 +4,7 @@
  */
 
 import type { MRPResult, MRPSkuViewResult } from '@/domain/mrp/mrp-types';
-import type { Block, EngineData } from '@/lib/engine';
+import type { Block, EngineData } from '@/domain/types/scheduling';
 import { computeOrderRisk } from './encomendas-compute';
 
 export type OrderStatus = 'on-time' | 'at-risk' | 'late' | 'done';

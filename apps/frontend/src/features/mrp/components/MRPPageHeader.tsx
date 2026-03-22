@@ -4,8 +4,8 @@ import type {
   MRPResult,
   MRPSkuViewResult,
   OptResult,
-} from '@/lib/engine';
-import { C } from '@/lib/engine';
+} from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 
 interface MRPPageHeaderProps {

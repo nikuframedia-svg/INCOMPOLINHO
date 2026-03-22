@@ -1,4 +1,4 @@
-import { C } from '../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 /** Aggregate daily values into weekly averages (5 working days per week) */
 function aggregateWeekly(vals: number[]): number[] {

@@ -7,8 +7,6 @@
  */
 
 import { useCallback, useMemo } from 'react';
-import { getCachedNikufraData, useScheduleData } from '../../../hooks/useScheduleData';
-import { scheduleReplanApi } from '../../../lib/api';
 import type {
   AutoReplanResult,
   Block,
@@ -16,7 +14,9 @@ import type {
   EngineData,
   EOp,
   MoveAction,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { getCachedNikufraData, useScheduleData } from '../../../hooks/useScheduleData';
+import { scheduleReplanApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleValidation } from './useScheduleValidation';
 

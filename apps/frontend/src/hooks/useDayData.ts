@@ -11,9 +11,9 @@ import { deriveDayData } from '../lib/day-data-derive';
 import { useUIStore } from '../stores/useUIStore';
 import { useScheduleData } from './useScheduleData';
 
+export type { OpDay } from '@/domain/types/scheduling';
 // Re-export types for consumers
 export type { DayData, MachineLoad } from '../lib/day-data-derive';
-export type { OpDay } from '../lib/engine';
 
 export interface UseDayDataResult {
   dayData: DayData | null;

@@ -1,8 +1,9 @@
 /**
  * CapacityImpactPanel — Per-machine capacity heatmap for affected/down machines.
  */
-import type { Block, DayLoad, EngineData } from '../../../../lib/engine';
-import { C, DAY_CAP } from '../../../../lib/engine';
+import type { Block, DayLoad, EngineData } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { gridDensityVars } from '../../../../utils/gridDensity';
 import { Card, dot, Tag } from '../atoms';
 
@@ -11,7 +12,7 @@ export interface CapacityImpactPanelProps {
   blocks: Block[];
   cap: Record<string, DayLoad[]>;
   mSt: Record<string, string>;
-  moves: import('../../../../lib/engine').MoveAction[];
+  moves: import('@/domain/types/scheduling').MoveAction[];
 }
 
 export function CapacityImpactPanel({ data, blocks, cap, mSt, moves }: CapacityImpactPanelProps) {

@@ -1,6 +1,6 @@
 import type React from 'react';
-import type { EngineData, ETool } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { EngineData, ETool } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, dot, Pill, Tag } from '../atoms';
 import type { OBJECTIVE_PROFILES } from '../constants';
 import { DownPeriodEditor } from './DownPeriodEditor';

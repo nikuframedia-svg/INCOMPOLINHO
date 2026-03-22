@@ -7,7 +7,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 // Re-use engine types via import — these are exported from NikufraEngine
-import type { Block, Decision, MoveAction, OptResult } from '../lib/engine';
+import type { Block, Decision, MoveAction, OptResult } from '@/domain/types/scheduling';
 
 export interface PlanVersionKPIs {
   otd: number;

@@ -6,8 +6,9 @@ import type {
   EngineData,
   OptResult,
   ScheduleValidationReport,
-} from '../../../../lib/engine';
-import { C, S0 } from '../../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { S0 } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { useGanttDragDrop } from '../../hooks/useGanttDragDrop';
 import { useGanttInteraction } from '../../hooks/useGanttInteraction';
 import { Card, Pill, Tag, toolColor } from '../atoms';

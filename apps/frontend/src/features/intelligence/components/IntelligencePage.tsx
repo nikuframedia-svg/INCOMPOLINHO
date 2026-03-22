@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { C } from '../../../lib/engine';
 import { useIntelCompute } from '../hooks/useIntelCompute';
 import '../NikufraIntel.css';
+import { C } from '@/theme/color-bridge';
 import { type IntelTab, mono, TABS } from './intel-helpers';
 import { BottleneckView } from './tabs/BottleneckCascadeTab';
 import { HorizonView } from './tabs/CapacityHorizonTab';

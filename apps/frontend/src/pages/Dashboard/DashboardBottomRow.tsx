@@ -1,6 +1,6 @@
+import { C, TC } from '@/theme/color-bridge';
 import { Collapsible } from '../../components/Common/Collapsible';
 import { Term } from '../../components/Common/Tooltip';
-import { C, TC } from '../../lib/engine';
 
 interface OpDayEntry {
   pg1: number;

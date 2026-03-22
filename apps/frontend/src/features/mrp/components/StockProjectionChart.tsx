@@ -9,7 +9,7 @@ import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { useMemo } from 'react';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { StockChartData } from '../utils/stock-detail-compute';
 import { computeUncertaintyBands } from '../utils/stock-detail-compute';
 

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 export function Sec({ label, children }: { label: string; children: React.ReactNode }) {
   return (

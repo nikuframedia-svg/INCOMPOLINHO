@@ -1,5 +1,5 @@
 import type React from 'react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Pill } from '../atoms';
 import type { OBJECTIVE_PROFILES } from '../constants';
 import type { ScenarioConfig } from './whatif-types';

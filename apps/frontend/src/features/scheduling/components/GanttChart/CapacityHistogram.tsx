@@ -8,8 +8,8 @@ import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { useMemo } from 'react';
-import type { DayLoad, EMachine } from '../../../../lib/engine';
-import { DAY_CAP } from '../../../../lib/engine';
+import type { DayLoad, EMachine } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
 import './CapacityHistogram.css';
 
 echarts.use([BarChart, GridComponent, MarkLineComponent, CanvasRenderer]);

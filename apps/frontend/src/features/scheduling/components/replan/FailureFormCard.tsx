@@ -1,7 +1,8 @@
 /**
  * FailureFormCard — Failure/breakdown registration form and active failures list.
  */
-import { C } from '../../../../lib/engine';
+
+import { C } from '@/theme/color-bridge';
 import { Card, Pill, Tag } from '../atoms';
 import { FailureListItems } from './FailureListItems';
 import type { FailureFormCardProps } from './types';

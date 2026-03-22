@@ -1,9 +1,11 @@
 import { useCallback, useMemo } from 'react';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonCard, SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C, DAY_CAP, opsByDayFromWorkforce } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { FabricaLoadHeatmap } from './FabricaLoadHeatmap';
 import { FabricaMachineCards } from './FabricaMachineCards';

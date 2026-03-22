@@ -2,7 +2,7 @@
  * RushOrderCard — Rush/urgent order insertion panel.
  */
 import { X, Zap } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Card, Tag, toolColor } from '../atoms';
 import type { RushOrderCardProps } from './types';
 

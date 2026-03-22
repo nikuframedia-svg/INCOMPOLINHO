@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { AlternativeAction, DecisionEntry, EngineData, EOp } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { AlternativeAction, DecisionEntry, EngineData, EOp } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import {
   DECISION_CATEGORIES,
   DECISION_CATEGORY_COLORS,

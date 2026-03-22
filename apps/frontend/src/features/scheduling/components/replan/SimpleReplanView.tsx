@@ -1,8 +1,8 @@
 import { RefreshCw, Settings2 } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';
-import type { MoveAction, ReplanDispatchResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { MoveAction, ReplanDispatchResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, dot } from '../atoms';
 import { MachineDownPicker } from './MachineDownPicker';
 import { SCENARIOS, type Scenario } from './replan-scenarios';

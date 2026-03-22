@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import { Term } from '@/components/Common/Tooltip';
 import type { MRPRecord } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 import { MRPRow, type ToolTableTabProps } from './ToolTableTab';
 

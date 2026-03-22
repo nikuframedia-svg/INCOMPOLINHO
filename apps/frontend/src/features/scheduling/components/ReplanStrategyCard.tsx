@@ -9,8 +9,8 @@
  */
 
 import { Zap } from 'lucide-react';
-import type { Block, FailureEvent, ImpactReport } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { Block, FailureEvent, ImpactReport } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Tag } from './atoms';
 import './ReplanStrategyCard.css';
 

@@ -7,8 +7,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { EmptyState } from '@/components/Common/EmptyState';
 import { SkeletonTable } from '@/components/Common/SkeletonLoader';
+import { DEFAULT_WORKFORCE_CONFIG } from '@/domain/types/scheduling';
 import { useScheduleData } from '@/hooks/useScheduleData';
-import { DEFAULT_WORKFORCE_CONFIG } from '@/lib/engine';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { ShiftCalendarEditor } from '../components/ShiftCalendarEditor';
 

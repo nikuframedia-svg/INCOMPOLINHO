@@ -1,5 +1,5 @@
-import type { ObjectiveProfile } from '../../../lib/engine';
-import { DEFAULT_SCORE_WEIGHTS } from '../../../lib/engine';
+import type { ObjectiveProfile } from '@/domain/types/scheduling';
+import { DEFAULT_SCORE_WEIGHTS } from '@/domain/types/scheduling';
 
 export const OBJECTIVE_PROFILES: ObjectiveProfile[] = [
   {

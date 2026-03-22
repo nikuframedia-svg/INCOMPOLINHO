@@ -3,8 +3,8 @@
  */
 
 import { AlertTriangle, ChevronDown, ChevronRight, Link2 } from 'lucide-react';
-import { C } from '@/lib/engine';
 import { useUIStore } from '@/stores/useUIStore';
+import { C } from '@/theme/color-bridge';
 import type { OrderRiskEntry } from '../utils/encomendas-compute';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import { MiniTimeline } from './MiniTimeline';

@@ -7,7 +7,7 @@ import type {
   MoveableOp,
   OptResult,
   QuickValidateResult,
-} from '../../../../lib/engine';
+} from '@/domain/types/scheduling';
 import { ApplyPlanButton, QualityWarnings, ScenarioResultCards } from './ScenarioComparison';
 import { ScenarioDetails } from './ScenarioDetails';
 

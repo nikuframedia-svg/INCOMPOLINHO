@@ -5,13 +5,13 @@ import React from 'react';
 import type {
   AutoReplanResult,
   Block,
-  buildResourceTimelines,
   EngineData,
   EOp,
   MoveAction,
   ObjectiveProfile,
   OptResult,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import type { buildResourceTimelines } from '@/utils/failure-timeline';
 import { useReplanControl } from './useReplanControl';
 import type { ReplanKPISnapshot } from './useReplanHistory';
 import { useReplanHistory } from './useReplanHistory';

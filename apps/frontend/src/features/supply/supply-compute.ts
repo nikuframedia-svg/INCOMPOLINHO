@@ -10,7 +10,7 @@ import type {
   RCCPEntry,
   ROPResult,
   ROPSummary,
-} from '../../lib/engine';
+} from '@/domain/types/scheduling';
 
 export type Risk = 'critical' | 'high' | 'medium' | 'ok';
 

@@ -4,7 +4,7 @@
  * optimal routing, rush orders, decisions, timeline).
  */
 import { ChevronDown } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { ReplanKPIPreview } from '../ReplanKPIPreview';
 import { ReplanStrategyCard } from '../ReplanStrategyCard';
 import { ReplanTimeline } from '../ReplanTimeline';

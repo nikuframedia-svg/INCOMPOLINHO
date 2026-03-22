@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Link2 } from 'lucide-react';
 import type { MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
 import { useUIStore } from '@/stores/useUIStore';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono, projColor } from '../utils/mrp-helpers';
 import { SKURowDetail } from './SKURowDetail';
 import { SKUTableFilters } from './SKUTableFilters';

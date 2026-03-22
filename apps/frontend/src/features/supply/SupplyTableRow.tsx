@@ -3,7 +3,7 @@
  */
 
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
-import { C } from '../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { useUIStore } from '../../stores/useUIStore';
 import { MiniChart } from './MiniChart';
 import type { SupplyRow } from './supply-compute';

@@ -6,8 +6,9 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import type { Block, EMachine } from '../../lib/engine';
-import { S0, S1, TC } from '../../lib/engine';
+import type { Block, EMachine } from '@/domain/types/scheduling';
+import { S0, S1 } from '@/domain/types/scheduling';
+import { TC } from '@/theme/color-bridge';
 import { gridDensityVars } from '../../utils/gridDensity';
 import './MiniGantt.css';
 

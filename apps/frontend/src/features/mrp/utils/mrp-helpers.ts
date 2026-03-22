@@ -1,5 +1,4 @@
-import { C } from '@/lib/engine';
-
+import { C } from '@/theme/color-bridge';
 export const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
 export function projColor(val: number): string {

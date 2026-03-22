@@ -3,7 +3,7 @@
  * Builds event list + ECharts data from MRPSkuViewRecord + blocks.
  */
 
-import type { Block, MRPSkuViewRecord } from '@/lib/engine';
+import type { Block, MRPSkuViewRecord } from '@/domain/types/scheduling';
 
 export type StockEventType = 'production' | 'shipment' | 'receipt';
 

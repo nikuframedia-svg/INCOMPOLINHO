@@ -1,5 +1,5 @@
 import { StatusBanner } from '@/components/Common/StatusBanner';
-import type { MRPResult, MRPSkuViewResult } from '@/lib/engine';
+import type { MRPResult, MRPSkuViewResult } from '@/domain/types/scheduling';
 
 interface MRPStatusSectionProps {
   mrp: MRPResult;

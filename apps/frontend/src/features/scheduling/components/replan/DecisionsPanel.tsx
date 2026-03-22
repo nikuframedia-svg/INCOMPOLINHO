@@ -2,8 +2,8 @@
  * DecisionsPanel — Metrics summary, decision cards, and capacity impact.
  */
 import { ArrowRight, Undo2 } from 'lucide-react';
-import type { Block, DayLoad, EngineData, MoveAction, OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { Block, DayLoad, EngineData, MoveAction, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, Metric, Pill, toolColor } from '../atoms';
 import { CapacityImpactPanel } from './CapacityImpactPanel';
 import { DecisionCard } from './DecisionCard';

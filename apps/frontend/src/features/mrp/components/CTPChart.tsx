@@ -1,4 +1,5 @@
-import { C, DAY_CAP } from '@/lib/engine';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 
 interface CTPChartProps {

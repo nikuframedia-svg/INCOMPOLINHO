@@ -2,7 +2,7 @@
  * CTPCommitmentsTable — displays committed CTP promises in a table.
  */
 
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { CTPCommitment } from '../utils/ctp-compute';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 

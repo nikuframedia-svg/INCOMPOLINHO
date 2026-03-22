@@ -7,8 +7,10 @@
  */
 
 import { useMemo } from 'react';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C, DAY_CAP, opsByDayFromWorkforce } from '../../lib/engine';
 import './PulseStrip.css';
 
 type PillVariant = 'green' | 'amber' | 'red' | 'teal' | 'blue';

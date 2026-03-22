@@ -4,8 +4,8 @@
  */
 
 import { Collapsible } from '@/components/Common/Collapsible';
-import type { InfeasibilityEntry, ScheduleViolation } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { InfeasibilityEntry, ScheduleViolation } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import './AlertsPanel.css';
 
 interface AlertsPanelProps {

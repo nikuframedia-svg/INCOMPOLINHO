@@ -4,9 +4,10 @@
  */
 
 import { useMemo } from 'react';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { S0, S1, T1 } from '@/domain/types/scheduling';
 import type { MachineLoad } from '@/hooks/useDayData';
-import type { Block, EngineData } from '@/lib/engine';
-import { fmtMin, S0, S1, T1 } from '@/lib/engine';
+import { fmtMin } from '@/utils/format';
 import './MachineTimeline.css';
 
 const RANGE = S1 - S0; // 1020 min

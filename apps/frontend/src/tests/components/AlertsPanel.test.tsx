@@ -5,12 +5,12 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/engine', () => ({
+vi.mock('@/domain/types/scheduling', () => ({
   C: { ac: '#3B82F6', yl: '#F59E0B', rd: '#EF4444' },
 }));
 
+import type { InfeasibilityEntry, ScheduleViolation } from '@/domain/types/scheduling';
 import { AlertsPanel } from '@/features/console/components/AlertsPanel';
-import type { InfeasibilityEntry, ScheduleViolation } from '@/lib/engine';
 
 const mkV = (
   ov: Partial<ScheduleViolation> & Pick<ScheduleViolation, 'id' | 'severity' | 'title' | 'detail'>,

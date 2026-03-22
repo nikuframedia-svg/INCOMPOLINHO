@@ -10,7 +10,6 @@ import { EmptyState } from '@/components/Common/EmptyState';
 import { FeatureErrorBoundary } from '@/components/Common/FeatureErrorBoundary';
 import { SkeletonCard, SkeletonTable } from '@/components/Common/SkeletonLoader';
 import { StatusBanner } from '@/components/Common/StatusBanner';
-import { C } from '@/lib/engine';
 import { ActiveDecisions } from '../components/ActiveDecisions';
 import { AlertsFeed } from '../components/AlertsFeed';
 import { AlertsPanel } from '../components/AlertsPanel';
@@ -27,6 +26,7 @@ import { TransparencyPanel } from '../components/TransparencyPanel';
 import { WorkforceNeeds } from '../components/WorkforceNeeds';
 import { useConsolePageData } from '../hooks/useConsolePageData';
 import './ConsolePage.css';
+import { C } from '@/theme/color-bridge';
 
 const PAGE_TITLE = 'Centro de Comando Diário';
 const PAGE_DESC = 'Visão completa por dia: máquinas, operações, operadores, alertas e decisões.';

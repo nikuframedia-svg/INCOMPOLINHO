@@ -2,7 +2,7 @@
  * ArActionItem — Single auto-replan action card with alternatives and simulation.
  */
 import { ChevronDown, ChevronRight, Eye, Undo2 } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Tag } from '../atoms';
 import type { AutoReplanCardProps } from './types';
 

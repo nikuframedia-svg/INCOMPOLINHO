@@ -9,8 +9,8 @@
  */
 
 import { useEffect, useRef } from 'react';
+import type { MRPRecord, MRPResult } from '@/domain/types/scheduling';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import type { MRPRecord, MRPResult } from '../../lib/engine';
 import type { Alert, AlertPriority } from './alert-types';
 import { useAlertStore } from './useAlertStore';
 

@@ -6,8 +6,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { C } from '@/lib/engine';
 import './EditableCell.css';
+import { C } from '@/theme/color-bridge';
 
 interface EditableCellProps {
   value: string | number;

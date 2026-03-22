@@ -2,8 +2,8 @@
  * ResourceDownCard — Machine/tool down status management.
  */
 import { Undo2, Zap } from 'lucide-react';
-import type { MoveAction, ReplanProposal } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { MoveAction, ReplanProposal } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, dot, Pill } from '../atoms';
 
 export function ResourceDownCard({

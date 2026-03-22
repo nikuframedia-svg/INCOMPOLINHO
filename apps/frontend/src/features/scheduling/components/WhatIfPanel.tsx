@@ -1,13 +1,7 @@
 import { useState } from 'react';
-import type {
-  Block,
-  buildResourceTimelines,
-  EngineData,
-  EOp,
-  MoveAction,
-  OptResult,
-} from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { Block, EngineData, EOp, MoveAction, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import type { buildResourceTimelines } from '@/utils/failure-timeline';
 import { usePlanVersionStore } from '../../../stores/usePlanVersionStore';
 import { useWhatIf } from '../hooks/useWhatIf';
 import { OBJECTIVE_PROFILES } from './constants';

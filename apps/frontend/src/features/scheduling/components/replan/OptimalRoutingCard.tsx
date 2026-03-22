@@ -4,7 +4,7 @@
 
 import { Sparkles } from 'lucide-react';
 import React from 'react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Card, Pill, toolColor } from '../atoms';
 import { OptResultsList } from './OptResultsList';
 import type { OptimalRoutingCardProps } from './types';

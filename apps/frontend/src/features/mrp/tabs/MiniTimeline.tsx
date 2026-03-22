@@ -1,8 +1,7 @@
 /**
  * MiniTimeline — Compact production timeline for order rows.
  */
-
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 
 export function MiniTimeline({
   productionDays,

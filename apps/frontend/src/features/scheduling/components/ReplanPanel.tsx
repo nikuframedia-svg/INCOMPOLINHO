@@ -5,19 +5,19 @@
  */
 import type React from 'react';
 import { useCallback, useState } from 'react';
-import { getCachedNikufraData } from '../../../hooks/useScheduleData';
-import { scheduleReplanApi } from '../../../lib/api';
 import type {
   AutoReplanResult,
   Block,
-  buildResourceTimelines,
   DayLoad,
   EngineData,
   EOp,
   MoveAction,
   OptResult,
   ReplanDispatchResult,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import type { buildResourceTimelines } from '@/utils/failure-timeline';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import { scheduleReplanApi } from '../../../lib/api';
 import { useReplanOrchestrator } from '../hooks/useReplanOrchestrator';
 import { OBJECTIVE_PROFILES } from './constants';
 import { ReplanAdvancedView, SimpleReplanView } from './replan';

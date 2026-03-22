@@ -1,4 +1,4 @@
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 
 export function KCard({

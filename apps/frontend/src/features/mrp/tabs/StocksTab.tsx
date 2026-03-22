@@ -4,8 +4,8 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Block, EngineData, MRPResult, MRPSkuViewResult } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { Block, EngineData, MRPResult, MRPSkuViewResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import type { StockRow } from '../utils/stock-compute';
 import { computeStockKPIs, computeStockRows, coverageColor } from '../utils/stock-compute';

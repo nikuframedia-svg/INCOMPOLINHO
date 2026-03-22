@@ -2,8 +2,8 @@
  * CTPForm — SKU/quantity/target day form for CTP simulation.
  */
 
-import type { EngineData } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 export function CTPForm({
   engine,

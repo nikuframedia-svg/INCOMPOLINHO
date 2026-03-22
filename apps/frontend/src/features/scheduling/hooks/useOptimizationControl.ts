@@ -3,8 +3,6 @@
  */
 
 import { useCallback, useState } from 'react';
-import { getCachedNikufraData } from '../../../hooks/useScheduleData';
-import { scheduleOptimizeApi } from '../../../lib/api';
 import type {
   Block,
   EngineData,
@@ -12,7 +10,9 @@ import type {
   MoveAction,
   ObjectiveProfile,
   OptResult,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import { scheduleOptimizeApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 
 export interface OptimizationState {

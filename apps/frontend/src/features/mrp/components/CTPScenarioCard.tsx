@@ -2,8 +2,8 @@
  * CTPScenarioCard — Card displaying one CTP scenario result.
  */
 
-import type { EngineData } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { CTPConfidenceInterval, CTPScenario } from '../utils/ctp-compute';
 import { mono } from '../utils/mrp-helpers';
 

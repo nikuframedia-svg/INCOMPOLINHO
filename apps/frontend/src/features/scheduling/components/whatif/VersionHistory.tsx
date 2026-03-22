@@ -1,6 +1,13 @@
 import { GitCommit, GitCompareArrows, History as HistoryIcon, Save } from 'lucide-react';
-import type { AreaCaps, Decision, EngineData, EOp, ETool, OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type {
+  AreaCaps,
+  Decision,
+  EngineData,
+  EOp,
+  ETool,
+  OptResult,
+} from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { PlanVersionParams } from '../../../../stores/usePlanVersionStore';
 import { usePlanVersionStore } from '../../../../stores/usePlanVersionStore';
 import { useToastStore } from '../../../../stores/useToastStore';

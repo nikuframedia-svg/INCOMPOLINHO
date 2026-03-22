@@ -1,4 +1,4 @@
-import { C } from '../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 interface SCardProps {
   label: string;

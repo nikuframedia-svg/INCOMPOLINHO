@@ -4,8 +4,6 @@
  */
 
 import { useCallback, useRef, useState } from 'react';
-// scoreSchedule removed — metrics come from backend via neMetrics prop
-import { useClassifications } from '../../../../hooks/useClassifications';
 import type {
   Block,
   DayLoad,
@@ -13,7 +11,9 @@ import type {
   EOp,
   OptResult,
   ScheduleValidationReport,
-} from '../../../../lib/engine';
+} from '@/domain/types/scheduling';
+// scoreSchedule removed — metrics come from backend via neMetrics prop
+import { useClassifications } from '../../../../hooks/useClassifications';
 import { useGanttDragDrop } from '../../hooks/useGanttDragDrop';
 import { CapacityHistogram } from './CapacityHistogram';
 import { DeviationPanel } from './DeviationPanel';

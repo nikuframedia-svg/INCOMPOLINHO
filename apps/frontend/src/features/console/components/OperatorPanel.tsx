@@ -2,8 +2,8 @@
  * OperatorPanel — Workforce demand per labor group x time window.
  */
 
-import type { ZoneShiftDemand } from '@/lib/engine';
-import { fmtMin } from '@/lib/engine';
+import type { ZoneShiftDemand } from '@/domain/types/scheduling';
+import { fmtMin } from '@/utils/format';
 import './OperatorPanel.css';
 
 interface OperatorPanelProps {

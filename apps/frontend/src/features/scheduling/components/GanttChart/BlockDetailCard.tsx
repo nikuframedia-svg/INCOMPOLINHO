@@ -5,8 +5,8 @@
  */
 
 import { Layers, Sparkles, Undo2, X } from 'lucide-react';
-import type { Block, ETool } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { Block, ETool } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { fmtT, toolColor } from '../atoms';
 
 export function BlockDetailCard({

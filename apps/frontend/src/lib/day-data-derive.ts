@@ -20,8 +20,9 @@ import type {
   TransparencyReport,
   WorkforceForecast,
   ZoneShiftDemand,
-} from './engine';
-import { DAY_CAP, opsByDayFromWorkforce } from './engine';
+} from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling/constants';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 
 export interface MachineLoad {
   machineId: string;

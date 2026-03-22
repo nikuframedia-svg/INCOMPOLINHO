@@ -2,7 +2,7 @@
  * DayRangePicker — Selector de intervalo de dias para downtime.
  */
 import { X } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { DayRangePickerProps } from './types';
 
 export function DayRangePicker({

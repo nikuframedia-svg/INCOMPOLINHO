@@ -1,6 +1,6 @@
 import type React from 'react';
-import type { ETool } from '../../../lib/engine';
-import { C, TC, tci } from '../../../lib/engine';
+import type { ETool } from '@/domain/types/scheduling';
+import { C, TC, tci } from '@/theme/color-bridge';
 
 export function Pill({
   children,

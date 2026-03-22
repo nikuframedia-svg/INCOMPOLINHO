@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, Moon, Server, Zap } from 'lucide-react';
+import type { ScheduleValidationReport } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { useScheduleData } from '../../../hooks/useScheduleData';
-import type { ScheduleValidationReport } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
 import { useSettingsStore } from '../../../stores/useSettingsStore';
 import { dot, Pill } from './atoms';
 

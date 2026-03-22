@@ -7,8 +7,9 @@
 import { useMemo } from 'react';
 import { Collapsible } from '@/components/Common/Collapsible';
 import { StatusBanner } from '@/components/Common/StatusBanner';
-import type { WorkforceForecast } from '@/lib/engine';
-import { C, fmtMin } from '@/lib/engine';
+import type { WorkforceForecast } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { fmtMin } from '@/utils/format';
 import './D1Preparation.css';
 
 const SUGGESTION_ICONS: Record<string, string> = {

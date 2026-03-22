@@ -3,8 +3,8 @@
  * Reads TrustIndex from data store (computed during ISOP parsing).
  */
 
-import { C } from '@/lib/engine';
 import { useDataStore } from '@/stores/useDataStore';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 
 function classifyGate(score: number): { label: string; color: string } {

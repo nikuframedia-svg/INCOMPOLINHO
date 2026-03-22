@@ -6,6 +6,22 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type {
+  AdvanceAction,
+  Block,
+  CoverageAuditResult,
+  DayLoad,
+  DecisionEntry,
+  DispatchRule,
+  EngineData,
+  FeasibilityReport,
+  LateDeliveryAnalysis,
+  MoveAction,
+  MRPResult,
+  OptResult,
+  ScheduleValidationReport,
+  TransparencyReport,
+} from '@/domain/types/scheduling';
+import type {
   ActionMessagesSummary as BackendActionsSummary,
   CoverageAuditResult as BackendCoverageResult,
   DayLoad as BackendDayLoad,
@@ -28,22 +44,6 @@ import type {
 } from '../domain/mrp/mrp-types';
 import type { FullScheduleResponse } from '../lib/api';
 import { scheduleFullApi } from '../lib/api';
-import type {
-  AdvanceAction,
-  Block,
-  CoverageAuditResult,
-  DayLoad,
-  DecisionEntry,
-  DispatchRule,
-  EngineData,
-  FeasibilityReport,
-  LateDeliveryAnalysis,
-  MoveAction,
-  MRPResult,
-  OptResult,
-  ScheduleValidationReport,
-  TransparencyReport,
-} from '../lib/engine';
 import type { TransformConfigFromSettings } from '../stores/settings-config';
 import { getTransformConfig, settingsHashSelector } from '../stores/settings-config';
 import { useDataStore } from '../stores/useDataStore';

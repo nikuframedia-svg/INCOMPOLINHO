@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AutoReplanResult, EngineData, EOp, MoveAction } from '@/domain/types/scheduling';
 import { useDataSource } from '../../../hooks/useDataSource';
 import { invalidateScheduleCache, useScheduleData } from '../../../hooks/useScheduleData';
-import type { AutoReplanResult, EngineData, EOp, MoveAction } from '../../../lib/engine';
 import { useReplanStore } from '../../../stores/useReplanStore';
 import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleFilters } from './useScheduleFilters';

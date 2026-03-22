@@ -1,6 +1,6 @@
 import { RefreshCw, Settings2, Target, Wrench, Zap } from 'lucide-react';
 import { useState } from 'react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Card } from '../atoms';
 
 // ── Quick scenario presets for simple mode ──

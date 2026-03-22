@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { MRPRecord } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
 import { useUIStore } from '@/stores/useUIStore';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono, projColor } from '../utils/mrp-helpers';
 import { MRPRowDetail } from './MRPRowDetail';
 

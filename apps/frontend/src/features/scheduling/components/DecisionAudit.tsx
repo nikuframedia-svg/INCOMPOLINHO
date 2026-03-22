@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { DecisionEntry, EngineData, EOp } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { DecisionEntry, EngineData, EOp } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card } from './atoms';
 import { DecisionItem } from './DecisionItem';
 import { DECISION_CATEGORIES, DECISION_CATEGORY_COLORS } from './decision-constants';

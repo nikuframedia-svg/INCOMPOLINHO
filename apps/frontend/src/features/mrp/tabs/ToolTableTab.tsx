@@ -1,6 +1,6 @@
 import { Term } from '@/components/Common/Tooltip';
 import type { MRPRecord } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { MRPRow } from './MRPRow';
 
 export type { MRPRowProps } from './MRPRow';

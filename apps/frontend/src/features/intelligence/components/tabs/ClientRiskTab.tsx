@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { IntelData } from '../../compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, fmtQty, MC, mono } from '../intel-helpers';

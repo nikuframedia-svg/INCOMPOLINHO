@@ -3,12 +3,12 @@ import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { PecasSkuTable } from './PecasSkuTable';
 import { PecasSummaryCards } from './PecasSummaryCards';
 import type { PecaRow, SortDir, SortField } from './pecas-types';
 import './Pecas.css';
+import { C } from '@/theme/color-bridge';
 
 export function Pecas() {
   const { engine, blocks, loading, error } = useScheduleData();

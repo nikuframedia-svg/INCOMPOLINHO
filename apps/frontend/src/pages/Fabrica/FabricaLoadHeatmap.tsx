@@ -1,7 +1,8 @@
 import React from 'react';
+import type { DayLoad } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { HeatmapLegend } from '../../components/Common/HeatmapLegend';
-import type { DayLoad } from '../../lib/engine';
-import { C, DAY_CAP } from '../../lib/engine';
 import { gridDensityVars, showDetailedCells } from '../../utils/gridDensity';
 import { utilColor } from '../../utils/utilColor';
 

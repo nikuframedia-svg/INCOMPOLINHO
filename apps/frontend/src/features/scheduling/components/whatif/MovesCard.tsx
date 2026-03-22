@@ -1,6 +1,6 @@
 import { ArrowRight } from 'lucide-react';
-import type { EOp, ETool, OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { EOp, ETool, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, Tag, toolColor } from '../atoms';
 
 export function MovesCard({

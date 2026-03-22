@@ -8,10 +8,10 @@
 import { Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { NikufraData } from '@/domain/nikufra-types';
-import { C } from '@/lib/engine';
 import { useMasterDataStore } from '@/stores/useMasterDataStore';
 import { EditableCell } from './EditableCell';
 import './ProductsTab.css';
+import { C } from '@/theme/color-bridge';
 
 interface ProductsTabProps {
   data: NikufraData;

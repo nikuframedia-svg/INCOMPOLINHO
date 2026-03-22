@@ -3,10 +3,10 @@ import { EmptyState } from '../../components/Common/EmptyState';
 import { StatusBanner } from '../../components/Common/StatusBanner';
 import { Term } from '../../components/Common/Tooltip';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { KCard } from './KCard';
 import './SupplyMonitor.css';
+import { C } from '@/theme/color-bridge';
 import { SupplyTableRow } from './SupplyTableRow';
 import { computeSupplyRows } from './supply-compute';
 

@@ -3,7 +3,7 @@
 //  Pure utility function, no React dependencies.
 // ═══════════════════════════════════════════════════════════
 
-import type { Block } from '../lib/engine';
+import type { Block } from '@/domain/types/scheduling';
 import type { PlanVersion } from '../stores/usePlanVersionStore';
 
 export interface PlanDiffKPIs {

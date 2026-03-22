@@ -1,5 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 export function QualityBanner({
   qv,

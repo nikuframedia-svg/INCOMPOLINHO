@@ -3,8 +3,8 @@
  * delivery entry with status, delay info, and action buttons.
  */
 
-import type { LateDeliveryEntry } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { LateDeliveryEntry } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { AcceptDelayModal } from './AcceptDelayModal';
 
 interface DeliveryEntryRowProps {

@@ -142,6 +142,8 @@ export type {
   Violation,
   ViolationSeverity,
 } from './kpis.js';
+// ── Legacy ──
+export type { AreaCaps, Decision, ObjectiveProfile, OpDay } from './legacy.js';
 // ── MRP ──
 export type {
   ActionMessage,

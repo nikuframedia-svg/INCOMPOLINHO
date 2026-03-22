@@ -6,7 +6,7 @@
 
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState } from 'react';
-import { C } from '../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { DayProblem } from '../hooks/useDayProblems';
 
 const MAX_VISIBLE = 5;

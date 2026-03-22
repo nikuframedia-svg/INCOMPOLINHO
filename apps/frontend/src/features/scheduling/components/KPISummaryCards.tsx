@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import type { Block, CoverageAuditResult, EngineData } from '../../../lib/engine';
-import { C, T1 } from '../../../lib/engine';
+import type { Block, CoverageAuditResult, EngineData } from '@/domain/types/scheduling';
+import { T1 } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { formatCoverage, formatSetupTime } from '../../../utils/explicitText';
 import type { FeasibilitySummary } from '../hooks/useScheduleValidation';
 import { Card, Metric } from './atoms';

@@ -2,8 +2,8 @@
  * OptResultsList — Displays ranked optimization results with apply buttons.
  */
 import { Star } from 'lucide-react';
-import type { OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 export interface OptResultsListProps {
   optResults: OptResult[];

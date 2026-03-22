@@ -2,7 +2,7 @@
  * Shared types for ReplanAdvancedView, derived from useReplanOrchestrator.
  */
 import type React from 'react';
-import type { Block, DayLoad, EngineData, MoveAction, OptResult } from '../../../../lib/engine';
+import type { Block, DayLoad, EngineData, MoveAction, OptResult } from '@/domain/types/scheduling';
 import type { ReplanHistoryEntry, ReplanKPISnapshot } from '../../hooks/useReplanHistory';
 import type { useReplanOrchestrator } from '../../hooks/useReplanOrchestrator';
 

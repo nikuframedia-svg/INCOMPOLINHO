@@ -5,7 +5,7 @@
 
 import { Collapsible } from '@/components/Common/Collapsible';
 import { StatusBanner } from '@/components/Common/StatusBanner';
-import type { WorkforceForecast } from '@/lib/engine';
+import type { WorkforceForecast } from '@/domain/types/scheduling';
 import './WorkforceNeeds.css';
 
 interface WorkforceNeedsProps {

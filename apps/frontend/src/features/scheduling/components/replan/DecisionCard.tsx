@@ -2,7 +2,8 @@
  * DecisionCard — Single replan/blocked decision card with XAI reasoning toggle.
  */
 import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronRight } from 'lucide-react';
-import { C, DAY_CAP } from '../../../../lib/engine';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card, Pill, Tag } from '../atoms';
 import type { ReplanProposal } from './types';
 

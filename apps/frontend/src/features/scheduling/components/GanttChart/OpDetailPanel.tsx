@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
-import type { Block, DayLoad, EMachine, EOp, ETool } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { Block, DayLoad, EMachine, EOp, ETool } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { toolColor } from '../atoms';
 import { ActionsSection, MachineSection } from './OpDetailMachine';
 import {

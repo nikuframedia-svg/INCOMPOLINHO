@@ -6,9 +6,9 @@
 
 import { useState } from 'react';
 import { Collapsible } from '@/components/Common/Collapsible';
+import type { LateDeliveryAnalysis } from '@/domain/types/scheduling';
 import { assessDeviation, createLedgerEntry } from '@/features/scheduling';
-import type { LateDeliveryAnalysis } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { computeDelayCost, governanceLevel, REASON_TO_INCENTIVE } from './AcceptDelayModal';
 import { DeliveryEntryRow } from './DeliveryEntryRow';
 

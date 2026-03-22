@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { Block } from '../../../../lib/engine';
+import type { Block } from '@/domain/types/scheduling';
 import './OperationsTable.css';
 
 interface OperationsTableProps {

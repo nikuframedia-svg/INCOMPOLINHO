@@ -1,6 +1,6 @@
 import React from 'react';
-import type { OptResult } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { Card } from '../atoms';
 
 export function ComparisonTable({

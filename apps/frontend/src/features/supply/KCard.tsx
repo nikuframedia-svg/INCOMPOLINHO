@@ -1,8 +1,7 @@
 /**
  * KCard — KPI card for supply monitor.
  */
-
-import { C } from '../../lib/engine';
+import { C } from '@/theme/color-bridge';
 
 const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 

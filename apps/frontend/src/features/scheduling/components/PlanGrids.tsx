@@ -1,7 +1,8 @@
 import { ArrowRight, Check, Zap } from 'lucide-react';
 import React from 'react';
-import type { DayLoad, EngineData } from '../../../lib/engine';
-import { C, DAY_CAP } from '../../../lib/engine';
+import type { DayLoad, EngineData } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { gridDensityVars } from '../../../utils/gridDensity';
 import { Card, dot } from './atoms';
 import type { AutoReplanSummary } from './decision-constants';

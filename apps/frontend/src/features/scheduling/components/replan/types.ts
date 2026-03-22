@@ -14,7 +14,7 @@ import type {
   ReplanActionDetail,
   ReplanProposal,
   ReplanSimulation,
-} from '../../../../lib/engine';
+} from '@/domain/types/scheduling';
 
 export type { ReplanProposal };
 

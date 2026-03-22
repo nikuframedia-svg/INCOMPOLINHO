@@ -9,11 +9,11 @@
 import { useMemo, useState } from 'react';
 import { Collapsible } from '@/components/Common/Collapsible';
 import type { MachineState } from '@/components/Industrial/MachineStatusIndicator';
+import type { Block } from '@/domain/types/scheduling';
 import { useActiveAlerts } from '@/features/alerts';
 import type { DayData, MachineLoad } from '@/hooks/useDayData';
-import type { Block } from '@/lib/engine';
-import { fmtMin } from '@/lib/engine';
 import { useDataStore } from '@/stores/useDataStore';
+import { fmtMin } from '@/utils/format';
 import { ShiftAlertsSection, ShiftDecisionsSection } from './ShiftAlertsList';
 import type { MachineRow } from './ShiftProductionTable';
 import { ShiftProductionTable } from './ShiftProductionTable';

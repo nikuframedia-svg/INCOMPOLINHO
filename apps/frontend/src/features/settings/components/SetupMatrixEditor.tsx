@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import type { ETool } from '@/lib/engine';
+import type { ETool } from '@/domain/types/scheduling';
 import './SetupMatrixEditor.css';
 
 interface SetupMatrixEditorProps {

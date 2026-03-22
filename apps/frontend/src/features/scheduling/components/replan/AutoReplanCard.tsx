@@ -2,7 +2,7 @@
  * AutoReplanCard — Auto-replan controls + AR strategy actions display.
  */
 import { Check, ChevronDown, ChevronRight, Undo2, Zap } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { Card, Pill, Tag } from '../atoms';
 import { ArActionItem } from './ArActionItem';
 import type { AutoReplanCardProps } from './types';

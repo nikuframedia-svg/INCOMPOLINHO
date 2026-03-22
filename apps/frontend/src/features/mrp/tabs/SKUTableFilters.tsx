@@ -1,5 +1,5 @@
 import type { MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 
 type Filter = 'all' | 'stockout' | 'backlog';
 

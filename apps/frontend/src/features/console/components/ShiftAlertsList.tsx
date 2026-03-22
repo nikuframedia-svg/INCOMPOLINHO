@@ -5,8 +5,8 @@
 
 import type { LucideIcon } from 'lucide-react';
 import { ArrowLeftRight, FastForward, Layers, Moon, Scissors, Zap } from 'lucide-react';
+import type { Block, DecisionEntry } from '@/domain/types/scheduling';
 import type { Alert } from '@/features/alerts';
-import type { Block, DecisionEntry } from '@/lib/engine';
 
 // ── Decision categories (same as ActiveDecisions) ──
 

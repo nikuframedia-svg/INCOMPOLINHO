@@ -7,7 +7,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { ArrowLeftRight, FastForward, Layers, Moon, Scissors, Zap } from 'lucide-react';
 import { Collapsible } from '@/components/Common/Collapsible';
-import type { DecisionEntry } from '@/lib/engine';
+import type { DecisionEntry } from '@/domain/types/scheduling';
 import './ActiveDecisions.css';
 
 interface ActiveDecisionsProps {

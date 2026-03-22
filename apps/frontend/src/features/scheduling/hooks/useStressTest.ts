@@ -6,9 +6,9 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import type { Block, EngineData, EOp, OptResult } from '@/domain/types/scheduling';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
 import { scheduleReplanApi } from '../../../lib/api';
-import type { Block, EngineData, EOp, OptResult } from '../../../lib/engine';
 
 export interface StressTestResult {
   id: string;

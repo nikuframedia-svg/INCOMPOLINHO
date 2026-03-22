@@ -5,8 +5,8 @@
  */
 
 import { Check, X } from 'lucide-react';
-import { C } from '../../../lib/engine';
 import './ReplanKPIPreview.css';
+import { C } from '@/theme/color-bridge';
 
 interface KPISnapshot {
   otd: number;

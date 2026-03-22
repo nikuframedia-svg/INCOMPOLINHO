@@ -1,6 +1,6 @@
 // compute/setup-timeline.ts — Feature 4: Setup Crew Timeline
 
-import { S0, S1, T1 } from '../../../lib/engine';
+import { S0, S1, T1 } from '@/domain/types/scheduling';
 import { MACHINES } from './constants';
 import type { DateContext, NkData } from './types';
 

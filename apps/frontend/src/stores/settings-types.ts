@@ -3,7 +3,7 @@
  */
 
 import type { RuleGroupType } from 'react-querybuilder';
-import type { AutoReplanConfig } from '../lib/engine';
+import type { AutoReplanConfig } from '@/domain/types/scheduling';
 
 // ── Types ──
 

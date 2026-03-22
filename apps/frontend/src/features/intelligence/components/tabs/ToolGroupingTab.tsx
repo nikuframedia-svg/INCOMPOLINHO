@@ -1,5 +1,5 @@
 import React from 'react';
-import { C, TC } from '../../../../lib/engine';
+import { C, TC } from '@/theme/color-bridge';
 import type { IntelData } from '../../compute';
 import { StatRow } from '../intel-atoms';
 import { cardSt, labelSt, MC, mono, toolFamily } from '../intel-helpers';

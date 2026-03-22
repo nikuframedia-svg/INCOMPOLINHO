@@ -1,5 +1,6 @@
-import type { EngineData, EOp, ETool, OptResult } from '../../../../lib/engine';
-import { C, opsByDayFromWorkforce } from '../../../../lib/engine';
+import type { EngineData, EOp, ETool, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 import { Card, Metric } from '../atoms';
 import { CapacityGrid, OperatorsChart } from './CapacityViews';
 import { ComparisonTable } from './ComparisonTable';

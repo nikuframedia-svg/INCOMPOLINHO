@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { MRPResult, MRPSkuViewResult } from '@/domain/mrp/mrp-types';
-import type { Block, EngineData } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { KCard } from '../components/KCard';
 import { computeOrderRisk, groupByClient } from '../utils/encomendas-compute';
 import { fmtQty } from '../utils/mrp-helpers';

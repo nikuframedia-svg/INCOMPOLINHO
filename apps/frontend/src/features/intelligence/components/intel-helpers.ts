@@ -1,5 +1,5 @@
 import type React from 'react';
-import { C, TC } from '../../../lib/engine';
+import { C, TC } from '@/theme/color-bridge';
 
 export const MC: Record<string, string> = {
   PRM019: TC[0],

@@ -5,8 +5,8 @@
 
 import { Drawer } from 'antd';
 import { useMemo } from 'react';
-import type { Block } from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+import type { Block } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { OperationsTable } from './OperationsTable';
 
 export function OperationsDrawer({

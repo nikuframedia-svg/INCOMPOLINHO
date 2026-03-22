@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { EOp } from '../../../lib/engine';
+import type { EOp } from '@/domain/types/scheduling';
 import { useToastStore } from '../../../stores/useToastStore';
 
 export interface RushOrderState {

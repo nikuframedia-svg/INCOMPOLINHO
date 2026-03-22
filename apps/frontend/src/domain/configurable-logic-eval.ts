@@ -7,7 +7,7 @@
 
 import { Parser } from 'expr-eval';
 import type { RuleGroupType } from 'react-querybuilder';
-import type { Block, EngineData, EOp } from '../lib/engine';
+import type { Block, EngineData, EOp } from '@/domain/types/scheduling';
 import type { ConceptDefinition, FormulaConfig } from '../stores/settings-types';
 
 // Singleton parser — avoid re-instantiation per evaluation

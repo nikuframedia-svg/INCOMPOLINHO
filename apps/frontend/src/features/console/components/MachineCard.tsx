@@ -9,9 +9,9 @@ import { memo, useEffect, useState } from 'react';
 import type { MachineState } from '@/components/Industrial/MachineStatusIndicator';
 import { MachineStatusIndicator } from '@/components/Industrial/MachineStatusIndicator';
 import { ProgressBar } from '@/components/Industrial/ProgressBar';
-import type { Block } from '@/lib/engine';
-import { fmtMin } from '@/lib/engine';
+import type { Block } from '@/domain/types/scheduling';
 import type { ActiveDowntime, AndonCategory } from '@/stores/useAndonStore';
+import { fmtMin } from '@/utils/format';
 import './MachineCard.css';
 
 const CATEGORY_LABELS: Record<AndonCategory, string> = {

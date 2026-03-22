@@ -5,10 +5,10 @@
  */
 
 import { Trash2, Undo2 } from 'lucide-react';
-import { C } from '../../../lib/engine';
 import type { ReplanHistoryEntry } from '../hooks/useReplanHistory';
 import { Tag } from './atoms';
 import './ReplanTimeline.css';
+import { C } from '@/theme/color-bridge';
 
 interface ReplanTimelineProps {
   entries: ReplanHistoryEntry[];

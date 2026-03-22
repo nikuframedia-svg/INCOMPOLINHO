@@ -6,8 +6,8 @@ import type {
   MoveAction,
   ObjectiveProfile,
   OptResult,
-} from '../../../../lib/engine';
-import { C } from '../../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { PlanVersion } from '../../../../stores/usePlanVersionStore';
 import type { WhatIfActions, WhatIfState } from '../../hooks/useWhatIf';
 import { Card } from '../atoms';

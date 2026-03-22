@@ -1,5 +1,5 @@
 import type { CTPResult } from '@/domain/mrp/mrp-types';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import { mono } from '../utils/mrp-helpers';
 import { CTPChart } from './CTPChart';
 import { KCard } from './KCard';

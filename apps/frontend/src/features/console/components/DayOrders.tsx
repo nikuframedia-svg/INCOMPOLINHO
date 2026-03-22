@@ -3,8 +3,8 @@
  */
 
 import { Collapsible } from '@/components/Common/Collapsible';
-import type { Block } from '@/lib/engine';
-import { fmtMin } from '@/lib/engine';
+import type { Block } from '@/domain/types/scheduling';
+import { fmtMin } from '@/utils/format';
 import './DayOrders.css';
 
 interface DayOrdersProps {

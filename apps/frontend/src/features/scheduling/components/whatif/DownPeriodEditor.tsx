@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { C } from '../../../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { EditingDown } from './whatif-types';
 
 export function DownPeriodEditor({

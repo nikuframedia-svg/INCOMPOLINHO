@@ -6,14 +6,14 @@
  */
 
 import { useMemo } from 'react';
-import { useScheduleData } from '../../../hooks/useScheduleData';
 import type {
   Block,
   CoverageAuditResult,
   EngineData,
   EOp,
   ScheduleValidationReport,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { useScheduleData } from '../../../hooks/useScheduleData';
 
 export interface FeasibilitySummary {
   totalOps: number;

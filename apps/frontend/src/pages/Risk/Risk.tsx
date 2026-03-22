@@ -6,10 +6,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import type { RiskLevel, RiskRow } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { EmptyState } from '../../components/Common/EmptyState';
 import { SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import { C, type RiskLevel, type RiskRow } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars } from '../../utils/gridDensity';
 import './Risk.css';

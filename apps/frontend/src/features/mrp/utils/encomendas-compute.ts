@@ -1,6 +1,6 @@
 import type { MRPResult, MRPSkuViewResult } from '@/domain/mrp/mrp-types';
-import type { ActionMessage, Block, EngineData } from '@/lib/engine';
-import { getBlockQtyForOp, getBlocksForOp } from '@/lib/engine';
+import type { ActionMessage, Block, EngineData } from '@/domain/types/scheduling';
+import { getBlockQtyForOp, getBlocksForOp } from '@/utils/block-production';
 import { computeActionMessages } from '@/utils/mrp-compute-stubs';
 
 // ── Types ──────────────────────────────────────────────────

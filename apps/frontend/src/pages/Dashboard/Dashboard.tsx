@@ -1,11 +1,13 @@
 import React, { useCallback, useMemo } from 'react';
+import type { DayLoad } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
+import { opsByDayFromWorkforce } from '@/utils/workforce';
 import { EmptyState } from '../../components/Common/EmptyState';
 import { HeatmapLegend } from '../../components/Common/HeatmapLegend';
 import { SkeletonCard, SkeletonTable } from '../../components/Common/SkeletonLoader';
 import { PulseStrip } from '../../components/PulseStrip/PulseStrip';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import type { DayLoad } from '../../lib/engine';
-import { C, DAY_CAP, opsByDayFromWorkforce } from '../../lib/engine';
 import { useUIStore } from '../../stores/useUIStore';
 import { gridDensityVars, showDetailedCells } from '../../utils/gridDensity';
 import { utilColor } from '../../utils/utilColor';

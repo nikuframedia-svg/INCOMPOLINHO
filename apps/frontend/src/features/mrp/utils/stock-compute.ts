@@ -8,8 +8,8 @@ import type {
   MRPResult,
   MRPSkuViewRecord,
   MRPSkuViewResult,
-} from '@/lib/engine';
-import { C } from '@/lib/engine';
+} from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 export type StockRisk = 'stockout' | 'critical' | 'warning' | 'ok';
 

@@ -1,6 +1,7 @@
 import { Sparkles, Undo2 } from 'lucide-react';
-import type { Block, DayLoad, EMachine } from '../../../../lib/engine';
-import { C, DAY_CAP } from '../../../../lib/engine';
+import type { Block, DayLoad, EMachine } from '@/domain/types/scheduling';
+import { DAY_CAP } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { dot } from '../atoms';
 import { Row, Sec } from './OpDetailAtoms';
 

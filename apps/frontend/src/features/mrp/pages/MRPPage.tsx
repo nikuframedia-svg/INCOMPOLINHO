@@ -4,7 +4,6 @@ import { FeatureErrorBoundary } from '@/components/Common/FeatureErrorBoundary';
 import { SkeletonTable } from '@/components/Common/SkeletonLoader';
 import type { MRPRecord, MRPSkuViewRecord } from '@/domain/mrp/mrp-types';
 import { useScheduleData } from '@/hooks/useScheduleData';
-import { C } from '@/lib/engine';
 import { useUIActions, useUIStore } from '@/stores/useUIStore';
 import { MRPPageHeader } from '../components/MRPPageHeader';
 import { MRPStatusSection } from '../components/MRPStatusSection';
@@ -14,6 +13,7 @@ import { EncomendasTab } from '../tabs/EncomendasTab';
 import { MachineTableTab, SKUTableTab, ToolTableTab } from '../tabs/MRPTableTab';
 import { StocksTab } from '../tabs/StocksTab';
 import './MRPPage.css';
+import { C } from '@/theme/color-bridge';
 
 type Tab = 'stocks' | 'table' | 'encomendas' | 'ctp';
 type Filter = 'all' | 'stockout' | 'backlog';

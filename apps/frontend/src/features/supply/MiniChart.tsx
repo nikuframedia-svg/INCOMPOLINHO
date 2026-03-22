@@ -2,7 +2,7 @@
  * MiniChart — Mini stock projection SVG chart for supply detail row.
  */
 
-import { C } from '../../lib/engine';
+import { C } from '@/theme/color-bridge';
 import { fmtQty } from './supply-compute';
 
 const mono: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };

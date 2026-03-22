@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
-import type { Block, EMachine, ScheduleValidationReport } from '../../../lib/engine';
-import { S0, S1, S2 } from '../../../lib/engine';
+import type { Block, EMachine, ScheduleValidationReport } from '@/domain/types/scheduling';
+import { S0, S1, S2 } from '@/domain/types/scheduling';
 
 export interface GanttInteractionState {
   hov: string | null;

@@ -3,7 +3,7 @@
  */
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { C } from '@/lib/engine';
+import { C } from '@/theme/color-bridge';
 import type { ClientRiskGroup } from '../utils/encomendas-compute';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import { OrderRow } from './OrderRow';

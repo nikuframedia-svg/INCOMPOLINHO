@@ -2,8 +2,8 @@
  * OrderTableRow — Expandable order row with PeggingTree for OrdersPage.
  */
 
-import type { Block, EngineData } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { Block, EngineData } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import { fmtQty, mono } from '../utils/mrp-helpers';
 import type { OrderEntry } from '../utils/orders-compute';
 import { PeggingTree } from './PeggingTree';

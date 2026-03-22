@@ -4,8 +4,8 @@
  */
 
 import { useState } from 'react';
-import type { LateDeliveryEntry } from '@/lib/engine';
-import { C } from '@/lib/engine';
+import type { LateDeliveryEntry } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 export const DELAY_REASONS = [
   { value: 'tecnico', label: 'Tecnico — limitacao de capacidade' },

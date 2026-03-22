@@ -6,7 +6,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { Block, OptResult } from '../../../../lib/engine';
+import type { Block, OptResult } from '@/domain/types/scheduling';
 import { assessDeviation } from '../../api/firewallApi';
 import { createLedgerEntry } from '../../api/ledgerApi';
 import type { ProposedMove } from '../../hooks/useGanttDragDrop';

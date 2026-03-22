@@ -10,8 +10,8 @@ import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { useMemo } from 'react';
-import type { OptResult } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 
 echarts.use([RadarChart, RadarComponent, TooltipComponent, CanvasRenderer]);
 

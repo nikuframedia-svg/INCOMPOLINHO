@@ -6,8 +6,8 @@
  */
 
 import { useState } from 'react';
-import type { Block, EngineData, EOp, OptResult } from '../../../lib/engine';
-import { C } from '../../../lib/engine';
+import type { Block, EngineData, EOp, OptResult } from '@/domain/types/scheduling';
+import { C } from '@/theme/color-bridge';
 import type { StressTestResult } from '../hooks/useStressTest';
 import { useStressTest } from '../hooks/useStressTest';
 import { Card } from './atoms';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 
-import type { EngineData, FailureEvent } from '../../../lib/engine';
-import { buildResourceTimelines } from '../../../lib/engine';
+import type { EngineData, FailureEvent } from '@/domain/types/scheduling';
+import { buildResourceTimelines } from '@/utils/failure-timeline';
 
 export interface ScheduleFiltersState {
   mSt: Record<string, string>;

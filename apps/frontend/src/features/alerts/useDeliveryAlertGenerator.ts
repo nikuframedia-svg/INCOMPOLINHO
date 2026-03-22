@@ -7,9 +7,9 @@
 
 import { Parser } from 'expr-eval';
 import { useEffect, useRef } from 'react';
+import type { LateDeliveryEntry } from '@/domain/types/scheduling';
 import { defaultTierFromName } from '../../domain/configurable-logic-eval';
 import { useScheduleData } from '../../hooks/useScheduleData';
-import type { LateDeliveryEntry } from '../../lib/engine';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import type { Alert, AlertPriority } from './alert-types';
 import { useAlertStore } from './useAlertStore';

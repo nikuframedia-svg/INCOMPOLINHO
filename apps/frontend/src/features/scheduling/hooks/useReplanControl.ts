@@ -5,7 +5,6 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useScheduleData } from '../../../hooks/useScheduleData';
 import type {
   AutoReplanResult,
   Block,
@@ -15,7 +14,8 @@ import type {
   ObjectiveProfile,
   QuickValidateResult,
   ReplanProposal,
-} from '../../../lib/engine';
+} from '@/domain/types/scheduling';
+import { useScheduleData } from '../../../hooks/useScheduleData';
 import type { AutoReplanActions, AutoReplanState } from './useAutoReplan';
 import { useAutoReplan } from './useAutoReplan';
 import type { FailureActions, FailureState } from './useFailureManagement';
@@ -56,7 +56,9 @@ export function useReplanControl(
   tSt: Record<string, string>,
   moves: MoveAction[],
   applyMove: (opId: string, toM: string) => void,
-  replanTimelines: ReturnType<typeof import('../../../lib/engine').buildResourceTimelines> | null,
+  replanTimelines: ReturnType<
+    typeof import('@/utils/failure-timeline').buildResourceTimelines
+  > | null,
   profiles: ObjectiveProfile[],
   setRushOrders: React.Dispatch<
     React.SetStateAction<Array<{ toolId: string; sku: string; qty: number; deadline: number }>>
