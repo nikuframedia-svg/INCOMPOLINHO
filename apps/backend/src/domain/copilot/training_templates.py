@@ -2,6 +2,10 @@
 
 Contains system prompts, factory constants, scenario data, and message
 formatting helpers used by the training data generator.
+
+NOTE: This file exceeds the 400-LOC guideline intentionally.
+It contains static training data constants that are inherently
+cohesive and should not be split across files.
 """
 
 from __future__ import annotations

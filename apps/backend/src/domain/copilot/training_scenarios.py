@@ -1,6 +1,10 @@
 """Scenario generation functions for PP1 copilot training data.
 
 Each function generates training examples for a specific category.
+
+NOTE: This file exceeds the 400-LOC guideline intentionally.
+Scenario generators depend heavily on training_templates data
+and splitting would reduce readability without benefit.
 """
 
 from __future__ import annotations
