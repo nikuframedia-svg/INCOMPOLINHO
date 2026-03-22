@@ -1,7 +1,8 @@
 import type React from 'react';
 import { useState } from 'react';
+import { LAYER_THRESHOLD_1, LAYER_THRESHOLD_2 } from '@/utils/replan-helpers';
 import type { ReplanDispatchResult, ReplanLayer } from '../../../../lib/engine';
-import { C, LAYER_THRESHOLD_1, LAYER_THRESHOLD_2 } from '../../../../lib/engine';
+import { C } from '../../../../lib/engine';
 import { Card } from '../atoms';
 
 const DURATION_PRESETS = [

@@ -1,9 +1,16 @@
 // ═══════════════════════════════════════════════════════════
-//  INCOMPOL PLAN — Time Utilities
+//  Time Utilities
 //  Shift boundaries, minute formatting, absolute time
 // ═══════════════════════════════════════════════════════════
 
-import { DEFAULT_MO_CAPACITY, MINUTES_PER_DAY, S0, S1, S2, T1 } from '../constants.js';
+import {
+  DEFAULT_MO_CAPACITY,
+  MINUTES_PER_DAY,
+  S0,
+  S1,
+  S2,
+  T1,
+} from '@/domain/types/scheduling/constants';
 
 /** Format minutes as HH:MM */
 export function fmtMin(m: number): string {
@@ -28,21 +35,21 @@ export function getShift(min: number, thirdShift?: boolean): 'X' | 'Y' | 'Z' {
   if (min >= S0 && min < T1) return 'X';
   if (min >= T1 && min < S1) return 'Y';
   if (thirdShift) return 'Z';
-  return 'X'; // Outside S0..S1 and no 3rd shift → default to X (pre-shift / post-shift)
+  return 'X';
 }
 
 /** Get shift end minute for a given shift */
 export function getShiftEnd(shift: 'X' | 'Y' | 'Z'): number {
   if (shift === 'X') return T1;
   if (shift === 'Y') return S1;
-  return S2; // Z shift
+  return S2;
 }
 
 /** Get shift start minute for a given shift */
 export function getShiftStart(shift: 'X' | 'Y' | 'Z'): number {
   if (shift === 'X') return S0;
   if (shift === 'Y') return T1;
-  return S1; // Z shift
+  return S1;
 }
 
 /** Infer workday flags from day-of-week labels */
@@ -54,10 +61,6 @@ export function inferWorkdaysFromLabels(dnames: string[], nDays: number): boolea
 
 /**
  * Pad MO (operator capacity) array to target length.
- * Strategies:
- * - 'cyclic': Repeat fixture values cyclically
- * - 'nominal': Use fixture for first N days, then constant value
- * - 'custom': Same as nominal with user-defined constant
  */
 export function padMoArray(
   arr: number[],

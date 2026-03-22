@@ -39,7 +39,10 @@ export type {
   PartialReplanResult,
   QuickValidateResult,
   ReplanActionDetail,
+  ReplanDispatchInput,
+  ReplanDispatchResult,
   ReplanEventType,
+  ReplanLayer,
   ReplanProposal,
   ReplanSimulation,
   RightShiftInput,
@@ -49,6 +52,7 @@ export type {
   RiskLevel,
   RiskRow,
   RiskValidationInput,
+  ROPConfig,
   SAConfig,
   SAInput,
   SAResult,
@@ -60,6 +64,8 @@ export type {
   SchedulingContext,
   SchedulingStrategy,
   ScoringJob,
+  SupplyPriority,
+  SupplyPriorityConfig,
   TransformConfig,
   TwinValidationInput,
   UserReplanChoice,
@@ -180,8 +186,10 @@ export type {
   CapacityLogEntry,
   DeficitEvolution,
   OperationScore,
+  ScoreWeights,
   WorkContent,
 } from './scoring.js';
+export { DEFAULT_SCORE_WEIGHTS } from './scoring.js';
 // ── Shipping ──
 export type { OperationDeadline, ShippingCutoffConfig } from './shipping.js';
 export { DEFAULT_SHIPPING_CUTOFF } from './shipping.js';

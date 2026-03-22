@@ -9,10 +9,11 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDayData } from '@/hooks/useDayData';
 import { useScheduleData } from '@/hooks/useScheduleData';
 import type { Block } from '@/lib/engine';
-import { chooseLayer, DAY_CAP } from '@/lib/engine';
+import { DAY_CAP } from '@/lib/engine';
 import { useAndonDowntimes } from '@/stores/useAndonStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { chooseLayer } from '@/utils/replan-helpers';
 
 export function useConsolePageData() {
   const { dayData, loading, error } = useDayData();

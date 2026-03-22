@@ -5,7 +5,7 @@
 
 import type { CTPResult, MRPResult } from '@/domain/mrp/mrp-types';
 import type { EngineData } from '@/lib/engine';
-import { computeCTP, computeCTPSku } from '@/lib/engine';
+import { computeCTP, computeCTPSku } from '@/utils/mrp-compute-stubs';
 
 export interface CTPScenario {
   id: 'best' | 'tradeoff' | 'infeasible';

@@ -4,17 +4,6 @@
 //  Pure re-exports only — zero logic.
 // ═══════════════════════════════════════════════════════════
 
-// ── Legacy types (web-app specific) ──
-export type {
-  AreaCaps,
-  Decision,
-  ObjectiveProfile,
-  OpDay,
-} from '../domain/types/scheduling/legacy';
-// ── Color bridge: C and TC resolve CSS vars ──
-export { C, TC } from '../theme/color-bridge';
-// ── Legacy helper ──
-export { opsByDayFromWorkforce } from '../utils/workforce';
 // ── ALL types (canonical: domain/types/scheduling) ──
 export type {
   ActionMessage,
@@ -176,58 +165,57 @@ export type {
   WorkforceForecastWarning,
   WorkforceSuggestion,
   ZoneShiftDemand,
-} from './scheduling-core/index.js';
-// ── Constants ──
+} from '../domain/types/scheduling';
 // ── Defaults ──
-// ── Runtime values (infeasibility) ──
-// ── Pure functions (MRP) ──
-// ── Pure functions (failures) ──
-// ── Pure functions (replan layer chooser) ──
-// ── Pure utilities ──
 export {
-  buildResourceTimelines,
-  chooseLayer,
-  computeActionMessages,
-  computeCoverageMatrix,
-  computeCoverageMatrixSku,
-  computeCTP,
-  computeCTPSku,
-  computeMRP,
-  computeMRPSkuView,
-  computeROP,
-  computeROPSku,
-  computeSupplyPriority,
-  computeWhatIf,
   createEmptyFeasibilityReport,
-  DAY_CAP,
-  DEFAULT_CONSTRAINT_CONFIG,
-  DEFAULT_OEE,
-  DEFAULT_ROP_CONFIG,
   DEFAULT_SCORE_WEIGHTS,
-  DEFAULT_SHIPPING_CUTOFF,
-  DEFAULT_SUPPLY_PRIORITY_CONFIG,
-  DEFAULT_WORKFORCE_CONFIG,
-  deriveLegacyStatus,
   finalizeFeasibilityReport,
-  fmtMin,
-  fromAbs,
-  getBlockProductionForOp,
-  getBlockQtyForOp,
-  getBlocksForOp,
-  getCapacityFactor,
-  getShift,
-  getShiftEnd,
-  getShiftStart,
-  inferWorkdaysFromLabels,
-  isFullyDown,
-  LAYER_THRESHOLD_1,
-  LAYER_THRESHOLD_2,
-  legacyStatusToFailureEvents,
-  padMoArray,
+} from '../domain/types/scheduling';
+// ── Constants ──
+export {
+  DAY_CAP,
+  DEFAULT_OEE,
   S0,
   S1,
   S2,
   T1,
-  tci,
+} from '../domain/types/scheduling/constants';
+export { DEFAULT_CONSTRAINT_CONFIG } from '../domain/types/scheduling/constraints';
+// ── Legacy types (web-app specific) ──
+export type {
+  AreaCaps,
+  Decision,
+  ObjectiveProfile,
+  OpDay,
+} from '../domain/types/scheduling/legacy';
+export { DEFAULT_SHIPPING_CUTOFF } from '../domain/types/scheduling/shipping';
+export { DEFAULT_WORKFORCE_CONFIG } from '../domain/types/scheduling/workforce';
+// ── Color bridge: C and TC resolve CSS vars ──
+export { C, TC, tci } from '../theme/color-bridge';
+export {
+  getBlockProductionForOp,
+  getBlockQtyForOp,
+  getBlocksForOp,
+} from '../utils/block-production';
+// ── Pure functions (failures) ──
+export {
+  buildResourceTimelines,
+  deriveLegacyStatus,
+  getCapacityFactor,
+  isFullyDown,
+  legacyStatusToFailureEvents,
+} from '../utils/failure-timeline';
+// ── Pure utilities ──
+export {
+  fmtMin,
+  fromAbs,
+  getShift,
+  getShiftEnd,
+  getShiftStart,
+  inferWorkdaysFromLabels,
+  padMoArray,
   toAbs,
-} from './scheduling-core/index.js';
+} from '../utils/format';
+// ── Legacy helper ──
+export { opsByDayFromWorkforce } from '../utils/workforce';

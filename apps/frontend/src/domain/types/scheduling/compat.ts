@@ -395,6 +395,48 @@ export interface FullReplanResult {
   blocks: Block[];
 }
 
+// ── Replan Dispatch (stubs) ──────────────────────────────
+
+export type ReplanLayer = 1 | 2 | 3 | 4;
+
+export interface ReplanDispatchInput {
+  eventType: ReplanEventType;
+  machineId?: string;
+  delayMin?: number;
+  blocks: Block[];
+}
+
+export interface ReplanDispatchResult {
+  layer: ReplanLayer;
+  layerName: string;
+  blocks: Block[];
+  decisions: DecisionEntry[];
+  actions: AutoReplanAction[];
+  kpis: Record<string, unknown>;
+  emergencyNightShift?: boolean;
+}
+
+// ── MRP extras (stubs) ──────────────────────────────────
+
+export interface ROPConfig {
+  reviewPeriodDays: number;
+  leadTimeDays: number;
+  serviceLevel: number;
+  demandStdDevFactor: number;
+}
+
+export interface SupplyPriority {
+  opId: string;
+  sku: string;
+  priority: number;
+  reason: string;
+}
+
+export interface SupplyPriorityConfig {
+  weights: Record<string, number>;
+  rules: Array<{ field: string; operator: string; value: number; boost: number }>;
+}
+
 // ── Miscellaneous stubs ─────────────────────────────────
 
 export interface MoveableOp {

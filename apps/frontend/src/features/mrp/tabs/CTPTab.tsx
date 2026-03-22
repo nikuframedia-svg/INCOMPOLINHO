@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { CTPResult, MRPResult, MRPSkuViewResult } from '@/domain/mrp/mrp-types';
 import type { EngineData } from '@/lib/engine';
-import { C, computeCTP, computeCTPSku } from '@/lib/engine';
+import { C } from '@/lib/engine';
+import { computeCTP, computeCTPSku } from '@/utils/mrp-compute-stubs';
 import { CTPContextPanel } from '../components/CTPContextPanel';
 import { CTPResultPanel } from '../components/CTPResultPanel';
 

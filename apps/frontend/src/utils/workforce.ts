@@ -2,8 +2,8 @@
  * Workforce helper — moved from engine.ts.
  */
 
+import type { ZoneShiftDemand } from '@/domain/types/scheduling';
 import type { OpDay } from '@/domain/types/scheduling/legacy';
-import type { ZoneShiftDemand } from '@/lib/scheduling-core/index';
 
 export function opsByDayFromWorkforce(wfd: ZoneShiftDemand[], nDays: number): OpDay[] {
   const result: OpDay[] = Array.from({ length: nDays }, () => ({ pg1: 0, pg2: 0, total: 0 }));

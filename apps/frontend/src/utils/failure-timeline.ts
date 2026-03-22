@@ -1,9 +1,6 @@
 // ═══════════════════════════════════════════════════════════
-//  INCOMPOL PLAN — Failure Timeline Builder
-//
-//  Converts FailureEvent[] into per-resource ResourceTimeline
-//  maps (per-day-per-shift capacity), and provides backward-
-//  compatible legacy status derivation.
+//  Failure Timeline Builder
+//  Converts FailureEvent[] into per-resource ResourceTimeline maps.
 // ═══════════════════════════════════════════════════════════
 
 import type {
@@ -12,16 +9,35 @@ import type {
   FailureEvent,
   ResourceTimeline,
   ShiftId,
-} from '../types/failure.js';
-import { isShiftInFailureWindow } from './shift-utils.js';
+} from '@/domain/types/scheduling';
 
-// ── Default (healthy) slot ───────────────────────────────
+// ── Shift-in-failure-window utility ──
+
+function isShiftInFailureWindow(
+  fe: FailureEvent,
+  day: number,
+  shift: ShiftId,
+  activeShifts: ShiftId[],
+): boolean {
+  if (day < fe.startDay || day > fe.endDay) return false;
+  const si = activeShifts.indexOf(shift);
+  if (si < 0) return false;
+  if (day === fe.startDay && fe.startShift) {
+    const startIdx = activeShifts.indexOf(fe.startShift);
+    if (startIdx >= 0 && si < startIdx) return false;
+  }
+  if (day === fe.endDay && fe.endShift) {
+    const endIdx = activeShifts.indexOf(fe.endShift);
+    if (endIdx >= 0 && si > endIdx) return false;
+  }
+  return true;
+}
+
+// ── Default (healthy) slot ──
 
 function mkDefault(): DayShiftCapacity {
   return { status: 'running', capacityFactor: 1.0, failureIds: [] };
 }
-
-// ── Status from capacity factor ──────────────────────────
 
 function statusFromFactor(cf: number): DayShiftStatus {
   if (cf <= 0) return 'down';
@@ -29,8 +45,6 @@ function statusFromFactor(cf: number): DayShiftStatus {
   if (cf < 1.0) return 'degraded';
   return 'running';
 }
-
-// ── Build a single empty timeline ────────────────────────
 
 function mkEmptyTimeline(nDays: number, activeShifts: ShiftId[]): ResourceTimeline {
   const tl: ResourceTimeline = [];
@@ -42,15 +56,8 @@ function mkEmptyTimeline(nDays: number, activeShifts: ShiftId[]): ResourceTimeli
   return tl;
 }
 
-// ══════════════════════════════════════════════════════════
-//  PUBLIC API
-// ══════════════════════════════════════════════════════════
-
 /**
  * Convert FailureEvent[] into per-resource ResourceTimeline maps.
- *
- * When multiple failures overlap on the same resource/day/shift,
- * the **minimum** capacityFactor is used (worst case).
  */
 export function buildResourceTimelines(
   failures: FailureEvent[],
@@ -63,8 +70,6 @@ export function buildResourceTimelines(
   const activeShifts: ShiftId[] = thirdShift ? ['X', 'Y', 'Z'] : ['X', 'Y'];
   const machineTimelines: Record<string, ResourceTimeline> = {};
   const toolTimelines: Record<string, ResourceTimeline> = {};
-
-  // Track seen failure IDs per slot with Sets for O(1) dedup
   const idSets = new Map<DayShiftCapacity, Set<string>>();
 
   for (const fe of failures) {
@@ -73,7 +78,6 @@ export function buildResourceTimelines(
       store[fe.resourceId] = mkEmptyTimeline(nDays, activeShifts);
     }
     const tl = store[fe.resourceId];
-
     const dStart = Math.max(fe.startDay, 0);
     const dEnd = Math.min(fe.endDay, nDays - 1);
 
@@ -102,10 +106,6 @@ export function buildResourceTimelines(
 
 /**
  * Derive legacy-compatible binary status maps from failure events.
- *
- * A resource is 'down' in the legacy sense only if EVERY day in
- * the horizon has capacityFactor === 0 for ALL active shifts.
- * Otherwise it is 'running' (per-day logic handles partial failures).
  */
 export function deriveLegacyStatus(
   failures: FailureEvent[],
@@ -144,11 +144,7 @@ export function deriveLegacyStatus(
 }
 
 /**
- * Backward compatibility: convert legacy binary status maps into
- * equivalent FailureEvent[].
- *
- * A 'down' resource becomes a FailureEvent spanning day 0 to nDays-1,
- * severity 'total', capacityFactor 0.
+ * Convert legacy binary status maps into equivalent FailureEvent[].
  */
 export function legacyStatusToFailureEvents(
   mSt: Record<string, string>,
@@ -195,11 +191,9 @@ export function legacyStatusToFailureEvents(
   return events;
 }
 
-// ── Utility: check if resource is fully down for a range ──
-
 /**
- * Returns true if the resource has zero capacity for EVERY active
- * shift across the given day range [fromDay, toDay] inclusive.
+ * Returns true if the resource has zero capacity for every active shift
+ * across the given day range [fromDay, toDay] inclusive.
  */
 export function isFullyDown(
   timeline: ResourceTimeline | undefined,
