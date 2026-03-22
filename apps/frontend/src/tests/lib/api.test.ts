@@ -9,6 +9,7 @@ vi.mock('../../lib/fetchWithTimeout', () => ({
   fetchWithTimeout: vi.fn(),
 }));
 
+import type { NikufraDataPayload, ScheduleBlock, ScheduleSettings } from '@/lib/api';
 import { scheduleCTPApi, scheduleFullApi, scheduleReplanApi, scheduleRunApi } from '@/lib/api';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 
@@ -28,7 +29,10 @@ describe('scheduleFullApi', () => {
     const payload = { blocks: [], kpis: { total_blocks: 0 } };
     mockFetch.mockResolvedValueOnce(fakeResponse(payload));
 
-    const req = { nikufra_data: { foo: 1 }, settings: { dispatchRule: 'EDD' } };
+    const req = {
+      nikufra_data: { foo: 1 } as unknown as NikufraDataPayload,
+      settings: { dispatchRule: 'EDD' } as ScheduleSettings,
+    };
     const result = await scheduleFullApi(req);
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -46,9 +50,9 @@ describe('scheduleFullApi', () => {
   it('throws on HTTP 500', async () => {
     mockFetch.mockResolvedValueOnce(fakeResponse('Internal Error', false, 500));
 
-    await expect(scheduleFullApi({ nikufra_data: {}, settings: {} })).rejects.toThrow(
-      /Schedule full HTTP 500/,
-    );
+    await expect(
+      scheduleFullApi({ nikufra_data: {} as NikufraDataPayload, settings: {} as ScheduleSettings }),
+    ).rejects.toThrow(/Schedule full HTTP 500/);
   });
 });
 
@@ -57,7 +61,10 @@ describe('scheduleRunApi', () => {
     const payload = { blocks: [], n_blocks: 0 };
     mockFetch.mockResolvedValueOnce(fakeResponse(payload));
 
-    const result = await scheduleRunApi({ x: 1 }, { rule: 'EDD' });
+    const result = await scheduleRunApi(
+      { x: 1 } as unknown as NikufraDataPayload,
+      { rule: 'EDD' } as ScheduleSettings,
+    );
 
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/v1/pipeline/run'),
@@ -74,7 +81,7 @@ describe('scheduleReplanApi', () => {
     mockFetch.mockResolvedValueOnce(fakeResponse(payload));
 
     const req = {
-      blocks: [{ id: 'b1' }],
+      blocks: [{ id: 'b1' }] as unknown as ScheduleBlock[],
       disruption: { type: 'machine_down', resource_id: 'PRM019', start_day: 0, end_day: 2 },
     };
     const result = await scheduleReplanApi(req);
@@ -93,7 +100,12 @@ describe('scheduleCTPApi', () => {
     const payload = { scenarios: [], solve_time_s: 0.5 };
     mockFetch.mockResolvedValueOnce(fakeResponse(payload));
 
-    const req = { nikufra_data: {}, sku: 'SKU001', quantity: 1000, target_day: 5 };
+    const req = {
+      nikufra_data: {} as NikufraDataPayload,
+      sku: 'SKU001',
+      quantity: 1000,
+      target_day: 5,
+    };
     const result = await scheduleCTPApi(req);
 
     expect(mockFetch).toHaveBeenCalledWith(

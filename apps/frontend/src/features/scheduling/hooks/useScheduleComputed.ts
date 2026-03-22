@@ -16,6 +16,7 @@ import type {
   MoveAction,
 } from '@/domain/types/scheduling';
 import { getCachedNikufraData, useScheduleData } from '../../../hooks/useScheduleData';
+import type { ScheduleBlock } from '../../../lib/api';
 import { scheduleReplanApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 import { useScheduleValidation } from './useScheduleValidation';
@@ -112,7 +113,7 @@ export function useScheduleComputed({
     if (!nikufraData) return null;
     try {
       const response = await scheduleReplanApi({
-        blocks: blocks as unknown as Record<string, unknown>[],
+        blocks: blocks as unknown as ScheduleBlock[],
         disruption: {
           type: 'auto_replan',
           resource_id: '',

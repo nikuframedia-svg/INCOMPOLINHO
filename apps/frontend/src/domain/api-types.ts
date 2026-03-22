@@ -588,3 +588,39 @@ export interface WorkforceForecastResult {
   has_warnings: boolean;
   has_critical: boolean;
 }
+
+// ── Request payload types ────────────────────────────────────
+
+/** Serialized NikufraData payload sent to backend. */
+export interface NikufraDataPayload {
+  operations: Array<{
+    id: string;
+    sku: string;
+    nm: string;
+    m: string;
+    t: string;
+    pH: number;
+    d: (number | null)[];
+    [key: string]: unknown;
+  }>;
+  dates?: string[];
+  [key: string]: unknown;
+}
+
+/** Scheduling engine settings sent to backend. */
+export interface ScheduleSettings {
+  dispatchRule?: string;
+  thirdShift?: boolean;
+  maxTier?: number;
+  orderBased?: boolean;
+  demandSemantics?: string;
+  cpsat_time_limit?: number;
+  [key: string]: unknown;
+}
+
+/** What-If scenario mutation. */
+export interface WhatIfMutation {
+  type: string;
+  target: string;
+  [key: string]: unknown;
+}

@@ -14,6 +14,7 @@ import type {
   QuickValidateResult,
 } from '@/domain/types/scheduling';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import type { WhatIfMutation } from '../../../lib/api';
 import { scheduleWhatIfApi } from '../../../lib/api';
 
 export interface WhatIfScenario {
@@ -142,7 +143,10 @@ export function useWhatIf(
       }
 
       setProg(30);
-      const response = await scheduleWhatIfApi({ nikufra_data: nikufraData, mutations }, 120_000);
+      const response = await scheduleWhatIfApi(
+        { nikufra_data: nikufraData, mutations: mutations as WhatIfMutation[] },
+        120_000,
+      );
       setProg(90);
 
       // Map response to OptResult shape

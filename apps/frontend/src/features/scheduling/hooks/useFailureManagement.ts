@@ -11,6 +11,7 @@ import type {
   MoveAction,
 } from '@/domain/types/scheduling';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import type { ScheduleBlock } from '../../../lib/api';
 import { scheduleReplanApi } from '../../../lib/api';
 import { useToastStore } from '../../../stores/useToastStore';
 
@@ -164,7 +165,7 @@ export function useFailureManagement(
       };
 
       const response = await scheduleReplanApi({
-        blocks: blocks as unknown as Record<string, unknown>[],
+        blocks: blocks as unknown as ScheduleBlock[],
         disruption,
         settings: { nikufra_data: nikufraData },
       });

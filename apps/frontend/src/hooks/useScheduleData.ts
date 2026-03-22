@@ -30,6 +30,7 @@ import type {
   MRPSkuViewResult as BackendMRPSkuViewResult,
   ROPSummary as BackendROPSummary,
   CoverageMatrixSkuResult,
+  NikufraDataPayload,
   QuickValidateResult,
   ReplanProposal,
   ScoreResult,
@@ -72,7 +73,7 @@ export interface BackendAnalytics {
 }
 
 export interface CacheEntry {
-  nikufraData: Record<string, unknown>;
+  nikufraData: NikufraDataPayload;
   engine: EngineData;
   blocks: Block[];
   autoMoves: MoveAction[];
@@ -87,7 +88,7 @@ export interface CacheEntry {
 }
 
 interface DataSourceLike {
-  getNikufraData?: () => Record<string, unknown> | null;
+  getNikufraData?: () => NikufraDataPayload | null;
   getPlanState?: () => Promise<unknown>;
 }
 
@@ -189,7 +190,7 @@ function applyPreStart(entry: CacheEntry, data: EngineData): CacheEntry {
 
 export interface ScheduleData {
   /** Raw nikufra_data for backend API calls (optimize, what-if, replan) */
-  nikufraData: Record<string, unknown> | null;
+  nikufraData: NikufraDataPayload | null;
   engine: EngineData | null;
   blocks: Block[];
   autoMoves: MoveAction[];
@@ -394,7 +395,7 @@ export function useScheduleData(): ScheduleData {
 }
 
 /** Get cached nikufra_data for backend API calls (optimize, what-if, replan). */
-export function getCachedNikufraData(): Record<string, unknown> | null {
+export function getCachedNikufraData(): NikufraDataPayload | null {
   return cached?.nikufraData ?? null;
 }
 

@@ -6,6 +6,7 @@
  * - Schedule, KPIs → NOT fabricated here; computed by NikufraEngine at runtime
  */
 
+import type { NikufraDataPayload } from '../domain/api-types';
 import type {
   NikufraData,
   NikufraTool,
@@ -143,9 +144,9 @@ export const MockDataSource: IDataSource = {
   },
 
   // NikufraData for backend pipeline (returns null if no user-loaded data)
-  getNikufraData(): Record<string, unknown> | null {
+  getNikufraData(): NikufraDataPayload | null {
     const userData = useDataStore.getState().nikufraData;
-    return userData ? (userData as unknown as Record<string, unknown>) : null;
+    return userData ? (userData as unknown as NikufraDataPayload) : null;
   },
 
   // Planning Engine — transforms nikufra_data.json SHORT→LONG names

@@ -20,13 +20,16 @@ import type {
   LateDeliveryAnalysis,
   MRPResult,
   MRPSkuViewResult,
+  NikufraDataPayload,
   ParseMeta,
   QuickValidateResult,
   ReplanProposal,
   ROPSummary,
   ScheduleBlock,
+  ScheduleSettings,
   ScoreResult,
   ValidationResult,
+  WhatIfMutation,
   WorkforceForecastResult,
 } from '../domain/api-types';
 import { fetchWithTimeout } from './fetchWithTimeout';
@@ -62,6 +65,7 @@ export type {
   MRPSkuViewRecord,
   MRPSkuViewResult,
   MRPSummary,
+  NikufraDataPayload,
   ParseMeta,
   QuickValidateResult,
   RCCPEntry,
@@ -69,12 +73,14 @@ export type {
   ROPRecord,
   ROPSummary,
   ScheduleBlock,
+  ScheduleSettings,
   ScheduleViolation,
   ScoreResult,
   StockProjectionPoint,
   TwinOutput,
   ValidationResult,
   ValidationSummary,
+  WhatIfMutation,
   WorkforceDemandEntry,
   WorkforceForecastResult,
   WorkforceForecastWarning,
@@ -130,14 +136,8 @@ export interface FullScheduleResponse {
 // ── Schedule Full ────────────────────────────────────────────
 
 export interface ScheduleFullRequest {
-  nikufra_data: Record<string, unknown>;
-  settings: {
-    dispatchRule?: string;
-    thirdShift?: boolean;
-    maxTier?: number;
-    orderBased?: boolean;
-    demandSemantics?: string;
-  };
+  nikufra_data: NikufraDataPayload;
+  settings: ScheduleSettings;
 }
 
 /**
@@ -167,8 +167,8 @@ export async function scheduleFullApi(
 // ── Schedule Run (lighter, no analytics) ─────────────────────
 
 export async function scheduleRunApi(
-  nikufraData: Record<string, unknown>,
-  settings: Record<string, unknown>,
+  nikufraData: NikufraDataPayload,
+  settings: ScheduleSettings,
   timeoutMs = 30_000,
 ): Promise<FullScheduleResponse> {
   const res = await fetchWithTimeout(
@@ -190,7 +190,7 @@ export async function scheduleRunApi(
 // ── Replan (Sprint 3 — stub) ─────────────────────────────────
 
 export interface ReplanRequest {
-  blocks: Record<string, unknown>[];
+  blocks: ScheduleBlock[];
   disruption: {
     type: string;
     resource_id: string;
@@ -198,7 +198,7 @@ export interface ReplanRequest {
     end_day: number;
     capacity_factor?: number;
   };
-  settings?: Record<string, unknown>;
+  settings?: ScheduleSettings;
 }
 
 /** POST /v1/schedule/replan — re-solve with disruption. */
@@ -225,9 +225,9 @@ export async function scheduleReplanApi(
 // ── What-If (Sprint 3 — stub) ────────────────────────────────
 
 export interface WhatIfRequest {
-  nikufra_data: Record<string, unknown>;
-  mutations: Record<string, unknown>[];
-  settings?: Record<string, unknown>;
+  nikufra_data: NikufraDataPayload;
+  mutations: WhatIfMutation[];
+  settings?: ScheduleSettings;
 }
 
 export interface WhatIfDelta {
@@ -268,10 +268,10 @@ export async function scheduleWhatIfApi(
 // ── Optimize (Sprint 3 — stub) ───────────────────────────────
 
 export interface OptimizeRequest {
-  nikufra_data: Record<string, unknown>;
+  nikufra_data: NikufraDataPayload;
   objective_weights?: Record<string, number>;
   n_alternatives?: number;
-  settings?: Record<string, unknown>;
+  settings?: ScheduleSettings;
 }
 
 export interface OptimizeAlternative {
@@ -339,11 +339,11 @@ export interface CTPApiResponse {
 /** POST /v1/schedule/ctp — capable-to-promise analysis. */
 export async function scheduleCTPApi(
   request: {
-    nikufra_data: Record<string, unknown>;
+    nikufra_data: NikufraDataPayload;
     sku: string;
     quantity: number;
     target_day: number;
-    settings?: Record<string, unknown>;
+    settings?: ScheduleSettings;
   },
   timeoutMs = 30_000,
 ): Promise<CTPApiResponse> {

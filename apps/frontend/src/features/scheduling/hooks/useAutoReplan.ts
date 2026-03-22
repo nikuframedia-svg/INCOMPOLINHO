@@ -16,6 +16,7 @@ import type {
   ReplanSimulation,
 } from '@/domain/types/scheduling';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import type { ScheduleBlock } from '../../../lib/api';
 import { scheduleReplanApi } from '../../../lib/api';
 import { useSettingsStore } from '../../../stores/useSettingsStore';
 import { useToastStore } from '../../../stores/useToastStore';
@@ -113,7 +114,7 @@ export function useAutoReplan(
         Object.entries(mSt).find(([, st]) => st === 'down')?.[0] ?? data.machines[0]?.id ?? '';
 
       const response = await scheduleReplanApi({
-        blocks: [] as unknown as Record<string, unknown>[],
+        blocks: [] as ScheduleBlock[],
         disruption: {
           type: 'breakdown',
           resource_id: downMachine,

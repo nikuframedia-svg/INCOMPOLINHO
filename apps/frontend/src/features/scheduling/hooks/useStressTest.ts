@@ -8,6 +8,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { Block, EngineData, EOp, OptResult } from '@/domain/types/scheduling';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import type { ScheduleBlock } from '../../../lib/api';
 import { scheduleReplanApi } from '../../../lib/api';
 
 export interface StressTestResult {
@@ -109,7 +110,7 @@ async function runSingleTest(
 ): Promise<StressTestResult> {
   const response = await scheduleReplanApi(
     {
-      blocks: blocks as unknown as Record<string, unknown>[],
+      blocks: blocks as unknown as ScheduleBlock[],
       disruption: def.disruption,
     },
     60_000,

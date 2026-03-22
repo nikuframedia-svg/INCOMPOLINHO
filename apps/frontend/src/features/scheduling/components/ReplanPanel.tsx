@@ -17,6 +17,7 @@ import type {
 } from '@/domain/types/scheduling';
 import type { buildResourceTimelines } from '@/utils/failure-timeline';
 import { getCachedNikufraData } from '../../../hooks/useScheduleData';
+import type { ScheduleBlock } from '../../../lib/api';
 import { scheduleReplanApi } from '../../../lib/api';
 import { useReplanOrchestrator } from '../hooks/useReplanOrchestrator';
 import { OBJECTIVE_PROFILES } from './constants';
@@ -103,7 +104,7 @@ export function ReplanView({
         if (!nikufraData) throw new Error('No schedule data cached');
 
         const response = await scheduleReplanApi({
-          blocks: blocks as unknown as Record<string, unknown>[],
+          blocks: blocks as unknown as ScheduleBlock[],
           disruption: {
             type: delayMin >= 510 ? 'catastrophe' : 'breakdown',
             resource_id: machineId,
