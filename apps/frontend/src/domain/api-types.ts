@@ -454,6 +454,66 @@ export interface CoverageMatrixSkuResult {
   cells: CoverageSkuCell[][];
 }
 
+// ── Parse Meta ───────────────────────────────────────────
+
+export interface ParseMeta {
+  rows: number;
+  skus: number;
+  warnings: string[];
+  [key: string]: unknown;
+}
+
+// ── Journal Summary ──────────────────────────────────────
+
+export interface JournalDrop {
+  step: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface JournalSummary {
+  total_entries: number;
+  by_severity: Record<string, number>;
+  by_step: Record<string, number>;
+  drops: JournalDrop[];
+  has_errors: boolean;
+  has_warnings: boolean;
+}
+
+// ── Auto Move / Auto Advance ─────────────────────────────
+
+export interface AutoMoveEntry {
+  op_id: string;
+  from_machine: string;
+  to_machine: string;
+  day_idx: number;
+  reason: string;
+  [key: string]: unknown;
+}
+
+export interface AutoAdvanceEntry {
+  op_id: string;
+  from_day: number;
+  to_day: number;
+  reason: string;
+  [key: string]: unknown;
+}
+
+// ── Coverage Matrix (tool-level) ─────────────────────────
+
+export interface CoverageMatrixCell {
+  tool_code: string;
+  day_index: number;
+  days_of_supply: number;
+  color_band: string;
+}
+
+export interface CoverageMatrixResult {
+  tools: Record<string, unknown>[];
+  days: string[];
+  cells: CoverageMatrixCell[][];
+}
+
 // ── Quick Validate ────────────────────────────────────────────
 
 export interface QuickValidateResult {

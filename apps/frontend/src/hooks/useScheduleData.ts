@@ -65,7 +65,7 @@ export interface BackendAnalytics {
   mrpRopSku: BackendROPSummary | null;
   mrpActions: BackendActionsSummary | null;
   mrpCoverageSku: CoverageMatrixSkuResult | null;
-  mrpCoverageMatrix: Record<string, unknown> | null;
+  mrpCoverageMatrix: FullScheduleResponse['mrp_coverage_matrix'];
   quickValidate: QuickValidateResult | null;
   genDecisions: ReplanProposal[] | null;
   workforceForecast: WorkforceForecastResult | null;

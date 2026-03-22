@@ -8,14 +8,19 @@
 import { config } from '../config';
 import type {
   ActionMessagesSummary,
+  AutoAdvanceEntry,
+  AutoMoveEntry,
   CoverageAuditResult,
+  CoverageMatrixResult,
   CoverageMatrixSkuResult,
   DayLoad,
   DecisionEntry,
   FeasibilityReport,
+  JournalSummary,
   LateDeliveryAnalysis,
   MRPResult,
   MRPSkuViewResult,
+  ParseMeta,
   QuickValidateResult,
   ReplanProposal,
   ROPSummary,
@@ -31,9 +36,13 @@ export type {
   ActionMessage,
   ActionMessagesSummary,
   AffectedOp,
+  AutoAdvanceEntry,
+  AutoMoveEntry,
   CausingBlock,
   CoverageAuditResult,
   CoverageAuditRow,
+  CoverageMatrixCell,
+  CoverageMatrixResult,
   CoverageMatrixSkuEntry,
   CoverageMatrixSkuResult,
   CoverageSkuCell,
@@ -41,6 +50,8 @@ export type {
   DecisionEntry,
   FeasibilityReport,
   InfeasibilityEntry,
+  JournalDrop,
+  JournalSummary,
   LateDeliveryAnalysis,
   LateDeliveryEntry,
   MRPDayBucket,
@@ -51,6 +62,7 @@ export type {
   MRPSkuViewRecord,
   MRPSkuViewResult,
   MRPSummary,
+  ParseMeta,
   QuickValidateResult,
   RCCPEntry,
   ReplanProposal,
@@ -87,13 +99,13 @@ export interface FullScheduleResponse {
   kpis: PipelineKPIs;
   decisions: DecisionEntry[];
   feasibility_report: FeasibilityReport | null;
-  auto_moves: Record<string, unknown>[];
-  auto_advances: Record<string, unknown>[];
+  auto_moves: AutoMoveEntry[];
+  auto_advances: AutoAdvanceEntry[];
   solve_time_s: number;
   solver_used: string;
   n_blocks: number;
   n_ops: number;
-  parse_meta: Record<string, unknown> | null;
+  parse_meta: ParseMeta | null;
   parse_warnings: string[];
   nikufra_data: Record<string, unknown> | null;
   engine_data: Record<string, unknown> | null;
@@ -108,11 +120,11 @@ export interface FullScheduleResponse {
   mrp_rop_sku: ROPSummary | null;
   mrp_actions: ActionMessagesSummary | null;
   mrp_coverage_sku: CoverageMatrixSkuResult | null;
-  mrp_coverage_matrix: Record<string, unknown> | null;
+  mrp_coverage_matrix: CoverageMatrixResult | null;
   quick_validate: QuickValidateResult | null;
   gen_decisions: ReplanProposal[] | null;
   workforce_forecast: WorkforceForecastResult | null;
-  journal_summary: Record<string, unknown> | null;
+  journal_summary: JournalSummary | null;
 }
 
 // ── Schedule Full ────────────────────────────────────────────
@@ -218,10 +230,17 @@ export interface WhatIfRequest {
   settings?: Record<string, unknown>;
 }
 
+export interface WhatIfDelta {
+  otd_change: number;
+  score_change: number;
+  setup_change: number;
+  [key: string]: unknown;
+}
+
 export interface WhatIfResponse {
-  baseline: Record<string, unknown> | null;
-  scenario: Record<string, unknown> | null;
-  delta: Record<string, unknown> | null;
+  baseline: FullScheduleResponse | null;
+  scenario: FullScheduleResponse | null;
+  delta: WhatIfDelta | null;
   solve_time_s: number;
 }
 
@@ -257,8 +276,8 @@ export interface OptimizeRequest {
 
 export interface OptimizeAlternative {
   objective: string;
-  blocks: Record<string, unknown>[];
-  score: Record<string, unknown> | null;
+  blocks: ScheduleBlock[];
+  score: ScoreResult | null;
   solve_time_s: number;
   n_blocks: number;
 }

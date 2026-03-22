@@ -89,7 +89,7 @@ export function useOptimizationControl(
 
       // Map backend alternatives to OptResult shape
       const results: OptResult[] = response.alternatives.map((alt) => {
-        const s = (alt.score as Record<string, number>) ?? {};
+        const s = (alt.score as unknown as Record<string, number>) ?? {};
         return {
           blocks: alt.blocks as unknown as Block[],
           moves: [] as MoveAction[],
