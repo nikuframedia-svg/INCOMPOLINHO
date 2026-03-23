@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any
 
+from ..scheduling.constraints import CalcoTimeline, SetupCrew, ToolTimeline
 from ..scheduling.types import (
     AdvanceAction,
     Block,
@@ -495,26 +496,48 @@ def _apply_advances(
 
 
 def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block]:
-    """Push each block to the latest possible day without violating OTD-D or capacity.
+    """Push each block to the latest possible day without violating OTD-D,
+    capacity, or constraints (ToolTimeline, CalcoTimeline, SetupCrew).
 
     Post-processing step: the ASAP schedule is already feasible (0 overflow,
     OTD-D 100%). We slide blocks later to reduce WIP / stock holding.
 
-    Constraint: for every op, cumProd(d) >= cumDemand(d) at every demand day d.
+    Processes blocks latest-EDD-first so that late-deadline blocks claim late
+    days first, freeing early days for early-deadline blocks.
     """
     from collections import defaultdict
+
+    MINUTES_PER_DAY = 1440
+    S0 = 420  # shift X start
 
     workdays = engine_data.workdays
     day_cap = DAY_CAP
     ops = engine_data.ops
+    tool_map = engine_data.tool_map
 
-    # Build capacity usage map: machine → day → minutes used
+    # ── Phase 0: Rebuild constraint state from current schedule ──
+    tool_tl = ToolTimeline()
+    calco_tl = CalcoTimeline()
+    setup_crew = SetupCrew()
+
+    for b in blocks:
+        if b.type != "ok":
+            continue
+        abs_s = b.day_idx * MINUTES_PER_DAY + b.start_min
+        abs_e = b.day_idx * MINUTES_PER_DAY + b.end_min
+        tool_tl.book(b.tool_id, abs_s, abs_e, b.machine_id)
+        tool = tool_map.get(b.tool_id)
+        if tool and tool.calco:
+            calco_tl.book(tool.calco, abs_s, abs_e, b.machine_id)
+        if b.setup_s is not None and b.setup_e is not None:
+            setup_crew.book(b.setup_s, b.setup_e, b.machine_id)
+
+    # ── Phase 1: Capacity map + OTD-D slack (same logic as before) ──
     machine_day_used: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
     for b in blocks:
         if b.type == "ok":
             machine_day_used[b.machine_id][b.day_idx] += b.prod_min + b.setup_min
 
-    # Build per-op cumulative demand: op_id → [(day, cumDemand)]
     op_cum_demand: dict[str, list[tuple[int, int]]] = {}
     for op in ops:
         cum = 0
@@ -526,24 +549,16 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         if points:
             op_cum_demand[op.id] = points
 
-    # Build per-op cumulative production (current schedule)
-    # op_id → sorted list of (day, qty)
     op_prod_blocks: dict[str, list[Block]] = defaultdict(list)
     for b in blocks:
         if b.type == "ok" and b.qty > 0:
-            # Twin blocks: attribute production to all output ops
             if b.outputs:
                 for out in b.outputs:
                     op_prod_blocks[out.op_id].append(b)
             else:
                 op_prod_blocks[b.op_id].append(b)
 
-    # For each op, compute slack at each demand day: slack = cumProd - cumDemand
-    # A block can shift from day_orig to day_new if for all demand days d
-    # in (day_orig, day_new]: slack(d) >= block.qty (we're removing block.qty
-    # from the window (day_orig, day_new])
     def _compute_cum_prod(op_id: str) -> dict[int, int]:
-        """Cumulative production for op up to each demand day."""
         demand_points = op_cum_demand.get(op_id, [])
         if not demand_points:
             return {}
@@ -556,11 +571,10 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
             else:
                 prod_items.append((b.day_idx, b.qty))
         prod_items.sort()
-
         result: dict[int, int] = {}
         cum = 0
         pi = 0
-        for day, cum_dem in demand_points:
+        for day, _cum_dem in demand_points:
             while pi < len(prod_items) and prod_items[pi][0] <= day:
                 cum += prod_items[pi][1]
                 pi += 1
@@ -568,30 +582,22 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         return result
 
     def _max_shift_day(b: Block, op_id: str, qty: int) -> int:
-        """Find latest day this block can shift to without violating OTD-D."""
         demand_points = op_cum_demand.get(op_id, [])
         if not demand_points:
             return b.edd_day if b.edd_day is not None else b.day_idx
-
         cum_prod = _compute_cum_prod(op_id)
         edd = b.edd_day if b.edd_day is not None else demand_points[-1][0]
         orig_day = b.day_idx
-
-        # Find latest day <= edd where shifting doesn't cause failure
-        # If block moves from orig_day to target_day, for demand days d
-        # where orig_day < d <= target_day: cumProd(d) drops by qty
         best = orig_day
         for target_day in range(edd, orig_day, -1):
             if target_day >= len(workdays) or not workdays[target_day]:
                 continue
-            # Check all demand days in (orig_day, target_day]
             ok = True
             for d_day, cum_dem in demand_points:
                 if d_day < orig_day:
                     continue
                 if d_day > target_day:
                     break
-                # cumProd at d_day would drop by qty
                 cp = cum_prod.get(d_day, 0)
                 if cp - qty < cum_dem:
                     ok = False
@@ -599,10 +605,22 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
             if ok:
                 best = target_day
                 break
-
         return best
 
-    # Process blocks: latest EDD first (those are easiest to shift)
+    # ── Phase 2: Machine-day tool tracking for setup decisions ──
+    machine_day_blocks: dict[str, dict[int, list[Block]]] = defaultdict(lambda: defaultdict(list))
+    for b in blocks:
+        if b.type == "ok" and b.qty > 0:
+            machine_day_blocks[b.machine_id][b.day_idx].append(b)
+
+    def _needs_setup_at_day(blk: Block, target_day: int) -> bool:
+        """Does blk need a new setup if placed at target_day?"""
+        existing = machine_day_blocks[blk.machine_id].get(target_day, [])
+        if not existing:
+            return True  # empty day → first block → needs setup
+        return not any(other.tool_id == blk.tool_id for other in existing)
+
+    # ── Phase 3: Process blocks — latest EDD first ──
     ok_blocks = [b for b in blocks if b.type == "ok" and b.qty > 0]
     ok_blocks.sort(key=lambda b: -(b.edd_day if b.edd_day is not None else 0))
 
@@ -614,7 +632,7 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         block_min = b.prod_min + b.setup_min
         orig_day = b.day_idx
 
-        # For twin blocks, use the most restrictive constraint across all outputs
+        # OTD-D constraint: max day this block can shift to
         if b.outputs:
             max_day = b.edd_day
             for out in b.outputs:
@@ -626,19 +644,97 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         if max_day <= orig_day:
             continue
 
-        # Find latest workday <= max_day with enough machine capacity
+        # Old absolute position for constraint unbook/rebook
+        old_abs_s = orig_day * MINUTES_PER_DAY + b.start_min
+        old_abs_e = orig_day * MINUTES_PER_DAY + b.end_min
+        tool = tool_map.get(b.tool_id)
+        calco = tool.calco if tool else None
+
         best_day = orig_day
         for d in range(max_day, orig_day, -1):
             if d >= len(workdays) or not workdays[d]:
                 continue
-            used = machine_day_used[mid].get(d, 0)
-            if used + block_min <= day_cap:
-                best_day = d
-                break
 
+            # a. Capacity check
+            used = machine_day_used[mid].get(d, 0)
+            if used + block_min > day_cap:
+                continue
+
+            # b. ToolTimeline: unbook old, check new, restore
+            new_abs_s = d * MINUTES_PER_DAY + b.start_min
+            new_abs_e = d * MINUTES_PER_DAY + b.end_min
+            tool_tl.unbook(b.tool_id, old_abs_s, old_abs_e, mid)
+            tool_ok = tool_tl.is_available(b.tool_id, new_abs_s, new_abs_e, mid)
+            tool_tl.book(b.tool_id, old_abs_s, old_abs_e, mid)
+            if not tool_ok:
+                continue
+
+            # c. CalcoTimeline: unbook old, check new, restore
+            if calco:
+                calco_tl.unbook(calco, old_abs_s, old_abs_e, mid)
+                calco_ok = calco_tl.is_available(calco, new_abs_s, new_abs_e)
+                calco_tl.book(calco, old_abs_s, old_abs_e, mid)
+                if not calco_ok:
+                    continue
+
+            # d. SetupCrew: if tool changes at target day, check crew availability
+            needs_setup = _needs_setup_at_day(b, d)
+            if needs_setup and b.setup_min > 0:
+                setup_dur = b.setup_min
+                setup_new_s = new_abs_s - setup_dur  # setup just before production
+                setup_new_e = new_abs_s
+                if b.setup_s is not None and b.setup_e is not None:
+                    setup_crew.unbook(b.setup_s, b.setup_e, mid)
+                crew_slot = setup_crew.find_next_available(setup_new_s, setup_dur, new_abs_e)
+                if b.setup_s is not None and b.setup_e is not None:
+                    setup_crew.book(b.setup_s, b.setup_e, mid)
+                if crew_slot == -1 or crew_slot != setup_new_s:
+                    continue  # setup crew busy at target time
+
+            best_day = d
+            break
+
+        # ── Phase 4: Move block if better day found ──
         if best_day > orig_day:
+            # Unbook old constraints
+            tool_tl.unbook(b.tool_id, old_abs_s, old_abs_e, mid)
+            if calco:
+                calco_tl.unbook(calco, old_abs_s, old_abs_e, mid)
+            if b.setup_s is not None and b.setup_e is not None:
+                setup_crew.unbook(b.setup_s, b.setup_e, mid)
+
+            # Update block position
+            machine_day_blocks[mid][orig_day] = [
+                x for x in machine_day_blocks[mid][orig_day] if x is not b
+            ]
+            b.day_idx = best_day
+            machine_day_blocks[mid][best_day].append(b)
+
+            # Book new constraints
+            new_abs_s = best_day * MINUTES_PER_DAY + b.start_min
+            new_abs_e = best_day * MINUTES_PER_DAY + b.end_min
+            tool_tl.book(b.tool_id, new_abs_s, new_abs_e, mid)
+            if calco:
+                calco_tl.book(calco, new_abs_s, new_abs_e, mid)
+
+            # Recalculate setup at new position
+            needs_setup = _needs_setup_at_day(b, best_day)
+            if needs_setup and b.setup_min > 0:
+                setup_new_s = new_abs_s - b.setup_min
+                setup_new_e = new_abs_s
+                b.setup_s = setup_new_s
+                b.setup_e = setup_new_e
+                setup_crew.book(setup_new_s, setup_new_e, mid)
+            elif not needs_setup and b.setup_s is not None:
+                # Same tool already on this day → no setup needed
+                block_min_saved = b.setup_min
+                b.setup_min = 0
+                b.setup_s = None
+                b.setup_e = None
+                block_min -= block_min_saved
+
+            # Update capacity map
             machine_day_used[mid][orig_day] -= block_min
             machine_day_used[mid][best_day] += block_min
-            b.day_idx = best_day
 
     return blocks

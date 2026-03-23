@@ -58,6 +58,14 @@ class SetupCrew:
         """Record a setup booking."""
         self._slots.append(SetupSlot(start=start, end=end, machine_id=machine_id))
 
+    def unbook(self, start: int, end: int, machine_id: str) -> None:
+        """Remove a specific booking (exact match)."""
+        self._slots = [
+            s
+            for s in self._slots
+            if not (s.start == start and s.end == end and s.machine_id == machine_id)
+        ]
+
     def get_slots(self) -> list[SetupSlot]:
         return list(self._slots)
 

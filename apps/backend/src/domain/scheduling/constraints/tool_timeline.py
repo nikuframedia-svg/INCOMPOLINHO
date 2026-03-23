@@ -92,6 +92,15 @@ class ToolTimeline:
             ToolBooking(start=start, end=end, machine_id=machine_id)
         )
 
+    def unbook(self, tool_id: str, start: int, end: int, machine_id: str) -> None:
+        """Remove a specific booking (exact match)."""
+        bks = self._bookings.get(tool_id, [])
+        self._bookings[tool_id] = [
+            bk
+            for bk in bks
+            if not (bk.start == start and bk.end == end and bk.machine_id == machine_id)
+        ]
+
     def get_bookings(self, tool_id: str) -> list[ToolBooking]:
         return list(self._bookings.get(tool_id, []))
 

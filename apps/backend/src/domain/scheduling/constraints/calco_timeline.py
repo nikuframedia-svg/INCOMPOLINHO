@@ -77,6 +77,17 @@ class CalcoTimeline:
             CalcoBooking(start=start, end=end, machine_id=machine_id)
         )
 
+    def unbook(self, calco_code: str, start: int, end: int, machine_id: str) -> None:
+        """Remove a specific booking (exact match)."""
+        if not calco_code:
+            return
+        bks = self._bookings.get(calco_code, [])
+        self._bookings[calco_code] = [
+            bk
+            for bk in bks
+            if not (bk.start == start and bk.end == end and bk.machine_id == machine_id)
+        ]
+
     def get_bookings(self, calco_code: str) -> list[CalcoBooking]:
         return list(self._bookings.get(calco_code, []))
 
