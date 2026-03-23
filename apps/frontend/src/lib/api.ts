@@ -308,6 +308,92 @@ export async function scheduleOptimizeApi(
   return await res.json();
 }
 
+// ── Simulate (unified replan + what-if) ─────────────────────
+
+export interface SimMutation {
+  type: string;
+  params: Record<string, unknown>;
+}
+
+export interface SimDeltaReport {
+  otd_before: number;
+  otd_after: number;
+  otd_d_before: number;
+  otd_d_after: number;
+  overflow_before: number;
+  overflow_after: number;
+  tardiness_before: number;
+  tardiness_after: number;
+  blocks_changed: number;
+  blocks_unchanged: number;
+  blocks_new: number;
+  blocks_removed: number;
+  util_before: Record<string, number>;
+  util_after: Record<string, number>;
+  setups_before: number;
+  setups_after: number;
+}
+
+export interface SimMutationImpact {
+  mutation_idx: number;
+  type: string;
+  description: string;
+  ops_affected: number;
+  blocks_affected: number;
+  otd_d_impact: number;
+  severity: 'none' | 'low' | 'medium' | 'high' | 'critical';
+}
+
+export interface SimBlockChange {
+  op_id: string;
+  sku: string;
+  tool_id: string;
+  action: 'moved' | 'new' | 'removed' | 'resized' | 'unchanged';
+  from_machine: string;
+  to_machine: string;
+  from_day: number;
+  to_day: number;
+  qty: number;
+  reason: string;
+}
+
+export interface SimulateRequest {
+  nikufra_data: NikufraDataPayload;
+  mutations: SimMutation[];
+  settings?: ScheduleSettings;
+}
+
+export interface SimulateResponse {
+  blocks: ScheduleBlock[];
+  score: ScoreResult | null;
+  time_ms: number;
+  delta: SimDeltaReport;
+  mutation_impacts: SimMutationImpact[];
+  block_changes: SimBlockChange[];
+  summary: string[];
+}
+
+/** POST /v1/schedule/simulate — unified scenario simulation. */
+export async function scheduleSimulateApi(
+  request: SimulateRequest,
+  timeoutMs = 30_000,
+): Promise<SimulateResponse> {
+  const res = await fetchWithTimeout(
+    `${config.apiBaseURL}/v1/schedule/simulate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+    timeoutMs,
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'unknown');
+    throw new Error(`Simulate HTTP ${res.status}: ${text}`);
+  }
+  return await res.json();
+}
+
 // ── CTP ──────────────────────────────────────────────────────
 
 export interface CTPApiScenario {

@@ -9,10 +9,9 @@ import { useScheduleEngine } from '../hooks/useScheduleEngine';
 import { GanttView } from './GanttChart/GanttChart';
 import { OperationsDrawer } from './GanttChart/OperationsDrawer';
 import { ProblemBar } from './ProblemBar';
-import { ReplanView } from './ReplanPanel';
 import { SchedulingBanners } from './SchedulingBanners';
 import { SchedulingHeader } from './SchedulingHeader';
-import { WhatIfView } from './WhatIfPanel';
+import { SimulatorPanel } from './simulator/SimulatorPanel';
 
 export function SchedulingPage({ initialView = 'plan' }: { initialView?: string }) {
   const eng = useScheduleEngine(initialView);
@@ -169,44 +168,8 @@ export function SchedulingPage({ initialView = 'plan' }: { initialView?: string 
               />
             </>
           )}
-          {eng.view === 'replan' && (
-            <ReplanView
-              mSt={eng.mSt}
-              tSt={eng.tSt}
-              toggleM={eng.toggleM}
-              toggleT={eng.toggleT}
-              moves={eng.moves}
-              applyMove={eng.applyMove}
-              undoMove={eng.undoMove}
-              blocks={eng.blocks}
-              cap={eng.cap}
-              data={eng.engineData}
-              onApplyAndSave={() => eng.handleApplyAndSave()}
-              isSaving={eng.isSaving}
-              setResourceDown={eng.setResourceDown}
-              clearResourceDown={eng.clearResourceDown}
-              getResourceDownDays={eng.getResourceDownDays}
-              replanTimelines={eng.replanTimelines}
-              rushOrders={eng.rushOrders}
-              setRushOrders={eng.setRushOrders}
-              allOps={eng.allOps}
-              neMetrics={eng.neMetrics}
-              setAppliedReplan={eng.setAppliedReplan}
-            />
-          )}
-          {eng.view === 'whatif' && (
-            <WhatIfView
-              data={eng.engineData}
-              onApplyMoves={(mvs, sc) => eng.handleApplyAndSave(mvs, sc)}
-              isSaving={eng.isSaving}
-              setResourceDown={eng.setResourceDown}
-              clearResourceDown={eng.clearResourceDown}
-              getResourceDownDays={eng.getResourceDownDays}
-              replanTimelines={eng.replanTimelines}
-              blocks={eng.blocks}
-              allOps={eng.allOps}
-              neMetrics={eng.neMetrics}
-            />
+          {eng.view === 'simulate' && (
+            <SimulatorPanel engineData={eng.engineData} onApply={() => eng.handleApplyAndSave()} />
           )}
         </div>
       </div>

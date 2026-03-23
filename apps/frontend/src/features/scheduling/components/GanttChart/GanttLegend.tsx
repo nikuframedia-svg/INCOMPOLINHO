@@ -7,10 +7,12 @@ export function GanttLegend({
   dayB,
   dayBlkN,
   tools,
+  diffMode,
 }: {
   dayB: Block[];
   dayBlkN: number;
   tools: ETool[];
+  diffMode?: boolean;
 }) {
   return (
     <div
@@ -58,6 +60,35 @@ export function GanttLegend({
         <span>Frozen</span>
       </div>
       {dayBlkN > 0 && <Tag color={C.rd}>{dayBlkN} bloqueadas</Tag>}
+      {diffMode && (
+        <>
+          <span style={{ width: 1, height: 12, background: C.bd }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: C.t3, opacity: 0.6 }} />
+            <span>Sem alteração</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, border: `2px solid ${C.yl}` }} />
+            <span>Movido</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, border: `2px solid ${C.rd}` }} />
+            <span>Novo</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 2,
+                border: `2px dashed ${C.t3}`,
+                opacity: 0.3,
+              }}
+            />
+            <span>Removido</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

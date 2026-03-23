@@ -4,6 +4,7 @@ import { DAY_CAP, S0, S1, T1 } from '@/domain/types/scheduling';
 import { C } from '@/theme/color-bridge';
 import { blockKey } from '../../../../domain/configurable-logic-eval';
 import { dot, toolColor } from '../atoms';
+import type { DiffAction } from './GanttBlock';
 import { GanttBlock } from './GanttBlock';
 
 export interface GanttMachineRowProps {
@@ -24,6 +25,8 @@ export interface GanttMachineRowProps {
   onDragStart?: (block: Block, e: React.MouseEvent) => void;
   isDragOver?: boolean;
   blockClassifications?: Map<string, Set<string>>;
+  /** Per-block diff action for scenario comparison */
+  diffMap?: Map<string, DiffAction>;
 }
 
 export const GanttMachineRow = memo(function GanttMachineRow({
@@ -44,6 +47,7 @@ export const GanttMachineRow = memo(function GanttMachineRow({
   onDragStart,
   isDragOver,
   blockClassifications,
+  diffMap,
 }: GanttMachineRowProps) {
   const isDown = mSt[mc.id] === 'down';
   const rowH = Math.max(44, mB.length * 22 + 10);
@@ -176,6 +180,7 @@ export const GanttMachineRow = memo(function GanttMachineRow({
             setSelOp={setSelOp}
             onDragStart={onDragStart}
             classifications={blockClassifications?.get(blockKey(b))}
+            diffAction={diffMap?.get(`${b.opId}|${b.eddDay ?? -1}`)}
           />
         ))}
         {!isDown && total > 0 && (

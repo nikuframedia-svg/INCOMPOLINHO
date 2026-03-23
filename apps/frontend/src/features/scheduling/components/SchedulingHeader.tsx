@@ -9,8 +9,7 @@ type Tab = { id: string; l: string };
 
 const TABS: Tab[] = [
   { id: 'plan', l: 'Plano' },
-  { id: 'replan', l: 'Replan' },
-  { id: 'whatif', l: 'What-If' },
+  { id: 'simulate', l: 'Simular' },
 ];
 
 export function SchedulingHeader({

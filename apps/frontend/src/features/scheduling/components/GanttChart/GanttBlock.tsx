@@ -5,6 +5,8 @@ import { S0 } from '@/domain/types/scheduling';
 import { C } from '@/theme/color-bridge';
 import { BlockTooltip } from './BlockTooltip';
 
+export type DiffAction = 'unchanged' | 'moved' | 'new' | 'removed' | 'resized' | null;
+
 export interface GanttBlockProps {
   b: Block;
   bi: number;
@@ -21,6 +23,8 @@ export interface GanttBlockProps {
   clientMap?: Record<string, string>;
   /** L4 definition IDs that match this block (from useClassifications) */
   classifications?: Set<string>;
+  /** Diff mode: visual override for scenario comparison */
+  diffAction?: DiffAction;
 }
 
 export const GanttBlock = memo(function GanttBlock({
@@ -37,10 +41,24 @@ export const GanttBlock = memo(function GanttBlock({
   onDragStart,
   clientMap,
   classifications,
+  diffAction,
 }: GanttBlockProps) {
   const isH = hov === `${b.opId}-${selDay}`;
   const isSel = selOp === b.opId;
   const y = 5 + bi * 22;
+
+  // Diff mode overrides
+  const diffBorder =
+    diffAction === 'moved'
+      ? `2px solid ${C.yl}`
+      : diffAction === 'new'
+        ? `2px solid ${C.rd}`
+        : diffAction === 'removed'
+          ? `2px dashed ${C.t3}`
+          : diffAction === 'resized'
+            ? `2px solid ${C.bl}`
+            : null;
+  const diffOpacity = diffAction === 'unchanged' ? 0.6 : diffAction === 'removed' ? 0.3 : null;
 
   return (
     <React.Fragment>
@@ -85,21 +103,23 @@ export const GanttBlock = memo(function GanttBlock({
           height: 17,
           background: isSel ? col : isH ? col : `${col}CC`,
           borderRadius: b.setupS != null ? '0 4px 4px 0' : 4,
-          border: isSel
-            ? `2px solid ${C.ac}`
-            : b.moved
+          border:
+            diffBorder ??
+            (isSel
               ? `2px solid ${C.ac}`
-              : b.freezeStatus === 'frozen'
-                ? `2px dashed ${C.rd}88`
-                : b.freezeStatus === 'slushy'
-                  ? `2px dotted ${C.yl}88`
-                  : `1px solid ${col}44`,
+              : b.moved
+                ? `2px solid ${C.ac}`
+                : b.freezeStatus === 'frozen'
+                  ? `2px dashed ${C.rd}88`
+                  : b.freezeStatus === 'slushy'
+                    ? `2px dotted ${C.yl}88`
+                    : `1px solid ${col}44`),
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           paddingLeft: 4,
           overflow: 'hidden',
-          opacity: b.freezeStatus === 'frozen' ? 0.9 : 1,
+          opacity: diffOpacity ?? (b.freezeStatus === 'frozen' ? 0.9 : 1),
           zIndex: isSel ? 25 : isH ? 20 : 1,
         }}
       >

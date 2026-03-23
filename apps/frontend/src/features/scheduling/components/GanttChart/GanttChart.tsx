@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import type {
   Block,
   DayLoad,
@@ -8,11 +8,13 @@ import type {
 } from '@/domain/types/scheduling';
 import { S0 } from '@/domain/types/scheduling';
 import { C } from '@/theme/color-bridge';
+import type { SimBlockChange } from '../../../../lib/api';
 import { useGanttDragDrop } from '../../hooks/useGanttDragDrop';
 import { useGanttInteraction } from '../../hooks/useGanttInteraction';
 import { Card } from '../atoms';
 import { BlockDetailCard } from './BlockDetailCard';
 import { DeviationPanel } from './DeviationPanel';
+import type { DiffAction } from './GanttBlock';
 import { GanttControls } from './GanttControls';
 import { GanttLegend } from './GanttLegend';
 import { GanttMachineRow } from './GanttMachineRow';
@@ -29,6 +31,7 @@ export function GanttView({
   currentMetrics,
   onDayChange,
   blockClassifications,
+  diffChanges,
 }: {
   blocks: Block[];
   mSt: Record<string, string>;
@@ -40,7 +43,22 @@ export function GanttView({
   currentMetrics?: OptResult | null;
   onDayChange?: (dayIdx: number) => void;
   blockClassifications?: Map<string, Set<string>>;
+  /** Block changes from simulator for diff visualization */
+  diffChanges?: SimBlockChange[];
 }) {
+  // Build diff map: "opId|eddDay" → DiffAction
+  const diffMap = useMemo(() => {
+    if (!diffChanges || diffChanges.length === 0) return undefined;
+    const m = new Map<string, DiffAction>();
+    for (const c of diffChanges) {
+      const key = `${c.op_id}|${c.to_day}`;
+      m.set(key, c.action as DiffAction);
+      if (c.action === 'removed') {
+        m.set(`${c.op_id}|${c.from_day}`, 'removed');
+      }
+    }
+    return m;
+  }, [diffChanges]);
   const { machines, dates, dnames, tools } = data;
   const containerRef = useRef<HTMLDivElement>(null);
   const { state: gantt, actions: ganttActions } = useGanttInteraction(
@@ -180,6 +198,7 @@ export function GanttView({
                   onDragStart={startDrag}
                   isDragOver={dragOverMachine === mc.id}
                   blockClassifications={blockClassifications}
+                  diffMap={diffMap}
                 />
               );
             })}
@@ -229,7 +248,7 @@ export function GanttView({
         )}
       </Card>
 
-      <GanttLegend dayB={dayB} dayBlkN={dayBlkN} tools={tools} />
+      <GanttLegend dayB={dayB} dayBlkN={dayBlkN} tools={tools} diffMode={!!diffChanges} />
 
       {drag.isDragging && drag.block && (
         <div

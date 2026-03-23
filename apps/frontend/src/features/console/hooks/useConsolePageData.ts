@@ -6,14 +6,20 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { Block } from '@/domain/types/scheduling';
+import type { Block, ReplanLayer } from '@/domain/types/scheduling';
 import { DAY_CAP } from '@/domain/types/scheduling';
 import { useDayData } from '@/hooks/useDayData';
 import { useScheduleData } from '@/hooks/useScheduleData';
 import { useAndonDowntimes } from '@/stores/useAndonStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { chooseLayer } from '@/utils/replan-helpers';
+
+/** Choose replan layer based on delay magnitude. */
+function chooseLayer(delayMin: number): ReplanLayer {
+  if (delayMin < 30) return 1;
+  if (delayMin < 120) return 2;
+  return 3;
+}
 
 export function useConsolePageData() {
   const { dayData, loading, error } = useDayData();

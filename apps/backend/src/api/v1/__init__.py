@@ -19,6 +19,7 @@ from .pipeline import pipeline_router
 from .plan import router as plan_router
 from .schedule import schedule_router
 from .settings import settings_router
+from .simulate import simulate_router
 from .snapshots import router as snapshots_router
 from .stock_alerts import stock_alerts_router
 from .version import router as version_router
@@ -45,3 +46,4 @@ router.include_router(schedule_router)
 router.include_router(settings_router)
 router.include_router(optimal_router)
 router.include_router(stock_alerts_router)
+router.include_router(simulate_router)

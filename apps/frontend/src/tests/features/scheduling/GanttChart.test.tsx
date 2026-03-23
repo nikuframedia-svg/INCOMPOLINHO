@@ -80,20 +80,25 @@ vi.mock('@/theme/color-bridge', () => ({
 
 import { GanttView } from '@/features/scheduling/components/GanttChart/GanttChart';
 
-const makeEngineData = (machines: Array<{ id: string; area: string }> = []) => ({
-  ops: [],
-  n_days: 1,
-  machines,
-  tools: [],
-  toolMap: {},
-  dates: ['2026-03-01'],
-  dnames: ['Seg'],
-  days_label: ['Seg'],
-  mo: { PG1: [0], PG2: [0] },
-  workday_flags: [true],
-  workdays: [true],
-  thirdShift: false,
-});
+const makeEngineData = (machines: Array<{ id: string; area: string }> = []) =>
+  ({
+    ops: [],
+    n_days: 1,
+    nDays: 1,
+    focusIds: [],
+    machines,
+    tools: [],
+    toolMap: {},
+    mSt: {},
+    tSt: {},
+    dates: ['2026-03-01'],
+    dnames: ['Seg'],
+    days_label: ['Seg'],
+    mo: { PG1: [0], PG2: [0] },
+    workday_flags: [true],
+    workdays: [true],
+    thirdShift: false,
+  }) as any;
 
 describe('GanttView', () => {
   const baseProps = {
