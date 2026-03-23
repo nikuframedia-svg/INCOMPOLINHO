@@ -207,6 +207,17 @@ class WorkforceConfig(BaseModel):
     )
 
 
+class ClientDemandEntry(BaseModel):
+    """Per-client demand for a specific SKU (preserved before multi-client merge)."""
+
+    model_config = {"populate_by_name": True}
+
+    client_code: str = Field(alias="clientCode")
+    client_name: str = Field("", alias="clientName")
+    sku: str = ""
+    d: list[int] = Field(default_factory=list)  # demand per day (transformed, >= 0)
+
+
 class EngineData(BaseModel):
     """Core engine input — port of EngineData interface."""
 
@@ -230,6 +241,9 @@ class EngineData(BaseModel):
     workforce_config: WorkforceConfig | None = Field(None, alias="workforceConfig")
     order_based: bool = Field(False, alias="orderBased")
     pre_start_days: int | None = Field(None, alias="preStartDays")
+    client_demands: dict[str, list[ClientDemandEntry]] = Field(
+        default_factory=dict, alias="clientDemands"
+    )
 
 
 # ── Block and actions ──

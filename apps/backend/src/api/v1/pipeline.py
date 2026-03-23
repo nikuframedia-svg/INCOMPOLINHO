@@ -31,6 +31,7 @@ from .pipeline_helpers import (
     run_analytics,
     run_cpsat,
     run_greedy,
+    set_last_schedule,
 )
 
 logger = get_logger(__name__)
@@ -95,6 +96,9 @@ async def schedule_from_data(request: PipelineScheduleRequest) -> PipelineRespon
     feasibility = solve_result["feasibility_report"]
     solver_used = solve_result["solver_used"]
     kpis = compute_kpis(blocks, len(engine_data.ops))
+
+    # Store last schedule for stock projection / CTP endpoints
+    set_last_schedule(engine_data, blocks)
 
     populate_copilot_state(
         blocks,
@@ -359,6 +363,9 @@ async def schedule_full(request: PipelineScheduleRequest) -> FullScheduleRespons
             warnings.append(f"Output: {v.violation_type} — {v.detail}")
 
     kpis = compute_kpis(blocks, len(engine_data.ops))
+
+    # Store last schedule for stock projection / CTP endpoints
+    set_last_schedule(engine_data, blocks)
 
     # Run all analytics
     journal.step(JournalStep.ANALYTICS, "Running analytics")

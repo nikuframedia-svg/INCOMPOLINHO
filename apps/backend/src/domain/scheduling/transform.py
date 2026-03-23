@@ -9,6 +9,7 @@ from typing import Any
 
 from .constants import KNOWN_FOCUS
 from .types import (
+    ClientDemandEntry,
     EMachine,
     EngineData,
     EOp,
@@ -292,6 +293,55 @@ def _add_anomaly(
     by_code[code] = by_code.get(code, 0) + 1
 
 
+# ── Per-client demand extraction (before merge) ──
+
+
+def _extract_client_demands(
+    raw_operations: list[dict[str, Any]],
+    n_days: int,
+) -> dict[str, list[ClientDemandEntry]]:
+    """Extract per-client demand BEFORE multi-client merge.
+
+    Each raw operation has a single client. After merge, client info is lost
+    (comma-separated string). This preserves the per-client breakdown for
+    the stock projection page.
+    """
+    result: dict[str, list[ClientDemandEntry]] = {}
+
+    for op in raw_operations:
+        sku = op.get("sku", "")
+        if not sku:
+            continue
+        cl = op.get("cl") or op.get("customer_code") or ""
+        cl_nm = op.get("clNm") or op.get("customer_name") or cl
+        raw_d = op.get("d", [])
+
+        # Convert raw NP to demand: negative = demand (abs value), else 0
+        demand: list[int] = []
+        for i in range(n_days):
+            v = raw_d[i] if i < len(raw_d) else None
+            if v is not None and v < 0:
+                demand.append(abs(v))
+            else:
+                demand.append(0)
+
+        if sum(demand) == 0:
+            continue
+
+        if sku not in result:
+            result[sku] = []
+        result[sku].append(
+            ClientDemandEntry(
+                client_code=cl or "Desconhecido",
+                client_name=cl_nm or cl or "Desconhecido",
+                sku=sku,
+                d=demand,
+            )
+        )
+
+    return result
+
+
 # ── Multi-client merge ──
 
 
@@ -362,6 +412,9 @@ def transform_plan_state(
     dates = plan_state.get("dates", [])
     dnames = plan_state.get("dnames", [])
     n_days = len(dates)
+
+    # Preserve per-client demand BEFORE merge (for stock projection page)
+    client_demands = _extract_client_demands(raw_operations, n_days)
 
     # Merge multi-client rows: same (SKU, machine, tool) → single op
     operations = _merge_multi_client_ops(raw_operations, n_days)
@@ -466,6 +519,7 @@ def transform_plan_state(
         twin_validation_report=twin_report,
         order_based=order_based,
         pre_start_days=pre_start_days if pre_start_days > 0 else None,
+        client_demands=client_demands,
     )
 
 

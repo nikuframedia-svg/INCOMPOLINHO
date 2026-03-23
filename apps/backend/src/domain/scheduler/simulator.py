@@ -69,6 +69,10 @@ class BlockChange:
     to_day: int
     qty: int
     reason: str
+    # Fields for ghost-block rendering (removed blocks)
+    from_start_min: int = 0
+    from_end_min: int = 0
+    nm: str = ""
 
 
 @dataclass
@@ -194,14 +198,33 @@ def _apply_mutation(data: EngineData, mut: SimMutation) -> list[str]:
 
     if mut.type == "machine_down":
         mid = p["machine_id"]
-        start = p.get("start_day", 0)
-        end = p.get("end_day", start)
-        cap = p.get("capacity_factor", 0.0)
+        start = int(p.get("start_day", 0))
+        end = int(p.get("end_day", start))
+        cap = float(p.get("capacity_factor", 0.0))
         if cap == 0.0:
-            data.m_st[mid] = "down"
-        for op in data.ops:
-            if op.m == mid:
-                affected.append(op.id)
+            if start <= 0 and end >= data.n_days - 1:
+                # Full horizon → global down
+                data.m_st[mid] = "down"
+            else:
+                # Partial range → redistribute demand away from down days
+                for op in data.ops:
+                    if op.m == mid:
+                        for day in range(start, min(end + 1, len(op.d))):
+                            if op.d[day] != 0:
+                                target = min(end + 1, len(op.d) - 1)
+                                op.d[target] += op.d[day]
+                                op.d[day] = 0
+                        affected.append(op.id)
+        elif cap < 1.0:
+            # Partial capacity → reduce production rate proportionally
+            for op in data.ops:
+                if op.m == mid:
+                    op.pH = max(1, int(op.pH * cap))
+                    affected.append(op.id)
+        if not affected:
+            for op in data.ops:
+                if op.m == mid:
+                    affected.append(op.id)
 
     elif mut.type == "tool_down":
         tid = p["tool_id"]
@@ -212,8 +235,12 @@ def _apply_mutation(data: EngineData, mut: SimMutation) -> list[str]:
 
     elif mut.type == "operator_shortage":
         labor_group = p["labor_group"]
+        # Prefer workforce_config mapping, fallback to hardcoded
+        m2lg: dict[str, str] = dict(_MACHINE_LABOR)
+        if data.workforce_config and data.workforce_config.machine_to_labor_group:
+            m2lg.update(data.workforce_config.machine_to_labor_group)
         for op in data.ops:
-            if _MACHINE_LABOR.get(op.m) == labor_group:
+            if m2lg.get(op.m) == labor_group:
                 affected.append(op.id)
         # Workforce config reduction (advisory)
         if data.workforce_config and data.workforce_config.labor_groups:
@@ -268,9 +295,9 @@ def _apply_mutation(data: EngineData, mut: SimMutation) -> list[str]:
             affected.append(op.id)
 
     elif mut.type == "overtime":
-        # Overtime is advisory — the scheduler sees third_shift as capacity boost
-        # For simplicity, enable third_shift as proxy
+        # Enable third_shift as capacity proxy (00:00-04:00 window)
         mid = p.get("machine_id", "__all__")
+        data.third_shift = True
         for op in data.ops:
             if mid == "__all__" or op.m == mid:
                 affected.append(op.id)
@@ -439,6 +466,9 @@ def _compute_block_changes(
                     to_day=-1,
                     qty=bb.qty,
                     reason=_find_mutation_reason(bb.op_id, mutations),
+                    from_start_min=bb.start_min,
+                    from_end_min=bb.end_min,
+                    nm=bb.nm,
                 )
             )
 

@@ -6,8 +6,8 @@
 import { Loader2, Play, RotateCcw, Save } from 'lucide-react';
 import type { EngineData } from '@/domain/types/scheduling';
 import { C } from '@/theme/color-bridge';
-import type { SimMutationImpact } from '../../hooks/useSimulator';
-import { useSimulator } from '../../hooks/useSimulator';
+import type { SimMutation } from '../../../../lib/api';
+import type { SimMutationImpact, SimulatorState } from '../../hooks/useSimulator';
 import { AddMutationMenu } from './AddMutationMenu';
 import { DeltaTable } from './DeltaTable';
 import { MutationCard } from './MutationCard';
@@ -16,10 +16,17 @@ import { SummaryText } from './SummaryText';
 interface Props {
   engineData: EngineData;
   onApply?: (blocks: unknown[], score: Record<string, unknown>) => void;
+  /** Simulator state — lifted from useSimulator() in parent */
+  sim: SimulatorState & {
+    addMutation: (mut: SimMutation) => void;
+    removeMutation: (idx: number) => void;
+    updateMutation: (idx: number, mut: SimMutation) => void;
+    clearAll: () => void;
+    simulate: () => Promise<void>;
+  };
 }
 
-export function SimulatorPanel({ engineData, onApply }: Props) {
-  const sim = useSimulator();
+export function SimulatorPanel({ engineData, onApply, sim }: Props) {
   const impactMap = new Map<number, SimMutationImpact>();
   if (sim.result) {
     for (const imp of sim.result.mutation_impacts) {

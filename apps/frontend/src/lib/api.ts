@@ -355,6 +355,10 @@ export interface SimBlockChange {
   to_day: number;
   qty: number;
   reason: string;
+  /** Ghost-block rendering fields (populated for removed blocks) */
+  from_start_min?: number;
+  from_end_min?: number;
+  nm?: string;
 }
 
 export interface SimulateRequest {
@@ -445,6 +449,42 @@ export async function scheduleCTPApi(
   if (!res.ok) {
     const text = await res.text().catch(() => 'unknown');
     throw new Error(`CTP HTTP ${res.status}: ${text}`);
+  }
+  return await res.json();
+}
+
+// ── CTP Real (block-based capacity) ─────────────────────────
+
+export interface CTPRealResult {
+  feasible: boolean;
+  machine: string;
+  earliestDay: number | null;
+  requiredMin: number;
+  freeMinOnTarget: number;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  altMachine: string | null;
+  altEarliestDay: number | null;
+}
+
+export async function ctpRealApi(
+  sku: string,
+  qty: number,
+  deadlineDay: number,
+  timeoutMs = 10_000,
+): Promise<CTPRealResult> {
+  const res = await fetchWithTimeout(
+    `${config.apiBaseURL}/v1/schedule/stock/${encodeURIComponent(sku)}/ctp`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qty, deadline_day: deadlineDay }),
+    },
+    timeoutMs,
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'unknown');
+    throw new Error(`CTP Real HTTP ${res.status}: ${text}`);
   }
   return await res.json();
 }

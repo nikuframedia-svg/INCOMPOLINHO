@@ -108,6 +108,9 @@ class _CacheEntry:
 
 _schedule_cache: dict[str, _CacheEntry] = {}
 
+# Most recent schedule result — used by stock projection / CTP endpoints
+_last_schedule: dict[str, Any] | None = None
+
 
 def cache_get(key: str) -> dict[str, Any] | None:
     entry = _schedule_cache.get(key)
@@ -132,6 +135,17 @@ def cache_set(key: str, data: dict[str, Any]) -> None:
         oldest = next(iter(_schedule_cache))
         del _schedule_cache[oldest]
     _schedule_cache[key] = _CacheEntry(data)
+
+
+def get_last_schedule() -> dict[str, Any] | None:
+    """Get the most recent schedule result (engine_data + blocks)."""
+    return _last_schedule
+
+
+def set_last_schedule(engine_data: Any, blocks: list) -> None:
+    """Store the most recent schedule result for stock/CTP queries."""
+    global _last_schedule
+    _last_schedule = {"engine_data": engine_data, "blocks": blocks}
 
 
 def cache_key(nikufra_data: dict, settings: dict) -> str:

@@ -59,10 +59,49 @@ export function GanttView({
     }
     return m;
   }, [diffChanges]);
+
+  // Create ghost blocks for removed items (exist in baseline, not in scenario)
+  const allBlocks = useMemo(() => {
+    if (!diffChanges) return blocks;
+    const ghosts: Block[] = diffChanges
+      .filter((c) => c.action === 'removed' && c.from_start_min != null)
+      .map(
+        (c): Block => ({
+          opId: c.op_id,
+          toolId: c.tool_id,
+          sku: c.sku,
+          nm: c.nm ?? '',
+          machineId: c.from_machine,
+          origM: c.from_machine,
+          dayIdx: c.from_day,
+          eddDay: c.from_day,
+          qty: c.qty,
+          prodMin: (c.from_end_min ?? 0) - (c.from_start_min ?? 0),
+          setupMin: 0,
+          operators: 1,
+          blocked: false,
+          reason: null,
+          moved: false,
+          hasAlt: false,
+          altM: null,
+          stk: 0,
+          lt: 0,
+          atr: 0,
+          startMin: c.from_start_min ?? 0,
+          endMin: c.from_end_min ?? 0,
+          setupS: null,
+          setupE: null,
+          type: 'ok',
+          shift: 'X',
+        }),
+      );
+    return ghosts.length > 0 ? [...blocks, ...ghosts] : blocks;
+  }, [blocks, diffChanges]);
+
   const { machines, dates, dnames, tools } = data;
   const containerRef = useRef<HTMLDivElement>(null);
   const { state: gantt, actions: ganttActions } = useGanttInteraction(
-    blocks,
+    allBlocks,
     machines,
     mSt,
     data.workdays,

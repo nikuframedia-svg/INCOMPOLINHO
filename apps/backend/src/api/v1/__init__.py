@@ -22,6 +22,7 @@ from .settings import settings_router
 from .simulate import simulate_router
 from .snapshots import router as snapshots_router
 from .stock_alerts import stock_alerts_router
+from .stock_projection import stock_projection_router
 from .version import router as version_router
 
 # Router principal para v1
@@ -47,3 +48,4 @@ router.include_router(settings_router)
 router.include_router(optimal_router)
 router.include_router(stock_alerts_router)
 router.include_router(simulate_router)
+router.include_router(stock_projection_router)

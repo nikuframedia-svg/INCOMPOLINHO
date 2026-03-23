@@ -6,6 +6,7 @@ import { useClassifications } from '../../../hooks/useClassifications';
 import { useScheduleData } from '../../../hooks/useScheduleData';
 import { useDayProblems } from '../hooks/useDayProblems';
 import { useScheduleEngine } from '../hooks/useScheduleEngine';
+import { useSimulator } from '../hooks/useSimulator';
 import { GanttView } from './GanttChart/GanttChart';
 import { OperationsDrawer } from './GanttChart/OperationsDrawer';
 import { ProblemBar } from './ProblemBar';
@@ -17,6 +18,7 @@ export function SchedulingPage({ initialView = 'plan' }: { initialView?: string 
   const eng = useScheduleEngine(initialView);
   const { metrics, lateDeliveries } = useScheduleData();
   const classifications = useClassifications();
+  const sim = useSimulator();
   const [selDay, setSelDay] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -169,7 +171,25 @@ export function SchedulingPage({ initialView = 'plan' }: { initialView?: string 
             </>
           )}
           {eng.view === 'simulate' && (
-            <SimulatorPanel engineData={eng.engineData} onApply={() => eng.handleApplyAndSave()} />
+            <>
+              <SimulatorPanel
+                engineData={eng.engineData}
+                onApply={() => eng.handleApplyAndSave()}
+                sim={sim}
+              />
+              {sim.result && (
+                <GanttView
+                  blocks={eng.blocks}
+                  mSt={eng.mSt}
+                  cap={eng.cap}
+                  data={eng.engineData}
+                  applyMove={eng.applyMove}
+                  undoMove={eng.undoMove}
+                  onDayChange={handleDayChange}
+                  diffChanges={sim.result.block_changes}
+                />
+              )}
+            </>
           )}
         </div>
       </div>

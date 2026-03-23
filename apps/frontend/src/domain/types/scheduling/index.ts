@@ -105,6 +105,7 @@ export type {
 } from './decisions.js';
 // ── Engine ──
 export type {
+  ClientDemandEntry,
   EMachine,
   EngineData,
   EOp,

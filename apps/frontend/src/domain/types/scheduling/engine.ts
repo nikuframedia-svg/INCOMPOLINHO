@@ -62,6 +62,13 @@ export interface EOp {
   twin?: string;
 }
 
+/** Per-client demand for a SKU — preserved before multi-client merge */
+export interface ClientDemandEntry {
+  clientCode: string;
+  clientName: string;
+  sku: string;
+  d: number[];
+}
 /** Complete engine data — input for scheduling */
 export interface EngineData {
   machines: EMachine[];
@@ -105,4 +112,6 @@ export interface EngineData {
   /** Number of pre-start days prepended before ISOP D0.
    *  Days 0.._preStartDays-1 are synthetic pre-production days. */
   _preStartDays?: number;
+  /** Per-client demand breakdown (keyed by SKU, preserved before multi-client merge) */
+  clientDemands?: Record<string, ClientDemandEntry[]>;
 }

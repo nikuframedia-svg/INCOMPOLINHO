@@ -138,6 +138,7 @@ export function App() {
                 {/* MRP / Materials */}
                 <Route path="/mrp" element={<MRPPage />} />
                 <Route path="/mrp/orders" element={<OrdersPage />} />
+                <Route path="/mrp/stock" element={<StockDetailPage />} />
                 <Route path="/mrp/stock/:sku" element={<StockDetailPage />} />
                 <Route path="/mrp/ctp" element={<CTPPage />} />
 
