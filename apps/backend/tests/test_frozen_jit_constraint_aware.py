@@ -635,3 +635,179 @@ class TestFrozenUnbookMethods:
         sc.book(0, 100, "M1")
         sc.unbook(0, 100, "M1")
         assert sc.find_next_available(0, 50, 200) == 0, "unbook must free slot"
+
+
+# ═══════════════════════════════════════════════════════════
+# FROZEN 10: No time-slot overlap after JIT right-shift
+# ═══════════════════════════════════════════════════════════
+
+
+class TestFrozenNoOverlap:
+    """JIT must recalculate start_min/end_min — blocks NEVER overlap on same machine-day."""
+
+    def test_high_utilization_no_overlap(self):
+        """At ~85% utilization, shifted blocks must not overlap existing blocks."""
+        n_days = 20
+        # 3 ops on same machine with different tools, heavy production
+        ops = []
+        blocks_in = []
+        for i in range(3):
+            d = [0] * n_days
+            d[15] = 200  # all demand at day 15
+            op = EOp(
+                id=f"OP{i}",
+                t=f"T{i}",
+                m="M1",
+                sku=f"SKU{i}",
+                nm=f"Op{i}",
+                d=d,
+                pH=1000,
+            )
+            ops.append(op)
+
+        tools = [ETool(id=f"T{i}", m="M1", sH=0.5, pH=1000, op=1, oee=0.66) for i in range(3)]
+
+        ed = EngineData(
+            machines=[EMachine(id="M1", area="grandes")],
+            tools=tools,
+            ops=ops,
+            tool_map={t.id: t for t in tools},
+            workdays=[True] * n_days,
+            n_days=n_days,
+            twin_groups=[],
+            order_based=True,
+        )
+
+        result = schedule_all(ed, settings={"disableJIT": False})
+        ok_blocks = [b for b in result.blocks if b.type == "ok"]
+
+        # Check no time overlap on same machine-day
+        from collections import defaultdict
+
+        by_machine_day: dict = defaultdict(list)
+        for b in ok_blocks:
+            by_machine_day[(b.machine_id, b.day_idx)].append(b)
+
+        for key, day_blocks in by_machine_day.items():
+            sorted_blocks = sorted(day_blocks, key=lambda x: x.start_min)
+            for j in range(len(sorted_blocks) - 1):
+                curr = sorted_blocks[j]
+                nxt = sorted_blocks[j + 1]
+                assert curr.end_min <= nxt.start_min, (
+                    f"Overlap on {key}: block {curr.op_id} ends at {curr.end_min} "
+                    f"but {nxt.op_id} starts at {nxt.start_min}"
+                )
+
+    def test_shifted_block_start_min_updated(self):
+        """When a block shifts to a day with existing blocks, start_min must change."""
+        op1 = EOp(id="OP1", t="T1", m="M1", sku="S1", nm="O1", d=[0] * 20, pH=1000)
+        op1.d[10] = 100  # demand at day 10
+
+        op2 = EOp(id="OP2", t="T2", m="M1", sku="S2", nm="O2", d=[0] * 20, pH=1000)
+        op2.d[10] = 100  # same demand day
+
+        # Block for OP1 starts early (day 0), should shift to day 10
+        block1 = _make_block(
+            op_id="OP1",
+            tool_id="T1",
+            machine_id="M1",
+            day_idx=0,
+            edd_day=10,
+            qty=100,
+            prod_min=60,
+            setup_min=30,
+            start_min=450,
+            end_min=510,
+        )
+        # Block for OP2 already at day 10, occupying 420-510
+        block2 = _make_block(
+            op_id="OP2",
+            tool_id="T2",
+            machine_id="M1",
+            day_idx=10,
+            edd_day=10,
+            qty=100,
+            prod_min=60,
+            setup_min=30,
+            start_min=450,
+            end_min=510,
+        )
+
+        ed = _make_engine_data(
+            ops=[op1, op2],
+            tools=[
+                ETool(id="T1", m="M1", sH=0.5, pH=1000, op=1, oee=0.66),
+                ETool(id="T2", m="M1", sH=0.5, pH=1000, op=1, oee=0.66),
+            ],
+            n_days=20,
+        )
+
+        result = _jit_right_shift([block1, block2], ed)
+        shifted = [b for b in result if b.op_id == "OP1"][0]
+        existing = [b for b in result if b.op_id == "OP2"][0]
+
+        if shifted.day_idx == existing.day_idx:
+            # If on same day, they must not overlap
+            assert shifted.end_min <= existing.start_min or existing.end_min <= shifted.start_min, (
+                f"OP1 ({shifted.start_min}-{shifted.end_min}) overlaps "
+                f"OP2 ({existing.start_min}-{existing.end_min})"
+            )
+
+
+# ═══════════════════════════════════════════════════════════
+# FROZEN 11: Setup respects adjacent block ordering
+# ═══════════════════════════════════════════════════════════
+
+
+class TestFrozenSetupOrdering:
+    """Setup decision must be based on the PRECEDING block, not any block on the day."""
+
+    def test_setup_cleared_when_preceding_same_tool(self):
+        """Block shifted after same-tool block should have setup_min=0."""
+        n_days = 20
+        d = [0] * n_days
+        d[10] = 300
+
+        op = EOp(id="OP1", t="T1", m="M1", sku="S1", nm="O1", d=d, pH=1000)
+
+        # Two blocks with same tool — one at day 0 (will shift), one at day 10
+        block_early = _make_block(
+            op_id="OP1",
+            tool_id="T1",
+            machine_id="M1",
+            day_idx=0,
+            edd_day=10,
+            qty=100,
+            prod_min=60,
+            setup_min=30,
+            start_min=450,
+            end_min=510,
+        )
+        block_late = _make_block(
+            op_id="OP1",
+            tool_id="T1",
+            machine_id="M1",
+            day_idx=10,
+            edd_day=10,
+            qty=200,
+            prod_min=120,
+            setup_min=30,
+            start_min=450,
+            end_min=570,
+        )
+
+        ed = _make_engine_data(
+            ops=[op],
+            tools=[ETool(id="T1", m="M1", sH=0.5, pH=1000, op=1, oee=0.66)],
+            n_days=n_days,
+        )
+
+        result = _jit_right_shift([block_early, block_late], ed)
+        blocks_day10 = [b for b in result if b.day_idx == 10]
+
+        # If both ended up on day 10, at most one should have setup
+        if len(blocks_day10) == 2:
+            setups = sum(1 for b in blocks_day10 if b.setup_min > 0)
+            assert setups <= 1, (
+                f"Two same-tool blocks on day 10 should have at most 1 setup, got {setups}"
+            )

@@ -509,6 +509,8 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
 
     MINUTES_PER_DAY = 1440
     S0 = 420  # shift X start
+    T1 = 930  # shift change X→Y: 15:30
+    S1 = 1440  # shift Y end: 24:00
 
     workdays = engine_data.workdays
     day_cap = DAY_CAP
@@ -613,12 +615,40 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         if b.type == "ok" and b.qty > 0:
             machine_day_blocks[b.machine_id][b.day_idx].append(b)
 
-    def _needs_setup_at_day(blk: Block, target_day: int) -> bool:
-        """Does blk need a new setup if placed at target_day?"""
+    def _needs_setup_at_day(blk: Block, target_day: int, insert_at: int) -> bool:
+        """Does blk need setup if inserted at minute `insert_at` on target_day?"""
         existing = machine_day_blocks[blk.machine_id].get(target_day, [])
         if not existing:
             return True  # empty day → first block → needs setup
-        return not any(other.tool_id == blk.tool_id for other in existing)
+        # Find the block immediately before insert_at
+        preceding = [x for x in existing if x.end_min <= insert_at and x is not blk]
+        if not preceding:
+            return True  # nothing before → first block → needs setup
+        last_before = max(preceding, key=lambda x: x.end_min)
+        return last_before.tool_id != blk.tool_id
+
+    def _find_slot_in_day(machine_id: str, target_day: int, duration: int) -> int | None:
+        """Find first free minute-of-day slot that fits `duration` minutes.
+        Returns minute-of-day (e.g. 420) or None if no contiguous slot fits."""
+        existing = sorted(
+            machine_day_blocks[machine_id].get(target_day, []),
+            key=lambda x: x.start_min,
+        )
+        cursor = S0  # 420 = 07:00
+        for blk in existing:
+            blk_start = blk.start_min
+            # Account for setup time occupying space before production
+            if blk.setup_s is not None:
+                setup_min_of_day = blk.setup_s - target_day * MINUTES_PER_DAY
+                if 0 <= setup_min_of_day < blk_start:
+                    blk_start = setup_min_of_day
+            if cursor + duration <= blk_start:
+                return cursor  # fits in gap before this block
+            cursor = max(cursor, blk.end_min)
+        # Try after all existing blocks
+        if cursor + duration <= S1:
+            return cursor
+        return None
 
     # ── Phase 3: Process blocks — latest EDD first ──
     ok_blocks = [b for b in blocks if b.type == "ok" and b.qty > 0]
@@ -651,6 +681,8 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
         calco = tool.calco if tool else None
 
         best_day = orig_day
+        best_slot: int | None = None  # minute-of-day where block will start production
+        best_needs_setup = False
         for d in range(max_day, orig_day, -1):
             if d >= len(workdays) or not workdays[d]:
                 continue
@@ -660,16 +692,31 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
             if used + block_min > day_cap:
                 continue
 
-            # b. ToolTimeline: unbook old, check new, restore
-            new_abs_s = d * MINUTES_PER_DAY + b.start_min
-            new_abs_e = d * MINUTES_PER_DAY + b.end_min
+            # b. Find a contiguous free slot in the target day
+            slot = _find_slot_in_day(mid, d, block_min)
+            if slot is None:
+                continue
+            # Production starts after setup (if needed)
+            new_start = slot + b.setup_min  # tentative; adjusted below if no setup
+            new_abs_s = d * MINUTES_PER_DAY + new_start
+            new_abs_e = new_abs_s + b.prod_min
+
+            # c. Check if setup is needed at insertion point
+            needs_setup = _needs_setup_at_day(b, d, new_start)
+            if not needs_setup:
+                # No setup → production starts at slot directly
+                new_start = slot
+                new_abs_s = d * MINUTES_PER_DAY + new_start
+                new_abs_e = new_abs_s + b.prod_min
+
+            # d. ToolTimeline: unbook old, check new, restore
             tool_tl.unbook(b.tool_id, old_abs_s, old_abs_e, mid)
             tool_ok = tool_tl.is_available(b.tool_id, new_abs_s, new_abs_e, mid)
             tool_tl.book(b.tool_id, old_abs_s, old_abs_e, mid)
             if not tool_ok:
                 continue
 
-            # c. CalcoTimeline: unbook old, check new, restore
+            # e. CalcoTimeline: unbook old, check new, restore
             if calco:
                 calco_tl.unbook(calco, old_abs_s, old_abs_e, mid)
                 calco_ok = calco_tl.is_available(calco, new_abs_s, new_abs_e)
@@ -677,25 +724,25 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
                 if not calco_ok:
                     continue
 
-            # d. SetupCrew: if tool changes at target day, check crew availability
-            needs_setup = _needs_setup_at_day(b, d)
+            # f. SetupCrew: if tool changes at target day, check crew availability
             if needs_setup and b.setup_min > 0:
                 setup_dur = b.setup_min
-                setup_new_s = new_abs_s - setup_dur  # setup just before production
-                setup_new_e = new_abs_s
+                setup_new_s = new_abs_s - setup_dur
                 if b.setup_s is not None and b.setup_e is not None:
                     setup_crew.unbook(b.setup_s, b.setup_e, mid)
                 crew_slot = setup_crew.find_next_available(setup_new_s, setup_dur, new_abs_e)
                 if b.setup_s is not None and b.setup_e is not None:
                     setup_crew.book(b.setup_s, b.setup_e, mid)
                 if crew_slot == -1 or crew_slot != setup_new_s:
-                    continue  # setup crew busy at target time
+                    continue
 
             best_day = d
+            best_slot = new_start
+            best_needs_setup = needs_setup
             break
 
         # ── Phase 4: Move block if better day found ──
-        if best_day > orig_day:
+        if best_day > orig_day and best_slot is not None:
             # Unbook old constraints
             tool_tl.unbook(b.tool_id, old_abs_s, old_abs_e, mid)
             if calco:
@@ -703,30 +750,32 @@ def _jit_right_shift(blocks: list[Block], engine_data: EngineData) -> list[Block
             if b.setup_s is not None and b.setup_e is not None:
                 setup_crew.unbook(b.setup_s, b.setup_e, mid)
 
-            # Update block position
+            # Update block position — recalculate start_min/end_min
             machine_day_blocks[mid][orig_day] = [
                 x for x in machine_day_blocks[mid][orig_day] if x is not b
             ]
             b.day_idx = best_day
+            b.start_min = best_slot
+            b.end_min = best_slot + b.prod_min
+            b.shift = "X" if best_slot < T1 else ("Y" if best_slot < S1 else "Z")
             machine_day_blocks[mid][best_day].append(b)
 
-            # Book new constraints
-            new_abs_s = best_day * MINUTES_PER_DAY + b.start_min
-            new_abs_e = best_day * MINUTES_PER_DAY + b.end_min
+            # Book new constraints at actual position
+            new_abs_s = best_day * MINUTES_PER_DAY + best_slot
+            new_abs_e = new_abs_s + b.prod_min
             tool_tl.book(b.tool_id, new_abs_s, new_abs_e, mid)
             if calco:
                 calco_tl.book(calco, new_abs_s, new_abs_e, mid)
 
             # Recalculate setup at new position
-            needs_setup = _needs_setup_at_day(b, best_day)
-            if needs_setup and b.setup_min > 0:
+            if best_needs_setup and b.setup_min > 0:
                 setup_new_s = new_abs_s - b.setup_min
                 setup_new_e = new_abs_s
                 b.setup_s = setup_new_s
                 b.setup_e = setup_new_e
                 setup_crew.book(setup_new_s, setup_new_e, mid)
-            elif not needs_setup and b.setup_s is not None:
-                # Same tool already on this day → no setup needed
+            elif not best_needs_setup and b.setup_s is not None:
+                # Same tool preceding → no setup needed
                 block_min_saved = b.setup_min
                 b.setup_min = 0
                 b.setup_s = None
