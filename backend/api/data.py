@@ -356,9 +356,9 @@ async def update_config(updates: dict):
 
     # Recalculate if data is loaded
     if state.engine_data:
-        from backend.scheduler.scheduler import schedule_all
+        from backend.cpo import optimize
 
-        result = schedule_all(state.engine_data, audit=True, config=c)
+        result = optimize(state.engine_data, mode="quick", audit=True, config=c)
         state.update_schedule(result)
 
     return {"status": "ok", "changed": changed, "score": state.score}
@@ -425,10 +425,10 @@ async def check_ctp(request: CTPRequest):
 @router.post("/recalculate")
 async def recalculate():
     _require_data()
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
     old_score = dict(state.score) if state.score else {}
-    result = schedule_all(state.engine_data, audit=True, config=state.config)
+    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
     state.update_schedule(result)
 
     return {
@@ -454,8 +454,8 @@ async def load_isop_upload(
 ):
     """Load ISOP from uploaded file (multipart/form-data)."""
     from backend.config.loader import load_config
+    from backend.cpo import optimize
     from backend.dqa import compute_trust_index
-    from backend.learning.smart import smart_schedule
     from backend.parser.isop_reader import read_isop
     from backend.transform.transform import transform
 
@@ -473,10 +473,9 @@ async def load_isop_upload(
 
         rows, workdays, has_twin = read_isop(tmp_path)
         engine_data = transform(rows, workdays, has_twin, master)
-        result = smart_schedule(
+        result = optimize(
             engine_data,
-            learn=True,
-            label=file.filename or "upload",
+            mode="normal",
             audit=True,
             config=config,
         )
@@ -501,16 +500,11 @@ async def load_isop_upload(
                 ]),
             }
 
-        learning_info = None
-        if result.study:
-            learning_info = {
-                "optimized": True,
-                "n_trials": result.study.n_trials,
-                "confidence": result.study.confidence,
-                "improvement": result.study.improvement,
-                "total_time_ms": result.study.total_time_ms,
-                "best_params": result.study.best_params.to_dict(),
-            }
+        learning_info = {
+            "optimized": True,
+            "mode": "normal",
+            "time_ms": result.time_ms,
+        }
         state.learning_info = learning_info
 
         return {
@@ -563,7 +557,7 @@ async def update_operators(body: dict):
     _require_data()
 
     from backend.config.loader import save_config
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
     old_score = dict(state.score) if state.score else {}
     changed = []
@@ -584,7 +578,7 @@ async def update_operators(body: dict):
         return {"status": "ok", "score": state.score, "score_anterior": old_score}
 
     save_config(state.config)
-    result = schedule_all(state.engine_data, audit=True, config=state.config)
+    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
     state.update_schedule(result)
 
     return {"status": "ok", "changed": changed, "score": result.score, "score_anterior": old_score}

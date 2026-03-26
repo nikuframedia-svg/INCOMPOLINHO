@@ -17,8 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.scheduler import schedule_all
-from scripts.cpo.optimizer import optimize
+from backend.cpo import optimize
 
 
 def main():
@@ -56,7 +55,7 @@ def main():
     # Baseline
     print("Running baseline (greedy)...")
     t0 = time.perf_counter()
-    baseline = schedule_all(engine_data, config=config)
+    baseline = optimize(engine_data, mode="quick", config=config)
     baseline_time = (time.perf_counter() - t0) * 1000
 
     # CPO

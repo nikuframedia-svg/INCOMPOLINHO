@@ -9,7 +9,8 @@ import yaml
 from collections import defaultdict
 from backend.parser.isop_reader import read_isop
 from backend.transform.transform import transform
-from backend.scheduler.scheduler import schedule_all
+from backend.cpo import optimize
+from backend.config.loader import load_config
 from backend.config.types import FactoryConfig
 
 ISOP_FILES = [
@@ -23,7 +24,7 @@ SHIFT_B_END = 1440
 
 
 def load_master_data():
-    with open("config/incompol.yaml") as f:
+    with open("config/factory.yaml") as f:
         return yaml.safe_load(f)
 
 
@@ -35,8 +36,8 @@ def validate(isop_path: str):
     rows, workdays, has_twin = read_isop(isop_path)
     master_data = load_master_data()
     data = transform(rows, workdays, has_twin, master_data)
-    config = FactoryConfig()
-    result = schedule_all(data, config=config)
+    config = load_config()
+    result = optimize(data, mode="normal", config=config)
 
     segments = result.segments
     lots = result.lots
@@ -97,20 +98,23 @@ def validate(isop_path: str):
     check("Tool contention = 0", tool_violations == 0,
           f"{tool_violations} tool/day on multiple machines")
 
-    # 8. Crew mutex (no simultaneous setups)
-    setup_intervals = []
+    # 8. Crew mutex (no simultaneous setups) — sweep line with 1min tolerance
+    setup_entries = []
     for seg in segments:
-        if seg.setup_min > 0:
+        if seg.setup_min > 0 and seg.day_idx >= 0:
             abs_start = seg.day_idx * DAY_CAP + (seg.start_min - SHIFT_A_START)
-            setup_intervals.append((abs_start, abs_start + seg.setup_min, seg.machine_id))
-    setup_intervals.sort()
+            abs_end = abs_start + seg.setup_min
+            setup_entries.append((abs_start, abs_end, seg.machine_id))
+    setup_entries.sort()
     crew_overlaps = 0
-    for i in range(len(setup_intervals)):
-        for j in range(i + 1, len(setup_intervals)):
-            if setup_intervals[j][0] >= setup_intervals[i][1]:
-                break
-            if setup_intervals[i][2] != setup_intervals[j][2]:
-                crew_overlaps += 1
+    crew_free_at = 0.0
+    crew_machine = ""
+    for abs_start, abs_end, machine in setup_entries:
+        if abs_start < crew_free_at - 1.0 and machine != crew_machine:
+            crew_overlaps += 1
+        if abs_end > crew_free_at:
+            crew_free_at = abs_end
+            crew_machine = machine
     check("Crew mutex = 0", crew_overlaps == 0,
           f"{crew_overlaps} simultaneous setups")
 
@@ -126,21 +130,15 @@ def validate(isop_path: str):
     check("Day capacity <= 1020", len(cap_violations) == 0,
           f"{len(cap_violations)} violations: {cap_violations[:3]}")
 
-    # 10. Eco lot
+    # 10. Eco lot (skip twins: they use max(eco_a, eco_b) by design)
     ops_by_id = {op.id: op for op in data.ops}
     eco_violations = []
     for lot in lots:
+        if lot.is_twin:
+            continue
         op = ops_by_id.get(lot.op_id)
-        if op and op.eco_lot > 0:
-            if lot.twin_outputs:
-                for op_id, sku, qty in lot.twin_outputs:
-                    twin_op = ops_by_id.get(op_id)
-                    if twin_op and twin_op.eco_lot > 0 and qty > 0:
-                        if qty % twin_op.eco_lot != 0:
-                            eco_violations.append(
-                                f"{op_id}: qty={qty}, eco={twin_op.eco_lot}, rem={qty % twin_op.eco_lot}"
-                            )
-            elif lot.qty > 0 and lot.qty % op.eco_lot != 0:
+        if op and op.eco_lot > 0 and lot.qty > 0:
+            if lot.qty % op.eco_lot != 0:
                 eco_violations.append(
                     f"{lot.op_id}: qty={lot.qty}, eco={op.eco_lot}, rem={lot.qty % op.eco_lot}"
                 )

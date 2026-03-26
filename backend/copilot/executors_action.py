@@ -30,10 +30,10 @@ def exec_recalcular_plano(args: dict) -> str:
     if (err := _guard()):
         return err
 
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
     old_score = dict(state.score) if state.score else {}
-    result = schedule_all(state.engine_data, audit=True, config=state.config)
+    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
     state.update_schedule(result)
 
     return _dumps({
@@ -51,7 +51,7 @@ def exec_mover_referencia(args: dict) -> str:
     if (err := _guard()):
         return err
 
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
     sku = args.get("sku", "")
     dest = args.get("maquina_destino", "")
@@ -74,7 +74,7 @@ def exec_mover_referencia(args: dict) -> str:
             op.alt = None
 
     # Re-schedule on mutated data
-    result = schedule_all(mutated, audit=True, config=state.config)
+    result = optimize(mutated, mode="quick", audit=True, config=state.config)
 
     # Reject if tardy_count worsens
     old_tardy = state.score.get("tardy_count", 0)

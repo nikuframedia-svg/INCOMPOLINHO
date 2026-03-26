@@ -19,12 +19,11 @@ from backend.config.loader import load_config
 from backend.config.types import FactoryConfig
 from backend.parser.isop_reader import read_isop
 from backend.scheduler.constants import DAY_CAP
-from backend.scheduler.scheduler import schedule_all
+from backend.cpo import optimize
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import ScheduleResult
 from backend.transform.transform import transform
 from backend.types import EngineData
-from scripts.cpo.optimizer import optimize
 
 
 # ─── Data loading ──────────────────────────────────────────────────────

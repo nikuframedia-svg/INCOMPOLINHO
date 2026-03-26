@@ -40,7 +40,7 @@ def smart_schedule(
     Returns:
         ScheduleResult with .study attached when learn=True.
     """
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
     store = LearnStore(db_path=store_path)
     transfer = ThompsonTransfer(store)
@@ -52,14 +52,13 @@ def smart_schedule(
     if learn:
         tuner = OptunaTuner(data, n_trials=n_trials, timeout_s=timeout_s, config=config)
         study = tuner.optimize(warm_start=warm)
-        best_params = study.best_params
 
         transfer.record(ctx, study, label)
         store.close()
 
-        result = schedule_all(data, params=best_params, audit=audit, config=config)
+        result = optimize(data, mode="normal", audit=audit, config=config)
         result.study = study
         return result
     else:
         store.close()
-        return schedule_all(data, params=warm, audit=audit, config=config)
+        return optimize(data, mode="quick", audit=audit, config=config)

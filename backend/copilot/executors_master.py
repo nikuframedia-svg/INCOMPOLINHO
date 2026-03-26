@@ -31,9 +31,9 @@ def _guard() -> str | None:
 
 def _reschedule() -> dict:
     """Re-schedule and return new score."""
-    from backend.scheduler.scheduler import schedule_all
+    from backend.cpo import optimize
 
-    result = schedule_all(state.engine_data, audit=True, config=state.config)
+    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
     state.update_schedule(result)
     return result.score
 

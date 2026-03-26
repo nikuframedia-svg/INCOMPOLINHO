@@ -10,7 +10,7 @@ import copy
 import time
 from dataclasses import dataclass
 
-from backend.scheduler.scheduler import schedule_all
+from backend.cpo import optimize
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -75,7 +75,7 @@ def simulate(
 
     # 3. Re-schedule with (possibly modified) config
     try:
-        result = schedule_all(mutated, config=sim_config)
+        result = optimize(mutated, mode="quick", config=sim_config)
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         summaries.append(f"ERRO no scheduler: {exc}")

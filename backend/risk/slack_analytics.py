@@ -11,7 +11,7 @@ from collections import defaultdict
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.scoring import compute_score
-from backend.scheduler.scheduler import schedule_all
+from backend.cpo import optimize
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -193,7 +193,7 @@ def compute_bottleneck(
                 mm.day_capacity = round(mm.day_capacity * 1.10)
                 break
 
-        result = schedule_all(mutated)
+        result = optimize(mutated, mode="quick")
         delta = result.score.get("otd", 100.0) - baseline_otd
         if delta > best_delta:
             best_delta = delta

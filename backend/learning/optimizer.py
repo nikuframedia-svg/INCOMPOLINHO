@@ -37,12 +37,12 @@ class OptunaTuner:
         self, warm_start: SchedulerParams | None = None,
     ) -> StudyResult:
         """Run Bayesian optimization. Returns StudyResult."""
-        from backend.scheduler.scheduler import schedule_all
+        from backend.cpo import optimize
 
         t0 = time.perf_counter()
 
         # Baseline (default params)
-        baseline_result = schedule_all(copy.deepcopy(self._data), config=self._config)
+        baseline_result = optimize(copy.deepcopy(self._data), mode="quick", config=self._config)
         baseline_reward = compute_reward(baseline_result.score)
 
         study = optuna.create_study(
@@ -66,7 +66,7 @@ class OptunaTuner:
                     "interleave_enabled", [True, False],
                 ),
             )
-            result = schedule_all(copy.deepcopy(self._data), params=params, config=self._config)
+            result = optimize(copy.deepcopy(self._data), mode="quick", config=self._config)
             return compute_reward(result.score)
 
         study.optimize(
@@ -78,7 +78,7 @@ class OptunaTuner:
         # Best result
         best_trial = study.best_trial
         best_params = SchedulerParams.from_dict(best_trial.params)
-        best_result = schedule_all(copy.deepcopy(self._data), params=best_params, config=self._config)
+        best_result = optimize(copy.deepcopy(self._data), mode="normal", config=self._config)
         best_reward = compute_reward(best_result.score)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000

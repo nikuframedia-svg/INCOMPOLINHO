@@ -24,7 +24,7 @@ from backend.copilot.llm_provider import get_provider
 from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
 from backend.copilot.tools import TOOLS
-from backend.learning.smart import smart_schedule
+from backend.cpo import optimize
 from backend.parser.isop_reader import read_isop
 from backend.transform.transform import transform
 
@@ -132,10 +132,9 @@ async def load_isop(request: LoadRequest):
 
     rows, workdays, has_twin = read_isop(request.isop_path)
     engine_data = transform(rows, workdays, has_twin, master)
-    result = smart_schedule(
+    result = optimize(
         engine_data,
-        learn=True,
-        label=request.isop_path,
+        mode="normal",
         audit=True,
         config=config,
     )

@@ -24,9 +24,20 @@ ISOP Excel (.xlsx)
 RawRow[]
   ↓ transform()                [backend/transform/transform.py]
 EngineData
-  ↓ schedule_all()             [backend/scheduler/scheduler.py]
+  ↓ optimize()                 [backend/cpo/optimizer.py]
 ScheduleResult { segments, lots, score, warnings, operator_alerts }
 ```
+
+## ═══ CPO v3.0 — Cascading Pipeline Optimizer ═══
+
+Entry point: `from backend.cpo import optimize`
+Modos: quick (greedy passthrough), normal (GA 20×30 + CP-SAT), deep (GA 40×100 + surrogate), max (GA 60×300)
+
+- `optimize(data, mode="quick")` — mesmo que schedule_all(), <500ms
+- `optimize(data, mode="normal")` — GA optimiza 7 genes sobre o greedy, ~5-15s
+- `schedule_all()` — pipeline greedy interno (5 fases), chamado pelo CPO internamente
+
+Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
 
 ## ═══ PRIORIDADE Nº1 ═══
 ENTREGAR TUDO A TEMPO. Sem excepção.

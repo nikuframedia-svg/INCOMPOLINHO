@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import time
 
-from backend.scheduler.scheduler import schedule_all
+from backend.cpo import optimize
 from backend.types import EngineData
 
 from .types import CounterfactualResult
@@ -47,7 +47,7 @@ def compute_counterfactual(
     elif question_type == "remove_jit":
         question = "E se não houvesse JIT?"
 
-    result = schedule_all(mutated, config=config)
+    result = optimize(mutated, mode="quick", config=config)
     cf_score = result.score
 
     delta = {
