@@ -127,33 +127,39 @@ def sequence_per_machine(
     audit_logger: object | None = None,
     params: object | None = None,
     config: FactoryConfig | None = None,
+    holidays: set[int] | None = None,
 ) -> dict[str, list[ToolRun]]:
-    """Sequence runs per machine: EDD → campaign → interleave → 2-opt."""
+    """Sequence runs per machine: EDD → campaign → interleave → 2-opt → tardy repair."""
+    day_cap = config.day_capacity_min if config else DAY_CAP
+    has_holidays = bool(holidays)
+
     for machine_id, runs in machine_runs.items():
         runs.sort(key=lambda r: r.edd)             # 1. EDD baseline
 
-        before = [r.id for r in runs]
-        runs = _campaign_sequence(runs, params=params, config=config)  # 2. Group by tool (Fix 3)
-        after_campaign = [r.id for r in runs]
-        if audit_logger and before != after_campaign:
-            moves = sum(1 for a, b in zip(before, after_campaign) if a != b)
-            audit_logger.log_sequence(machine_id, "sequence_campaign", moves)
-
-        interleave = getattr(params, 'interleave_enabled', config.interleave_enabled if config else True)
-        if interleave:
+        if not has_holidays:
+            # Campaign grouping only when no weekends/holidays reduce capacity
             before = [r.id for r in runs]
-            runs = _interleave_urgent(runs)         # 3. Break campaign if urgent (Fix 4)
-            after_interleave = [r.id for r in runs]
-            if audit_logger and before != after_interleave:
-                moves = sum(1 for a, b in zip(before, after_interleave) if a != b)
-                audit_logger.log_sequence(machine_id, "sequence_interleave", moves)
+            runs = _campaign_sequence(runs, params=params, config=config)
+            after_campaign = [r.id for r in runs]
+            if audit_logger and before != after_campaign:
+                moves = sum(1 for a, b in zip(before, after_campaign) if a != b)
+                audit_logger.log_sequence(machine_id, "sequence_campaign", moves)
 
-        before = [r.id for r in runs]
-        runs = _two_opt(runs, params=params, config=config)        # 4. Local improvement
-        after_2opt = [r.id for r in runs]
-        if audit_logger and before != after_2opt:
-            moves = sum(1 for a, b in zip(before, after_2opt) if a != b)
-            audit_logger.log_sequence(machine_id, "sequence_2opt", moves)
+            interleave = getattr(params, 'interleave_enabled', config.interleave_enabled if config else True)
+            if interleave:
+                before = [r.id for r in runs]
+                runs = _interleave_urgent(runs)
+                after_interleave = [r.id for r in runs]
+                if audit_logger and before != after_interleave:
+                    moves = sum(1 for a, b in zip(before, after_interleave) if a != b)
+                    audit_logger.log_sequence(machine_id, "sequence_interleave", moves)
+
+            before = [r.id for r in runs]
+            runs = _two_opt(runs, params=params, config=config)
+            after_2opt = [r.id for r in runs]
+            if audit_logger and before != after_2opt:
+                moves = sum(1 for a, b in zip(before, after_2opt) if a != b)
+                audit_logger.log_sequence(machine_id, "sequence_2opt", moves)
 
         machine_runs[machine_id] = runs
     return machine_runs
@@ -263,6 +269,7 @@ def _two_opt(runs: list[ToolRun], params=None, config: FactoryConfig | None = No
             if improved:
                 break
     return runs
+
 
 
 # ─── 5.3 Per-machine dispatch (allocate segments) ──────────────────────
@@ -397,6 +404,8 @@ def _allocate_run(
         start_abs = setup_start + run.setup_min
 
     # Production: each lot sequentially (already in EDD order — Fix 1)
+    last_end_on_day: dict[int, int] = {}  # track end_min per day to prevent overlaps
+
     for lot_idx, lot in enumerate(run.lots):
         remaining_min = lot.prod_min
         remaining_qty = lot.qty
@@ -412,13 +421,32 @@ def _allocate_run(
 
             offset_in_day = start_abs - day * day_cap
             min_in_day = shift_a_start + int(offset_in_day)
+
+            # Prevent float/int truncation overlaps: ensure we start after last segment
+            if day in last_end_on_day and min_in_day < last_end_on_day[day]:
+                min_in_day = last_end_on_day[day]
+
+            # Setup only on first segment of first lot of run
+            seg_setup = (
+                run.setup_min
+                if (lot_idx == 0 and is_first_seg and needs_setup)
+                else 0.0
+            )
+
             day_remaining = shift_b_end - min_in_day
 
             if day_remaining < 1:
                 start_abs = (day + 1) * day_cap
                 continue
 
-            block_min = min(remaining_min, float(day_remaining))
+            # If setup doesn't fit in remaining day, push to next day
+            if seg_setup >= day_remaining:
+                start_abs = (day + 1) * day_cap
+                continue
+
+            # Production time available AFTER setup
+            prod_available = day_remaining - seg_setup
+            block_min = min(remaining_min, float(prod_available))
             block_min = max(block_min, 0.01)  # never zero
 
             # Proportional qty
@@ -429,13 +457,6 @@ def _allocate_run(
             block_qty = min(block_qty, remaining_qty)
 
             shift = "A" if min_in_day < shift_a_end else "B"
-
-            # Setup only on first segment of first lot of run
-            seg_setup = (
-                run.setup_min
-                if (lot_idx == 0 and is_first_seg and needs_setup)
-                else 0.0
-            )
 
             # Twin outputs proportional
             twin_out = None
@@ -473,6 +494,7 @@ def _allocate_run(
             segments.append(seg)
 
             tl.used_per_day[day] = tl.used_per_day.get(day, 0) + block_min + seg_setup
+            last_end_on_day[day] = seg.end_min
             start_abs += block_min
             remaining_min -= block_min
             remaining_qty -= block_qty

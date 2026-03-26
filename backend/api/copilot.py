@@ -24,8 +24,8 @@ from backend.copilot.llm_provider import get_provider
 from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
 from backend.copilot.tools import TOOLS
+from backend.learning.smart import smart_schedule
 from backend.parser.isop_reader import read_isop
-from backend.scheduler.scheduler import schedule_all
 from backend.transform.transform import transform
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,13 @@ async def load_isop(request: LoadRequest):
 
     rows, workdays, has_twin = read_isop(request.isop_path)
     engine_data = transform(rows, workdays, has_twin, master)
-    result = schedule_all(engine_data, audit=True, config=config)
+    result = smart_schedule(
+        engine_data,
+        learn=True,
+        label=request.isop_path,
+        audit=True,
+        config=config,
+    )
 
     state.engine_data = engine_data
     state.config = config
@@ -153,6 +159,15 @@ async def load_isop(request: LoadRequest):
             "warnings": len([e for e in result.journal if e.get("severity") in ("warn", "error")]),
         }
 
+    learning_info = None
+    if result.study:
+        learning_info = {
+            "optimized": True,
+            "n_trials": result.study.n_trials,
+            "confidence": result.study.confidence,
+            "improvement": result.study.improvement,
+        }
+
     return {
         "status": "ok",
         "n_ops": len(engine_data.ops),
@@ -161,6 +176,7 @@ async def load_isop(request: LoadRequest):
         "time_ms": result.time_ms,
         "trust_index": {"score": trust.score, "gate": trust.gate},
         "journal_summary": journal_summary,
+        "learning": learning_info,
     }
 
 

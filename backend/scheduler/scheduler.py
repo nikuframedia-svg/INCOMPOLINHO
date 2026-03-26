@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import defaultdict
 
 from backend.scheduler.constants import DAY_CAP
 from backend.config.types import FactoryConfig
@@ -33,13 +34,61 @@ from backend.types import EngineData
 logger = logging.getLogger(__name__)
 
 
-def _detect_buffer_need(runs: list[ToolRun], config: FactoryConfig | None = None) -> int:
-    """Return 1 if any run with edd=0 needs more than 1 day of work."""
+def _detect_buffer_need(
+    runs: list[ToolRun],
+    config: FactoryConfig | None = None,
+    machine_runs: dict[str, list[ToolRun]] | None = None,
+    holidays: set[int] | None = None,
+) -> int:
+    """Return number of buffer days needed so no machine has infeasible early load.
+
+    For each machine, simulates strict-EDD dispatch accounting for holidays.
+    If any run completes after its EDD, computes how many extra days are needed.
+    Falls back to simple edd=0 check when machine_runs not provided.
+    """
+    import math
     day_cap = config.day_capacity_min if config else DAY_CAP
+    hols = holidays or set()
+
+    if machine_runs:
+        max_buffer = 0
+        for m_id, m_runs in machine_runs.items():
+            sorted_runs = sorted(m_runs, key=lambda r: r.edd)
+            abs_min = 0.0
+            for run in sorted_runs:
+                # Snap to workday
+                day = int(abs_min) // day_cap
+                while day in hols:
+                    day += 1
+                    abs_min = float(day * day_cap)
+
+                remaining = run.total_min
+                while remaining > 0.01:
+                    day = int(abs_min) // day_cap
+                    while day in hols:
+                        day += 1
+                        abs_min = float(day * day_cap)
+                    day_used = abs_min - day * day_cap
+                    day_left = day_cap - day_used
+                    block = min(remaining, day_left)
+                    abs_min += block
+                    remaining -= block
+                    if remaining > 0.01:
+                        abs_min = float((day + 1) * day_cap)
+
+                comp_day = day
+                if comp_day > run.edd:
+                    tardiness = comp_day - run.edd
+                    max_buffer = max(max_buffer, tardiness)
+        return max_buffer
+
+    # Fallback: simple edd=0 check
+    max_buffer = 0
     for run in runs:
         if run.edd == 0 and run.total_min > day_cap:
-            return 1
-    return 0
+            days_needed = math.ceil(run.total_min / day_cap)
+            max_buffer = max(max_buffer, days_needed - 1)
+    return max_buffer
 
 
 def _apply_buffer(runs: list[ToolRun], buffer_days: int) -> None:
@@ -63,10 +112,11 @@ def _shift_engine_data(data: EngineData, buffer_days: int) -> EngineData:
 def _unshift_segments(segments: list[Segment], buffer_days: int) -> list[Segment]:
     """Shift segment day_idx and edd back by buffer_days.
 
-    Buffer-day production (day_idx < 0 after shift) is clamped to day 0.
+    Buffer-day production keeps negative day_idx (e.g. day -1) so the
+    Gantt can display it truthfully instead of cramming into day 0.
     """
     for seg in segments:
-        seg.day_idx = max(0, seg.day_idx - buffer_days)
+        seg.day_idx = seg.day_idx - buffer_days
         seg.edd -= buffer_days
     return segments
 
@@ -76,6 +126,110 @@ def _unshift_lots(lots: list[Lot], buffer_days: int) -> list[Lot]:
     for lot in lots:
         lot.edd -= buffer_days
     return lots
+
+
+def _next_workday(day: int, holidays: set[int]) -> int:
+    """Return next day that is not a holiday."""
+    d = day
+    while d in holidays:
+        d += 1
+    return d
+
+
+def _fix_day_overlaps(segments: list[Segment], config: FactoryConfig | None = None, holidays: set[int] | None = None) -> list[Segment]:
+    """Fix overlapping segments on same machine/day after buffer unshift.
+
+    Per machine: sort all segments by (day_idx, start_min), then sequentially
+    ensure each segment starts after the previous one ends. Segments that
+    overflow past shift_b_end are pushed to the next workday (skipping holidays).
+    """
+    shift_a_start = config.shift_a_start if config else 420
+    shift_b_end = config.shift_b_end if config else 1440
+    hols = holidays or set()
+
+    by_machine: defaultdict[str, list[Segment]] = defaultdict(list)
+    for seg in segments:
+        by_machine[seg.machine_id].append(seg)
+
+    for machine_id, segs in by_machine.items():
+        segs.sort(key=lambda s: (s.day_idx, s.start_min))
+        for i in range(1, len(segs)):
+            prev = segs[i - 1]
+            curr = segs[i]
+
+            # Only fix overlaps within the same day
+            if curr.day_idx != prev.day_idx:
+                continue
+
+            if curr.start_min < prev.end_min:
+                duration = curr.end_min - curr.start_min
+                new_start = prev.end_min
+                new_end = new_start + duration
+
+                # If overflows day, move to next workday
+                if new_end > shift_b_end:
+                    new_day = _next_workday(curr.day_idx + 1, hols)
+                    # EDD guard: never cause tardy
+                    if new_day > curr.edd:
+                        # Cap segment within remaining day time instead
+                        if prev.end_min < shift_b_end:
+                            curr.start_min = prev.end_min
+                            curr.end_min = shift_b_end
+                        else:
+                            # No space left — collapse (zero visual footprint)
+                            curr.start_min = shift_b_end
+                            curr.end_min = shift_b_end
+                        continue
+                    curr.day_idx = new_day
+                    curr.start_min = shift_a_start
+                    curr.end_min = shift_a_start + duration
+                    curr.is_continuation = True
+                    curr.shift = "A"
+                    # Re-sort needed since we moved a segment to a later day
+                    segs.sort(key=lambda s: (s.day_idx, s.start_min))
+                    break
+                else:
+                    curr.start_min = new_start
+                    curr.end_min = new_end
+        else:
+            continue
+        # Break happened — re-scan this machine (max iterations = n_segments)
+        for _ in range(len(segs)):
+            segs.sort(key=lambda s: (s.day_idx, s.start_min))
+            cascaded = False
+            for i in range(1, len(segs)):
+                prev = segs[i - 1]
+                curr = segs[i]
+                if curr.day_idx != prev.day_idx:
+                    continue
+                if curr.start_min < prev.end_min:
+                    duration = curr.end_min - curr.start_min
+                    new_start = prev.end_min
+                    new_end = new_start + duration
+                    if new_end > shift_b_end:
+                        new_day = _next_workday(curr.day_idx + 1, hols)
+                        if new_day > curr.edd:
+                            if prev.end_min < shift_b_end:
+                                curr.start_min = prev.end_min
+                                curr.end_min = shift_b_end
+                            else:
+                                curr.start_min = shift_b_end
+                                curr.end_min = shift_b_end
+                            continue
+                        curr.day_idx = new_day
+                        curr.start_min = shift_a_start
+                        curr.end_min = shift_a_start + duration
+                        curr.is_continuation = True
+                        curr.shift = "A"
+                        cascaded = True
+                        break
+                    else:
+                        curr.start_min = new_start
+                        curr.end_min = new_end
+            if not cascaded:
+                break
+
+    return segments
 
 
 def schedule_all(data: EngineData, params=None, audit: bool = False, config: FactoryConfig | None = None) -> ScheduleResult:
@@ -119,17 +273,21 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
     journal.phase_end("tool_grouping", f"{len(runs)} runs from {len(lots)} lots", n_runs=len(runs))
     logger.info("Phase 2: %d tool runs (vs %d lots)", len(runs), len(lots))
 
-    # Auto buffer: if any run with edd=0 needs more than 1 day, shift everything +1
-    buffer_days = _detect_buffer_need(runs, config=config)
-    if buffer_days > 0:
-        logger.info("Auto buffer: +%d day(s) for infeasible day-0 runs", buffer_days)
-        _apply_buffer(runs, buffer_days)
-        data = _shift_engine_data(data, buffer_days)
-
-    # Phase 3: Assign + Sequence + Allocate
+    # Auto buffer: detect per-machine capacity infeasibility with holidays
     journal.phase_start("dispatch")
     machine_runs = assign_machines(runs, data, audit_logger=audit_logger, params=params, config=config)
-    machine_runs = sequence_per_machine(machine_runs, audit_logger=audit_logger, params=params, config=config)
+    global_holidays = set(data.holidays) if data.holidays else set()
+    buffer_days = _detect_buffer_need(runs, config=config, machine_runs=machine_runs, holidays=global_holidays)
+    if buffer_days > 0:
+        logger.info("Auto buffer: +%d day(s) for infeasible early runs", buffer_days)
+        _apply_buffer(runs, buffer_days)
+        data = _shift_engine_data(data, buffer_days)
+        global_holidays = set(data.holidays) if data.holidays else set()
+        # Re-assign with shifted EDDs
+        machine_runs = assign_machines(runs, data, audit_logger=audit_logger, params=params, config=config)
+
+    # Phase 3: Sequence + Allocate
+    machine_runs = sequence_per_machine(machine_runs, audit_logger=audit_logger, params=params, config=config, holidays=global_holidays or None)
     baseline_segments, baseline_lots, warnings = per_machine_dispatch(machine_runs, data, config=config)
     journal.phase_end("dispatch", f"{len(baseline_segments)} segments", n_segments=len(baseline_segments))
     logger.info("Phase 3: %d segments, %d warnings", len(baseline_segments), len(warnings))
@@ -145,8 +303,10 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
     # Phase 4: JIT (LST-gated re-dispatch)
     journal.phase_start("jit")
     jit_thresh = getattr(params, 'jit_threshold', config.jit_threshold)
+    jit_machine_runs = None
+    jit_gates = None
     if config.jit_enabled and baseline_score["otd"] >= jit_thresh:
-        final_segments, final_lots, jit_warnings = jit_dispatch(
+        final_segments, final_lots, jit_warnings, jit_machine_runs, jit_gates = jit_dispatch(
             runs, data,
             baseline_segments, baseline_lots, baseline_score,
             audit_logger=audit_logger, params=params, config=config,
@@ -160,12 +320,31 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
         journal.log("jit", "warn", "JIT disabled: baseline OTD < 95%")
         journal.phase_end("jit", "JIT skipped")
 
+    # Phase 4b: VNS polish (post-JIT)
+    if config.vns_enabled and jit_machine_runs is not None and jit_gates is not None:
+        from backend.scheduler.vns import vns_polish
+        journal.phase_start("vns")
+        jit_score = compute_score(final_segments, final_lots, data, config=config)
+        vns_segs, vns_lots, vns_score, vns_warnings = vns_polish(
+            jit_machine_runs, jit_gates, data, config,
+            final_segments, final_lots, jit_score,
+        )
+        if vns_score["setups"] < jit_score["setups"] or vns_score["earliness_avg_days"] < jit_score["earliness_avg_days"]:
+            final_segments = vns_segs
+            final_lots = vns_lots
+        warnings.extend(vns_warnings)
+        journal.phase_end("vns", f"VNS: setups={vns_score['setups']}, earliness={vns_score['earliness_avg_days']:.1f}d")
+
     # Un-shift buffer if applied
     if buffer_days > 0:
         final_segments = _unshift_segments(final_segments, buffer_days)
         final_lots = _unshift_lots(final_lots, buffer_days)
         # Restore original n_days for scoring
         data = _shift_engine_data(data, -buffer_days)
+
+    # Fix any overlapping segments (from buffer unshift or dispatch edge cases)
+    global_holidays = set(getattr(data, "holidays", []))
+    final_segments = _fix_day_overlaps(final_segments, config, holidays=global_holidays)
 
     # Phase 5: Final scoring
     journal.phase_start("scoring")
@@ -176,6 +355,14 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
         score["otd"], score["otd_d"], score["setups"],
         score["tardy_count"], score["total_lots"], score["earliness_avg_days"],
     )
+
+    # Earliness hard constraint check
+    earliness_target = config.jit_earliness_target if config else 6.0
+    if score["earliness_avg_days"] > earliness_target:
+        warnings.append(
+            f"HARD: earliness {score['earliness_avg_days']:.1f}d > target {earliness_target:.1f}d"
+        )
+        journal.log("scoring", "warn", f"Earliness {score['earliness_avg_days']:.1f}d exceeds target {earliness_target:.1f}d")
 
     # Guardian: validate output
     out_issues = validate_output(final_segments, data)

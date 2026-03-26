@@ -447,7 +447,7 @@ class TestJITDispatch:
         baseline_score = compute_score(baseline_segs, baseline_lots, data)
 
         # JIT should not worsen tardy
-        final_segs, final_lots, warnings = jit_dispatch(
+        final_segs, final_lots, warnings, _, _ = jit_dispatch(
             runs, data, baseline_segs, baseline_lots, baseline_score,
         )
         final_score = compute_score(final_segs, final_lots, data)
@@ -564,6 +564,74 @@ class TestScheduleAll:
         assert result.lots[0].is_twin
         assert result.score is not None
 
+    def test_twin_joint_equal_qty(self):
+        """When both twins have demand, both produce max(eco_a, eco_b)."""
+        op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000], eco_lot=0)
+        op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 800], eco_lot=0)
+        twin = TwinGroup(
+            tool_id="T1", machine_id="M1",
+            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
+            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+        )
+        data = _make_engine_data(
+            ops=[op_a, op_b],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            twins=[twin],
+        )
+        lots = create_lots(data)
+        assert len(lots) == 1
+        to = lots[0].twin_outputs
+        assert to is not None
+        # Both produce max(1000, 800) = 1000
+        assert to[0][2] == 1000  # A = 1000
+        assert to[1][2] == 1000  # B = 1000 (not 800)
+        assert lots[0].qty == 1000
+
+    def test_twin_joint_with_eco_lot(self):
+        """Max eco lot determines qty for both twins."""
+        op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 4500], eco_lot=5000)
+        op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 2800], eco_lot=3000)
+        twin = TwinGroup(
+            tool_id="T1", machine_id="M1",
+            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
+            sku_1="A", sku_2="B", eco_lot_1=5000, eco_lot_2=3000,
+        )
+        data = _make_engine_data(
+            ops=[op_a, op_b],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            twins=[twin],
+        )
+        lots = create_lots(data)
+        assert len(lots) == 1
+        to = lots[0].twin_outputs
+        assert to is not None
+        # eco_a = ceil(4500/5000)*5000 = 5000, eco_b = ceil(2800/3000)*3000 = 3000
+        # qty = max(5000, 3000) = 5000
+        assert to[0][2] == 5000  # A
+        assert to[1][2] == 5000  # B (not 3000)
+        assert lots[0].qty == 5000
+
+    def test_twin_solo_only_a(self):
+        """Only A has demand → B gets 0."""
+        op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000])
+        op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 0])
+        twin = TwinGroup(
+            tool_id="T1", machine_id="M1",
+            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
+            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+        )
+        data = _make_engine_data(
+            ops=[op_a, op_b],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            twins=[twin],
+        )
+        lots = create_lots(data)
+        assert len(lots) == 1
+        to = lots[0].twin_outputs
+        assert to is not None
+        assert to[0][2] == 1000  # A produces
+        assert to[1][2] == 0     # B does NOT produce
+
     def test_with_holidays(self):
         op = _make_eop(d=[0, 0, 500], pH=1000.0, sH=0.0)
         data = _make_engine_data(ops=[op], n_days=3, holidays=[1])
@@ -665,3 +733,58 @@ class TestScheduleAll:
         result = schedule_all(data)
         assert result.time_ms < 500  # generous for CI
         assert result.score is not None
+
+    def test_no_production_overlap_per_machine_day(self):
+        """No two production segments should overlap on the same machine/day.
+
+        Large demand on day 0 triggers buffer, which previously caused
+        _unshift_segments to clamp two engine days onto day_idx=0.
+        """
+        from collections import defaultdict
+
+        op = _make_eop(d=[30000], pH=200.0, sH=0.5, eco_lot=0)
+        data = _make_engine_data(ops=[op], n_days=10)
+        result = schedule_all(data)
+
+        by_md: dict[tuple[str, int], list] = defaultdict(list)
+        for s in result.segments:
+            by_md[(s.machine_id, s.day_idx)].append(s)
+
+        for (mid, day), segs in by_md.items():
+            sorted_segs = sorted(segs, key=lambda s: s.start_min)
+            for i in range(1, len(sorted_segs)):
+                prev = sorted_segs[i - 1]
+                curr = sorted_segs[i]
+                assert curr.start_min >= prev.end_min, (
+                    f"Overlap on {mid} day {day}: "
+                    f"[{prev.start_min},{prev.end_min}) vs [{curr.start_min},{curr.end_min})"
+                )
+
+    def test_no_overlap_full_factory_buffer(self):
+        """Full factory with 5 machines: no overlaps after buffer unshift."""
+        from collections import defaultdict
+
+        machines_ids = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"]
+        ops = []
+        for i, mid in enumerate(machines_ids):
+            ops.append(_make_eop(
+                sku=f"SKU_{mid}", machine=mid, tool=f"T{i}",
+                d=[20000, 5000, 3000], pH=150.0, sH=0.5,
+            ))
+        machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machines_ids]
+        data = _make_engine_data(ops=ops, machines=machines, n_days=10)
+        result = schedule_all(data)
+
+        by_md: dict[tuple[str, int], list] = defaultdict(list)
+        for s in result.segments:
+            by_md[(s.machine_id, s.day_idx)].append(s)
+
+        overlaps = 0
+        for (mid, day), segs in by_md.items():
+            sorted_segs = sorted(segs, key=lambda s: s.start_min)
+            for i in range(1, len(sorted_segs)):
+                prev = sorted_segs[i - 1]
+                curr = sorted_segs[i]
+                if curr.start_min < prev.end_min:
+                    overlaps += 1
+        assert overlaps == 0, f"Found {overlaps} overlaps across all machines"

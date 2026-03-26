@@ -1,6 +1,6 @@
 /** Typed endpoint functions — one per backend route. */
 
-import { get, post, put, upload } from "./client";
+import { get, post, put, del, upload } from "./client";
 import type {
   ChatResponse,
   ClientOrders,
@@ -12,8 +12,10 @@ import type {
   FactoryConfig,
   JournalEntry,
   LateDeliveryReport,
+  LearningInfo,
   LoadResponse,
   Lot,
+  MasterDataResult,
   MutationInput,
   RiskResult,
   Score,
@@ -28,11 +30,13 @@ import type {
 // ── Core ─────────────────────────────────────────────────────
 
 export const getToday = () => get<{ today_idx: number; date: string }>("/api/data/today");
+export const getWorkdays = () => get<string[]>("/api/data/workdays");
 export const getScore = () => get<Score>("/api/data/score");
 export const getSegments = () => get<Segment[]>("/api/data/segments");
 export const getLots = () => get<Lot[]>("/api/data/lots");
 export const getTrust = () => get<TrustIndex>("/api/data/trust");
 export const getJournal = () => get<JournalEntry[]>("/api/data/journal");
+export const getLearning = () => get<LearningInfo | null>("/api/data/learning");
 
 // ── Analytics ────────────────────────────────────────────────
 
@@ -54,6 +58,32 @@ export const updateConfig = (updates: Record<string, unknown>) =>
   put<{ status: string; changed: string[]; score: Score }>("/api/data/config", updates);
 export const getOps = () => get<EOp[]>("/api/data/ops");
 export const getRules = () => get<{ id: string; tipo: string; descricao: string }[]>("/api/data/rules");
+
+// ── Master Data Mutations ────────────────────────────────────
+
+export const editMachine = (mid: string, updates: Record<string, unknown>) =>
+  put<MasterDataResult>(`/api/data/machines/${encodeURIComponent(mid)}`, updates);
+
+export const editTool = (tid: string, updates: Record<string, unknown>) =>
+  put<MasterDataResult>(`/api/data/tools/${encodeURIComponent(tid)}`, updates);
+
+export const updateOperators = (ops: Record<string, number>) =>
+  put<MasterDataResult>("/api/data/operators", ops);
+
+export const addHoliday = (date: string) =>
+  post<MasterDataResult>("/api/data/holidays", { data: date });
+
+export const removeHoliday = (date: string) =>
+  del<MasterDataResult>(`/api/data/holidays/${encodeURIComponent(date)}`);
+
+export const addTwin = (tool_id: string, sku_a: string, sku_b: string) =>
+  post<MasterDataResult>("/api/data/twins", { tool_id, sku_a, sku_b });
+
+export const removeTwin = (tool_id: string) =>
+  del<MasterDataResult>(`/api/data/twins/${encodeURIComponent(tool_id)}`);
+
+export const applyPreset = (name: string) =>
+  post<{ status: string; changed: string[]; score: Score }>(`/api/data/presets/${name}`, {});
 
 // ── Console ──────────────────────────────────────────────────
 

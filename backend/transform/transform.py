@@ -127,22 +127,32 @@ def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
 def _resolve_holidays(
     workdays: list[str], master_data: dict[str, Any] | None
 ) -> list[int]:
-    """Convert holiday date strings from YAML to workday indices."""
-    if not master_data:
-        return []
+    """Convert holiday date strings from YAML to workday indices.
 
-    holiday_dates = master_data.get("holidays", [])
-    if not holiday_dates:
-        return []
+    Also auto-detects weekends (Saturday=5, Sunday=6) as holidays.
+    """
+    from datetime import date as dt_date
 
-    workday_set = {d: i for i, d in enumerate(workdays)}
-    indices: list[int] = []
-    for h in holiday_dates:
-        date_str = str(h)
-        if date_str in workday_set:
-            indices.append(workday_set[date_str])
+    indices_set: set[int] = set()
 
-    return sorted(indices)
+    # Auto-detect weekends
+    for i, d in enumerate(workdays):
+        try:
+            if dt_date.fromisoformat(d).weekday() >= 5:
+                indices_set.add(i)
+        except ValueError:
+            pass
+
+    # Explicit holidays from YAML
+    if master_data:
+        holiday_dates = master_data.get("holidays", [])
+        workday_set = {d: i for i, d in enumerate(workdays)}
+        for h in holiday_dates:
+            date_str = str(h)
+            if date_str in workday_set:
+                indices_set.add(workday_set[date_str])
+
+    return sorted(indices_set)
 
 
 def _build_machines(

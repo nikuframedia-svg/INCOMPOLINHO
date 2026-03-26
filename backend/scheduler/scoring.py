@@ -22,12 +22,13 @@ def compute_score(
 ) -> dict:
     """Compute all KPIs for a schedule."""
 
-    # Completion day per lot
+    # Completion day per lot (sentinel must be below any possible day_idx)
+    _NO_COMPLETION = -999
     lot_completion: dict[str, int] = {}
     for seg in segments:
         if seg.setup_min > 0 and seg.qty == 0:
             continue
-        prev = lot_completion.get(seg.lot_id, -1)
+        prev = lot_completion.get(seg.lot_id, _NO_COMPLETION)
         if seg.day_idx > prev:
             lot_completion[seg.lot_id] = seg.day_idx
 
@@ -123,9 +124,16 @@ def _compute_otd_d(
     for op in engine_data.ops:
         cum_demand = 0
         cum_produced = 0
+
+        # Pre-accumulate production from negative days (buffer unshift)
+        op_prod = prod[op.id]
+        for neg_day, qty in op_prod.items():
+            if neg_day < 0:
+                cum_produced += qty
+
         for day_idx in range(engine_data.n_days):
             demand = op.d[day_idx] if day_idx < len(op.d) else 0
-            cum_produced += prod[op.id].get(day_idx, 0)
+            cum_produced += op_prod.get(day_idx, 0)
 
             if demand <= 0:
                 continue

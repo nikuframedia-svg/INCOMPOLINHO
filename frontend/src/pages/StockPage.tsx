@@ -150,6 +150,7 @@ export function StockPage() {
 
   if (error) return <div style={{ color: T.red, padding: 24 }}>{error}</div>;
   if (!data) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;
+  if (data.length === 0) return <div style={{ color: T.secondary, padding: 24 }}>Sem dados de stock. Carrega um ISOP primeiro.</div>;
 
   const totalCount = hideNoDemand ? data.filter((s) => s.total_demand > 0).length : data.length;
 

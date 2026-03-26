@@ -51,6 +51,9 @@ class CopilotState:
     schedule_id: str = ""
     audit_store: AuditStore | None = None
 
+    # Learning optimization info (persisted from smart_schedule)
+    learning_info: dict | None = None
+
     # User rules
     rules: list[dict] = field(default_factory=list)
 
@@ -73,7 +76,10 @@ class CopilotState:
         self._refresh_analytics()
 
     def _refresh_analytics(self) -> None:
-        """Pre-compute all analytics over current segments/lots."""
+        """Pre-compute all analytics over current segments/lots.
+
+        Each analytics is isolated — a failure in one does not block the others.
+        """
         if self.engine_data is None or not self.segments:
             return
 
@@ -84,17 +90,22 @@ class CopilotState:
         from backend.analytics.stock_projection import compute_stock_projections
         from backend.risk import compute_risk
 
-        try:
-            self.expedition = compute_expedition(self.segments, self.lots, self.engine_data)
-            self.stock_projections = compute_stock_projections(self.segments, self.lots, self.engine_data)
-            self.order_tracking = compute_order_tracking(self.segments, self.lots, self.engine_data)
-            self.risk_result = compute_risk(self.segments, self.lots, self.engine_data)
-            self.late_deliveries = analyze_late_deliveries(
+        analytics = [
+            ("expedition", lambda: compute_expedition(self.segments, self.lots, self.engine_data)),
+            ("stock_projections", lambda: compute_stock_projections(self.segments, self.lots, self.engine_data)),
+            ("order_tracking", lambda: compute_order_tracking(self.segments, self.lots, self.engine_data)),
+            ("risk_result", lambda: compute_risk(self.segments, self.lots, self.engine_data)),
+            ("late_deliveries", lambda: analyze_late_deliveries(
                 self.segments, self.lots, self.engine_data, self.config,
-            )
-            self.coverage = compute_coverage_audit(self.segments, self.lots, self.engine_data)
-        except Exception:
-            logger.exception("Failed to refresh analytics")
+            )),
+            ("coverage", lambda: compute_coverage_audit(self.segments, self.lots, self.engine_data)),
+        ]
+
+        for name, fn in analytics:
+            try:
+                setattr(self, name, fn())
+            except Exception:
+                logger.exception("Failed to compute %s", name)
 
     def add_rule(self, rule: dict) -> str:
         """Add a user rule. Returns rule id."""

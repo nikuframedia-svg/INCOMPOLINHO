@@ -7,6 +7,7 @@ All analytics are pre-computed in state._refresh_analytics().
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import tempfile
 from dataclasses import asdict
@@ -17,6 +18,14 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from backend.copilot.state import state
+from backend.copilot.executors_master import (
+    exec_editar_maquina,
+    exec_editar_ferramenta,
+    exec_adicionar_feriado,
+    exec_remover_feriado,
+    exec_adicionar_twin,
+    exec_remover_twin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +59,13 @@ async def get_today():
         if d >= today:
             return {"today_idx": i, "date": d}
     return {"today_idx": len(workdays) - 1, "date": workdays[-1] if workdays else ""}
+
+
+@router.get("/workdays")
+async def get_workdays():
+    """Return workdays list (day_idx → ISO date mapping)."""
+    _require_data()
+    return state.engine_data.workdays
 
 
 @router.get("/score")
@@ -90,6 +106,12 @@ async def get_trust():
 @router.get("/journal")
 async def get_journal():
     return state.journal_entries or []
+
+
+@router.get("/learning")
+async def get_learning():
+    """Return learning optimization info (or null if not optimized)."""
+    return state.learning_info
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -433,8 +455,8 @@ async def load_isop_upload(
     """Load ISOP from uploaded file (multipart/form-data)."""
     from backend.config.loader import load_config
     from backend.dqa import compute_trust_index
+    from backend.learning.smart import smart_schedule
     from backend.parser.isop_reader import read_isop
-    from backend.scheduler.scheduler import schedule_all
     from backend.transform.transform import transform
 
     # Save uploaded file to temp
@@ -451,7 +473,13 @@ async def load_isop_upload(
 
         rows, workdays, has_twin = read_isop(tmp_path)
         engine_data = transform(rows, workdays, has_twin, master)
-        result = schedule_all(engine_data, audit=True, config=config)
+        result = smart_schedule(
+            engine_data,
+            learn=True,
+            label=file.filename or "upload",
+            audit=True,
+            config=config,
+        )
 
         state.engine_data = engine_data
         state.config = config
@@ -473,6 +501,18 @@ async def load_isop_upload(
                 ]),
             }
 
+        learning_info = None
+        if result.study:
+            learning_info = {
+                "optimized": True,
+                "n_trials": result.study.n_trials,
+                "confidence": result.study.confidence,
+                "improvement": result.study.improvement,
+                "total_time_ms": result.study.total_time_ms,
+                "best_params": result.study.best_params.to_dict(),
+            }
+        state.learning_info = learning_info
+
         return {
             "status": "ok",
             "n_ops": len(engine_data.ops),
@@ -481,6 +521,119 @@ async def load_isop_upload(
             "time_ms": result.time_ms,
             "trust_index": {"score": trust.score, "gate": trust.gate},
             "journal_summary": journal_summary,
+            "learning": learning_info,
         }
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MASTER DATA MUTATIONS (8)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _exec_result(result_json: str) -> dict:
+    """Parse executor JSON result, raise HTTPException on error."""
+    result = json.loads(result_json)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.put("/machines/{mid}")
+async def edit_machine(mid: str, body: dict):
+    """Toggle machine active/inactive or change group."""
+    _require_data()
+    body["id"] = mid
+    return _exec_result(exec_editar_maquina(body))
+
+
+@router.put("/tools/{tid}")
+async def edit_tool(tid: str, body: dict):
+    """Edit tool setup_hours or alt machine."""
+    _require_data()
+    body["id"] = tid
+    return _exec_result(exec_editar_ferramenta(body))
+
+
+@router.put("/operators")
+async def update_operators(body: dict):
+    """Batch update operator counts. Body: { "Grandes A": 6, ... }"""
+    _require_config()
+    _require_data()
+
+    from backend.config.loader import save_config
+    from backend.scheduler.scheduler import schedule_all
+
+    old_score = dict(state.score) if state.score else {}
+    changed = []
+    for key, count in body.items():
+        if key in state.config.operators:
+            state.config.operators[key] = int(count)
+            changed.append(key)
+        else:
+            # Try tuple key format: "Grandes A" → ("Grandes", "A")
+            parts = key.split()
+            if len(parts) == 2:
+                tkey = (parts[0], parts[1])
+                if tkey in state.config.operators:
+                    state.config.operators[tkey] = int(count)
+                    changed.append(key)
+
+    if not changed:
+        return {"status": "ok", "score": state.score, "score_anterior": old_score}
+
+    save_config(state.config)
+    result = schedule_all(state.engine_data, audit=True, config=state.config)
+    state.update_schedule(result)
+
+    return {"status": "ok", "changed": changed, "score": result.score, "score_anterior": old_score}
+
+
+@router.post("/holidays")
+async def add_holiday(body: dict):
+    """Add a holiday. Body: { "data": "2026-05-01" }"""
+    _require_data()
+    date = body.get("data", "")
+    if not date:
+        raise HTTPException(400, "Campo 'data' obrigatório.")
+    return _exec_result(exec_adicionar_feriado({"data": date}))
+
+
+@router.delete("/holidays/{date}")
+async def remove_holiday(date: str):
+    """Remove a holiday by ISO date."""
+    _require_data()
+    return _exec_result(exec_remover_feriado({"data": date}))
+
+
+@router.post("/twins")
+async def add_twin(body: dict):
+    """Add a twin pair. Body: { "tool_id": "...", "sku_a": "...", "sku_b": "..." }"""
+    _require_data()
+    for field in ("tool_id", "sku_a", "sku_b"):
+        if field not in body:
+            raise HTTPException(400, f"Campo '{field}' obrigatório.")
+    return _exec_result(exec_adicionar_twin(body))
+
+
+@router.delete("/twins/{tool_id}")
+async def remove_twin(tool_id: str):
+    """Remove a twin pair by tool_id."""
+    _require_data()
+    return _exec_result(exec_remover_twin({"tool_id": tool_id}))
+
+
+@router.post("/presets/{name}")
+async def apply_preset_endpoint(name: str):
+    """Apply a named config preset (urgente, equilibrado, min_setups, max_otd)."""
+    _require_config()
+    from backend.config.presets import get_preset
+
+    try:
+        overrides = get_preset(name)
+    except KeyError as e:
+        raise HTTPException(400, str(e))
+
+    # Reuse existing update_config logic
+    return await update_config(overrides)

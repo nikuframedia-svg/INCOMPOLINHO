@@ -4,14 +4,10 @@ Goal: push production as late as possible (2-3 days before delivery).
 
 Strategy:
   1. Assign machines (same load balancing as baseline).
-  2. Sort per machine by EDD (pure EDD, no campaign grouping).
+  2. Sort per machine by EDD (strict).
   3. Backward-stack gates: last run at max_gate, cascade backward.
-  4. Dispatch with EDD sequence + gates.
-  5. Safety net: fall back to baseline if tardy worsens.
-
-Campaign grouping is intentionally skipped for JIT — it reorders runs
-from pure EDD and causes cascading delays when gates are applied.
-The extra setups are negligible given ~50% spare capacity.
+  4. Per-machine dispatch with gates (independent per machine).
+  5. Binary search safety net: per-run gate adjustment if tardy.
 
 Kept: compute_lst() and compute_paced_lst() for reference/tests.
 """
@@ -167,8 +163,11 @@ def _backward_stack_gates(
             mg_abs = float(_max_gate(run, holiday_set, day_cap=day_cap) * day_cap)
 
             # Buffer: overhead pct of work time + setup absorbs shift-boundary overhead.
+            # Holiday density increases overhead (more partial-day waste at boundaries).
             pct = getattr(params, 'backward_buffer_pct', config.jit_buffer_pct if config else 0.05)
-            buffer = run.total_min * pct + run.setup_min
+            holiday_density = len(holiday_set) / max(n_days, 1)
+            adjusted_pct = pct + holiday_density * 0.05
+            buffer = run.total_min * adjusted_pct + run.setup_min
             candidate_abs = next_start_abs - run.total_min - buffer
             gate_abs = min(mg_abs, candidate_abs)
             gate_abs = max(0.0, gate_abs)
@@ -194,28 +193,30 @@ def jit_dispatch(
     audit_logger: object | None = None,
     params: object | None = None,
     config: FactoryConfig | None = None,
-) -> tuple[list[Segment], list[Lot], list[str]]:
-    """JIT v3: backward scheduling with EDD-pure sequence.
+) -> tuple[list[Segment], list[Lot], list[str], dict[str, list[ToolRun]] | None, dict[str, float] | None]:
+    """JIT v3: backward scheduling with EDD-strict ordering + per-machine dispatch.
 
     1. Assign machines (same load balancing as baseline).
-    2. Sort per machine by EDD (no campaign grouping — avoids cascading delays).
+    2. Sort per machine by EDD (strict).
     3. Backward-stack gates per machine.
-    4. Dispatch with EDD sequence + gates.
-    5. Safety net: fall back to baseline if tardy worsens.
+    4. Per-machine dispatch with gates (independent per machine).
+    5. Binary search safety net: per-run gate adjustment if tardy.
+
+    Returns (segments, lots, warnings, machine_runs, gates).
+    machine_runs and gates are None when JIT reverts to baseline.
     """
     day_cap = config.day_capacity_min if config else DAY_CAP
     target_tardy = baseline_score["tardy_count"]
-    target_otd_d = baseline_score.get("otd_d_failures", 0)
     holiday_set = set(getattr(engine_data, "holidays", []))
 
     # Phase 1: Assign machines (same load balancing)
     jit_machine_runs = assign_machines(runs, engine_data, audit_logger=audit_logger, params=params, config=config)
 
-    # Phase 2: Pure EDD sort per machine (no campaigns)
+    # Phase 2: EDD sort per machine
     for m_id in jit_machine_runs:
         jit_machine_runs[m_id].sort(key=lambda r: r.edd)
 
-    # Phase 3: Backward-stack gates
+    # Phase 3: Backward-stack gates (on EDD-sorted order for correct cascading)
     current_gate = _backward_stack_gates(jit_machine_runs, holiday_set, engine_data.n_days, params=params, config=config)
 
     gated_count = sum(1 for g in current_gate.values() if g > 0)
@@ -233,8 +234,9 @@ def jit_dispatch(
                 mg = float(_max_gate(r, holiday_set, day_cap=day_cap) * day_cap)
                 audit_logger.log_gate(run_id, gate_abs, mg, r.edd, "gate_jit")
 
-    # Phase 4: Dispatch each machine independently (no shared crew contention).
-    # Crew utilization is ~7% total, so independent dispatch is safe.
+    # Phase 4: Dispatch each machine independently.
+    # Per-machine dispatch avoids crew serialization that causes tardiness with gates.
+    # Campaign continuation (same tool → skip setup) still works within each machine.
     jit_segs: list[Segment] = []
     jit_lots: list[Lot] = []
     jit_warns: list[str] = []
@@ -247,44 +249,39 @@ def jit_dispatch(
         jit_warns.extend(m_warns)
     jit_score = compute_score(jit_segs, jit_lots, engine_data, config=config)
 
-    # Phase 5: Targeted safety net — pull back tardy runs AND predecessors
-    # Build machine→run index for predecessor lookup
-    run_machine: dict[str, str] = {}
-    for m_id, m_runs in jit_machine_runs.items():
-        for run in m_runs:
-            run_machine[run.id] = m_id
+    # Phase 5: Binary search safety net — per-run gate adjustment
+    # gate_lo=0 (baseline position, always feasible) gate_hi=backward-stacked gate
+    gate_lo: dict[str, float] = {r.id: 0.0 for r in runs}
 
-    max_retries = 5
+    max_retries = config.jit_max_retries if config else 15
     for attempt in range(max_retries):
-        if (jit_score["tardy_count"] <= target_tardy
-                and jit_score.get("otd_d_failures", 0) <= target_otd_d):
+        if jit_score["tardy_count"] <= target_tardy:
             break
 
-        # Find tardy machines and pull back all their gated runs by 1 day.
-        # Must pull ALL predecessors because chains can span 15+ days.
+        # Find tardy runs and binary-search their gates toward baseline
         _, run_end = _compute_run_timing(jit_segs)
         run_by_id = {r.id: r for r in runs}
-        changed = False
-        tardy_machines: set[str] = set()
+        adjusted = False
+
         for rid, end_day in run_end.items():
-            if rid in run_by_id and end_day > run_by_id[rid].edd:
-                m_id = run_machine.get(rid)
-                if m_id:
-                    tardy_machines.add(m_id)
-        for m_id in tardy_machines:
-            for mr_run in jit_machine_runs[m_id]:
-                if mr_run.id in current_gate and current_gate[mr_run.id] > 0:
-                    current_gate[mr_run.id] = max(
-                        0.0, current_gate[mr_run.id] - day_cap,
-                    )
-                    changed = True
+            if rid not in run_by_id:
+                continue
+            if end_day > run_by_id[rid].edd:
+                # Tardy run: halve distance to gate_lo (binary search)
+                lo = gate_lo.get(rid, 0.0)
+                hi = current_gate.get(rid, 0.0)
+                mid = (lo + hi) / 2.0
+                if abs(hi - mid) > day_cap * 0.5:
+                    current_gate[rid] = mid
+                else:
+                    # Near baseline already — snap to baseline
+                    current_gate[rid] = lo
+                adjusted = True
 
-        if not changed:
-            return baseline_segments, baseline_lots, [
-                f"JIT safety net: tardy {jit_score['tardy_count']} > {target_tardy}"
-            ]
+        if not adjusted:
+            break
 
-        # Re-dispatch with adjusted gates
+        # Re-dispatch with adjusted gates (per-machine)
         jit_segs = []
         jit_lots = []
         jit_warns = []
@@ -296,12 +293,16 @@ def jit_dispatch(
             jit_lots.extend(m_lots)
             jit_warns.extend(m_warns)
         jit_score = compute_score(jit_segs, jit_lots, engine_data, config=config)
-    else:
-        if (jit_score["tardy_count"] > target_tardy
-                or jit_score.get("otd_d_failures", 0) > target_otd_d):
-            return baseline_segments, baseline_lots, [
-                f"JIT safety net: tardy {jit_score['tardy_count']} > {target_tardy}"
-            ]
+
+    # Final check: if still tardy after all retries, revert to baseline
+    if jit_score["tardy_count"] > target_tardy:
+        logger.warning(
+            "JIT binary search: still tardy %d > %d after %d retries, reverting",
+            jit_score["tardy_count"], target_tardy, max_retries,
+        )
+        return baseline_segments, baseline_lots, [
+            f"JIT safety net: tardy {jit_score['tardy_count']} > {target_tardy}"
+        ], None, None
 
     logger.info(
         "JIT v3: earliness %.1f → %.1f days",
@@ -316,4 +317,4 @@ def jit_dispatch(
     ]
     warnings.extend(jit_warns)
 
-    return jit_segs, jit_lots, warnings
+    return jit_segs, jit_lots, warnings, jit_machine_runs, current_gate

@@ -254,7 +254,7 @@ class TestHolidays:
         workdays = ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04"]
         master = {"holidays": ["2026-04-03", "2026-04-05"]}
         indices = _resolve_holidays(workdays, master)
-        assert indices == [2]  # only 04-03 is in workdays
+        assert indices == [2, 3]  # 04-03 is holiday, 04-04 (Saturday) auto-detected
 
     def test_resolve_holidays_none(self):
         assert _resolve_holidays(["2026-04-01"], None) == []
@@ -300,4 +300,4 @@ class TestTransformPipeline:
         assert result.ops[0].alt == "PRM039"
         assert result.machines[0].group == "Grandes"
         assert result.machines[0].day_capacity == 1020
-        assert result.holidays == [1]  # "2026-03-06" is workday index 1
+        assert result.holidays == [1, 2]  # "2026-03-06" is holiday (index 1), "2026-03-07" is Saturday (index 2)

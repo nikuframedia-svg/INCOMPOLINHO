@@ -38,6 +38,10 @@ export async function put<T>(url: string, body: unknown): Promise<T> {
   });
 }
 
+export async function del<T>(url: string): Promise<T> {
+  return request<T>(url, { method: "DELETE" });
+}
+
 export async function upload<T>(url: string, file: File, params?: Record<string, string>): Promise<T> {
   const form = new FormData();
   form.append("file", file);

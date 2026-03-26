@@ -117,7 +117,13 @@ class FactoryConfig:
     jit_enabled: bool = True
     jit_buffer_pct: float = 0.05
     jit_threshold: float = 95.0
+    jit_max_retries: int = 15
+    jit_earliness_target: float = 6.0
     auto_buffer: bool = True
+
+    # VNS post-processing
+    vns_enabled: bool = True
+    vns_max_iter: int = 50
 
     # Scoring weights
     weight_earliness: float = 0.40

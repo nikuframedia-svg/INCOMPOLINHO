@@ -369,6 +369,15 @@ export interface CTPResult {
   reason: string;
 }
 
+export interface LearningInfo {
+  optimized: boolean;
+  n_trials: number;
+  confidence: string;
+  improvement: { reward: number; earliness_delta: number; setups_delta: number };
+  total_time_ms: number;
+  best_params: Record<string, unknown>;
+}
+
 export interface LoadResponse {
   status: string;
   n_ops: number;
@@ -377,6 +386,7 @@ export interface LoadResponse {
   time_ms: number;
   trust_index: { score: number; gate: string };
   journal_summary: { total: number; warnings: number } | null;
+  learning: LearningInfo | null;
 }
 
 // ── Chat ─────────────────────────────────────────────────────
@@ -385,6 +395,13 @@ export interface ChatResponse {
   response: string;
   widgets: unknown[];
   tools_used: number;
+}
+
+export interface MasterDataResult {
+  status: string;
+  score: Score;
+  score_anterior: Score;
+  [key: string]: unknown;
 }
 
 export interface JournalEntry {
