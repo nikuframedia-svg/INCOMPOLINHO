@@ -399,7 +399,7 @@ def _serialize_crew_setups(
     return segments
 
 
-def schedule_all(data: EngineData, params=None, audit: bool = False, config: FactoryConfig | None = None) -> ScheduleResult:
+def schedule_all(data: EngineData, params=None, audit: bool = False, config: FactoryConfig | None = None, crew_priority: list[str] | None = None) -> ScheduleResult:
     """Run the full scheduling pipeline."""
     t0 = time.perf_counter()
 
@@ -519,7 +519,7 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
     pre_crew_score = compute_score(final_segments, final_lots, data, config=config)
     crew_segments = copy.deepcopy(final_segments)
     for _crew_pass in range(20):  # max 20 passes for convergence
-        crew_segments = _serialize_crew_setups(crew_segments, config, holidays=global_holidays)
+        crew_segments = _serialize_crew_setups(crew_segments, config, holidays=global_holidays, crew_priority=crew_priority)
         crew_segments = _fix_day_overlaps(crew_segments, config, holidays=global_holidays)
         crew_segments = _sanitize_segments(crew_segments, config, holidays=global_holidays)
     crew_score = compute_score(crew_segments, final_lots, data, config=config)
