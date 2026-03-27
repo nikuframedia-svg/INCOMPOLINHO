@@ -109,7 +109,7 @@ def _resequence_machine_cpsat(
     day_cap: int,
     time_limit_s: float = 5.0,
 ) -> list[ToolRun] | None:
-    """Re-sequence runs on one machine using CP-SAT.
+    """Re-sequence runs on one machine using CP-SAT with IntervalVar + NoOverlap.
 
     Returns reordered runs if improvement found, None otherwise.
     """
@@ -120,42 +120,44 @@ def _resequence_machine_cpsat(
     n = len(runs)
     horizon = (n_days + 1) * day_cap
 
-    # Variables: position in sequence (0 to n-1)
+    # IntervalVar per run (native no-overlap)
+    durations = [max(1, int(r.total_min + 0.5)) for r in runs]
+    starts = [model.new_int_var(0, horizon, f"start_{i}") for i in range(n)]
+    ends = [model.new_int_var(0, horizon, f"end_{i}") for i in range(n)]
+    intervals = [
+        model.new_interval_var(starts[i], durations[i], ends[i], f"iv_{i}")
+        for i in range(n)
+    ]
+
+    # NoOverlap constraint (replaces O(n²) big-M formulation)
+    model.add_no_overlap(intervals)
+
+    # Setup savings: if consecutive, same tool → skip setup
+    # Use circuit constraint to model sequencing order
+    # Position variable to track order
     pos = [model.new_int_var(0, n - 1, f"pos_{i}") for i in range(n)]
     model.add_all_different(pos)
 
-    # Start/end times
-    starts = [model.new_int_var(0, horizon, f"start_{i}") for i in range(n)]
-    ends = [model.new_int_var(0, horizon, f"end_{i}") for i in range(n)]
-    durations = [int(r.total_min + 0.5) for r in runs]
-
-    for i in range(n):
-        model.add(ends[i] == starts[i] + durations[i])
-
-    # No overlap via position-based ordering
+    # Link position to start times: lower position → earlier start
     for i in range(n):
         for j in range(i + 1, n):
-            b = model.new_bool_var(f"order_{i}_{j}")
-            # b=1 => i before j
-            big_m = horizon + 1
+            b = model.new_bool_var(f"ord_{i}_{j}")
             model.add(pos[i] < pos[j]).only_enforce_if(b)
             model.add(pos[j] < pos[i]).only_enforce_if(b.negated())
-            model.add(ends[i] <= starts[j]).only_enforce_if(b)
-            model.add(ends[j] <= starts[i]).only_enforce_if(b.negated())
+            model.add(starts[i] <= starts[j]).only_enforce_if(b)
+            model.add(starts[j] <= starts[i]).only_enforce_if(b.negated())
 
-    # Setup savings: if consecutive runs share same tool, save setup time
-    # Model as: for each pair (i,j) where tool matches, bonus if adjacent
+    # Setup savings for adjacent same-tool runs
     same_tool_bonus = []
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
             if runs[i].tool_id == runs[j].tool_id:
-                # is_adjacent: pos[j] == pos[i] + 1
                 adj = model.new_bool_var(f"adj_{i}_{j}")
                 model.add(pos[j] == pos[i] + 1).only_enforce_if(adj)
                 model.add(pos[j] != pos[i] + 1).only_enforce_if(adj.negated())
-                setup_saved = int(runs[j].setup_min)
+                setup_saved = max(1, int(runs[j].setup_min))
                 same_tool_bonus.append(adj * setup_saved)
 
     # Tardiness per run
@@ -172,10 +174,13 @@ def _resequence_machine_cpsat(
         sum(t * 1000 for t in tardy_vars) - setup_bonus
     )
 
-    # Warm-start: current order = EDD order
+    # Warm-start with current (EDD) order
     current_order = sorted(range(n), key=lambda i: runs[i].edd)
+    cumulative = 0
     for rank, run_idx in enumerate(current_order):
         model.add_hint(pos[run_idx], rank)
+        model.add_hint(starts[run_idx], cumulative)
+        cumulative += durations[run_idx]
 
     # Solve
     solver = cp_model.CpSolver()
@@ -187,23 +192,29 @@ def _resequence_machine_cpsat(
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None
 
-    # Extract new order
+    # Extract new order by position
     new_positions = [(solver.value(pos[i]), i) for i in range(n)]
     new_positions.sort()
     new_order = [runs[idx] for _, idx in new_positions]
 
-    # Check if it actually changed
+    # Check if order actually changed
     old_ids = [r.id for r in runs]
     new_ids = [r.id for r in new_order]
     if old_ids == new_ids:
-        return None  # same order
+        return None
 
-    # Check tardiness improvement
+    # Compare tardiness: reject if new solution has more tardies
     new_tardies = sum(1 for i in range(n) if solver.value(tardy_vars[i]) > 0)
-    old_tardies = 0  # current runs are from best solution, assumed 0
-    for run in runs:
-        # Conservative: count as tardy if total_min before EDD is tight
-        pass
+    old_tardies = 0
+    cumul = 0
+    for idx in current_order:
+        cumul += durations[idx]
+        edd_abs = (runs[idx].edd + 1) * day_cap
+        if cumul > edd_abs:
+            old_tardies += 1
+
+    if new_tardies > old_tardies:
+        return None  # safety: never worsen tardiness
 
     return new_order
 

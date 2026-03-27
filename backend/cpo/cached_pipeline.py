@@ -158,10 +158,17 @@ class CachedPipeline:
         # Crew serialization (safe — revert if tardy worsens)
         pre_crew_score = compute_score(segments, lots, data, config=self.config)
         crew_segments = copy.deepcopy(segments)
-        for _ in range(20):
+        prev_hash = None
+        for _ in range(5):  # max 5 passes (convergence typically in 2-3)
             crew_segments = _serialize_crew_setups(crew_segments, self.config, holidays=global_holidays, crew_priority=chrom.crew_priority)
             crew_segments = _fix_day_overlaps(crew_segments, self.config, holidays=global_holidays)
             crew_segments = _sanitize_segments(crew_segments, self.config, holidays=global_holidays)
+            curr_hash = hash(tuple(
+                (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in crew_segments
+            ))
+            if curr_hash == prev_hash:
+                break
+            prev_hash = curr_hash
         crew_score = compute_score(crew_segments, lots, data, config=self.config)
         if crew_score["tardy_count"] <= pre_crew_score["tardy_count"]:
             segments = crew_segments

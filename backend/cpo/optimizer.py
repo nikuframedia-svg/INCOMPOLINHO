@@ -288,8 +288,12 @@ def _ga_search(
             if time.perf_counter() - t0 > time_budget:
                 break
 
-            # Select operator
-            op_name = frrmab.select(rng)
+            # Select operator (OneFifthRule: force strong mutation when stagnating)
+            # Only activate after warmup (at least 2 full generations)
+            if one_fifth.rate < 0.15 and len(one_fifth.history) >= one_fifth.history.maxlen and gen >= 2:
+                op_name = "mutate_strong"
+            else:
+                op_name = frrmab.select(rng)
             op_fn = OPERATORS[op_name]
 
             # Select parent(s)

@@ -518,10 +518,17 @@ def schedule_all(data: EngineData, params=None, audit: bool = False, config: Fac
     import copy
     pre_crew_score = compute_score(final_segments, final_lots, data, config=config)
     crew_segments = copy.deepcopy(final_segments)
-    for _crew_pass in range(20):  # max 20 passes for convergence
+    prev_hash = None
+    for _crew_pass in range(5):  # max 5 passes (convergence typically in 2-3)
         crew_segments = _serialize_crew_setups(crew_segments, config, holidays=global_holidays, crew_priority=crew_priority)
         crew_segments = _fix_day_overlaps(crew_segments, config, holidays=global_holidays)
         crew_segments = _sanitize_segments(crew_segments, config, holidays=global_holidays)
+        curr_hash = hash(tuple(
+            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in crew_segments
+        ))
+        if curr_hash == prev_hash:
+            break
+        prev_hash = curr_hash
     crew_score = compute_score(crew_segments, final_lots, data, config=config)
     if crew_score["tardy_count"] <= pre_crew_score["tardy_count"]:
         final_segments = crew_segments
