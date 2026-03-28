@@ -165,7 +165,8 @@ async def get_stock_summary():
                     "stock": d.stock,
                     "demand": d.demand,
                     "produced": d.produced,
-                    "workday": _is_workday(d.date, d.day_idx),
+                    "workday": True if d.is_buffer else _is_workday(d.date, d.day_idx),
+                    "is_buffer": d.is_buffer,
                 }
                 for d in p.days
             ],
@@ -408,6 +409,51 @@ async def simulate_scenario(request: SimulateRequest):
         "time_ms": result.time_ms,
         "summary": result.summary,
     }
+
+
+@router.post("/simulate-apply")
+async def simulate_and_apply(request: SimulateRequest):
+    """Run simulation and apply result as active schedule. Saves snapshot for revert."""
+    _require_data()
+    from backend.simulator.simulator import Mutation, simulate
+
+    old_score = dict(state.score) if state.score else {}
+    old_n = len(state.segments)
+
+    state.save_current()
+
+    mutations = [Mutation(type=m.type, params=m.params) for m in request.mutations]
+    result = simulate(state.engine_data, old_score, mutations, config=state.config)
+
+    state.update_schedule(result)
+
+    return {
+        "status": "applied",
+        "score": result.score,
+        "score_previous": old_score,
+        "summary": result.summary,
+        "n_segments_before": old_n,
+        "n_segments_after": len(result.segments),
+        "time_ms": result.time_ms,
+        "can_revert": True,
+    }
+
+
+@router.post("/revert")
+async def revert_simulation():
+    """Revert to schedule saved before simulate-apply."""
+    _require_data()
+    if not state.saved_schedule:
+        raise HTTPException(400, "Nada para reverter.")
+    state.update_schedule(state.saved_schedule)
+    state.saved_schedule = None
+    return {"status": "reverted", "score": state.score}
+
+
+@router.get("/can-revert")
+async def can_revert():
+    """Check if there is a saved schedule to revert to."""
+    return {"can_revert": state.saved_schedule is not None}
 
 
 class CTPRequest(BaseModel):

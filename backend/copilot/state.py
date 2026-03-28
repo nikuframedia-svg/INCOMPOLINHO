@@ -68,6 +68,22 @@ class CopilotState:
     # User rules
     rules: list[dict] = field(default_factory=list)
 
+    # Simulation revert snapshot
+    saved_schedule: ScheduleResult | None = None
+
+    def save_current(self) -> None:
+        """Save current schedule for revert after simulation apply."""
+        self.saved_schedule = ScheduleResult(
+            segments=list(self.segments),
+            lots=list(self.lots),
+            score=dict(self.score),
+            warnings=list(self.warnings),
+            operator_alerts=list(self.operator_alerts or []),
+            time_ms=0,
+            audit_trail=None,
+            journal=self.journal_entries,
+        )
+
     def update_schedule(self, result: ScheduleResult) -> None:
         """Update state from a ScheduleResult. Saves audit trail if present."""
         self.segments = result.segments
@@ -104,7 +120,10 @@ class CopilotState:
 
         analytics = [
             ("expedition", lambda: compute_expedition(self.segments, self.lots, self.engine_data)),
-            ("stock_projections", lambda: compute_stock_projections(self.segments, self.lots, self.engine_data)),
+            ("stock_projections", lambda: compute_stock_projections(
+                self.segments, self.lots, self.engine_data,
+                buffer_days=self.score.get("buffer_days", 0),
+            )),
             ("order_tracking", lambda: compute_order_tracking(self.segments, self.lots, self.engine_data)),
             ("risk_result", lambda: compute_risk(self.segments, self.lots, self.engine_data)),
             ("late_deliveries", lambda: analyze_late_deliveries(

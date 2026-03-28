@@ -34,6 +34,7 @@ function fmtDate(iso: string): { short: string; dow: string } {
 }
 
 function cellBg(day: StockDayCompact, coverageDays: number): string {
+  if (day.is_buffer) return `${T.blue}10`; // buffer day → subtle blue
   if (!day.workday) return T.border; // weekend/holiday → grey
   if (day.stock < 0) return `${T.red}30`; // ruptura → red
   if (coverageDays < 3 && coverageDays > 0 && day.stock > 0 && day.demand > 0)
@@ -130,7 +131,7 @@ export function StockPage() {
     if (!first.days) return [];
     return first.days.map((d) => {
       const fmt = fmtDate(d.date);
-      return { day: d.day, date: d.date, short: fmt.short, dow: fmt.dow, workday: d.workday };
+      return { day: d.day, date: d.date, short: fmt.short, dow: fmt.dow, workday: d.workday, isBuffer: d.is_buffer ?? false };
     });
   }, [data]);
 
@@ -228,7 +229,7 @@ export function StockPage() {
                 position: "sticky",
                 top: 0,
                 zIndex: 2,
-                background: col.workday ? T.card : T.elevated,
+                background: col.isBuffer ? `${T.blue}08` : col.workday ? T.card : T.elevated,
                 borderBottom: `1px solid ${T.border}`,
                 padding: "4px 2px",
                 textAlign: "center",
@@ -343,6 +344,10 @@ export function StockPage() {
           <span style={{ fontSize: 10, color: T.tertiary }}>Nao util</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ width: 12, height: 12, borderRadius: 2, background: `${T.blue}10` }} />
+          <span style={{ fontSize: 10, color: T.tertiary }}>Buffer</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10, color: T.green }}>+N</span>
           <span style={{ fontSize: 10, color: T.tertiary }}>Producao</span>
         </div>
@@ -391,7 +396,7 @@ export function StockPage() {
                   <tbody>
                     {detail.days.map((d) => (
                       <tr key={d.day_idx}>
-                        <td style={{ padding: "3px 6px", fontFamily: T.mono, color: T.secondary, borderBottom: `1px solid ${T.border}` }}>D{d.day_idx}</td>
+                        <td style={{ padding: "3px 6px", fontFamily: T.mono, color: d.is_buffer ? T.blue : T.secondary, borderBottom: `1px solid ${T.border}` }}>{d.is_buffer ? `B${d.day_idx}` : `D${d.day_idx}`}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.demand > 0 ? T.primary : T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.demand > 0 ? d.demand.toLocaleString() : "-"}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.produced > 0 ? T.green : T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.produced > 0 ? d.produced.toLocaleString() : "-"}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.stock < 0 ? T.red : T.primary, fontWeight: d.stock < 0 ? 600 : 400, borderBottom: `1px solid ${T.border}` }}>{d.stock.toLocaleString()}</td>

@@ -188,8 +188,8 @@ class TestStockProjection:
         assert projs[0].stockout_day == 2
         assert projs[0].coverage_days == 2.0
 
-    def test_initial_stock(self):
-        """Initial stock (op.stk) is included in projection."""
+    def test_initial_stock_not_in_formula(self):
+        """Initial stock NOT added to projection (NP already deducts it)."""
         lots = [_lot(op_id="op1")]
         segs = []  # no production
         # stk=200, demand=500 on day 1
@@ -202,9 +202,39 @@ class TestStockProjection:
         engine = _engine(ops=[op])
 
         projs = compute_stock_projections(segs, lots, engine)
-        assert projs[0].initial_stock == 200
-        assert projs[0].days[0].stock == 200  # day 0: 200 + 0 - 0
-        assert projs[0].days[1].stock == -300  # day 1: 200 + 0 - 500
+        assert projs[0].initial_stock == 200  # stored but not in formula
+        assert projs[0].days[0].stock == 0    # day 0: 0 - 0 = 0
+        assert projs[0].days[1].stock == -500  # day 1: 0 - 500 = -500
+
+    def test_buffer_days(self):
+        """Buffer production creates visible entries with is_buffer=True."""
+        lots = [_lot(op_id="op1")]
+        segs = [_seg(day=-1, qty=300), _seg(day=1, qty=200)]
+        engine = _engine(ops=[_eop(d=[0, 500, 0, 0, 0])])
+
+        projs = compute_stock_projections(segs, lots, engine, buffer_days=2)
+        # First 2 entries are buffer days
+        assert projs[0].days[0].is_buffer is True   # day -2
+        assert projs[0].days[0].day_idx == -2
+        assert projs[0].days[0].produced == 0
+        assert projs[0].days[1].is_buffer is True   # day -1
+        assert projs[0].days[1].day_idx == -1
+        assert projs[0].days[1].produced == 300
+        assert projs[0].days[1].stock == 300         # 300 produced, 0 demand
+        # Regular days follow
+        assert projs[0].days[2].is_buffer is False   # day 0
+        assert projs[0].days[2].stock == 300          # carry from buffer
+        assert projs[0].days[3].stock == 300 + 200 - 500  # day 1: +200 prod, -500 demand = 0
+
+    def test_buffer_zero(self):
+        """buffer_days=0 produces same result as before."""
+        lots = [_lot(op_id="op1")]
+        segs = [_seg(day=0, qty=1000)]
+        engine = _engine(ops=[_eop(d=[800, 0, 0, 0, 0])])
+
+        projs = compute_stock_projections(segs, lots, engine, buffer_days=0)
+        assert len(projs[0].days) == 5  # no buffer entries
+        assert projs[0].days[0].stock == 200  # 1000 - 800
 
 
 # ═══ CTP ═══

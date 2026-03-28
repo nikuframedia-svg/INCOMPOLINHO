@@ -63,6 +63,7 @@ export interface StockDayCompact {
   demand: number;
   produced: number;
   workday: boolean;
+  is_buffer?: boolean;
 }
 
 export interface StockSummary {
@@ -88,6 +89,7 @@ export interface StockDay {
   cum_produced: number;
   stock: number;
   machine: string | null;
+  is_buffer?: boolean;
 }
 
 export interface StockProjection extends Omit<StockSummary, "days"> {
@@ -356,6 +358,17 @@ export interface SimulateResponse {
   delta: DeltaReport;
   time_ms: number;
   summary: string[];
+}
+
+export interface SimulateApplyResponse {
+  status: string;
+  score: Score;
+  score_previous: Score;
+  summary: string[];
+  n_segments_before: number;
+  n_segments_after: number;
+  time_ms: number;
+  can_revert: boolean;
 }
 
 export interface CTPResult {

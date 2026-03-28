@@ -3,11 +3,13 @@
 Day-by-day stock projection per EOp:
   stock[day] = cum_produced - cum_demand
 
+NP negativo já desconta stock inicial, por isso initial_stock NÃO entra na fórmula.
 Production comes from real Segments. Demand from EngineData op.d.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -23,8 +25,9 @@ class StockDay:
     produced: int
     cum_demand: int
     cum_produced: int
-    stock: int  # cum_produced - cum_demand
+    stock: int  # cum_produced - cum_demand (NP já desconta stock inicial)
     machine: str | None  # where it was produced (None if nothing produced)
+    is_buffer: bool = False
 
 
 @dataclass(slots=True)
@@ -69,6 +72,7 @@ def compute_stock_projections(
     segments: list[Segment],
     lots: list[Lot],
     engine_data: EngineData,
+    buffer_days: int = 0,
 ) -> list[StockProjection]:
     """Compute stock projection for every EOp."""
     prod = build_production_by_op(segments, lots)
@@ -85,6 +89,17 @@ def compute_stock_projections(
             if oid:
                 op_machine[oid][seg.day_idx] = seg.machine_id
 
+    # Generate buffer day dates (workdays before first ISOP date)
+    buffer_dates: list[str] = []
+    if buffer_days > 0 and engine_data.workdays:
+        first = _dt.date.fromisoformat(engine_data.workdays[0])
+        d = first
+        while len(buffer_dates) < buffer_days:
+            d -= _dt.timedelta(days=1)
+            if d.weekday() < 5:  # skip weekends
+                buffer_dates.append(d.isoformat())
+        buffer_dates.reverse()  # oldest first: [-N, ..., -1]
+
     projections: list[StockProjection] = []
 
     for op in engine_data.ops:
@@ -94,12 +109,30 @@ def compute_stock_projections(
         stockout_day: int | None = None
         days: list[StockDay] = []
 
-        # Pre-accumulate production from negative days (buffer unshift)
         op_prod = prod.get(op.id, {})
-        for neg_day, qty in op_prod.items():
-            if neg_day < 0:
-                cum_produced += qty
 
+        # Buffer days (negative day_idx): demand=0, only production
+        for i, neg_day in enumerate(range(-buffer_days, 0)):
+            produced = op_prod.get(neg_day, 0)
+            cum_produced += produced
+            stock = cum_produced - cum_demand
+            machine = op_machine.get(op.id, {}).get(neg_day)
+
+            days.append(
+                StockDay(
+                    day_idx=neg_day,
+                    date=buffer_dates[i] if i < len(buffer_dates) else "",
+                    demand=0,
+                    produced=produced,
+                    cum_demand=cum_demand,
+                    cum_produced=cum_produced,
+                    stock=stock,
+                    machine=machine,
+                    is_buffer=True,
+                )
+            )
+
+        # Regular days (day_idx >= 0)
         for day_idx in range(engine_data.n_days):
             demand = op.d[day_idx] if day_idx < len(op.d) else 0
             demand = max(demand, 0)
@@ -107,7 +140,7 @@ def compute_stock_projections(
 
             cum_demand += demand
             cum_produced += produced
-            stock = initial_stock + cum_produced - cum_demand
+            stock = cum_produced - cum_demand
 
             if stock < 0 and stockout_day is None:
                 stockout_day = day_idx
@@ -147,8 +180,12 @@ def compute_stock_projections(
 
 
 def _calc_coverage(days: list[StockDay]) -> float:
-    """Days until first stockout."""
+    """Days until first stockout (buffer days excluded)."""
+    n_regular = 0
     for d in days:
+        if d.is_buffer:
+            continue
+        n_regular += 1
         if d.stock < 0:
             return float(d.day_idx)
-    return float(len(days))
+    return float(n_regular)
