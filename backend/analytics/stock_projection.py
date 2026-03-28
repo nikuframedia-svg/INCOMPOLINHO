@@ -94,10 +94,16 @@ def compute_stock_projections(
         stockout_day: int | None = None
         days: list[StockDay] = []
 
+        # Pre-accumulate production from negative days (buffer unshift)
+        op_prod = prod.get(op.id, {})
+        for neg_day, qty in op_prod.items():
+            if neg_day < 0:
+                cum_produced += qty
+
         for day_idx in range(engine_data.n_days):
             demand = op.d[day_idx] if day_idx < len(op.d) else 0
             demand = max(demand, 0)
-            produced = prod.get(op.id, {}).get(day_idx, 0)
+            produced = op_prod.get(day_idx, 0)
 
             cum_demand += demand
             cum_produced += produced

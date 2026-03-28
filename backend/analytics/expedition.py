@@ -58,6 +58,10 @@ def compute_expedition(
     cum_prod: dict[str, dict[int, int]] = {}
     for op_id, day_prod in prod.items():
         running = 0
+        # Pre-accumulate production from negative days (buffer unshift)
+        for neg_day, qty in day_prod.items():
+            if neg_day < 0:
+                running += qty
         cum: dict[int, int] = {}
         for day in range(engine_data.n_days):
             running += day_prod.get(day, 0)
@@ -77,32 +81,36 @@ def compute_expedition(
         if op_id is None:
             continue
 
-        # Group demands by day for cumulative tracking per client
-        client_cum: dict[str, int] = defaultdict(int)
+        # Sort by (day, client) for deterministic FIFO allocation
+        sorted_entries = sorted(demand_entries, key=lambda e: (e.day_idx, e.client))
 
-        # Sort entries by day_idx for cumulative computation
-        sorted_entries = sorted(demand_entries, key=lambda e: e.day_idx)
+        # FIFO: track total cumulative demand across ALL clients for this SKU.
+        # Production is shared — first entries (earliest EDD) get served first.
+        cum_demand_total = 0
 
         for entry in sorted_entries:
             if entry.order_qty <= 0:
                 continue
 
-            client_cum[entry.client] = client_cum.get(entry.client, 0) + entry.order_qty
-            cum_demand = client_cum[entry.client]
-
+            cum_demand_total += entry.order_qty
             produced = cum_prod.get(op_id, {}).get(entry.day_idx, 0)
 
-            if produced >= cum_demand:
+            # Global shortfall: how much total demand exceeds total production
+            shortfall_total = max(0, cum_demand_total - produced)
+            # This entry absorbs shortfall (FIFO: earlier entries satisfied first)
+            entry_shortfall = min(entry.order_qty, shortfall_total)
+            entry_covered = entry.order_qty - entry_shortfall
+
+            if entry_shortfall == 0:
                 status = "ready"
-            elif produced > 0:
+            elif entry_covered > 0:
                 status = "partial"
             elif _has_segments_before(segments, lots, lot_to_op, op_id, entry.day_idx):
                 status = "in_production"
             else:
                 status = "not_planned"
 
-            coverage = min(100.0, produced / entry.order_qty * 100) if entry.order_qty > 0 else 100.0
-            shortfall = max(0, entry.order_qty - produced)
+            coverage = min(100.0, entry_covered / entry.order_qty * 100) if entry.order_qty > 0 else 100.0
 
             days_map[entry.day_idx].append(
                 ExpeditionEntry(
@@ -114,7 +122,7 @@ def compute_expedition(
                     produced_qty=produced,
                     status=status,
                     coverage_pct=round(coverage, 1),
-                    shortfall=shortfall,
+                    shortfall=entry_shortfall,
                 )
             )
 

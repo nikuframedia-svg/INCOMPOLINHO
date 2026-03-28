@@ -371,8 +371,8 @@ export function GanttPage() {
                 <Dot color={badgeColor} size={5} />
                 <span style={{ marginLeft: 4 }}>
                   Optimizado ({label} confiança) — {learning.n_trials} trials
-                  {imp.earliness_delta !== 0 && `, earliness ${imp.earliness_delta > 0 ? "+" : ""}${imp.earliness_delta}d`}
-                  {imp.setups_delta !== 0 && `, setups ${imp.setups_delta > 0 ? "+" : ""}${imp.setups_delta}`}
+                  {imp?.earliness_delta != null && imp.earliness_delta !== 0 && `, earliness ${imp.earliness_delta > 0 ? "+" : ""}${imp.earliness_delta}d`}
+                  {imp?.setups_delta != null && imp.setups_delta !== 0 && `, setups ${imp.setups_delta > 0 ? "+" : ""}${imp.setups_delta}`}
                 </span>
               </Pill>
             );

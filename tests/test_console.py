@@ -312,14 +312,22 @@ class TestActionItems:
         assert len(actions) <= 7
 
     def test_delivery_risk_with_shortfall(self):
-        """High demand that can't be covered → delivery alert."""
-        # SKU with huge demand on day 1
-        ops = [_eop("T1_M1_BIG", "BIG", "M1", "T1",
-                     d=[0, 99999, 0, 0, 0, 0, 0, 0, 0, 0], pH=10.0)]
+        """Shortfall in production → delivery alert."""
+        # Create segments that only produce 200 of 500 needed by day 1
+        ops = [_eop("T1_M1_SKU1", "SKU1", "M1", "T1",
+                     d=[0, 500, 0, 0, 0, 0, 0, 0, 0, 0], pH=100.0)]
         engine = _engine(ops=ops)
         config = _config()
-        result = schedule_all(engine, config=config)
-        actions = compute_action_items(result.segments, result.lots, engine, config)
+        # Manually create insufficient segments (bypass scheduler)
+        from backend.scheduler.types import Lot, Segment
+        lots = [Lot(id="L1", op_id="T1_M1_SKU1", tool_id="T1",
+                     machine_id="M1", alt_machine_id=None, qty=200,
+                     prod_min=20, setup_min=30, edd=1, is_twin=False)]
+        segs = [Segment(lot_id="L1", run_id="R1", machine_id="M1",
+                        tool_id="T1", day_idx=0, start_min=420, end_min=440,
+                        shift="A", qty=200, prod_min=20, setup_min=0,
+                        is_continuation=False, edd=1, sku="SKU1")]
+        actions = compute_action_items(segs, lots, engine, config)
         delivery = [a for a in actions if a.category == "delivery"]
         assert len(delivery) >= 1
         assert delivery[0].severity in ("critical", "warning")
