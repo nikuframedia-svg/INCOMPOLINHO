@@ -33,10 +33,8 @@ def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
         return False
     if new["otd_d"] < old["otd_d"]:
         return False
-    earliness_ceiling = max(
-        old["earliness_avg_days"],
-        config.jit_earliness_target if config else 5.5,
-    )
+    target = config.jit_earliness_target if config else 5.5
+    earliness_ceiling = max(old["earliness_avg_days"], target)
     if new["earliness_avg_days"] > earliness_ceiling:
         return False
 

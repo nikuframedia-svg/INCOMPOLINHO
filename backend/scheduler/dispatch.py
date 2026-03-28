@@ -257,7 +257,7 @@ def _two_opt(runs: list[ToolRun], config: FactoryConfig | None = None) -> list[T
         for i in range(len(runs) - 1):
             if runs[i].tool_id == runs[i + 1].tool_id:
                 continue
-            for j in range(i + 2, min(i + 6, len(runs))):
+            for j in range(i + 2, min(i + 10, len(runs))):
                 if runs[j].tool_id == runs[i].tool_id:
                     if abs(runs[i + 1].edd - runs[j].edd) <= tolerance:
                         runs[i + 1], runs[j] = runs[j], runs[i + 1]
@@ -416,8 +416,8 @@ def _allocate_run(
             if day >= engine_data.n_days:
                 break
 
-            offset_in_day = start_abs - day * day_cap
-            min_in_day = shift_a_start + int(offset_in_day)
+            offset_in_day = round(start_abs - day * day_cap, 2)
+            min_in_day = shift_a_start + int(round(offset_in_day))
 
             # Prevent float/int truncation overlaps: ensure we start after last segment
             if day in last_end_on_day and min_in_day < last_end_on_day[day]:
@@ -455,13 +455,17 @@ def _allocate_run(
 
             shift = "A" if min_in_day < shift_a_end else "B"
 
-            # Twin outputs proportional
+            # Twin outputs proportional (floor-based to avoid over-allocation)
             twin_out = None
             if lot.twin_outputs and lot.qty > 0:
-                twin_out = [
-                    (op_id, sku, round(qty * block_qty / lot.qty) if lot.qty > 0 else 0)
-                    for op_id, sku, qty in lot.twin_outputs
-                ]
+                if remaining_qty <= 0:
+                    # Last segment — assign all remaining twin quantities
+                    twin_out = list(lot.twin_outputs)
+                else:
+                    twin_out = [
+                        (op_id, sku, int(qty * block_qty / lot.qty) if lot.qty > 0 else 0)
+                        for op_id, sku, qty in lot.twin_outputs
+                    ]
 
             # SKU from twin outputs or op_id
             sku = ""

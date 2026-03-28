@@ -14,3 +14,12 @@ data/*.db
 data/copilot_state.json
 apps/
 frontend/dist/
+
+# ISOP data files (client data, do not commit)
+ISOP_*.xlsx
+ISOP*.xlsx
+"ISOP_*"
+*.xlsx
+
+# Pip artifacts
+=*

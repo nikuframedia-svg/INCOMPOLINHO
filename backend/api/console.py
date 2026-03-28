@@ -10,6 +10,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException
 
 from backend.console.action_items import compute_action_items
+from backend.console.day_summary import compute_day_summary
 from backend.console.expedition_today import compute_expedition_today
 from backend.console.machines_today import compute_machines_today
 from backend.console.state_phrase import compute_state_phrase
@@ -40,6 +41,10 @@ async def get_console(day_idx: int = 0):
     tomorrow = compute_tomorrow_prep(
         state.segments, state.lots, state.engine_data, state.config,
         day_idx + 1,
+    )
+    summary = compute_day_summary(
+        state.segments, state.lots, state.engine_data, state.config,
+        day_idx, machines, expedition, actions,
     )
     color, phrase = compute_state_phrase(actions, expedition, machines)
 
@@ -93,4 +98,5 @@ async def get_console(day_idx: int = 0):
         "machines": machines_list,
         "expedition": expedition_list,
         "tomorrow": tomorrow,
+        "summary": summary,
     }

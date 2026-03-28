@@ -82,6 +82,7 @@ class MAPElitesArchive:
     """2D quality-diversity archive indexed by (setups, earliness).
 
     Each cell stores the best feasible solution with that behavioral profile.
+    Grid boundaries adapt automatically as new solutions are inserted.
     """
 
     def __init__(
@@ -94,6 +95,34 @@ class MAPElitesArchive:
         self.earl_lo, self.earl_hi = earliness_range
         self.bins = bins
         self.grid: dict[tuple[int, int], ArchiveEntry] = {}
+
+    def _adapt_range(self, setups: int, earliness: float) -> None:
+        """Expand grid boundaries if a solution falls outside current range."""
+        changed = False
+        if setups < self.setups_lo:
+            self.setups_lo = max(0, setups - 10)
+            changed = True
+        if setups > self.setups_hi:
+            self.setups_hi = setups + 10
+            changed = True
+        if earliness < self.earl_lo:
+            self.earl_lo = max(0.0, earliness - 1.0)
+            changed = True
+        if earliness > self.earl_hi:
+            self.earl_hi = earliness + 1.0
+            changed = True
+        if changed:
+            # Re-index existing entries under new grid
+            old_entries = list(self.grid.values())
+            self.grid.clear()
+            for entry in old_entries:
+                cell = self._to_cell(
+                    entry.score.get("setups", 100),
+                    entry.score.get("earliness_avg_days", 5.0),
+                )
+                existing = self.grid.get(cell)
+                if existing is None or entry.cost < existing.cost:
+                    self.grid[cell] = entry
 
     def _to_cell(self, setups: int, earliness: float) -> tuple[int, int]:
         si = int(
@@ -114,6 +143,10 @@ class MAPElitesArchive:
         # Only feasible solutions
         if score.get("tardy_count", 1) > 0:
             return False
+
+        setups = score.get("setups", 100)
+        earliness = score.get("earliness_avg_days", 5.0)
+        self._adapt_range(setups, earliness)
 
         cell = self._to_cell(
             score.get("setups", 100),

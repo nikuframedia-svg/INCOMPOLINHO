@@ -52,8 +52,8 @@ export function ConsolePage() {
         <Dot color={stateColor} size={8} />
         <span style={{ fontSize: 15, fontWeight: 500, color: T.primary, flex: 1 }}>{data.state.phrase}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.elevated, borderRadius: 8, padding: "4px 4px" }}>
-          <button onClick={() => setDay(Math.max(0, (day ?? 0) - 1))} style={navBtnStyle}>‹</button>
-          <span style={{ fontSize: 12, fontWeight: 600, color: T.primary, minWidth: 44, textAlign: "center", fontFamily: T.mono }}>
+          <button onClick={() => setDay(Math.max(-(Number(score?.buffer_days) || 0), (day ?? 0) - 1))} style={navBtnStyle}>‹</button>
+          <span style={{ fontSize: 12, fontWeight: 600, color: T.primary, minWidth: 54, textAlign: "center", fontFamily: T.mono }}>
             Dia {day ?? 0}
           </span>
           <button onClick={() => setDay((day ?? 0) + 1)} style={navBtnStyle}>›</button>
@@ -62,13 +62,14 @@ export function ConsolePage() {
 
       {/* KPI Strip */}
       {score && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
           {[
             { l: "OTD", v: score.otd?.toFixed(1), u: "%", c: (score.otd ?? 0) >= TH.OTD_GREEN ? T.green : T.orange },
             { l: "OTD-D", v: score.otd_d?.toFixed(1), u: "%", c: (score.otd_d ?? 0) >= TH.OTD_D_GREEN ? T.green : T.orange },
             { l: "Atrasos", v: score.tardy_count, c: score.tardy_count === 0 ? T.green : T.red },
             { l: "Setups", v: score.setups, c: T.primary },
             { l: "Antecipação", v: score.earliness_avg_days?.toFixed(1), u: "d", c: T.primary },
+            { l: "Buffer", v: Number(score.buffer_days) || 0, u: "d", c: T.primary },
           ].map((k, i) => (
             <Card key={i} style={{ padding: 16 }}>
               <Label>{k.l}</Label>
@@ -85,17 +86,36 @@ export function ConsolePage() {
         {/* Actions */}
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "16px 20px 12px" }}>
-            <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Acções</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Resumo do Dia</span>
           </div>
-          {data.actions.length === 0 && (
-            <div style={{ padding: "14px 20px", color: T.tertiary, fontSize: 13 }}>Sem acções pendentes</div>
+          {/* Day summary */}
+          {data.summary?.length > 0 && (
+            <div style={{ padding: "0 20px 12px" }}>
+              {data.summary.map((line, i) => {
+                const color = line.color === "red" ? T.red : line.color === "orange" ? T.orange : line.color === "green" ? T.green : T.secondary;
+                return (
+                  <div key={i} style={{ fontSize: 12, lineHeight: 1.7, color, fontFamily: line.text.startsWith("  ") ? T.mono : "inherit" }}>
+                    {line.text}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* Actions */}
+          {data.actions.length > 0 && (
+            <>
+              <Divider />
+              <div style={{ padding: "12px 20px 4px" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>Acções</span>
+              </div>
+            </>
           )}
           {data.actions.map((a, i) => {
             const c = a.severity === "critical" ? T.red : a.severity === "warning" ? T.orange : T.blue;
             return (
               <div key={i}>
                 {i > 0 && <Divider />}
-                <div style={{ padding: "14px 20px" }}>
+                <div style={{ padding: "10px 20px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                     <Dot color={c} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>{a.title}</span>
@@ -110,6 +130,9 @@ export function ConsolePage() {
               </div>
             );
           })}
+          {data.actions.length === 0 && !data.summary?.length && (
+            <div style={{ padding: "14px 20px", color: T.tertiary, fontSize: 13 }}>Sem dados para este dia</div>
+          )}
         </Card>
 
         {/* Right column */}
@@ -183,14 +206,14 @@ export function ConsolePage() {
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Preparacao Amanha</span>
-            {(data.tomorrow as any).date && (
-              <span style={{ fontSize: 11, color: T.tertiary, fontFamily: T.mono }}>{(data.tomorrow as any).date}</span>
+            {data.tomorrow.date && (
+              <span style={{ fontSize: 11, color: T.tertiary, fontFamily: T.mono }}>{data.tomorrow.date}</span>
             )}
           </div>
 
-          {((data.tomorrow as any).problems ?? []).length > 0 && (
+          {(data.tomorrow.problems ?? []).length > 0 && (
             <div style={{ padding: "0 20px 12px" }}>
-              {((data.tomorrow as any).problems as string[]).map((p: string, i: number) => (
+              {data.tomorrow.problems.map((p, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
                   <Dot color={T.orange} size={5} />
                   <span style={{ fontSize: 12, color: T.orange }}>{p}</span>
@@ -199,13 +222,13 @@ export function ConsolePage() {
             </div>
           )}
 
-          {((data.tomorrow as any).setups ?? []).length > 0 && (
+          {(data.tomorrow.setups ?? []).length > 0 && (
             <>
               <Divider />
               <div style={{ padding: "12px 20px" }}>
                 <Label style={{ marginBottom: 8 }}>Setups</Label>
                 <div style={{ display: "grid", gridTemplateColumns: "60px 90px 1fr 50px", gap: "4px 12px" }}>
-                  {((data.tomorrow as any).setups as any[]).map((s: any, i: number) => (
+                  {data.tomorrow.setups.map((s, i) => (
                     <React.Fragment key={i}>
                       <span style={{ fontSize: 11, fontFamily: T.mono, color: T.tertiary }}>{s.time}</span>
                       <span style={{ fontSize: 11, fontFamily: T.mono, color: T.primary }}>{s.machine}</span>
@@ -221,7 +244,7 @@ export function ConsolePage() {
             </>
           )}
 
-          {((data.tomorrow as any).operators ?? []).length > 0 && (
+          {(data.tomorrow.operators ?? []).length > 0 && (
             <>
               <Divider />
               <div style={{ padding: "12px 20px" }}>
@@ -231,7 +254,7 @@ export function ConsolePage() {
                   <span style={{ fontSize: 10, color: T.tertiary, textTransform: "uppercase" }}>Grupo</span>
                   <span style={{ fontSize: 10, color: T.tertiary, textTransform: "uppercase" }}>Necessarios</span>
                   <span style={{ fontSize: 10, color: T.tertiary, textTransform: "uppercase" }}>Deficit</span>
-                  {((data.tomorrow as any).operators as any[]).map((o: any, i: number) => (
+                  {data.tomorrow.operators.map((o, i) => (
                     <React.Fragment key={i}>
                       <span style={{ fontSize: 12, fontFamily: T.mono, color: T.primary }}>{o.shift}</span>
                       <span style={{ fontSize: 12, color: T.secondary }}>{o.group}</span>
@@ -246,17 +269,17 @@ export function ConsolePage() {
             </>
           )}
 
-          {(data.tomorrow as any).expeditions_summary && (
+          {data.tomorrow.expeditions_summary && (
             <>
               <Divider />
               <div style={{ padding: "12px 20px" }}>
                 <Label style={{ marginBottom: 4 }}>Expedicoes</Label>
-                <span style={{ fontSize: 12, color: T.secondary }}>{(data.tomorrow as any).expeditions_summary}</span>
+                <span style={{ fontSize: 12, color: T.secondary }}>{data.tomorrow.expeditions_summary}</span>
               </div>
             </>
           )}
 
-          {(data.tomorrow as any).ok && ((data.tomorrow as any).problems ?? []).length === 0 && (
+          {data.tomorrow.ok && (data.tomorrow.problems ?? []).length === 0 && (
             <div style={{ padding: "12px 20px" }}>
               <span style={{ fontSize: 12, color: T.green }}>Tudo preparado para amanha.</span>
             </div>

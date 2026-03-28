@@ -184,21 +184,24 @@ class CachedPipeline:
 
         # Final score
         score = compute_score(segments, lots, data, config=self.config)
+        score["buffer_days"] = buffer_days
+        score["_earliness_target"] = self.config.jit_earliness_target if self.config else 5.5
 
         # Day capacity violation count (for fitness penalty)
+        # Use actual segment span (end - start) to account for shift gaps
         day_cap = self.config.day_capacity_min if self.config else DAY_CAP
-        day_used: dict[tuple[str, int], float] = defaultdict(float)
+        day_span: dict[tuple[str, int], float] = defaultdict(float)
         for seg in segments:
             if seg.day_idx >= 0:
-                day_used[(seg.machine_id, seg.day_idx)] += seg.prod_min + seg.setup_min
+                day_span[(seg.machine_id, seg.day_idx)] += seg.end_min - seg.start_min
         day_cap_violations = sum(
-            1 for total in day_used.values() if total > day_cap + 1.0
+            1 for total in day_span.values() if total > day_cap + 1.0
         )
         score["day_cap_violations"] = day_cap_violations
 
         # Weighted setup cost: setup_min × machine utilisation
         machine_total_used: dict[str, float] = {}
-        for (m_id, _day), total in day_used.items():
+        for (m_id, _day), total in day_span.items():
             machine_total_used[m_id] = machine_total_used.get(m_id, 0.0) + total
         n_holidays = len(set(getattr(data, "holidays", []) or []))
         n_work_days = max(data.n_days - n_holidays, 1)

@@ -87,8 +87,15 @@ class SurrogateModel:
         return float(self.model.predict([features])[0])
 
     def should_evaluate(self, chrom: Chromosome, best_cost: float, threshold: float = 1.3) -> bool:
-        """Return True if chromosome is worth full evaluation."""
+        """Return True if chromosome is worth full evaluation.
+
+        Threshold adapts based on training data size: wider early (fewer samples,
+        less confident), tighter later (more data, more confident).
+        """
         if not self.is_trained:
             return True
+        # Adaptive: relax threshold when few samples, tighten with more data
+        n = len(self.X)
+        adaptive_threshold = threshold + max(0, (self.min_samples * 2 - n) / (self.min_samples * 2)) * 0.5
         predicted = self.predict(chrom)
-        return predicted < best_cost * threshold
+        return predicted < best_cost * adaptive_threshold

@@ -270,6 +270,92 @@ def _sanitize_segments(
     return result
 
 
+def _find_predecessor_end(segments: list[Segment], target: Segment, shift_a_start: int) -> int:
+    """Find the end_min of the latest predecessor on the same machine/day before target."""
+    pred_end = shift_a_start
+    for other in segments:
+        if (other.machine_id == target.machine_id
+                and other.day_idx == target.day_idx
+                and other.end_min <= target.start_min
+                and other.end_min > pred_end):
+            pred_end = other.end_min
+    return pred_end
+
+
+def _try_pull_back(
+    segments: list[Segment],
+    blocker_seg_idx: int,
+    blocker_abs_start: float,
+    prev_crew_end: float,
+    delay_needed: float,
+    shift_a_start: int,
+) -> tuple[bool, float, float]:
+    """Try pulling the blocker segment back in time to make room.
+
+    Returns (pulled, new_blocker_abs_start, new_crew_free_at).
+    """
+    bseg = segments[blocker_seg_idx]
+    pull_back_available = blocker_abs_start - prev_crew_end
+    is_full = pull_back_available >= delay_needed
+    pull_amount = int(delay_needed + 0.5) if is_full else int(pull_back_available)
+
+    if pull_amount < 1:
+        return False, blocker_abs_start, 0.0
+
+    new_bstart = bseg.start_min - pull_amount
+    pred_end = _find_predecessor_end(segments, bseg, shift_a_start)
+
+    # Limit pull to available intra-machine space
+    if new_bstart < pred_end:
+        pull_amount = max(0, bseg.start_min - pred_end)
+        new_bstart = bseg.start_min - pull_amount
+
+    if pull_amount < 1 or new_bstart < shift_a_start:
+        return False, blocker_abs_start, 0.0
+
+    bseg.end_min -= pull_amount
+    bseg.start_min = new_bstart
+    new_blocker_abs = blocker_abs_start - pull_amount
+    new_crew_free = new_blocker_abs + bseg.setup_min
+    return is_full, new_blocker_abs, new_crew_free
+
+
+def _push_forward(
+    seg: Segment,
+    crew_free_at: float,
+    abs_start: float,
+    duration: float,
+    shift_a_start: int,
+    shift_b_end: int,
+    holidays: set[int],
+) -> bool:
+    """Push a setup segment forward in time to avoid crew overlap.
+
+    Returns True if segment was shifted.
+    """
+    new_abs_start = crew_free_at
+    delay = int(new_abs_start - abs_start + 0.5)
+    if delay < 1:
+        return False
+
+    new_start = seg.start_min + delay
+    new_end = seg.end_min + delay
+
+    if new_end > shift_b_end:
+        # Overflow: move entire segment to next workday
+        seg_duration = seg.end_min - seg.start_min
+        new_day = seg.day_idx + 1
+        while new_day in holidays:
+            new_day += 1
+        seg.day_idx = new_day
+        seg.start_min = shift_a_start
+        seg.end_min = shift_a_start + seg_duration
+    else:
+        seg.start_min = new_start
+        seg.end_min = new_end
+    return True
+
+
 def _serialize_crew_setups(
     segments: list[Segment],
     config: FactoryConfig | None = None,
@@ -281,6 +367,8 @@ def _serialize_crew_setups(
     JIT/VNS dispatch each machine independently (no shared crew) for gate independence.
     This post-processing step delays ONLY the overlapping setup segment (not all
     subsequent segments). Intra-machine cascading is handled by _fix_day_overlaps.
+
+    Bidirectional resolution: tries pulling the blocker back before pushing current forward.
     """
     day_cap = config.day_capacity_min if config else DAY_CAP
     shift_a_start = config.shift_a_start if config else 420
@@ -293,7 +381,7 @@ def _serialize_crew_setups(
         prio_map = {m: i for i, m in enumerate(crew_priority)}
 
     # Collect setups with absolute time
-    setup_entries: list[tuple[float, float, int]] = []  # (abs_start, duration, seg_index)
+    setup_entries: list[tuple[float, float, int]] = []
     for idx, seg in enumerate(segments):
         if seg.setup_min > 0 and seg.day_idx >= 0:
             abs_start = seg.day_idx * day_cap + (seg.start_min - shift_a_start)
@@ -302,105 +390,46 @@ def _serialize_crew_setups(
     if not setup_entries:
         return segments
 
-    # Sort by time, break ties by priority (higher priority machines first)
     setup_entries.sort(key=lambda e: (e[0], prio_map.get(segments[e[2]].machine_id, 99)))
 
-    # Walk through setups in chronological order, enforcing crew serialization.
-    # Bidirectional: try pulling the blocker back before pushing current forward.
-    # Only delay the INDIVIDUAL setup segment — _fix_day_overlaps cascades per-machine.
     crew_free_at = 0.0
-    prev_crew_end = 0.0      # crew_free_at BEFORE the current blocker
-    blocker_seg_idx = -1     # seg index of the setup that set crew_free_at
-    blocker_abs_start = 0.0  # abs_start of the blocker
+    prev_crew_end = 0.0
+    blocker_seg_idx = -1
+    blocker_abs_start = 0.0
     shifted = 0
 
     for abs_start, duration, seg_idx in setup_entries:
         seg = segments[seg_idx]
-        if abs_start < crew_free_at - 0.01:
-            delay_needed = crew_free_at - abs_start
 
-            # ── Try pulling the blocker back ──
+        if abs_start < crew_free_at - 0.01:
+            # Overlap detected — resolve bidirectionally
             pulled = False
             if blocker_seg_idx >= 0:
-                pull_back_available = blocker_abs_start - prev_crew_end
-                if pull_back_available >= delay_needed:
-                    # Full pull-back: move blocker earlier, current fits without delay
-                    bseg = segments[blocker_seg_idx]
-                    pull = int(delay_needed + 0.5)
-                    new_bstart = bseg.start_min - pull
-                    # Check intra-machine feasibility: predecessor must end before new_bstart
-                    pred_end = shift_a_start
-                    for other in segments:
-                        if (other.machine_id == bseg.machine_id
-                                and other.day_idx == bseg.day_idx
-                                and other.end_min <= bseg.start_min
-                                and other.end_min > pred_end):
-                            pred_end = other.end_min
-                    if new_bstart >= shift_a_start and new_bstart >= pred_end:
-                        bseg.end_min -= pull
-                        bseg.start_min = new_bstart
-                        # Update crew_free_at based on pulled-back blocker
-                        new_blocker_abs = blocker_abs_start - pull
-                        blocker_abs_start = new_blocker_abs
-                        crew_free_at = new_blocker_abs + segments[blocker_seg_idx].setup_min
-                        pulled = True
-                elif pull_back_available > 1.0:
-                    # Partial pull-back: pull blocker as far as possible
-                    bseg = segments[blocker_seg_idx]
-                    pull = int(pull_back_available)
-                    new_bstart = bseg.start_min - pull
-                    # Check intra-machine feasibility
-                    pred_end = shift_a_start
-                    for other in segments:
-                        if (other.machine_id == bseg.machine_id
-                                and other.day_idx == bseg.day_idx
-                                and other.end_min <= bseg.start_min
-                                and other.end_min > pred_end):
-                            pred_end = other.end_min
-                    # Limit pull to available intra-machine space
-                    if new_bstart < pred_end:
-                        pull = max(0, bseg.start_min - pred_end)
-                        new_bstart = bseg.start_min - pull
-                    if pull >= 1 and new_bstart >= shift_a_start:
-                        bseg.end_min -= pull
-                        bseg.start_min = new_bstart
-                        new_blocker_abs = blocker_abs_start - pull
-                        blocker_abs_start = new_blocker_abs
-                        crew_free_at = new_blocker_abs + segments[blocker_seg_idx].setup_min
-                        # Remaining delay handled by push-forward below
+                is_full, blocker_abs_start, new_crew_free = _try_pull_back(
+                    segments, blocker_seg_idx, blocker_abs_start, prev_crew_end,
+                    crew_free_at - abs_start, shift_a_start,
+                )
+                if new_crew_free > 0:
+                    crew_free_at = new_crew_free
+                    pulled = is_full
 
             if pulled:
-                # Current setup fits now
                 crew_free_at = abs_start + duration
                 blocker_seg_idx = seg_idx
                 blocker_abs_start = abs_start
                 shifted += 1
             else:
-                new_abs_start = crew_free_at
-                delay = int(new_abs_start - abs_start + 0.5)
-                if delay >= 1:
-                    new_start = seg.start_min + delay
-                    new_end = seg.end_min + delay
-
-                    if new_end > shift_b_end:
-                        # Overflow: move entire segment to next workday
-                        seg_duration = seg.end_min - seg.start_min
-                        new_day = seg.day_idx + 1
-                        while new_day in hols:
-                            new_day += 1
-                        seg.day_idx = new_day
-                        seg.start_min = shift_a_start
-                        seg.end_min = shift_a_start + seg_duration
-                        # DON'T jump crew_free_at to next day — crew is free
-                        # for remaining entries on the current day.
-                    else:
-                        seg.start_min = new_start
-                        seg.end_min = new_end
-                        crew_free_at = new_abs_start + duration
+                pushed = _push_forward(seg, crew_free_at, abs_start, duration,
+                                       shift_a_start, shift_b_end, hols)
+                if pushed:
+                    new_abs = crew_free_at
+                    new_end = seg.start_min + duration if seg.end_min - seg.start_min >= duration else seg.end_min
+                    # Update tracking only for same-day pushes (not day-overflow)
+                    if seg.day_idx * day_cap + (seg.start_min - shift_a_start) >= abs_start:
+                        crew_free_at = seg.day_idx * day_cap + (seg.start_min - shift_a_start) + duration
                         prev_crew_end = blocker_abs_start + segments[blocker_seg_idx].setup_min if blocker_seg_idx >= 0 else 0.0
                         blocker_seg_idx = seg_idx
-                        blocker_abs_start = new_abs_start
-
+                        blocker_abs_start = seg.day_idx * day_cap + (seg.start_min - shift_a_start)
                     shifted += 1
                 else:
                     crew_free_at = abs_start + duration
@@ -689,6 +718,7 @@ def schedule_all(data: EngineData, audit: bool = False, config: FactoryConfig | 
     # Phase 5: Final scoring
     journal.phase_start("scoring")
     score = compute_score(final_segments, final_lots, data, config=config)
+    score["buffer_days"] = buffer_days
     journal.phase_end("scoring", f"OTD={score['otd']:.1f}%, tardy={score['tardy_count']}", **{k: v for k, v in score.items() if isinstance(v, (int, float))})
     logger.info(
         "Final: OTD=%.1f%%, OTD-D=%.1f%%, setups=%d, tardy=%d/%d, earliness=%.1fd",

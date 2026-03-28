@@ -23,6 +23,7 @@ from backend.cpo import optimize
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import ScheduleResult
 from backend.transform.transform import transform
+from backend.analytics.expedition import compute_expedition
 from backend.types import EngineData
 
 
@@ -187,6 +188,20 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
     results["Min prod_min >= 1.0"] = (
         len(min_prod_violations) == 0,
         f"{len(min_prod_violations)} violations" + (f": {min_prod_violations[:3]}" if min_prod_violations else "")
+    )
+
+    # 18. Per-client order coverage — every individual order must be "ready"
+    exp = compute_expedition(segs, lots, data)
+    not_ready = []
+    for day in exp.days:
+        for e in day.entries:
+            if e.status != "ready":
+                not_ready.append(
+                    f"{e.client}/{e.sku} day={e.day_idx} shortfall={e.shortfall:,}"
+                )
+    results["Encomendas individuais cobertas"] = (
+        len(not_ready) == 0,
+        f"{len(not_ready)} não cobertas" + (f": {not_ready[:3]}" if not_ready else "")
     )
 
     return results
@@ -374,7 +389,7 @@ def main():
                 "OTD = 100%", "OTD-D = 100%", "Tardy = 0",
                 "Shift bounds [420,1440]", "Feriados respeitados", "PRM020 inactivo",
                 "Tool contention", "Crew mutex", "Day capacity <= 1020",
-                "Eco lot", "Demand conservation",
+                "Eco lot", "Demand conservation", "Encomendas individuais cobertas",
             ]),
             ("SOFT", [
                 "Earliness <= 6.5d", "Setups razoáveis", "0 overlaps intra-máquina",

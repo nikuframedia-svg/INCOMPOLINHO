@@ -300,8 +300,11 @@ export interface ConsoleAction {
   severity: string;
   title: string;
   detail: string;
-  suggestion: string;
+  suggestion: string | null;
   machine_id: string | null;
+  deadline: number | null;
+  client: string | null;
+  category: string | null;
 }
 
 export interface ConsoleMachine {
@@ -324,12 +327,44 @@ export interface ConsoleExpedition {
   total: number;
 }
 
+export interface ConsoleSummaryLine {
+  text: string;
+  color: "red" | "orange" | "green" | "default";
+}
+
+export interface TomorrowSetup {
+  time: string;
+  machine: string;
+  from_tool: string | null;
+  to_tool: string;
+  duration_min: number;
+  already_mounted: boolean;
+}
+
+export interface TomorrowOperator {
+  shift: string;
+  group: string;
+  required: number;
+  available: number;
+  deficit: number;
+}
+
+export interface TomorrowPrep {
+  date: string | null;
+  setups: TomorrowSetup[];
+  operators: TomorrowOperator[];
+  expeditions_summary: string | null;
+  problems: string[];
+  ok: boolean;
+}
+
 export interface ConsoleData {
   state: { color: string; phrase: string };
   actions: ConsoleAction[];
   machines: ConsoleMachine[];
   expedition: ConsoleExpedition[];
-  tomorrow: unknown;
+  tomorrow: TomorrowPrep | null;
+  summary: ConsoleSummaryLine[];
 }
 
 // ── Actions ──────────────────────────────────────────────────

@@ -37,18 +37,9 @@ machines:
   # PRM020: FORA DE USO — NÃO INCLUIR
 
 # ─── TURNOS ───
-
-shifts:
-  Grandes:
-    A: { start: "07:00", end: "15:30", equipa: 5 }
-    B: { start: "15:30", end: "00:00", equipa: 5 }
-    geral: { start: "07:00", end: "16:00", equipa: 1 }
-    # Total turno A: 5+1=6 | overlap 15:30-16:00: 5+1=6 | turno B após 16:00: 5
-  Medias:
-    A: { start: "07:00", end: "15:30", equipa: 5 }
-    B: { start: "15:30", end: "00:00", equipa: 4 }
-    geral: { start: "07:00", end: "16:00", equipa: 4 }
-    # Total turno A: 5+4=9 | overlap 15:30-16:00: 4+4=8 | turno B após 16:00: 4
+# Definidos em config/factory.yaml (ShiftConfig).
+# A: 07:00-15:30 (510 min), B: 15:30-00:00 (510 min). Total: 1020 min/dia.
+# Operadores: Grandes A:6/B:5, Medias A:9/B:4.
 
 # ─── MÁQUINAS ALTERNATIVAS ───
 # Fonte: coluna "Máquina alternativa" do ISOP completo
@@ -196,23 +187,9 @@ twins:
   # JDE002 (PRM042): 4 SKUs — TP042173-0040-1, -0040-2, -0060-1, -0060-2
   # JTE007 (PRM019): 3 SKUs — JJB10-000070F.10, -000071A.10, -000080F.10
 
-# ─── SCHEDULER ───
-
-scheduler:
-  dispatch_rule: ATCS
-  jit_enabled: true
-  eco_lot_hard: true
-  k1_values: [0.5, 1.0, 1.5, 2.0, 2.5]
-  k2_values: [0.5, 1.0, 1.5, 2.0, 2.5]
-  alt_util_threshold: 0.95
-
-# ─── OBJECTIVOS (pesos para scoring) ───
-
-objectives:
-  tardiness_weight: 10000   # NUNCA atrasar
-  earliness_weight: 500     # produzir o mais tarde possível (JIT)
-  setup_weight: 10          # menos setups melhor
-  balance_weight: 20        # balancear carga entre máquinas
+# ─── SCHEDULER + SCORING ───
+# Parametros do scheduler e pesos de scoring definidos em config/factory.yaml (FactoryConfig).
+# Tunables: max_run_days, max_edd_gap, campaign_window, jit_*, vns_*, weights, etc.
 
 # ─── FERIADOS 2026 (Portugal) ───
 # Adicionar/remover conforme necessário

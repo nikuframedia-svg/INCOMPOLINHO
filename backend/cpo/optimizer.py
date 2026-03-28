@@ -148,6 +148,7 @@ def optimize(
             engine_data, config, time_limit_per_machine=time_per_machine,
         )
         if polished_score.get("tardy_count", 1) <= best_result.score.get("tardy_count", 0):
+            polished_score["buffer_days"] = best_result.score.get("buffer_days", 0)
             best_result = ScheduleResult(
                 segments=polished_segs,
                 lots=polished_lots,
@@ -198,10 +199,11 @@ def _fitness_cost(score: dict) -> float:
 
     earliness = score.get("earliness_avg_days", 10.0)
 
-    # Earliness penalty: quadratic above 6.0d threshold
+    # Earliness penalty: quadratic above config threshold (default 5.5d)
+    earl_threshold = score.get("_earliness_target", 5.5)
     earl_cost = earliness * 0.50
-    if earliness > 6.0:
-        earl_cost += (earliness - 6.0) ** 2 * 5.0
+    if earliness > earl_threshold:
+        earl_cost += (earliness - earl_threshold) ** 2 * 5.0
 
     # Setup cost: weighted by machine utilisation (bottleneck setups cost more)
     weighted_setup = score.get("weighted_setup_cost", 0.0)
@@ -277,9 +279,14 @@ def _ga_search(
         surrogate.train()
 
     t0 = time.perf_counter()
+    stagnation_count = 0
+    max_stagnation = max(10, max_gen // 5)  # escape after 10+ gens without improvement
 
     for gen in range(max_gen):
         if time.perf_counter() - t0 > time_budget:
+            break
+        if stagnation_count >= max_stagnation:
+            logger.info("GA early stop: %d generations without improvement", stagnation_count)
             break
 
         gen_improved = 0
@@ -353,6 +360,12 @@ def _ga_search(
         # Survivor selection: keep best pop_size
         population.sort(key=lambda x: x[1])
         population = population[:pop_size]
+
+        # Track stagnation
+        if gen_improved > 0:
+            stagnation_count = 0
+        else:
+            stagnation_count += 1
 
         # Re-train surrogate periodically
         if surrogate and gen % 10 == 9:
