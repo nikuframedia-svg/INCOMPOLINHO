@@ -156,6 +156,7 @@ def optimize(
                 time_ms=0.0,
                 warnings=best_result.warnings,
                 operator_alerts=best_result.operator_alerts,
+                journal=baseline.journal,
             )
     except Exception as e:
         logger.debug("CP-SAT polish skipped: %s", e)
@@ -169,6 +170,10 @@ def optimize(
 
     elapsed = (time.perf_counter() - t0) * 1000
     best_result.time_ms = round(elapsed, 1)
+
+    # Propagate journal from baseline (GA/CP-SAT don't generate their own)
+    if not best_result.journal and baseline.journal:
+        best_result.journal = baseline.journal
 
     logger.info(
         "CPO %s: OTD=%.1f%%, setups=%d, earliness=%.1fd, tardy=%d (%.1fs)",
