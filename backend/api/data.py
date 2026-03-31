@@ -425,7 +425,18 @@ async def simulate_and_apply(request: SimulateRequest):
     mutations = [Mutation(type=m.type, params=m.params) for m in request.mutations]
     result = simulate(state.engine_data, old_score, mutations, config=state.config)
 
-    state.update_schedule(result)
+    from backend.scheduler.types import ScheduleResult
+    schedule_result = ScheduleResult(
+        segments=result.segments,
+        lots=result.lots,
+        score=result.score,
+        time_ms=result.time_ms,
+        warnings=[],
+        operator_alerts=[],
+        audit_trail=None,
+        journal=None,
+    )
+    state.update_schedule(schedule_result)
 
     return {
         "status": "applied",
