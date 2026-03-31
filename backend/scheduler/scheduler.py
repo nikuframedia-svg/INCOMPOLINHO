@@ -100,12 +100,22 @@ def _apply_buffer(runs: list[ToolRun], buffer_days: int) -> None:
 
 
 def _shift_engine_data(data: EngineData, buffer_days: int) -> EngineData:
-    """Return a copy of EngineData with n_days increased and holidays shifted."""
+    """Return a copy of EngineData with n_days increased and holidays/blocked days shifted."""
     import copy
     shifted = copy.copy(data)
     shifted.n_days = data.n_days + buffer_days
     if hasattr(data, "holidays") and data.holidays:
         shifted.holidays = [h + buffer_days for h in data.holidays]
+    if getattr(data, "machine_blocked_days", None):
+        shifted.machine_blocked_days = {
+            m: {d + buffer_days for d in days}
+            for m, days in data.machine_blocked_days.items()
+        }
+    if getattr(data, "tool_blocked_days", None):
+        shifted.tool_blocked_days = {
+            t: {d + buffer_days for d in days}
+            for t, days in data.tool_blocked_days.items()
+        }
     return shifted
 
 

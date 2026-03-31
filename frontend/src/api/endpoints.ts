@@ -108,6 +108,9 @@ export const canRevert = () =>
 export const checkCTP = (sku: string, qty: number, deadline: number) =>
   post<CTPResult>("/api/data/ctp", { sku, qty, deadline });
 
+export const applyCTP = (sku: string, qty: number, deadline: number) =>
+  post<SimulateApplyResponse>("/api/data/ctp-apply", { sku, qty, deadline });
+
 export const recalculate = () =>
   post<{ status: string; score: Score; score_previous: Score; time_ms: number; n_segments: number }>(
     "/api/data/recalculate",

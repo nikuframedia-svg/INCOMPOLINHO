@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { T } from "../theme/tokens";
-import { simulate, checkCTP } from "../api/endpoints";
+import { simulate, checkCTP, applyCTP } from "../api/endpoints";
 import { useDataStore } from "../stores/useDataStore";
 import { useSimulatorStore } from "../stores/useSimulatorStore";
 import type { MutationInput, SimulateResponse, CTPResult } from "../api/types";
@@ -167,6 +167,8 @@ export function SimulatorPage() {
   const [ctpQty, setCtpQty] = useState("");
   const [ctpDeadline, setCtpDeadline] = useState("");
   const [ctpLoading, setCtpLoading] = useState(false);
+  const [ctpApplying, setCtpApplying] = useState(false);
+  const [ctpApplied, setCtpApplied] = useState(false);
   const [ctpError, setCtpError] = useState<string | null>(null);
 
   const runSimulation = async () => {
@@ -204,6 +206,7 @@ export function SimulatorPage() {
     if (!ctpSku || !ctpQty || !ctpDeadline) return;
     setCtpLoading(true);
     setCtpError(null);
+    setCtpApplied(false);
     try {
       const res = await checkCTP(ctpSku, parseInt(ctpQty), parseInt(ctpDeadline));
       setCtpResult(res);
@@ -211,6 +214,21 @@ export function SimulatorPage() {
       setCtpError(String(e));
     } finally {
       setCtpLoading(false);
+    }
+  };
+
+  const handleApplyCTP = async () => {
+    if (!ctpSku || !ctpQty || !ctpDeadline) return;
+    setCtpApplying(true);
+    setCtpError(null);
+    try {
+      await applyCTP(ctpSku, parseInt(ctpQty), parseInt(ctpDeadline));
+      await refreshAll();
+      setCtpApplied(true);
+    } catch (e: any) {
+      setCtpError(String(e));
+    } finally {
+      setCtpApplying(false);
     }
   };
 
@@ -374,12 +392,21 @@ export function SimulatorPage() {
             <span style={{ fontSize: 13, fontFamily: T.mono, color: T.primary }}>{ctpResult.sku}</span>
             <span style={{ fontSize: 12, color: T.secondary }}>{ctpResult.qty_requested.toLocaleString()} pcs</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
             <div>
-              <Label>Ultimo Dia</Label>
+              <Label>Producao</Label>
               <div style={{ fontSize: 14, fontFamily: T.mono, color: T.primary, marginTop: 4 }}>
-                {ctpResult.latest_day !== null ? `D${ctpResult.latest_day}` : "-"}
+                {ctpResult.latest_day !== null
+                  ? ctpResult.date_start
+                    ? `${ctpResult.date_start}${ctpResult.date_end && ctpResult.date_end !== ctpResult.date_start ? ` → ${ctpResult.date_end}` : ""}`
+                    : `D${ctpResult.latest_day}${ctpResult.earliest_end_day !== null && ctpResult.earliest_end_day !== ctpResult.latest_day ? ` → D${ctpResult.earliest_end_day}` : ""}`
+                  : "-"}
               </div>
+              {ctpResult.prod_days > 0 && (
+                <div style={{ fontSize: 11, color: T.tertiary, marginTop: 2 }}>
+                  {ctpResult.prod_days} dia{ctpResult.prod_days > 1 ? "s" : ""} · {ctpResult.required_min.toFixed(0)} min
+                </div>
+              )}
             </div>
             <div>
               <Label>Maquina</Label>
@@ -401,9 +428,35 @@ export function SimulatorPage() {
                 {ctpResult.slack_min.toFixed(0)}
               </div>
             </div>
+            <div>
+              <Label>Deadline</Label>
+              <div style={{ fontSize: 14, fontFamily: T.mono, color: T.primary, marginTop: 4 }}>
+                D{ctpDeadline}
+              </div>
+            </div>
           </div>
           {ctpResult.reason && (
             <div style={{ marginTop: 12, fontSize: 12, color: T.secondary, lineHeight: 1.5 }}>{ctpResult.reason}</div>
+          )}
+          {ctpResult.feasible && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                onClick={handleApplyCTP}
+                disabled={ctpApplying || ctpApplied}
+                style={{
+                  ...btnStyle,
+                  background: ctpApplied ? T.green : T.blue,
+                  opacity: ctpApplying || ctpApplied ? 0.6 : 1,
+                }}
+              >
+                {ctpApplying ? "A aplicar..." : ctpApplied ? "Aplicado ao Gantt" : "Aplicar ao Gantt"}
+              </button>
+              {ctpApplied && (
+                <span style={{ fontSize: 11, color: T.green, marginLeft: 8 }}>
+                  Encomenda adicionada e schedule recalculado
+                </span>
+              )}
+            </div>
           )}
         </Card>
       )}

@@ -411,10 +411,15 @@ export interface CTPResult {
   qty_requested: number;
   feasible: boolean;
   latest_day: number | null;
+  earliest_end_day: number | null;
   machine: string | null;
   confidence: string;
   slack_min: number;
   reason: string;
+  date_start: string | null;
+  date_end: string | null;
+  required_min: number;
+  prod_days: number;
 }
 
 export interface LearningInfo {

@@ -487,10 +487,57 @@ async def check_ctp(request: CTPRequest):
         "qty_requested": result.qty_requested,
         "feasible": result.feasible,
         "latest_day": result.latest_day,
+        "earliest_end_day": result.earliest_end_day,
         "machine": result.machine,
         "confidence": result.confidence,
         "slack_min": result.slack_min,
         "reason": result.reason,
+        "date_start": result.date_start,
+        "date_end": result.date_end,
+        "required_min": result.required_min,
+        "prod_days": result.prod_days,
+    }
+
+
+@router.post("/ctp-apply")
+async def apply_ctp(request: CTPRequest):
+    """Apply CTP as a rush order: add demand + reschedule."""
+    _require_data()
+    from backend.simulator.simulator import Mutation, simulate
+    from backend.scheduler.types import ScheduleResult
+
+    old_score = dict(state.score) if state.score else {}
+    old_n = len(state.segments)
+
+    state.save_current()
+
+    mutations = [Mutation(
+        type="rush_order",
+        params={"sku": request.sku, "qty": str(request.qty), "deadline_day": str(request.deadline)},
+    )]
+    result = simulate(state.engine_data, old_score, mutations, config=state.config)
+
+    schedule_result = ScheduleResult(
+        segments=result.segments,
+        lots=result.lots,
+        score=result.score,
+        time_ms=result.time_ms,
+        warnings=[],
+        operator_alerts=[],
+        audit_trail=None,
+        journal=None,
+    )
+    state.update_schedule(schedule_result)
+
+    return {
+        "status": "applied",
+        "score": result.score,
+        "score_previous": old_score,
+        "summary": result.summary,
+        "n_segments_before": old_n,
+        "n_segments_after": len(result.segments),
+        "time_ms": result.time_ms,
+        "can_revert": True,
     }
 
 
