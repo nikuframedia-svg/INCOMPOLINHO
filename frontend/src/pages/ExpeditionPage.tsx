@@ -73,7 +73,7 @@ export function ExpeditionPage() {
             onClick={() => setView(v)}
             style={{
               background: view === v ? T.elevated : "transparent",
-              border: `0.5px solid ${view === v ? T.borderHover : T.border}`,
+              border: `1px solid ${view === v ? T.borderHover : T.border}`,
               color: view === v ? T.primary : T.secondary,
               borderRadius: 8, padding: "5px 12px", cursor: "pointer",
               fontSize: 12, fontWeight: view === v ? 600 : 400, fontFamily: "inherit",

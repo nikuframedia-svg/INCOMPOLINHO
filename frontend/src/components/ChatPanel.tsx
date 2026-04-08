@@ -40,7 +40,7 @@ export function ChatPanel() {
       setMessages((prev) => [...prev, {
         role: "assistant",
         content: res.response,
-        widgets: res.widgets?.length ? res.widgets : undefined,
+        widgets: res.widgets?.length ? res.widgets as Widget[] : undefined,
       }]);
     } catch {
       setMessages((prev) => [...prev, { role: "assistant", content: "Erro ao contactar o copilot." }]);
@@ -55,7 +55,7 @@ export function ChatPanel() {
         width: 360,
         flexShrink: 0,
         background: T.card,
-        borderLeft: `0.5px solid ${T.border}`,
+        borderLeft: `1px solid ${T.border}`,
         display: "flex",
         flexDirection: "column",
       }}
@@ -63,7 +63,7 @@ export function ChatPanel() {
       <div
         style={{
           padding: "14px 20px",
-          borderBottom: `0.5px solid ${T.border}`,
+          borderBottom: `1px solid ${T.border}`,
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
@@ -83,7 +83,7 @@ export function ChatPanel() {
           <div
             key={i}
             style={{
-              background: m.role === "user" ? `${T.blue}15` : T.elevated,
+              background: m.role === "user" ? `${T.blue}0D` : T.elevated,
               borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
               padding: "12px 16px",
               maxWidth: "85%",
@@ -101,7 +101,7 @@ export function ChatPanel() {
                   padding: "8px 10px",
                   background: T.card,
                   borderRadius: 8,
-                  border: `0.5px solid ${T.border}`,
+                  border: `1px solid ${T.border}`,
                 }}
               >
                 <div style={{ fontSize: 10, color: T.tertiary, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>
@@ -122,7 +122,7 @@ export function ChatPanel() {
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ padding: "12px 20px", borderTop: `0.5px solid ${T.border}` }}>
+      <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.border}` }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={input}
@@ -132,7 +132,7 @@ export function ChatPanel() {
             style={{
               flex: 1,
               background: T.elevated,
-              border: `0.5px solid ${T.border}`,
+              border: `1px solid ${T.border}`,
               color: T.primary,
               borderRadius: 10,
               padding: "10px 14px",

@@ -51,7 +51,7 @@ function cellColor(day: StockDayCompact): string {
 
 const selectStyle: React.CSSProperties = {
   background: T.elevated,
-  border: `0.5px solid ${T.border}`,
+  border: `1px solid ${T.border}`,
   borderRadius: 6,
   padding: "4px 8px",
   fontSize: 11,
@@ -63,7 +63,7 @@ const selectStyle: React.CSSProperties = {
 
 const toggleStyle = (active: boolean): React.CSSProperties => ({
   background: active ? T.elevated : "transparent",
-  border: `0.5px solid ${active ? T.borderHover : T.border}`,
+  border: `1px solid ${active ? T.borderHover : T.border}`,
   borderRadius: 6,
   padding: "4px 10px",
   fontSize: 11,
@@ -158,7 +158,7 @@ export function StockPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {/* Summary banner */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: T.card, borderRadius: 8, border: `0.5px solid ${T.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: T.card, borderRadius: 8, border: `1px solid ${T.border}` }}>
         <Dot color={riskCount > 0 ? T.red : T.green} size={8} />
         <span style={{ fontSize: 14, fontWeight: 500, color: T.primary }}>
           {totalCount} referencias.{" "}
@@ -195,7 +195,7 @@ export function StockPage() {
       <div style={{
         overflow: "auto",
         maxHeight: "calc(100vh - 220px)",
-        border: `0.5px solid ${T.border}`,
+        border: `1px solid ${T.border}`,
         borderRadius: 8,
         background: T.card,
       }}>
@@ -363,7 +363,7 @@ export function StockPage() {
           }}
         >
           <Card
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            onClick={() => {}}
             style={{ width: 600, maxHeight: "80vh", overflow: "auto", padding: 20 }}
           >
             {detailLoading && !detail ? (

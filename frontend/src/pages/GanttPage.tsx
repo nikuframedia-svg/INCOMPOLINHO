@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { T, toolColor } from "../theme/tokens";
 import { useDataStore } from "../stores/useDataStore";
 import { getWorkdays } from "../api/endpoints";
-import type { Segment, Score, FactoryConfig } from "../api/types";
+import type { Segment, Score } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Modal } from "../components/ui/Modal";
@@ -16,7 +16,6 @@ const DAY_START = 420;
 const DAY_CAP = 1020;
 const FALLBACK_MACHINES = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"];
 const SINGLE_BAR_H = 52;
-const SINGLE_BAR_GAP = 4;
 const SINGLE_BAR_PAD = 8;
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -158,7 +157,7 @@ function exportGantt(
 
 const inputStyle: React.CSSProperties = {
   background: T.elevated,
-  border: `0.5px solid ${T.border}`,
+  border: `1px solid ${T.border}`,
   color: T.primary,
   borderRadius: 8,
   padding: "6px 12px",
@@ -390,7 +389,7 @@ export function GanttPage() {
               display: "flex",
               background: T.card,
               borderRadius: 8,
-              border: `0.5px solid ${T.border}`,
+              border: `1px solid ${T.border}`,
               overflow: "hidden",
             }}
           >
@@ -428,7 +427,7 @@ export function GanttPage() {
             display: "flex",
             background: T.card,
             borderRadius: 8,
-            border: `0.5px solid ${T.border}`,
+            border: `1px solid ${T.border}`,
             overflow: "hidden",
           }}
         >
@@ -493,7 +492,7 @@ export function GanttPage() {
             padding: "5px 14px",
             fontWeight: 500,
             background: T.blue + "18",
-            border: `0.5px solid ${T.blue}44`,
+            border: `1px solid ${T.blue}44`,
             color: T.blue,
           }}
         >
@@ -535,7 +534,7 @@ export function GanttPage() {
                   justifyContent: "center",
                   gap: 16,
                   padding: "10px 24px",
-                  borderBottom: `0.5px solid ${T.border}`,
+                  borderBottom: `1px solid ${T.border}`,
                   background: T.card,
                 }}
                 tabIndex={0}
@@ -549,7 +548,7 @@ export function GanttPage() {
                   disabled={d <= minDay}
                   style={{
                     background: "none",
-                    border: `0.5px solid ${T.border}`,
+                    border: `1px solid ${T.border}`,
                     borderRadius: 6,
                     color: d <= minDay ? T.tertiary : T.primary,
                     cursor: d <= minDay ? "default" : "pointer",
@@ -575,7 +574,7 @@ export function GanttPage() {
                   disabled={d >= nDays - 1}
                   style={{
                     background: "none",
-                    border: `0.5px solid ${T.border}`,
+                    border: `1px solid ${T.border}`,
                     borderRadius: 6,
                     color: d >= nDays - 1 ? T.tertiary : T.primary,
                     cursor: d >= nDays - 1 ? "default" : "pointer",
@@ -595,7 +594,7 @@ export function GanttPage() {
           <div
             style={{
               display: "flex",
-              borderBottom: `0.5px solid ${T.border}`,
+              borderBottom: `1px solid ${T.border}`,
               position: "sticky",
               top: 0,
               background: T.card,
@@ -609,7 +608,7 @@ export function GanttPage() {
                 padding: "8px 16px",
                 fontSize: 11,
                 color: T.tertiary,
-                borderRight: `0.5px solid ${T.border}`,
+                borderRight: `1px solid ${T.border}`,
               }}
             >
               Máquina
@@ -639,7 +638,7 @@ export function GanttPage() {
                             alignItems: "center",
                             borderLeft: tick.min === SHIFT_CHANGE
                               ? `1.5px solid ${T.orange}55`
-                              : `0.5px solid ${T.border}`,
+                              : `1px solid ${T.border}`,
                           }}
                         >
                           <span style={{
@@ -672,7 +671,7 @@ export function GanttPage() {
                       flexShrink: 0,
                       padding: "6px 0",
                       textAlign: "center",
-                      borderRight: `0.5px solid ${T.border}`,
+                      borderRight: `1px solid ${T.border}`,
                       cursor: "pointer",
                       transition: "background 0.15s",
                     }}
@@ -698,7 +697,7 @@ export function GanttPage() {
                 : LANE_H;
 
               return (
-                <div key={m} style={{ display: "flex", borderBottom: `0.5px solid ${T.border}` }}>
+                <div key={m} style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}>
                   <div
                     style={{
                       width: 72,
@@ -709,7 +708,7 @@ export function GanttPage() {
                       fontSize: 12,
                       fontWeight: 600,
                       color: T.primary,
-                      borderRight: `0.5px solid ${T.border}`,
+                      borderRight: `1px solid ${T.border}`,
                       fontFamily: T.mono,
                     }}
                   >
@@ -761,7 +760,7 @@ export function GanttPage() {
                               bottom: 0,
                               width: 0.5,
                               background: T.border,
-                              borderLeft: `0.5px dashed rgba(255,255,255,0.03)`,
+                              borderLeft: `1px dashed ${T.border}`,
                             }}
                           />
                         ))}
@@ -789,10 +788,10 @@ export function GanttPage() {
                             top,
                             width,
                             height: barH,
-                            background: `${col}22`,
+                            background: `${col}18`,
                             borderRadius: 5,
                             cursor: "pointer",
-                            border: `0.5px solid ${col}44`,
+                            border: `1px solid ${col}55`,
                             transition: "all 0.15s",
                             borderLeft: s.is_continuation ? `2px dashed ${col}66` : undefined,
                             overflow: "hidden",
@@ -810,7 +809,7 @@ export function GanttPage() {
                                 width: Math.max((s.setup_min / (s.end_min - s.start_min)) * width, 1.5),
                                 background: `${col}30`,
                                 backgroundImage: `repeating-linear-gradient(-45deg, transparent, transparent 3px, ${col}15 3px, ${col}15 6px)`,
-                                borderRight: `0.5px dashed ${col}44`,
+                                borderRight: `1px dashed ${col}44`,
                               }}
                             />
                           )}
@@ -828,7 +827,7 @@ export function GanttPage() {
                               justifyContent: "center",
                             }}>
                               <span style={{ fontSize: 10, color: `${col}dd`, fontWeight: 700, fontFamily: T.mono, lineHeight: 1.3 }}>
-                                {s.tool_id}
+                                {s.sku}
                                 {s.setup_min > 0 ? ` ⚙${s.setup_min.toFixed(0)}m` : ""}
                               </span>
                               {width > 50 && (
@@ -864,7 +863,7 @@ export function GanttPage() {
                                 height: "100%",
                               }}>
                                 <span style={{ fontSize: 8, color: `${col}cc`, fontWeight: 600, fontFamily: T.mono }}>
-                                  {s.tool_id}
+                                  {width > 55 ? s.sku : s.tool_id}
                                 </span>
                               </div>
                             )
@@ -948,7 +947,7 @@ export function GanttPage() {
                       fontSize: 11,
                       color: T.tertiary,
                       fontWeight: 500,
-                      borderBottom: `0.5px solid ${T.border}`,
+                      borderBottom: `1px solid ${T.border}`,
                     }}
                   >
                     {h}
@@ -962,7 +961,7 @@ export function GanttPage() {
                 return (
                   <tr
                     key={i}
-                    style={{ borderBottom: `0.5px solid ${T.border}`, cursor: "pointer" }}
+                    style={{ borderBottom: `1px solid ${T.border}`, cursor: "pointer" }}
                     onClick={() => setSel(s)}
                   >
                     <td style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, color: T.primary, fontFamily: T.mono }}>{s.machine_id}</td>
@@ -1001,7 +1000,7 @@ export function GanttPage() {
 
           {/* Per-machine breakdown */}
           {dayDetail.machineDetails.map((md) => (
-            <div key={md.mid} style={{ borderBottom: `0.5px solid ${T.border}`, paddingBottom: 14, marginBottom: 14 }}>
+            <div key={md.mid} style={{ borderBottom: `1px solid ${T.border}`, paddingBottom: 14, marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: T.primary, fontFamily: T.mono, minWidth: 56 }}>
                   {md.mid}
@@ -1117,7 +1116,7 @@ export function GanttPage() {
                 display: "flex",
                 justifyContent: "space-between",
                 padding: "10px 0",
-                borderBottom: `0.5px solid ${T.border}`,
+                borderBottom: `1px solid ${T.border}`,
               }}
             >
               <span style={{ fontSize: 13, color: T.secondary }}>{k}</span>

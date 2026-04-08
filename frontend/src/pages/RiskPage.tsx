@@ -92,7 +92,7 @@ export function RiskPage() {
             onClick={() => setTab(t.id)}
             style={{
               background: tab === t.id ? T.elevated : "transparent",
-              border: `0.5px solid ${tab === t.id ? T.borderHover : T.border}`,
+              border: `1px solid ${tab === t.id ? T.borderHover : T.border}`,
               color: tab === t.id ? T.primary : T.secondary,
               borderRadius: 8, padding: "5px 12px", cursor: "pointer",
               fontSize: 12, fontWeight: tab === t.id ? 600 : 400, fontFamily: "inherit",
@@ -200,7 +200,7 @@ export function RiskPage() {
                 onClick={() => setCauseFilter(null)}
                 style={{
                   background: causeFilter === null ? T.elevated : "transparent",
-                  border: `0.5px solid ${T.border}`,
+                  border: `1px solid ${T.border}`,
                   borderRadius: 6, padding: "3px 10px", cursor: "pointer",
                   fontSize: 11, color: causeFilter === null ? T.primary : T.secondary, fontFamily: "inherit",
                 }}
@@ -213,7 +213,7 @@ export function RiskPage() {
                   onClick={() => setCauseFilter(causeFilter === cause ? null : cause)}
                   style={{
                     background: causeFilter === cause ? T.elevated : "transparent",
-                    border: `0.5px solid ${T.border}`,
+                    border: `1px solid ${T.border}`,
                     borderRadius: 6, padding: "3px 10px", cursor: "pointer",
                     fontSize: 11, color: causeFilter === cause ? T.primary : T.secondary, fontFamily: "inherit",
                   }}

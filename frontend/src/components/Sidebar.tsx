@@ -35,8 +35,8 @@ export function Sidebar() {
       style={{
         width: 200,
         flexShrink: 0,
-        background: T.card,
-        borderRight: `0.5px solid ${T.border}`,
+        background: T.sidebar,
+        borderRight: `1px solid ${T.border}`,
         display: "flex",
         flexDirection: "column",
       }}
@@ -56,7 +56,7 @@ export function Sidebar() {
               key={n.id}
               onClick={() => setPage(n.id)}
               style={{
-                background: active ? "rgba(255,255,255,0.06)" : "transparent",
+                background: active ? "#E8E2D8" : "transparent",
                 border: "none",
                 borderRadius: 8,
                 padding: "8px 12px",
@@ -77,7 +77,7 @@ export function Sidebar() {
       </div>
 
       {trustScore !== null && (
-        <div style={{ padding: 16, borderTop: `0.5px solid ${T.border}` }}>
+        <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <Label>Trust Index</Label>
             <span
@@ -96,7 +96,7 @@ export function Sidebar() {
               value={trustScore}
               color={trustScore >= 80 ? T.green : T.orange}
               height={3}
-              bg="rgba(255,255,255,0.04)"
+              bg="#EFEBE3"
             />
           </div>
           {trust?.dimensions && trust.dimensions.length > 0 && (
@@ -109,7 +109,7 @@ export function Sidebar() {
                       <span style={{ fontSize: 10, color: T.tertiary }}>{d.name}</span>
                       <span style={{ fontSize: 10, color: c, fontFamily: T.mono }}>{d.score}</span>
                     </div>
-                    <ProgressBar value={d.score} color={c} height={2} bg="rgba(255,255,255,0.04)" />
+                    <ProgressBar value={d.score} color={c} height={2} bg="#EFEBE3" />
                   </div>
                 );
               })}

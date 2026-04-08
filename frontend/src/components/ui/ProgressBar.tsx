@@ -7,7 +7,7 @@ interface Props {
   bg?: string;
 }
 
-export function ProgressBar({ value, color = T.blue, height = 4, bg = "rgba(255,255,255,0.06)" }: Props) {
+export function ProgressBar({ value, color = T.blue, height = 4, bg = "#E8E2D8" }: Props) {
   return (
     <div style={{ width: "100%", height, borderRadius: height, background: bg, overflow: "hidden" }}>
       <div

@@ -8,7 +8,6 @@ import {
 import type { FactoryConfig, EOp, Score } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
-import { Dot } from "../components/ui/Dot";
 import { Divider } from "../components/ui/Divider";
 import { Modal } from "../components/ui/Modal";
 import { useDataStore } from "../stores/useDataStore";
@@ -40,14 +39,14 @@ const tdStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  background: T.elevated, border: `0.5px solid ${T.border}`,
+  background: T.elevated, border: `1px solid ${T.border}`,
   borderRadius: 6, padding: "4px 8px", fontSize: 12,
   color: T.primary, fontFamily: T.mono, outline: "none",
   width: 100, textAlign: "right",
 };
 
 const btnStyle: React.CSSProperties = {
-  background: T.elevated, border: `0.5px solid ${T.border}`,
+  background: T.elevated, border: `1px solid ${T.border}`,
   borderRadius: 8, padding: "6px 14px", cursor: "pointer",
   fontSize: 12, color: T.secondary, fontFamily: "inherit",
 };
@@ -90,7 +89,7 @@ function ScoreDelta({ prev, curr, onClear }: { prev: Score; curr: Score; onClear
     <div style={{
       display: "flex", gap: 16, alignItems: "center",
       padding: "10px 16px", background: T.green + "12",
-      border: `0.5px solid ${T.green}40`, borderRadius: 10,
+      border: `1px solid ${T.green}40`, borderRadius: 10,
     }}>
       <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>Guardado</span>
       {items.map((it) => {
@@ -144,16 +143,17 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
 
   const hasChanges = Object.keys(edits).length > 0;
 
   const getValue = (key: string) => {
     if (key in edits) return edits[key];
-    return (config as Record<string, unknown>)[key];
+    return (config as unknown as Record<string, unknown>)[key];
   };
 
   const handleChange = (key: string, value: unknown, type: "number" | "boolean" | "select") => {
-    const original = (config as Record<string, unknown>)[key];
+    const original = (config as unknown as Record<string, unknown>)[key];
     const parsed = type === "boolean" ? value : type === "select" ? value : Number(value);
     if (parsed === original) {
       const next = { ...edits };
@@ -171,6 +171,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     try {
       const res = await updateConfig(edits);
       setEdits({});
+      setActivePreset(null);
       const fresh = await getConfig();
       onSaved(fresh);
       onDelta(config as unknown as Score, res.score as unknown as Score);
@@ -192,6 +193,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       const fresh = await getConfig();
       onSaved(fresh);
       setMsg(`Preset "${name}" aplicado (${res.changed.length} parametros)`);
+      setActivePreset(name);
       refreshAll();
     } catch (e) {
       setMsg(`Erro: ${e}`);
@@ -206,22 +208,29 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       <div style={{ marginBottom: 12 }}>
         <Label style={{ marginBottom: 8 }}>Presets</Label>
         <div style={{ display: "flex", gap: 6 }}>
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => handlePreset(p.id)}
-              disabled={saving}
-              style={{
-                background: p.color + "18",
-                border: `0.5px solid ${p.color}50`,
-                borderRadius: 8, padding: "5px 14px", cursor: "pointer",
-                fontSize: 12, fontWeight: 500, color: p.color, fontFamily: "inherit",
-                opacity: saving ? 0.5 : 1,
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
+          {PRESETS.map((p) => {
+            const isActive = activePreset === p.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => handlePreset(p.id)}
+                disabled={saving}
+                style={{
+                  background: isActive ? p.color + "30" : p.color + "18",
+                  border: isActive ? `2px solid ${p.color}` : `1px solid ${p.color}50`,
+                  borderRadius: 8, padding: isActive ? "4px 13px" : "5px 14px",
+                  cursor: "pointer",
+                  fontSize: 12, fontWeight: isActive ? 700 : 500,
+                  color: p.color, fontFamily: "inherit",
+                  opacity: saving ? 0.5 : 1,
+                  boxShadow: isActive ? `0 0 10px ${p.color}25` : "none",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {isActive ? "● " : ""}{p.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -237,7 +246,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
                 onClick={() => handleChange(t.key, !getValue(t.key), "boolean")}
                 style={{
                   background: getValue(t.key) ? T.green + "22" : T.red + "22",
-                  border: `0.5px solid ${getValue(t.key) ? T.green : T.red}`,
+                  border: `1px solid ${getValue(t.key) ? T.green : T.red}`,
                   borderRadius: 6, padding: "3px 12px", cursor: "pointer",
                   fontSize: 12, color: getValue(t.key) ? T.green : T.red, fontFamily: "inherit",
                 }}
@@ -357,7 +366,7 @@ export function ConfigPage() {
             onClick={() => setSection(s.id)}
             style={{
               background: section === s.id ? T.elevated : "transparent",
-              border: `0.5px solid ${section === s.id ? T.borderHover : T.border}`,
+              border: `1px solid ${section === s.id ? T.borderHover : T.border}`,
               color: section === s.id ? T.primary : T.secondary,
               borderRadius: 8, padding: "5px 12px", cursor: "pointer",
               fontSize: 12, fontWeight: section === s.id ? 600 : 400, fontFamily: "inherit",
@@ -433,7 +442,7 @@ export function ConfigPage() {
                       onClick={() => withSave(() => editMachine(id, { activa: !m.active }))}
                       style={{
                         background: m.active ? T.green + "22" : T.red + "22",
-                        border: `0.5px solid ${m.active ? T.green : T.red}`,
+                        border: `1px solid ${m.active ? T.green : T.red}`,
                         borderRadius: 6, padding: "2px 10px", cursor: "pointer",
                         fontSize: 11, color: m.active ? T.green : T.red, fontFamily: "inherit",
                         opacity: saving ? 0.5 : 1,
@@ -717,7 +726,7 @@ export function ConfigPage() {
             value={opsSearch}
             onChange={(e) => setOpsSearch(e.target.value)}
             style={{
-              background: T.elevated, border: `0.5px solid ${T.border}`,
+              background: T.elevated, border: `1px solid ${T.border}`,
               borderRadius: 8, padding: "6px 12px", fontSize: 12,
               color: T.primary, fontFamily: T.mono, outline: "none", width: 280,
             }}

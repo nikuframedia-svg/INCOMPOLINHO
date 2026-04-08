@@ -19,7 +19,7 @@ export function Card({ children, style, onClick, hoverable = false }: Props) {
         background: hovered ? T.hover : T.card,
         borderRadius: T.radius,
         padding: 20,
-        border: `0.5px solid ${hovered ? T.borderHover : T.border}`,
+        border: `1px solid ${hovered ? T.borderHover : T.border}`,
         transition: "all 0.2s ease",
         cursor: onClick ? "pointer" : "default",
         ...style,

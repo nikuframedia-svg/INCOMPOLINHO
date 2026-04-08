@@ -748,5 +748,11 @@ async def apply_preset_endpoint(name: str):
     except KeyError as e:
         raise HTTPException(400, str(e))
 
-    # Reuse existing update_config logic
-    return await update_config(overrides)
+    # Se ha simulacao ativa, limpar antes de aplicar preset
+    simulation_cleared = state.saved_schedule is not None
+    if simulation_cleared:
+        state.saved_schedule = None
+
+    result = await update_config(overrides)
+    result["simulation_cleared"] = simulation_cleared
+    return result

@@ -46,7 +46,7 @@ export function ConsolePage() {
           padding: "16px 20px",
           background: T.card,
           borderRadius: T.radius,
-          border: `0.5px solid ${T.border}`,
+          border: `1px solid ${T.border}`,
         }}
       >
         <Dot color={stateColor} size={8} />
@@ -303,7 +303,7 @@ const navBtnStyle: React.CSSProperties = {
 
 const fixBtnStyle: React.CSSProperties = {
   background: T.elevated,
-  border: `0.5px solid ${T.border}`,
+  border: `1px solid ${T.border}`,
   color: T.blue,
   fontSize: 11,
   fontWeight: 500,

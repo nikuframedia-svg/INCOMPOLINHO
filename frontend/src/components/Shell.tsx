@@ -94,7 +94,7 @@ export function Shell() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            borderBottom: `0.5px solid ${T.border}`,
+            borderBottom: `1px solid ${T.border}`,
             flexShrink: 0,
           }}
         >
@@ -117,7 +117,7 @@ export function Shell() {
                   title="Actualizar dados"
                   style={{
                     background: "transparent",
-                    border: `0.5px solid ${T.border}`,
+                    border: `1px solid ${T.border}`,
                     color: T.secondary,
                     borderRadius: 8,
                     padding: "5px 10px",
@@ -134,7 +134,7 @@ export function Shell() {
                   title={isSimulated ? "Reverta o cenario simulado primeiro" : "Recalcular schedule"}
                   style={{
                     background: "transparent",
-                    border: `0.5px solid ${T.border}`,
+                    border: `1px solid ${T.border}`,
                     color: (recalcing || isSimulated) ? T.tertiary : T.secondary,
                     borderRadius: 8,
                     padding: "5px 10px",
@@ -151,7 +151,7 @@ export function Shell() {
               onClick={toggleChat}
               style={{
                 background: chatOpen ? `${T.blue}18` : "transparent",
-                border: `0.5px solid ${chatOpen ? `${T.blue}44` : T.border}`,
+                border: `1px solid ${chatOpen ? `${T.blue}44` : T.border}`,
                 color: chatOpen ? T.blue : T.secondary,
                 borderRadius: 8,
                 padding: "5px 12px",
@@ -169,8 +169,8 @@ export function Shell() {
         {isSimulated && (
           <div style={{
             padding: "8px 24px",
-            background: `${T.orange}12`,
-            borderBottom: `1px solid ${T.orange}40`,
+            background: `${T.orange}15`,
+            borderBottom: `1px solid ${T.orange}44`,
             display: "flex",
             alignItems: "center",
             gap: 12,

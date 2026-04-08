@@ -12,7 +12,7 @@ export function Modal({ children, onClose, title }: Props) {
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.7)",
+        background: "rgba(0,0,0,0.4)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
         display: "flex",
@@ -30,8 +30,8 @@ export function Modal({ children, onClose, title }: Props) {
           width: 400,
           maxHeight: "80vh",
           overflowY: "auto",
-          border: `0.5px solid ${T.border}`,
-          boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+          border: `1px solid ${T.border}`,
+          boxShadow: "0 24px 80px rgba(0,0,0,0.15)",
         }}
         onClick={(e) => e.stopPropagation()}
       >

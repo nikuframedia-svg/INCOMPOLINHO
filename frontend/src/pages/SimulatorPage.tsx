@@ -3,7 +3,6 @@ import { T } from "../theme/tokens";
 import { simulate, checkCTP, applyCTP } from "../api/endpoints";
 import { useDataStore } from "../stores/useDataStore";
 import { useSimulatorStore } from "../stores/useSimulatorStore";
-import type { MutationInput, SimulateResponse, CTPResult } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
 import { Num } from "../components/ui/Num";
@@ -89,7 +88,7 @@ const MUTATION_TYPES: { value: string; label: string; fields: ParamField[] }[] =
 
 const inputStyle: React.CSSProperties = {
   background: T.elevated,
-  border: `0.5px solid ${T.border}`,
+  border: `1px solid ${T.border}`,
   borderRadius: 6,
   padding: "4px 8px",
   fontSize: 12,
@@ -238,7 +237,7 @@ export function SimulatorPage() {
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Simulador de Cenarios</span>
-          <button onClick={addMutation} style={{ ...btnStyle, background: T.elevated, color: T.blue, border: `0.5px solid ${T.border}` }}>
+          <button onClick={addMutation} style={{ ...btnStyle, background: T.elevated, color: T.blue, border: `1px solid ${T.border}` }}>
             + Adicionar Mutacao
           </button>
         </div>
