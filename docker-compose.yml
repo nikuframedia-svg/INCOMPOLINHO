@@ -1,0 +1,32 @@
+# PP1 — Industrial APS Scheduler
+#
+# Run anywhere (Linux x86-64, Apple-Silicon / Intel Mac):
+#   docker compose up --build -d      → http://localhost:3000
+#   docker compose down               → stop
+#
+# `build:` makes the image locally for your machine's architecture, so the
+# Mac↔Linux mismatch never arises. See DOCKER.md for details.
+
+services:
+  pp1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pp1-scheduler:latest
+    container_name: pp1-scheduler
+    ports:
+      - "3000:80"
+    volumes:
+      # ISOP Excel drop folder (optional — uploads also work via the UI).
+      - ./isop:/app/isop
+      # Persistent SQLite DBs (audit, learning) — survives rebuilds.
+      - pp1-data:/app/data
+    env_file:
+      # Optional: copy .env.example to .env for the AI copilot key.
+      # `required: false` → the stack starts fine without it.
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+volumes:
+  pp1-data:

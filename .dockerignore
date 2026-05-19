@@ -1,0 +1,35 @@
+# Keep the build context small and the image clean.
+.git
+.gitignore
+.claude
+.plans
+
+# Python / virtualenv artefacts
+.venv
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+
+# Node / frontend build artefacts (rebuilt inside the image)
+node_modules
+frontend/node_modules
+frontend/dist
+
+# Secrets and local data (provided via volumes / env_file at run time)
+.env
+data/
+
+# Tests and client data — not needed at runtime
+tests/
+*.xlsx
+uv.lock
+
+# Editor / OS / CI
+.github
+.vscode
+.DS_Store
+*.md
