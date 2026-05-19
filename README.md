@@ -8,6 +8,7 @@ Factory: Incompol (5 presses, 59 tools, ~94 SKUs, 14 clients).
 No Python or Node needed — just Docker. Works on Linux x86-64 and Mac alike:
 
 ```bash
+cp .env.example .env              # one-time: create the env file
 docker compose up --build -d      # → http://localhost:3000
 ```
 

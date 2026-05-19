@@ -22,10 +22,11 @@ services:
       # Persistent SQLite DBs (audit, learning) — survives rebuilds.
       - pp1-data:/app/data
     env_file:
-      # Optional: copy .env.example to .env for the AI copilot key.
-      # `required: false` → the stack starts fine without it.
-      - path: .env
-        required: false
+      # AI copilot key. Create it once before the first run:
+      #     cp .env.example .env
+      # The classic `- .env` form works on every Docker Compose version
+      # (the newer `path:`/`required:` syntax needs Compose >= 2.24).
+      - .env
     restart: unless-stopped
 
 volumes:

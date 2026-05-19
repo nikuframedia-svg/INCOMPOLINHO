@@ -7,7 +7,7 @@ sem instalar Python, Node ou dependências — só o Docker.
 
 ## 1. Pré-requisitos
 
-- **Docker Engine** + **Docker Compose v2** (v2.24 ou mais recente).
+- **Docker Engine** + **Docker Compose v2** (qualquer versão recente serve).
   - Linux: instalar o [Docker Engine](https://docs.docker.com/engine/install/)
     (o plugin `docker compose` vem incluído).
   - Mac: instalar o [Docker Desktop](https://docs.docker.com/desktop/).
@@ -26,12 +26,16 @@ Não é preciso mais nada. Não é preciso Python, nem Node, nem pnpm.
 Dentro da pasta do projecto:
 
 ```bash
-# 1. (opcional) criar o ficheiro de ambiente para o copiloto de IA
-cp .env.example .env        # depois editar .env e pôr a chave OpenAI
+# 1. criar o ficheiro de ambiente (basta uma vez)
+cp .env.example .env        # opcional: editar .env e pôr a chave OpenAI
 
 # 2. construir e arrancar
 docker compose up --build -d
 ```
+
+> O passo 1 é necessário porque o `docker-compose.yml` lê o `.env`. O
+> ficheiro pode ficar com a chave por preencher — só o chat de IA depende
+> dela; o resto da aplicação funciona na mesma.
 
 Abrir no browser: **http://localhost:3000**
 
@@ -77,11 +81,12 @@ Há duas formas:
 O planeamento, o Gantt, o simulador e os KPIs funcionam **sem qualquer
 configuração**. Só o chat de IA precisa de uma chave:
 
-1. `cp .env.example .env`
+1. `cp .env.example .env` (se ainda não o fizeste — ver secção 2).
 2. Editar `.env` e preencher `PP1_OPENAI_API_KEY`.
 3. `docker compose up -d` (recarrega o ambiente).
 
-Sem `.env` a aplicação arranca na mesma — apenas o chat fica indisponível.
+Com o `.env` sem chave válida a aplicação arranca na mesma — apenas o
+chat fica indisponível.
 
 ---
 
@@ -130,7 +135,7 @@ para a sua arquitectura.
 | Sintoma | Causa provável | Solução |
 |---|---|---|
 | `port is already allocated` | A porta 3000 está ocupada | Editar `docker-compose.yml`: `"3001:80"` e abrir `:3001` |
-| `env file .env not found` | Docker Compose < 2.24 | Actualizar o Compose, ou correr `cp .env.example .env` |
+| `env file .env not found` | O `.env` não existe | Correr `cp .env.example .env` (secção 2, passo 1) |
 | Página abre mas dá 502 | Backend ainda a arrancar | Esperar ~25 s; ver `docker compose logs -f` |
 | `exec format error` ao correr uma imagem puxada | Imagem de arquitectura errada | Construir local com `--build` ou publicar multi-arch (secção 7) |
 | Build falha em `pnpm install` | Lockfile dessincronizado | Garantir que `frontend/pnpm-lock.yaml` está actualizado |
