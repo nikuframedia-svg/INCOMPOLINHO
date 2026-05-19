@@ -158,7 +158,8 @@ def optimize(
                 operator_alerts=best_result.operator_alerts,
                 journal=baseline.journal,
             )
-    except Exception as e:
+    except (ImportError, RuntimeError, TimeoutError, ValueError) as e:
+        # CP-SAT polish is optional — it must never break the pipeline.
         logger.debug("CP-SAT polish skipped: %s", e)
 
     # Safety: never return worse than baseline

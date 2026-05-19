@@ -9,6 +9,7 @@ interface Widget {
 }
 
 interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
   widgets?: Widget[];
@@ -17,7 +18,7 @@ interface Message {
 export function ChatPanel() {
   const toggleChat = useAppStore((s) => s.toggleChat);
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Olá. Posso ajudar com análise de produção, simulações, ou perguntas sobre o plano." },
+    { id: crypto.randomUUID(), role: "assistant", content: "Olá, João. Posso ajudar com análise de produção, simulações, ou perguntas sobre o plano." },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,7 +30,7 @@ export function ChatPanel() {
 
   const send = async () => {
     if (!input.trim() || loading) return;
-    const userMsg: Message = { role: "user", content: input.trim() };
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: input.trim() };
     const updated = [...messages, userMsg];
     setMessages(updated);
     setInput("");
@@ -38,12 +39,13 @@ export function ChatPanel() {
     try {
       const res = await chatCopilot(updated.map((m) => ({ role: m.role, content: m.content })));
       setMessages((prev) => [...prev, {
+        id: crypto.randomUUID(),
         role: "assistant",
         content: res.response,
         widgets: res.widgets?.length ? res.widgets as Widget[] : undefined,
       }]);
     } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "Erro ao contactar o copilot." }]);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Erro ao contactar o copilot." }]);
     } finally {
       setLoading(false);
     }
@@ -79,9 +81,9 @@ export function ChatPanel() {
       </div>
 
       <div style={{ flex: 1, padding: 20, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
-        {messages.map((m, i) => (
+        {messages.map((m) => (
           <div
-            key={i}
+            key={m.id}
             style={{
               background: m.role === "user" ? `${T.blue}0D` : T.elevated,
               borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
@@ -95,7 +97,7 @@ export function ChatPanel() {
             </p>
             {m.widgets?.map((w, wi) => (
               <div
-                key={wi}
+                key={`${m.id}-${wi}`}
                 style={{
                   marginTop: 8,
                   padding: "8px 10px",

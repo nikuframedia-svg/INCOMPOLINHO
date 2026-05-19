@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { T } from "../theme/tokens";
 import { getConsole, getToday } from "../api/endpoints";
 import { useDataStore } from "../stores/useDataStore";
-import type { ConsoleData } from "../api/types";
+import type { ConsoleData, ConsoleMachine, ConsoleExpedition } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { Num } from "../components/ui/Num";
 import { Label } from "../components/ui/Label";
@@ -142,8 +142,8 @@ export function ConsolePage() {
             <div style={{ padding: "16px 20px 12px" }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Máquinas</span>
             </div>
-            {(Array.isArray(data.machines) ? data.machines : (data.machines as any)?.machines ?? []).map((m: any, i: number) => {
-              const raw = m.utilization_pct ?? (typeof m.util === "number" ? m.util * 100 : 0);
+            {(Array.isArray(data.machines) ? data.machines : (data.machines as { machines?: ConsoleMachine[] })?.machines ?? []).map((m: ConsoleMachine, i: number) => {
+              const raw = m.utilization_pct ?? 0;
               const u = raw > 1 && raw <= 100 ? raw : raw <= 1 ? raw * 100 : raw;
               const c = u > 95 ? T.red : u > 85 ? T.orange : u > 70 ? T.blue : T.green;
               return (
@@ -152,14 +152,14 @@ export function ConsolePage() {
                   <div style={{ padding: "12px 20px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: T.primary, fontFamily: T.mono }}>{m.machine_id ?? m.id}</span>
-                        {(m.current_tool ?? m.tools?.[0]?.id) && <span style={{ fontSize: 11, color: T.tertiary }}>{m.current_tool ?? m.tools?.[0]?.id}</span>}
+                        <span style={{ fontSize: 13, fontWeight: 600, color: T.primary, fontFamily: T.mono }}>{m.machine_id}</span>
+                        {m.current_tool && <span style={{ fontSize: 11, color: T.tertiary }}>{m.current_tool}</span>}
                       </div>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: c, fontFamily: T.mono }}>{(typeof u === "number" ? u : 0).toFixed(0)}%</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: c, fontFamily: T.mono }}>{u.toFixed(0)}%</span>
                     </div>
-                    <ProgressBar value={typeof u === "number" ? u : 0} color={c} />
+                    <ProgressBar value={u} color={c} />
                     <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 11, color: T.tertiary }}>{m.runs?.length ?? m.tools?.length ?? 0} runs</span>
+                      <span style={{ fontSize: 11, color: T.tertiary }}>{m.runs?.length ?? 0} runs</span>
                       <span style={{ fontSize: 11, color: T.secondary, fontFamily: T.mono }}>{m.total_pcs ?? 0} pcs</span>
                     </div>
                   </div>
@@ -173,7 +173,7 @@ export function ConsolePage() {
             <div style={{ padding: "16px 20px 12px" }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Expedição</span>
             </div>
-            {(Array.isArray(data.expedition) ? data.expedition : (data.expedition as any)?.clients ?? []).map((e: any, i: number) => (
+            {(Array.isArray(data.expedition) ? data.expedition : (data.expedition as { clients?: ConsoleExpedition[] })?.clients ?? []).map((e: ConsoleExpedition, i: number) => (
               <div key={i}>
                 {i > 0 && <Divider />}
                 <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>

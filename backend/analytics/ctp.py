@@ -69,6 +69,8 @@ def compute_ctp(
         return _fail("pH = 0, cadência desconhecida", machine=op.m)
 
     oee = op.oee or oee_default
+    if oee <= 0:
+        return _fail("OEE inválido", machine=op.m)
     setup_min = op.sH * 60
     prod_min = (qty / op.pH) * 60 / oee
     required_min = setup_min + prod_min
@@ -81,7 +83,7 @@ def compute_ctp(
         cap_used[seg.machine_id][seg.day_idx] += seg.prod_min + seg.setup_min
 
     n_days = engine_data.n_days
-    holidays = set(engine_data.holidays)
+    holidays = set(engine_data.holidays or [])
 
     # Determine scan range: include buffer days (negative indices from segments)
     min_day = 0

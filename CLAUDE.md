@@ -6,10 +6,11 @@ Empresa: NIKUFRA.AI (Portugal).
 
 ## Arquitectura
 
-Python puro. Sem frontend. Sem monorepo.
-- `backend/` — Scheduler + Analytics + Simulator + Parser + Transform
+- `backend/` — Python: Scheduler + Analytics + Simulator + Parser + Transform + Copilot LLM (`backend/copilot/`)
+- `frontend/` — React 19 + TypeScript + Vite + Zustand (UI: Console, Gantt, Stock, Risk, Expedition, Simulator, Config, Journal, Rules)
 - `config/incompol.yaml` — Master data (máquinas, setups, twins, holidays)
-- `tests/` — 86+ testes
+- `docker/` + `Dockerfile` + `docker-compose.yml` — Orquestração multi-stage (Node build → Python slim + Nginx + Supervisor)
+- `tests/` — 414 testes (backend Python)
 
 ## Comandos
 ```bash
@@ -94,7 +95,32 @@ DEFAULT_OEE=0.66 | DEFAULT_SETUP=0.5h | MIN_PROD_MIN=1.0
 MAX_RUN_DAYS=5 | MAX_EDD_GAP=10 | LST_SAFETY_BUFFER=2
 EDD_SWAP_TOLERANCE=5
 
+## ═══ PÓS-PROCESSAMENTO (scheduler.py) ═══
+
+Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamento:
+
+1. **`_fix_day_overlaps`**: Corrige sobreposições intra-dia. Empurra segmentos para o dia seguinte se não cabem (com EDD guard). Pode criar "zero-duration placeholders" quando EDD bloqueia o push.
+2. **`_sanitize_segments`** (2 passes):
+   - Pass 1: remove invertidos, clamp start≥420, cap end≤1440
+   - Pass 2: detecta **ghost segments** (`duration < prod_min + setup_min`) — tenta relocar para dia anterior com capacidade via `_try_relocate_truncated`, senão trunca proporcionalmente ou remove
+3. **`_fix_orphan_continuations`**: Reseta `is_continuation=False` no primeiro segmento de cada lot (corrige flags erradas de `_fix_day_overlaps`)
+
+## ═══ BUGS CORRIGIDOS ═══
+
+### Crew Buffer Day Fix (2026-04-08)
+**Bug**: `_serialize_crew_setups` e `_serialize_crew_safe` filtravam `seg.day_idx >= 0`, ignorando setups em buffer days (dias negativos). `crew_free_at` começava a 0.0, fazendo com que setups com abs_time negativo nunca fossem processados. Resultado: setups simultâneos em máquinas diferentes nos buffer days.
+**Fix**: Removido filtro `day_idx >= 0`. `crew_free_at` inicializado ao `min(abs_times)` dos setups. Ambos os ISOPs validados: 0 crew overlaps em todos os dias (reais e buffer).
+
+### Ghost Segment Fix (2026-04-08)
+**Bug**: `_fix_day_overlaps` criava segmentos com `start=end=1440` (zero duração) mas mantinha `prod_min`/`qty` intactos quando EDD impedia push para dia seguinte. Resultado: produção fantasma contabilizada no scoring mas fisicamente impossível. Caso real: PRM019 dia 67 declarava 1413 min (cap=1020), com 7200 pç de BFP179 que nunca seriam produzidas.
+**Fix**: `_sanitize_segments` Pass 2 detecta `duration < prod_min + setup_min` e chama `_try_relocate_truncated` que procura dia anterior com capacidade (verifica shift bounds). No caso real, relocou para dia 65 (livre, EDD=67). OTD-D mantém-se 100%.
+
+### Orphan Continuation Fix (2026-04-08)
+**Bug**: `_fix_day_overlaps` marcava `is_continuation=True` incondicionalmente ao empurrar segmentos, mesmo quando o segmento era o primeiro do lot. 25 segmentos ficavam como "continuação" sem precedente visível no Gantt.
+**Fix**: `_fix_orphan_continuations` identifica o primeiro segmento de cada lot (ordenado por day_idx, start_min) e reseta a flag.
+
 ## ═══ RESULTADOS VALIDADOS ═══
-ISOP 27/02: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.6d, 125 setups
+ISOP 27/02: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.4d, 125 setups
 ISOP 17/03: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.9d, 136 setups
-346 testes passam. Pipeline determinístico. <500ms para ~60 ops.
+414 testes passam. Pipeline determinístico. <500ms para ~60 ops.
+0 violações de capacidade. 0 ghost segments. 0 orphan continuations.

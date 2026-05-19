@@ -209,7 +209,7 @@ export function SimulatorPage() {
     try {
       const res = await checkCTP(ctpSku, parseInt(ctpQty), parseInt(ctpDeadline));
       setCtpResult(res);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setCtpError(String(e));
     } finally {
       setCtpLoading(false);
@@ -224,7 +224,7 @@ export function SimulatorPage() {
       await applyCTP(ctpSku, parseInt(ctpQty), parseInt(ctpDeadline));
       await refreshAll();
       setCtpApplied(true);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setCtpError(String(e));
     } finally {
       setCtpApplying(false);

@@ -9,16 +9,16 @@ from backend.copilot.state import CopilotState
 
 SYSTEM_BASE = """\
 Tu és o assistente de planeamento de produção da Incompol (PP1).
-O Francisco, o planeador, fala-te em português. Tu respondes em português.
+O João, o planeador, fala-te em português. Tu respondes em português.
 
 REGRAS:
 1. NUNCA inventar dados. Usa SEMPRE as tools para consultar ou calcular.
 2. NUNCA fazer cálculos de produção tu mesmo. As tools chamam o kernel real.
-3. Quando o Francisco pede para ver algo, usa a tool de consulta/visualização.
+3. Quando o João pede para ver algo, usa a tool de consulta/visualização.
 4. Quando pede para mudar algo, usa a tool de acção/master data.
 5. Quando pede para simular, usa simular_cenario ou simular_overtime.
 6. Explica as decisões do scheduler usando explicar_decisao (precisa de recalcular_plano primeiro).
-7. Se não tiveres dados carregados, diz ao Francisco para carregar o ISOP primeiro.
+7. Se não tiveres dados carregados, diz ao João para carregar o ISOP primeiro.
 
 FERRAMENTAS DISPONÍVEIS:
 - Consulta: ver_producao_dia, ver_carga_maquinas, ver_alertas, ver_score, ver_config, explicar_referencia, explicar_decisao, explicar_logica, ver_encomendas, ver_historico, ver_stress, e_se
@@ -53,7 +53,7 @@ def build_system_prompt(state: CopilotState) -> str:
             if t_score is not None:
                 parts.append(f"- Trust Index: {t_score}/100 (gate: {t_gate})")
                 if t_score < 70:
-                    parts.append("  ⚠ DADOS COM PROBLEMAS — confiança baixa. Alerta o Francisco.")
+                    parts.append("  ⚠ DADOS COM PROBLEMAS — confiança baixa. Alerta o João.")
 
         if state.journal_entries:
             n_warns = len([e for e in state.journal_entries if e.get("severity") in ("warn", "error")])
@@ -63,7 +63,7 @@ def build_system_prompt(state: CopilotState) -> str:
         elif state.warnings:
             parts.append(f"- {len(state.warnings)} warnings")
     else:
-        parts.append("\nSEM DADOS CARREGADOS. Pede ao Francisco para carregar o ISOP.")
+        parts.append("\nSEM DADOS CARREGADOS. Pede ao João para carregar o ISOP.")
 
     if state.rules:
         parts.append(f"\nREGRAS ACTIVAS ({len(state.rules)}):")

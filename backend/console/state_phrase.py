@@ -1,6 +1,6 @@
 """State phrase — Spec 11 §2.
 
-One line at the top. Green/yellow/red. The Francisco reads it in 1 second.
+One line at the top. Green/yellow/red. The João reads it in 1 second.
 """
 
 from __future__ import annotations

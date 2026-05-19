@@ -198,7 +198,7 @@ export function GanttPage() {
   const machines = useMemo(() => {
     if (!config?.machines) return FALLBACK_MACHINES;
     return Object.entries(config.machines)
-      .filter(([, m]) => (m as any).active !== false)
+      .filter(([, m]) => (m as { active?: boolean }).active !== false)
       .map(([id]) => id)
       .sort();
   }, [config]);
@@ -1058,7 +1058,7 @@ export function GanttPage() {
                         )}
                         {s.twin_outputs && (
                           <div style={{ marginLeft: 12, fontSize: 10, color: T.tertiary }}>
-                            {s.twin_outputs.map(([_opId, sku, qty]: [string, string, number], i: number) => (
+                            {s.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => (
                               <div key={i}>↳ {sku}: {qty.toLocaleString()} pç{qty === 0 ? " (sem produção)" : ""}</div>
                             ))}
                           </div>
@@ -1104,7 +1104,7 @@ export function GanttPage() {
             ["Continuação", sel.is_continuation ? "Sim" : "Não"],
             ["Gémeos", sel.twin_outputs ? "Sim" : "Não"],
             ...(sel.twin_outputs
-              ? sel.twin_outputs.map(([_opId, sku, qty]: [string, string, number], i: number) => [
+              ? sel.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => [
                   `  Twin ${i + 1}`,
                   `${qty.toLocaleString()} pç (${sku})`,
                 ])
