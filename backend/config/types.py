@@ -127,6 +127,9 @@ class FactoryConfig:
     vns_enabled: bool = True
     vns_max_iter: int = 150
 
+    # Compaction post-processing (opt-in — default OFF preserves validated results)
+    compact_enabled: bool = False
+
     # Scoring weights
     weight_earliness: float = 0.40
     weight_setups: float = 0.30

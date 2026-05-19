@@ -52,22 +52,62 @@ def _early_load(
 # ─── 5.1 Assign machines ───────────────────────────────────────────────
 
 
+def _estimate_run_window(
+    run: ToolRun,
+    machine_runs: dict[str, list[ToolRun]],
+    machine_id: str,
+    day_cap: float,
+) -> tuple[float, float]:
+    """Rough absolute-time window [start, end) a run would occupy on a machine.
+
+    Used by assign_machines for tool-contention avoidance. EDD-driven estimate:
+    the run is assumed to finish at its EDD and start total_min earlier. This
+    is approximate but sufficient to keep two overlapping runs of the SAME tool
+    off two different machines.
+    """
+    end = (run.edd + 1) * day_cap
+    start = end - max(run.total_min, 1.0)
+    return start, end
+
+
 def assign_machines(
     runs: list[ToolRun],
     engine_data: EngineData,
     audit_logger: object | None = None,
     config: FactoryConfig | None = None,
 ) -> dict[str, list[ToolRun]]:
-    """Assign runs to machines. Load-balance runs with alt machines."""
+    """Assign runs to machines. Load-balance runs with alt machines.
+
+    Tool contention: a physical tool can move between machines over time but
+    must never be on two machines at once. When choosing between primary and
+    alt, an option that would place the same tool on a *different* machine
+    during an overlapping time window is avoided.
+    """
+    day_cap = config.day_capacity_min if config else DAY_CAP
     machine_runs: dict[str, list[ToolRun]] = defaultdict(list)
     machine_load: dict[str, float] = defaultdict(float)
+    # tool_id -> list of (start_abs, end_abs, machine_id) already assigned
+    tool_windows: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
+
+    def _record(run: ToolRun, chosen: str) -> None:
+        machine_runs[chosen].append(run)
+        machine_load[chosen] += run.total_min
+        w_start, w_end = _estimate_run_window(run, machine_runs, chosen, day_cap)
+        tool_windows[run.tool_id].append((w_start, w_end, chosen))
+
+    def _conflicts(run: ToolRun, candidate: str) -> bool:
+        """True if placing run on candidate overlaps the same tool on another machine."""
+        w_start, w_end = _estimate_run_window(run, machine_runs, candidate, day_cap)
+        for o_start, o_end, o_machine in tool_windows.get(run.tool_id, []):
+            if o_machine != candidate and w_start < o_end and o_start < w_end:
+                return True
+        return False
 
     # First pass: runs without alt go to their primary
     has_alt: list[ToolRun] = []
     for run in runs:
         if run.alt_machine_id is None:
-            machine_runs[run.machine_id].append(run)
-            machine_load[run.machine_id] += run.total_min
+            _record(run, run.machine_id)
             if audit_logger:
                 audit_logger.log_assign(
                     run.id, run.tool_id, run.machine_id,
@@ -91,13 +131,8 @@ def assign_machines(
                 chosen = run.machine_id
             else:
                 chosen = run.alt_machine_id
-            if audit_logger:
-                audit_logger.log_assign(
-                    run.id, run.tool_id, chosen,
-                    [(run.machine_id, primary_early), (run.alt_machine_id, alt_early)],
-                    "assign_edd_aware",
-                )
-                audit_logger.decisions[-1].state_snapshot["edd"] = run.edd
+            reason = "assign_edd_aware"
+            options = [(run.machine_id, primary_early), (run.alt_machine_id, alt_early)]
         else:
             primary_load_val = machine_load.get(run.machine_id, 0)
             alt_load_val = machine_load.get(run.alt_machine_id, 0)
@@ -105,15 +140,24 @@ def assign_machines(
                 chosen = run.machine_id
             else:
                 chosen = run.alt_machine_id
-            if audit_logger:
-                audit_logger.log_assign(
-                    run.id, run.tool_id, chosen,
-                    [(run.machine_id, primary_load_val), (run.alt_machine_id, alt_load_val)],
-                    "assign_load_balance",
-                )
+            reason = "assign_load_balance"
+            options = [(run.machine_id, primary_load_val), (run.alt_machine_id, alt_load_val)]
 
-        machine_runs[chosen].append(run)
-        machine_load[chosen] += run.total_min
+        # Tool contention: if the load-preferred machine would place the same
+        # tool on another machine during an overlapping window, switch to the
+        # other option when that one is conflict-free.
+        if _conflicts(run, chosen):
+            other = run.alt_machine_id if chosen == run.machine_id else run.machine_id
+            if not _conflicts(run, other):
+                chosen = other
+                reason = "assign_tool_contention"
+
+        if audit_logger:
+            audit_logger.log_assign(run.id, run.tool_id, chosen, options, reason)
+            if reason == "assign_edd_aware":
+                audit_logger.decisions[-1].state_snapshot["edd"] = run.edd
+
+        _record(run, chosen)
 
     return dict(machine_runs)
 
@@ -278,6 +322,7 @@ def per_machine_dispatch(
     lst_gate: dict[str, float] | None = None,
     audit_logger: object | None = None,
     config: FactoryConfig | None = None,
+    tool_tl: ToolTimeline | None = None,
 ) -> tuple[list[Segment], list[Lot], list[str]]:
     """Dispatch runs across machines. Parallel per-machine with crew mutex.
 
@@ -286,10 +331,16 @@ def per_machine_dispatch(
     only when they need a tool change. Campaign continuations (same tool)
     skip the crew entirely.
 
+    The ``tool_tl`` (tool timeline) is SHARED across every machine in this
+    call: a physical tool can never be in two machines simultaneously. Callers
+    that dispatch machines one-at-a-time (e.g. JIT) should pass a single
+    shared ToolTimeline so contention is enforced globally.
+
     Returns (segments, all_lots, warnings).
     """
     crew = CrewState()
-    tool_tl = ToolTimeline()
+    if tool_tl is None:
+        tool_tl = ToolTimeline()
     timelines: dict[str, MachineState] = {}
     for m in engine_data.machines:
         timelines[m.id] = MachineState(machine_id=m.id, group=m.group)
@@ -388,15 +439,20 @@ def _allocate_run(
 
     start_abs = tl.available_at
 
-    # Tool contention: wait if tool is booked on another machine
-    while not tool_tl.is_available(run.tool_id, start_abs, machine_id):
-        start_abs += day_cap  # skip to next day
+    # Tool contention: a physical tool can be on only ONE machine at a time.
+    # Skip past any booking owned by another machine that covers start_abs.
+    if not tool_tl.is_available(run.tool_id, start_abs, machine_id):
+        start_abs = tool_tl.next_free_after(run.tool_id, start_abs, machine_id)
         start_abs = _snap_to_shift(start_abs, holidays, day_cap=day_cap)
 
     # Setup
     if needs_setup and run.setup_min > 0:
         setup_start = max(start_abs, crew.available_at)
         setup_start = _snap_to_shift(setup_start, holidays, day_cap=day_cap)
+        # The tool itself must be free for the setup window too.
+        if not tool_tl.is_available(run.tool_id, setup_start, machine_id):
+            setup_start = tool_tl.next_free_after(run.tool_id, setup_start, machine_id)
+            setup_start = _snap_to_shift(setup_start, holidays, day_cap=day_cap)
         crew.available_at = setup_start + run.setup_min
         start_abs = setup_start + run.setup_min
 

@@ -632,6 +632,60 @@ class TestScheduleAll:
         assert to[0][2] == 1000  # A produces
         assert to[1][2] == 0     # B does NOT produce
 
+    def test_twin_interleaved_demand_co_produces(self):
+        """BUG 4: irregular twin demand (A/A/B/A/B/A) must co-produce.
+
+        Reproduces JD471512 on PRM042 (SKUs 0081 + 0071): 0081 has demand on
+        days 1,2,4,6 and 0071 on days 3,5. The old pairwise-consecutive merge
+        left some solo-A lots unmerged, yielding separate single-SKU blocks on
+        the same tool+machine. The global pairing pass must merge every solo-B
+        lot with a nearby solo-A lot — no interleaved single-SKU blocks where
+        co-production was possible, and a single ToolRun (one setup).
+        """
+        op_a = _make_eop(sku="0081", tool="JD471512", machine="PRM042",
+                         pH=500.0, d=[0, 2000, 2000, 0, 2000, 0, 2000])
+        op_b = _make_eop(sku="0071", tool="JD471512", machine="PRM042",
+                         pH=500.0, d=[0, 0, 0, 1500, 0, 1500, 0])
+        twin = TwinGroup(
+            tool_id="JD471512", machine_id="PRM042",
+            op_id_1="JD471512_PRM042_0081", op_id_2="JD471512_PRM042_0071",
+            sku_1="0081", sku_2="0071", eco_lot_1=0, eco_lot_2=0,
+        )
+        data = _make_engine_data(
+            ops=[op_a, op_b],
+            machines=[MachineInfo(id="PRM042", group="Medias", day_capacity=DAY_CAP)],
+            twins=[twin],
+            n_days=7,
+        )
+        lots = create_lots(data)
+
+        # Every lot is a twin lot carrying twin_outputs for BOTH SKUs.
+        assert all(lot.is_twin and lot.twin_outputs is not None for lot in lots)
+
+        # Both 0071 demand events (d3, d5) were merged into co-produced lots —
+        # there are exactly 2 lots carrying qty_b > 0.
+        co_produced = [lot for lot in lots if lot.twin_outputs[1][2] > 0]
+        assert len(co_produced) == 2
+        for lot in co_produced:
+            assert lot.twin_outputs[0][1] == "0081"
+            assert lot.twin_outputs[1][1] == "0071"
+            assert lot.twin_outputs[0][2] > 0  # 0081 produced
+            assert lot.twin_outputs[1][2] > 0  # 0071 co-produced
+            # Time is ONE simultaneous run = max(time_a, time_b), not the sum.
+            time_a = (lot.twin_outputs[0][2] / (op_a.pH * 0.66)) * 60.0
+            time_b = (lot.twin_outputs[1][2] / (op_b.pH * 0.66)) * 60.0
+            assert abs(lot.prod_min - max(time_a, time_b)) < 1.0
+
+        # No 0071 demand left stranded as its own solo block.
+        solo_b = [lot for lot in lots
+                  if lot.twin_outputs[1][2] > 0 and lot.twin_outputs[0][2] == 0]
+        assert solo_b == []
+
+        # Tool grouping → ONE run, ONE setup for the whole tool+machine.
+        runs = create_tool_runs(lots)
+        jd_runs = [r for r in runs if r.tool_id == "JD471512"]
+        assert len(jd_runs) == 1
+
     def test_with_holidays(self):
         op = _make_eop(d=[0, 0, 500], pH=1000.0, sH=0.0)
         data = _make_engine_data(ops=[op], n_days=3, holidays=[1])
@@ -893,3 +947,246 @@ class TestCrewMutex:
                     overlaps += 1
 
         assert overlaps == 0, f"Found {overlaps} simultaneous setups across machines"
+
+
+# --- Tool contention (Bug 5) ---
+
+
+def _tool_machine_overlaps(segments) -> list[tuple]:
+    """Return (tool_id, day, mA, mB) for same tool on two machines at once."""
+    by_tool: dict[str, list] = {}
+    for s in segments:
+        if s.end_min <= s.start_min:
+            continue  # skip zero-duration placeholders
+        by_tool.setdefault(s.tool_id, []).append(s)
+
+    conflicts = []
+    for tool_id, segs in by_tool.items():
+        windows = sorted(
+            (
+                (s.day_idx * DAY_CAP + (s.start_min - 420),
+                 s.day_idx * DAY_CAP + (s.end_min - 420),
+                 s.machine_id, s.day_idx)
+                for s in segs
+            ),
+            key=lambda w: w[0],
+        )
+        for i in range(len(windows)):
+            a_start, a_end, a_machine, a_day = windows[i]
+            for j in range(i + 1, len(windows)):
+                b_start, b_end, b_machine, _ = windows[j]
+                if b_start >= a_end:
+                    break
+                if b_machine != a_machine:
+                    conflicts.append((tool_id, a_day, a_machine, b_machine))
+    return conflicts
+
+
+class TestToolContention:
+    """Bug 5: a physical tool must never run on two machines simultaneously."""
+
+    def test_split_runs_same_tool_not_on_two_machines(self):
+        """Same tool split into two EDD-separated runs, both with an alt machine.
+
+        The EDD-gap split in tool_grouping produces multiple ToolRuns for one
+        tool; load-balancing could otherwise scatter them across machines so
+        the single physical mould appears in two places at once.
+        """
+        machines = [
+            MachineInfo(id="PRM031", group="Grandes", day_capacity=DAY_CAP),
+            MachineInfo(id="PRM039", group="Grandes", day_capacity=DAY_CAP),
+        ]
+        # One tool (T_SHARED), heavy demand early and late → EDD-gap split.
+        # alt machine set so the assigner is free to scatter the runs.
+        ops = [
+            _make_eop(
+                sku="SHARED", machine="PRM031", tool="T_SHARED", alt="PRM039",
+                d=[0, 9000, 0, 0, 0, 0, 0, 9000, 0, 0],
+                pH=150.0, sH=0.5,
+            ),
+            # Filler load so the assigner is tempted to balance onto PRM039.
+            _make_eop(
+                sku="FILL", machine="PRM039", tool="T_FILL",
+                d=[0, 6000, 0, 0, 0, 0, 0, 6000, 0, 0],
+                pH=150.0, sH=0.5,
+            ),
+        ]
+        data = _make_engine_data(ops=ops, machines=machines, n_days=12)
+        result = schedule_all(data)
+
+        conflicts = _tool_machine_overlaps(result.segments)
+        assert conflicts == [], (
+            f"Tool on two machines simultaneously: {conflicts}"
+        )
+        # OTD must remain 100%.
+        assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
+        assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
+
+    def test_full_factory_no_tool_on_two_machines(self):
+        """Across a 5-machine factory, no tool overlaps on two machines."""
+        machine_ids = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"]
+        machines = [
+            MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP)
+            for m in machine_ids
+        ]
+        ops = []
+        # Two shared tools each usable on two machines with an alt.
+        ops.append(_make_eop(
+            sku="S1", machine="PRM019", tool="TX", alt="PRM031",
+            d=[0, 7000, 0, 0, 6000, 0, 0, 5000, 0, 0], pH=140.0, sH=0.5,
+        ))
+        ops.append(_make_eop(
+            sku="S2", machine="PRM039", tool="TY", alt="PRM043",
+            d=[0, 6000, 0, 0, 5000, 0, 0, 4000, 0, 0], pH=140.0, sH=0.5,
+        ))
+        for i, mid in enumerate(machine_ids):
+            ops.append(_make_eop(
+                sku=f"F{i}", machine=mid, tool=f"TF{i}",
+                d=[0, 4000, 0, 0, 3000, 0, 0, 2000, 0, 0], pH=140.0, sH=0.5,
+            ))
+        data = _make_engine_data(ops=ops, machines=machines, n_days=12)
+        result = schedule_all(data)
+
+        conflicts = _tool_machine_overlaps(result.segments)
+        assert conflicts == [], (
+            f"Found {len(conflicts)} tool-on-two-machines overlaps: {conflicts[:5]}"
+        )
+        assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
+        assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
+
+    def test_assign_machines_avoids_tool_contention(self):
+        """assign_machines should not place overlapping runs of one tool apart."""
+        # Two runs of the SAME tool, both with alt, overlapping EDD windows.
+        run_a = _make_run(
+            run_id="RA", tool_id="T_DUP", machine_id="PRM031",
+            alt_machine_id="PRM039", edd=4,
+            lots=[_make_lot(lot_id="LA", tool_id="T_DUP", machine_id="PRM031",
+                            edd=4, prod_min=600.0)],
+        )
+        run_b = _make_run(
+            run_id="RB", tool_id="T_DUP", machine_id="PRM031",
+            alt_machine_id="PRM039", edd=4,
+            lots=[_make_lot(lot_id="LB", tool_id="T_DUP", machine_id="PRM031",
+                            edd=4, prod_min=600.0)],
+        )
+        machines = [
+            MachineInfo(id="PRM031", group="Grandes", day_capacity=DAY_CAP),
+            MachineInfo(id="PRM039", group="Grandes", day_capacity=DAY_CAP),
+        ]
+        data = _make_engine_data(
+            ops=[_make_eop(machine="PRM031")], machines=machines, n_days=8,
+        )
+        machine_runs = assign_machines([run_a, run_b], data)
+        # Both runs of T_DUP must land on the SAME machine (overlapping window).
+        machine_of = {
+            r.id: m for m, runs in machine_runs.items() for r in runs
+        }
+        assert machine_of["RA"] == machine_of["RB"], (
+            f"Same-tool overlapping runs split across machines: {machine_of}"
+        )
+
+
+def _total_gap_min(segments) -> float:
+    """Sum of idle minutes between consecutive production blocks per machine."""
+    from backend.config.types import FactoryConfig
+
+    cfg = FactoryConfig()
+    by_machine: dict[str, list] = {}
+    for s in segments:
+        if s.end_min <= s.start_min:
+            continue  # skip zero-duration placeholders
+        by_machine.setdefault(s.machine_id, []).append(s)
+
+    total = 0.0
+    for segs in by_machine.values():
+        ordered = sorted(segs, key=lambda s: (s.day_idx, s.start_min))
+        for prev, curr in zip(ordered, ordered[1:]):
+            prev_abs = prev.day_idx * cfg.day_capacity_min + (prev.end_min - cfg.shift_a_start)
+            curr_abs = curr.day_idx * cfg.day_capacity_min + (curr.start_min - cfg.shift_a_start)
+            gap = curr_abs - prev_abs
+            if gap > 0:
+                total += gap
+    return total
+
+
+class TestCompaction:
+    """Opt-in compaction post-processing step (config.compact_enabled)."""
+
+    def _scenario(self):
+        """A multi-run scenario with JIT-induced gaps across machines."""
+        from backend.config.types import FactoryConfig
+
+        ops = [
+            _make_eop(
+                sku="A1", machine="PRM031", tool="TA", alt="PRM039",
+                d=[0, 0, 0, 0, 0, 0, 0, 6000, 0, 0], pH=150.0, sH=0.5,
+            ),
+            _make_eop(
+                sku="B1", machine="PRM039", tool="TB",
+                d=[0, 0, 0, 0, 0, 0, 0, 5000, 0, 0], pH=150.0, sH=0.5,
+            ),
+            _make_eop(
+                sku="C1", machine="PRM031", tool="TC",
+                d=[0, 0, 0, 0, 0, 0, 0, 0, 0, 4000], pH=150.0, sH=0.5,
+            ),
+        ]
+        data = _make_engine_data(ops=ops, n_days=10)
+        return data, FactoryConfig
+
+    def test_default_off_is_identical(self):
+        """With compact_enabled=False (default), result is unchanged."""
+        data, FactoryConfig = self._scenario()
+        import copy
+
+        base = schedule_all(copy.deepcopy(data), config=FactoryConfig())
+        explicit_off = schedule_all(
+            copy.deepcopy(data), config=FactoryConfig(compact_enabled=False),
+        )
+        base_key = sorted(
+            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in base.segments
+        )
+        off_key = sorted(
+            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in explicit_off.segments
+        )
+        assert base_key == off_key, "Explicit compact_enabled=False diverged from default"
+
+    def test_compaction_reduces_gaps(self):
+        """compact_enabled=True reduces total idle time vs. compact_enabled=False."""
+        data, FactoryConfig = self._scenario()
+        import copy
+
+        off = schedule_all(copy.deepcopy(data), config=FactoryConfig(compact_enabled=False))
+        on = schedule_all(copy.deepcopy(data), config=FactoryConfig(compact_enabled=True))
+
+        gap_off = _total_gap_min(off.segments)
+        gap_on = _total_gap_min(on.segments)
+        assert gap_on <= gap_off, (
+            f"Compaction did not reduce gaps: on={gap_on} off={gap_off}"
+        )
+        assert gap_on < gap_off, (
+            f"Compaction left gaps unchanged: on={gap_on} off={gap_off}"
+        )
+
+    def test_compaction_preserves_otd_and_no_violations(self):
+        """compact_enabled=True keeps OTD/OTD-D at 100%, 0 tardy, 0 tool overlap."""
+        data, FactoryConfig = self._scenario()
+        result = schedule_all(data, config=FactoryConfig(compact_enabled=True))
+
+        assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
+        assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
+        assert result.score["tardy_count"] == 0, (
+            f"Tardy appeared: {result.score['tardy_count']}"
+        )
+        conflicts = _tool_machine_overlaps(result.segments)
+        assert conflicts == [], f"Tool overlaps after compaction: {conflicts[:5]}"
+
+    def test_compaction_no_edd_violation(self):
+        """No segment is scheduled after its EDD with compaction on."""
+        data, FactoryConfig = self._scenario()
+        result = schedule_all(data, config=FactoryConfig(compact_enabled=True))
+        for s in result.segments:
+            if s.end_min <= s.start_min:
+                continue
+            assert s.day_idx <= s.edd, (
+                f"Segment {s.lot_id} day {s.day_idx} > EDD {s.edd}"
+            )

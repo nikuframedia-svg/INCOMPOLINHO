@@ -79,7 +79,12 @@ class CrewState:
 
 @dataclass
 class ToolTimeline:
-    """Tracks which machine a tool is on to prevent simultaneous use."""
+    """Tracks which machine a tool is on to prevent simultaneous use.
+
+    A physical tool (mould) is a single object: it may move between machines
+    over time, but can NEVER be in two machines at once. All machines share
+    ONE instance of this timeline during dispatch.
+    """
 
     bookings: dict[str, list[tuple[float, float, str]]] = field(default_factory=dict)
 
@@ -89,6 +94,34 @@ class ToolTimeline:
             if booked_machine != machine_id and start <= at_time < end:
                 return False
         return True
+
+    def interval_free(
+        self, tool_id: str, start: float, end: float, machine_id: str
+    ) -> bool:
+        """Check that the WHOLE interval [start, end) is free on other machines."""
+        for b_start, b_end, booked_machine in self.bookings.get(tool_id, []):
+            if booked_machine == machine_id:
+                continue
+            if start < b_end and b_start < end:  # intervals overlap
+                return False
+        return True
+
+    def next_free_after(
+        self, tool_id: str, start: float, machine_id: str
+    ) -> float:
+        """Return the earliest time >= start where the tool is free on `machine_id`.
+
+        Skips past any booking owned by another machine that covers `start`.
+        """
+        moved = True
+        cursor = start
+        while moved:
+            moved = False
+            for b_start, b_end, booked_machine in self.bookings.get(tool_id, []):
+                if booked_machine != machine_id and b_start <= cursor < b_end:
+                    cursor = b_end
+                    moved = True
+        return cursor
 
     def book(self, tool_id: str, start: float, end: float, machine_id: str) -> None:
         """Book a tool on a machine for a time range."""

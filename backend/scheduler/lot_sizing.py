@@ -77,7 +77,10 @@ def _create_solo_lots(op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float
         qty = _apply_eco_lot(deficit, op.eco_lot)
         surplus = qty - deficit
 
-        prod_min = max(min_prod, (qty / (op.pH * oee)) * 60.0)
+        if op.pH > 0 and oee > 0:
+            prod_min = max(min_prod, (qty / (op.pH * oee)) * 60.0)
+        else:
+            prod_min = min_prod
         setup_min = op.sH * 60.0
 
         lots.append(Lot(
@@ -181,63 +184,100 @@ def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = 
 def _merge_complementary_twin_lots(
     lots: list[Lot], op_a: EOp, op_b: EOp, oee: float, max_gap: int = 5,
 ) -> list[Lot]:
-    """Merge consecutive twin lots where one has qty_a=0 and the other qty_b=0.
+    """Merge complementary twin lots into single co-produced runs.
 
-    When A and B have demands on close days, combine into a single lot
-    producing both simultaneously. EDD = min of the two.
+    BUG 4 fix: the previous logic only merged *consecutive* complementary lots
+    (solo-A immediately followed by solo-B). When demand patterns interleave
+    irregularly — e.g. A/A/B/A/B/A — runs of same-side solo lots left some
+    solo-A lots unmerged, producing separate single-SKU blocks on the same
+    tool+machine instead of one co-produced run.
+
+    New logic: a GLOBAL pairing pass. Each solo-A lot is paired with the
+    nearest still-unpaired solo-B lot within ``max_gap`` days (and vice
+    versa). Pairing a solo lot keeps eco-lot HARD per SKU (qty already
+    computed independently) and independent per-SKU surplus carry-forward
+    (already baked into each lot's qty before this pass). Merging only
+    combines ``twin_outputs`` and recomputes time = max(time_a, time_b).
+    EDD = min of the pair so neither deadline is missed.
     """
     if len(lots) <= 1:
         return lots
 
-    merged: list[Lot] = []
-    i = 0
-    while i < len(lots):
-        curr = lots[i]
-        if i + 1 < len(lots) and curr.twin_outputs and lots[i + 1].twin_outputs:
-            nxt = lots[i + 1]
-            c_a, c_b = curr.twin_outputs[0][2], curr.twin_outputs[1][2]
-            n_a, n_b = nxt.twin_outputs[0][2], nxt.twin_outputs[1][2]
-            gap = abs(nxt.edd - curr.edd)
+    def side(lot: Lot) -> str | None:
+        """'A' = only A produces, 'B' = only B produces, None = joint/empty."""
+        if not lot.twin_outputs:
+            return None
+        qa, qb = lot.twin_outputs[0][2], lot.twin_outputs[1][2]
+        if qa > 0 and qb == 0:
+            return "A"
+        if qb > 0 and qa == 0:
+            return "B"
+        return None
 
-            is_complementary = (
-                gap <= max_gap
-                and ((c_a > 0 and c_b == 0 and n_a == 0 and n_b > 0)
-                     or (c_a == 0 and c_b > 0 and n_a > 0 and n_b == 0))
-            )
+    solo_a = sorted((i for i, lot in enumerate(lots) if side(lot) == "A"))
+    solo_b = sorted((i for i, lot in enumerate(lots) if side(lot) == "B"))
 
-            if is_complementary:
-                qty_a = max(c_a, n_a)
-                qty_b = max(c_b, n_b)
-                qty = max(qty_a, qty_b)
-
-                time_a = (qty_a / (op_a.pH * oee)) * 60.0 if qty_a > 0 else 0.0
-                time_b = (qty_b / (op_b.pH * oee)) * 60.0 if qty_b > 0 else 0.0
-                prod_min = max(1.0, max(time_a, time_b))
-
-                primary_op = op_a if qty_a >= qty_b else op_b
-                edd = min(curr.edd, nxt.edd)
-
-                merged.append(Lot(
-                    id=f"{curr.id}_m",
-                    op_id=primary_op.id,
-                    tool_id=curr.tool_id,
-                    machine_id=curr.machine_id,
-                    alt_machine_id=curr.alt_machine_id,
-                    qty=qty,
-                    prod_min=prod_min,
-                    setup_min=curr.setup_min,
-                    edd=edd,
-                    is_twin=True,
-                    twin_outputs=[
-                        (op_a.id, op_a.sku, qty_a),
-                        (op_b.id, op_b.sku, qty_b),
-                    ],
-                ))
-                i += 2
+    # Greedy nearest-neighbour pairing between solo-A and solo-B lots.
+    paired: dict[int, int] = {}  # idx_a -> idx_b
+    used_b: set[int] = set()
+    for ia in solo_a:
+        best_ib = None
+        best_gap = max_gap + 1
+        for ib in solo_b:
+            if ib in used_b:
                 continue
+            gap = abs(lots[ib].edd - lots[ia].edd)
+            if gap <= max_gap and gap < best_gap:
+                best_gap = gap
+                best_ib = ib
+        if best_ib is not None:
+            paired[ia] = best_ib
+            used_b.add(best_ib)
 
-        merged.append(curr)
-        i += 1
+    if not paired:
+        return lots
+
+    consumed: set[int] = set()
+    merged: list[Lot] = []
+    for idx, lot in enumerate(lots):
+        if idx in consumed:
+            continue
+        if idx in paired:
+            partner_idx = paired[idx]
+            lot_a, lot_b = lot, lots[partner_idx]
+            consumed.add(partner_idx)
+
+            qty_a = lot_a.twin_outputs[0][2]  # type: ignore[index]
+            qty_b = lot_b.twin_outputs[1][2]  # type: ignore[index]
+            qty = max(qty_a, qty_b)
+
+            time_a = (qty_a / (op_a.pH * oee)) * 60.0 if qty_a > 0 and op_a.pH > 0 else 0.0
+            time_b = (qty_b / (op_b.pH * oee)) * 60.0 if qty_b > 0 and op_b.pH > 0 else 0.0
+            prod_min = max(1.0, max(time_a, time_b))
+
+            primary_op = op_a if qty_a >= qty_b else op_b
+            edd = min(lot_a.edd, lot_b.edd)
+
+            merged.append(Lot(
+                id=f"{lot_a.id}_m",
+                op_id=primary_op.id,
+                tool_id=lot_a.tool_id,
+                machine_id=lot_a.machine_id,
+                alt_machine_id=lot_a.alt_machine_id,
+                qty=qty,
+                prod_min=prod_min,
+                setup_min=lot_a.setup_min,
+                edd=edd,
+                is_twin=True,
+                twin_outputs=[
+                    (op_a.id, op_a.sku, qty_a),
+                    (op_b.id, op_b.sku, qty_b),
+                ],
+            ))
+        else:
+            merged.append(lot)
+
+    merged.sort(key=lambda x: x.edd)
     return merged
 
 

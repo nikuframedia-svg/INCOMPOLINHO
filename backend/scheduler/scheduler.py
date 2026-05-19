@@ -242,42 +242,508 @@ def _fix_day_overlaps(segments: list[Segment], config: FactoryConfig | None = No
     return segments
 
 
+def _try_relocate_truncated(
+    seg: Segment,
+    all_segments: list[Segment],
+    used: dict[tuple[str, int], float],
+    shift_a_start: int,
+    shift_b_end: int,
+    day_cap: int,
+    holidays: set[int],
+) -> bool:
+    """Try to move a truncated segment to an earlier day with free capacity.
+
+    Searches backward from seg.edd. Checks both total capacity AND that
+    the segment fits within shift bounds (existing_end + needed <= shift_b_end).
+    Does NOT check crew availability — caller should log a warning.
+    """
+    needed = seg.prod_min + seg.setup_min
+    machine = seg.machine_id
+    for candidate_day in range(seg.edd, -2, -1):
+        if candidate_day in holidays or candidate_day == seg.day_idx:
+            continue
+        day_used = used.get((machine, candidate_day), 0)
+        if day_cap - day_used < needed:
+            continue
+        # Find end of existing segments on this day
+        existing_end = shift_a_start
+        for other in all_segments:
+            if other.machine_id == machine and other.day_idx == candidate_day:
+                existing_end = max(existing_end, other.end_min)
+        # Guard: segment must fit within shift bounds
+        if existing_end + int(round(needed)) > shift_b_end:
+            continue
+        # Tool contention: the same physical tool must not be on another
+        # machine during the candidate slot.
+        new_start_abs = candidate_day * day_cap + (existing_end - shift_a_start)
+        new_end_abs = new_start_abs + needed
+        conflict = False
+        for other in all_segments:
+            if (other is not seg
+                    and other.tool_id == seg.tool_id
+                    and other.machine_id != machine):
+                o_start = other.day_idx * day_cap + (other.start_min - shift_a_start)
+                o_end = other.day_idx * day_cap + (other.end_min - shift_a_start)
+                if new_start_abs < o_end and o_start < new_end_abs:
+                    conflict = True
+                    break
+        if conflict:
+            continue
+        old_day = seg.day_idx
+        seg.day_idx = candidate_day
+        seg.start_min = existing_end
+        seg.end_min = existing_end + int(round(needed))
+        seg.shift = "A" if seg.start_min < 930 else "B"
+        used[(machine, candidate_day)] = day_used + needed
+        old_key = (machine, old_day)
+        if old_key in used:
+            used[old_key] = max(0, used[old_key] - needed)
+        logger.info(
+            "Relocated truncated segment %s to day %d (was day %d, %s, crew overlap possible)",
+            seg.lot_id, candidate_day, old_day, machine,
+        )
+        return True
+    return False
+
+
 def _sanitize_segments(
     segments: list[Segment],
     config: FactoryConfig | None = None,
     holidays: set[int] | None = None,
 ) -> list[Segment]:
-    """Final safety net: enforce shift bounds without causing tardiness.
+    """Final safety net: enforce shift bounds and fix ghost segments.
 
-    1. Remove truly inverted segments (start > end)
-    2. Clamp start_min >= shift_a_start
-    3. Cap end_min at shift_b_end (never move to next day — that could cause tardy)
+    Pass 1: existing logic — remove inverted, clamp start, cap end.
+    Pass 2: detect ghost segments (duration < prod_min + setup_min) and
+             try to relocate to an earlier day with capacity, or truncate
+             proportionally, or remove if degenerate.
     """
     shift_a_start = config.shift_a_start if config else 420
     shift_b_end = config.shift_b_end if config else 1440
+    day_cap = config.day_capacity_min if config else 1020
+    hols = holidays or set()
 
+    # Pass 1: clamp bounds
     result: list[Segment] = []
     for seg in segments:
-        # Remove truly inverted segments (start > end)
         if seg.start_min > seg.end_min:
             continue
-
-        # Clamp start to shift_a_start
         if seg.start_min < shift_a_start:
             seg.start_min = shift_a_start
-
-        # Cap end_min at shift_b_end (safe: preserves day_idx = no tardy risk)
         if seg.end_min > shift_b_end:
             seg.end_min = shift_b_end
-
-        # Keep segment (including zero-duration EDD placeholders)
         result.append(seg)
 
-    removed = len(segments) - len(result)
-    if removed > 0:
-        logger.info("Sanitize: removed %d degenerate segments", removed)
+    removed_pass1 = len(segments) - len(result)
 
-    return result
+    # Pass 2: fix ghost segments (duration < prod_min + setup_min)
+    used: dict[tuple[str, int], float] = {}
+    for seg in result:
+        key = (seg.machine_id, seg.day_idx)
+        dur = max(0, seg.end_min - seg.start_min)
+        used[key] = used.get(key, 0) + dur
+
+    final: list[Segment] = []
+    for seg in result:
+        actual_duration = seg.end_min - seg.start_min
+        needed = seg.prod_min + seg.setup_min
+
+        if actual_duration < needed - 1.0 and needed > 1.0:
+            # Ghost segment: try to relocate to earlier day
+            if _try_relocate_truncated(seg, result, used, shift_a_start, shift_b_end, day_cap, hols):
+                final.append(seg)
+                continue
+
+            # Can't relocate — remove if degenerate, else truncate proportionally
+            if actual_duration < 1.0:
+                logger.warning(
+                    "Removed ghost segment %s day %d (duration=0, needed=%.0f min)",
+                    seg.lot_id, seg.day_idx, needed,
+                )
+                continue
+
+            ratio = actual_duration / needed
+            seg.prod_min = seg.prod_min * ratio
+            seg.qty = max(0, round(seg.qty * ratio))
+            seg.setup_min = seg.setup_min * ratio
+            if seg.twin_outputs:
+                seg.twin_outputs = [
+                    (oid, sku, max(0, round(qty * ratio)))
+                    for oid, sku, qty in seg.twin_outputs
+                ]
+
+        final.append(seg)
+
+    removed_total = len(segments) - len(final)
+    if removed_total > 0:
+        logger.info(
+            "Sanitize: removed %d segments (%d inverted, %d ghost)",
+            removed_total, removed_pass1, removed_total - removed_pass1,
+        )
+    return final
+
+
+def _fix_orphan_continuations(segments: list[Segment]) -> list[Segment]:
+    """Reset is_continuation for segments that are the first of their lot.
+
+    After _fix_day_overlaps and crew serialization, some segments may be
+    incorrectly marked as continuations when they are actually the first
+    (or only) segment of their lot.
+    """
+    by_lot: dict[str, list[Segment]] = defaultdict(list)
+    for s in segments:
+        by_lot[s.lot_id].append(s)
+
+    fixed = 0
+    for lot_id, segs in by_lot.items():
+        segs.sort(key=lambda s: (s.day_idx, s.start_min))
+        if segs[0].is_continuation:
+            segs[0].is_continuation = False
+            fixed += 1
+
+    if fixed > 0:
+        logger.info("Fixed %d orphan continuations", fixed)
+
+    return segments
+
+
+def _compact_segments(
+    segments: list[Segment],
+    config: FactoryConfig | None = None,
+    holidays: set[int] | None = None,
+) -> list[Segment]:
+    """Opt-in compaction: pull whole lots earlier to close idle gaps on machines.
+
+    Bug 3 mitigation: JIT + crew serialization + tool contention leave idle
+    time between production blocks. This pass works lot-by-lot, per machine:
+    each lot is treated as one contiguous block of work-minutes and slid to the
+    earliest feasible absolute start, then re-flowed day-by-day so its segments
+    are contiguous (no day-boundary holes).
+
+    Hard constraints (all preserved — caller still wraps this in a tardy /
+    contention safety-net revert):
+      - never schedules production after the lot's EDD (only earlier or equal);
+      - never overlaps two segments on the same machine (re-flow packs after
+        the running machine cursor);
+      - never exceeds shift bounds (start >= shift_a_start, end <= shift_b_end);
+      - never exceeds DAY_CAP (a day holds at most shift_b_end-shift_a_start
+        minutes by construction of the re-flow);
+      - never creates a same-tool cross-machine overlap (every produced
+        interval is checked against other-machine bookings of the same tool,
+        same logic as ``_detect_tool_machine_overlaps``).
+
+    Work-minutes, quantities, setup and twin outputs are NEVER changed — only
+    day_idx / start_min / end_min / shift / is_continuation are rewritten.
+
+    Mutates and returns ``segments``.
+    """
+    shift_a_start = config.shift_a_start if config else 420
+    shift_b_end = config.shift_b_end if config else 1440
+    day_cap = config.day_capacity_min if config else DAY_CAP
+    shift_span = shift_b_end - shift_a_start
+    hols = holidays or set()
+
+    # Tool bookings from segments on OTHER machines (for cross-machine guard).
+    # Built once; a lot only moves within its own machine so other-machine
+    # segments are a fixed reference during this pass.
+    by_machine: defaultdict[str, list[Segment]] = defaultdict(list)
+    for seg in segments:
+        by_machine[seg.machine_id].append(seg)
+
+    def _tool_busy_other(tool_id: str, machine_id: str, start_abs: float, end_abs: float,
+                         own_lot: str) -> bool:
+        """True if `tool_id` is used on a different machine during [start, end)."""
+        for other in segments:
+            if other.lot_id == own_lot:
+                continue
+            if other.tool_id != tool_id or other.machine_id == machine_id:
+                continue
+            if other.end_min <= other.start_min:
+                continue
+            o_start, o_end = _seg_abs(other, shift_a_start, day_cap)
+            if start_abs < o_end and o_start < end_abs:
+                return True
+        return False
+
+    def _next_workday(d: int) -> int:
+        while d in hols:
+            d += 1
+        return d
+
+    moved = 0
+    for machine_id, m_segs in by_machine.items():
+        # Group this machine's segments into lots, ordered chronologically.
+        lots: dict[str, list[Segment]] = defaultdict(list)
+        for s in m_segs:
+            lots[s.lot_id].append(s)
+        lot_order = sorted(
+            lots.keys(),
+            key=lambda lid: min((s.day_idx, s.start_min) for s in lots[lid]),
+        )
+
+        # Machine occupancy cursor: earliest free absolute minute. Starts at
+        # day 0 shift start; advances as each lot is placed.
+        cursor_day = _next_workday(0)
+        cursor_min = shift_a_start
+
+        for lid in lot_order:
+            lot_segs = sorted(lots[lid], key=lambda s: (s.day_idx, s.start_min))
+            work = [s.end_min - s.start_min for s in lot_segs]
+            total_work = sum(w for w in work if w > 0)
+            tool_id = lot_segs[0].tool_id
+            edd = lot_segs[0].edd
+
+            if total_work <= 0:
+                # Degenerate / placeholder-only lot — leave untouched but make
+                # sure the cursor never rewinds before it.
+                last = lot_segs[-1]
+                if (last.day_idx, last.end_min) > (cursor_day, cursor_min):
+                    cursor_day, cursor_min = last.day_idx, last.end_min
+                continue
+
+            # Re-flow the lot's TOTAL work as one continuous stream starting at
+            # a trial (day, start). The stream is split into day-blocks packed
+            # tightly within shift bounds. Returns the list of
+            # (day, start, end) blocks or None if it cannot fit by EDD /
+            # tool contention.
+            def _try_flow(d0: int, s0: int):
+                blocks: list[tuple[int, int, int]] = []
+                d, s = _next_workday(d0), s0
+                if s >= shift_b_end:
+                    d = _next_workday(d + 1)
+                    s = shift_a_start
+                remaining = total_work
+                while remaining > 0:
+                    if d > edd:
+                        return None  # would breach the deadline
+                    avail = shift_b_end - s
+                    block = min(remaining, avail)
+                    seg_start_abs = d * day_cap + (s - shift_a_start)
+                    seg_end_abs = seg_start_abs + block
+                    if _tool_busy_other(tool_id, machine_id, seg_start_abs,
+                                        seg_end_abs, lid):
+                        return None  # same tool on another machine
+                    blocks.append((d, s, s + block))
+                    s += block
+                    remaining -= block
+                    if remaining > 0:
+                        d = _next_workday(d + 1)
+                        s = shift_a_start
+                return blocks
+
+            # Trial start = machine cursor (earliest free slot on this machine).
+            placements = _try_flow(cursor_day, cursor_min)
+
+            current_pos = (lot_segs[0].day_idx, lot_segs[0].start_min)
+            if placements is None or (placements[0][0], placements[0][1]) >= current_pos:
+                # Cannot improve — keep the lot where it is, advance cursor.
+                last = lot_segs[-1]
+                if (last.day_idx, last.end_min) > (cursor_day, cursor_min):
+                    cursor_day, cursor_min = last.day_idx, last.end_min
+                continue
+
+            # Map the re-flowed day-blocks onto the existing Segment objects.
+            # prod_min / qty / setup / twin_outputs are redistributed strictly
+            # proportionally to block duration so totals are conserved exactly.
+            orig_work_segs = [s for s in lot_segs if s.end_min > s.start_min]
+            tot_prod = sum(s.prod_min for s in orig_work_segs)
+            tot_setup = sum(s.setup_min for s in orig_work_segs)
+            tot_qty = sum(s.qty for s in orig_work_segs)
+            twin_totals: dict[tuple[str, str], int] = {}
+            for s in orig_work_segs:
+                for oid, sku, q in (s.twin_outputs or []):
+                    twin_totals[(oid, sku)] = twin_totals.get((oid, sku), 0) + q
+
+            template = orig_work_segs[0]
+            new_segs: list[Segment] = []
+            n_blocks = len(placements)
+            prod_acc = 0.0
+            setup_acc = 0.0
+            qty_acc = 0
+            twin_acc: dict[tuple[str, str], int] = {k: 0 for k in twin_totals}
+            for k, (d, st, en) in enumerate(placements):
+                dur = en - st
+                last_block = k == n_blocks - 1
+                frac = dur / total_work if total_work else 0.0
+                if last_block:
+                    p_prod = tot_prod - prod_acc
+                    p_setup = tot_setup - setup_acc
+                    p_qty = tot_qty - qty_acc
+                else:
+                    p_prod = tot_prod * frac
+                    p_setup = tot_setup * frac
+                    p_qty = round(tot_qty * frac)
+                prod_acc += p_prod
+                setup_acc += p_setup
+                qty_acc += p_qty
+                twin_out: list[tuple[str, str, int]] | None = None
+                if twin_totals:
+                    twin_out = []
+                    for (oid, sku), tq in twin_totals.items():
+                        if last_block:
+                            piece = tq - twin_acc[(oid, sku)]
+                        else:
+                            piece = round(tq * frac)
+                        twin_acc[(oid, sku)] += piece
+                        twin_out.append((oid, sku, piece))
+                ns = Segment(
+                    lot_id=template.lot_id,
+                    run_id=template.run_id,
+                    machine_id=template.machine_id,
+                    tool_id=template.tool_id,
+                    day_idx=d,
+                    start_min=st,
+                    end_min=en,
+                    shift="A" if st < 930 else "B",
+                    qty=p_qty,
+                    prod_min=p_prod,
+                    setup_min=p_setup,
+                    is_continuation=k > 0,
+                    edd=template.edd,
+                    sku=template.sku,
+                    twin_outputs=twin_out,
+                )
+                new_segs.append(ns)
+
+            # Replace this lot's segments in the master list.
+            lot_id_set = lid
+            segments[:] = [s for s in segments if s.lot_id != lot_id_set]
+            segments.extend(new_segs)
+            moved += 1
+
+            # Advance machine cursor past this lot.
+            last_d, _ls, last_e = placements[-1]
+            cursor_day, cursor_min = last_d, last_e
+
+    if moved > 0:
+        logger.info("Compaction: pulled %d lots earlier to close gaps", moved)
+    return segments
+
+
+def _seg_abs(seg: Segment, shift_a_start: int, day_cap: int) -> tuple[float, float]:
+    """Return (start_abs, end_abs) of a segment in absolute scheduling minutes."""
+    start_abs = seg.day_idx * day_cap + (seg.start_min - shift_a_start)
+    end_abs = seg.day_idx * day_cap + (seg.end_min - shift_a_start)
+    return start_abs, end_abs
+
+
+def _detect_tool_machine_overlaps(
+    segments: list[Segment],
+    config: FactoryConfig | None = None,
+) -> list[tuple[str, str, str, int]]:
+    """Find time overlaps of the SAME tool_id on DIFFERENT machines.
+
+    A physical tool (mould) is unique — it can move between machines over time
+    but can never run in two machines at once. Returns a list of
+    (tool_id, machine_a, machine_b, day_idx) for each conflicting pair.
+    """
+    shift_a_start = config.shift_a_start if config else 420
+    day_cap = config.day_capacity_min if config else DAY_CAP
+
+    by_tool: dict[str, list[Segment]] = defaultdict(list)
+    for seg in segments:
+        if seg.end_min > seg.start_min:  # skip zero-duration placeholders
+            by_tool[seg.tool_id].append(seg)
+
+    conflicts: list[tuple[str, str, str, int]] = []
+    for tool_id, segs in by_tool.items():
+        segs = sorted(segs, key=lambda s: _seg_abs(s, shift_a_start, day_cap)[0])
+        for i in range(len(segs)):
+            a_start, a_end = _seg_abs(segs[i], shift_a_start, day_cap)
+            for j in range(i + 1, len(segs)):
+                b_start, b_end = _seg_abs(segs[j], shift_a_start, day_cap)
+                if b_start >= a_end:
+                    break  # sorted — no later segment can overlap
+                if segs[j].machine_id != segs[i].machine_id:
+                    conflicts.append(
+                        (tool_id, segs[i].machine_id, segs[j].machine_id, segs[i].day_idx)
+                    )
+    return conflicts
+
+
+def _fix_tool_machine_overlaps(
+    segments: list[Segment],
+    config: FactoryConfig | None = None,
+    holidays: set[int] | None = None,
+) -> list[Segment]:
+    """Resolve same-tool-on-two-machines overlaps by deferring the later run.
+
+    For each conflict, the segment that is LESS urgent (higher EDD, later start)
+    is pushed forward until the tool is free — but only while it stays on time
+    (day_idx <= edd). If it cannot be deferred without going tardy, the conflict
+    is left for the verification warning rather than risking an OTD regression.
+    """
+    shift_a_start = config.shift_a_start if config else 420
+    shift_b_end = config.shift_b_end if config else 1440
+    day_cap = config.day_capacity_min if config else DAY_CAP
+    hols = holidays or set()
+
+    fixed = 0
+    for _ in range(len(segments) + 1):
+        conflicts = _detect_tool_machine_overlaps(segments, config)
+        if not conflicts:
+            break
+
+        by_tool: dict[str, list[Segment]] = defaultdict(list)
+        for seg in segments:
+            if seg.end_min > seg.start_min:
+                by_tool[seg.tool_id].append(seg)
+
+        moved_any = False
+        for tool_id, _ma, _mb, _day in conflicts:
+            segs = sorted(
+                by_tool[tool_id],
+                key=lambda s: _seg_abs(s, shift_a_start, day_cap)[0],
+            )
+            for i in range(len(segs)):
+                a_start, a_end = _seg_abs(segs[i], shift_a_start, day_cap)
+                for j in range(i + 1, len(segs)):
+                    b_start, b_end = _seg_abs(segs[j], shift_a_start, day_cap)
+                    if b_start >= a_end:
+                        break
+                    if segs[j].machine_id == segs[i].machine_id:
+                        continue
+                    # Defer the less-urgent of the two (higher EDD, then later).
+                    earlier, later = segs[i], segs[j]
+                    if later.edd < earlier.edd:
+                        earlier, later = later, earlier
+                    e_start, e_end = _seg_abs(earlier, shift_a_start, day_cap)
+                    duration = later.end_min - later.start_min
+                    # Push `later` to start when `earlier` frees the tool.
+                    new_abs = e_end
+                    new_day = int(new_abs) // day_cap
+                    while new_day in hols:
+                        new_day += 1
+                    new_start_in_day = shift_a_start + int(
+                        round(new_abs - new_day * day_cap)
+                    )
+                    if new_start_in_day + duration > shift_b_end:
+                        new_day += 1
+                        while new_day in hols:
+                            new_day += 1
+                        new_start_in_day = shift_a_start
+                    # OTD guard: never make the segment tardy to fix contention.
+                    if new_day > later.edd:
+                        continue
+                    later.day_idx = new_day
+                    later.start_min = new_start_in_day
+                    later.end_min = new_start_in_day + duration
+                    later.shift = "A" if new_start_in_day < 930 else "B"
+                    later.is_continuation = False
+                    fixed += 1
+                    moved_any = True
+                    break
+                if moved_any:
+                    break
+            if moved_any:
+                break
+
+        if not moved_any:
+            break  # remaining conflicts cannot be fixed without tardy
+
+    if fixed > 0:
+        logger.info("Tool contention: resolved %d same-tool cross-machine overlaps", fixed)
+    return segments
 
 
 def _find_predecessor_end(segments: list[Segment], target: Segment, shift_a_start: int) -> int:
@@ -390,10 +856,10 @@ def _serialize_crew_setups(
     if crew_priority:
         prio_map = {m: i for i, m in enumerate(crew_priority)}
 
-    # Collect setups with absolute time
+    # Collect setups with absolute time (including buffer days)
     setup_entries: list[tuple[float, float, int]] = []
     for idx, seg in enumerate(segments):
-        if seg.setup_min > 0 and seg.day_idx >= 0:
+        if seg.setup_min > 0:
             abs_start = seg.day_idx * day_cap + (seg.start_min - shift_a_start)
             setup_entries.append((abs_start, seg.setup_min, idx))
 
@@ -402,7 +868,8 @@ def _serialize_crew_setups(
 
     setup_entries.sort(key=lambda e: (e[0], prio_map.get(segments[e[2]].machine_id, 99)))
 
-    crew_free_at = 0.0
+    # Initialize crew_free_at before the earliest setup (handles negative abs_times from buffer days)
+    crew_free_at = min(e[0] for e in setup_entries)
     prev_crew_end = 0.0
     blocker_seg_idx = -1
     blocker_abs_start = 0.0
@@ -482,10 +949,10 @@ def _serialize_crew_safe(
     if crew_priority:
         prio_map = {m: i for i, m in enumerate(crew_priority)}
 
-    # Collect setup intervals
+    # Collect setup intervals (including buffer days)
     setup_entries: list[tuple[float, float, int]] = []
     for idx, seg in enumerate(segments):
-        if seg.setup_min > 0 and seg.day_idx >= 0:
+        if seg.setup_min > 0:
             abs_start = seg.day_idx * day_cap + (seg.start_min - shift_a_start)
             setup_entries.append((abs_start, seg.setup_min, idx))
 
@@ -494,7 +961,8 @@ def _serialize_crew_safe(
 
     setup_entries.sort(key=lambda e: (e[0], prio_map.get(segments[e[2]].machine_id, 99)))
 
-    crew_free_at = 0.0
+    # Initialize before earliest setup (handles buffer days with negative abs_times)
+    crew_free_at = min(e[0] for e in setup_entries)
     crew_machine = ""
     fixed = 0
     skipped = 0
@@ -722,8 +1190,67 @@ def schedule_all(data: EngineData, audit: bool = False, config: FactoryConfig | 
                 f"Crew serialization limited: {safe_score['tardy_count']} tardy vs {pre_crew_score['tardy_count']} pre-crew"
             )
 
-    # Final sanitize: enforce shift bounds
+    # Tool contention: a physical tool cannot run on two machines at once.
+    # JIT/VNS dispatch each machine with an isolated tool timeline, so a global
+    # repair pass is needed here. OTD-guarded — never defers into tardiness.
+    tc_pre_score = compute_score(final_segments, final_lots, data, config=config)
+    tc_segments = copy.deepcopy(final_segments)
+    tc_segments = _fix_tool_machine_overlaps(tc_segments, config, holidays=global_holidays)
+    tc_segments = _fix_day_overlaps(tc_segments, config, holidays=global_holidays)
+    tc_score = compute_score(tc_segments, final_lots, data, config=config)
+    if tc_score["tardy_count"] <= tc_pre_score["tardy_count"]:
+        final_segments = tc_segments
+    else:
+        logger.warning(
+            "Tool contention fix skipped: would cause tardy %d > %d",
+            tc_score["tardy_count"], tc_pre_score["tardy_count"],
+        )
+
+    # Final sanitize: enforce shift bounds + fix ghost segments
     final_segments = _sanitize_segments(final_segments, config, holidays=global_holidays)
+    # Fix orphan continuations (segments wrongly marked as continuation by _fix_day_overlaps)
+    final_segments = _fix_orphan_continuations(final_segments)
+
+    # Optional compaction (opt-in via config.compact_enabled — default OFF).
+    # Closes idle gaps left by JIT + crew serialization + tool contention by
+    # pulling segments earlier. OTD-guarded: reverts if tardy regresses or new
+    # tool-contention violations appear (same safety-net pattern as JIT/crew).
+    if config.compact_enabled:
+        compact_pre_score = compute_score(final_segments, final_lots, data, config=config)
+        compact_pre_conflicts = len(_detect_tool_machine_overlaps(final_segments, config))
+        compact_segments = copy.deepcopy(final_segments)
+        compact_segments = _compact_segments(compact_segments, config, holidays=global_holidays)
+        compact_segments = _fix_day_overlaps(compact_segments, config, holidays=global_holidays)
+        compact_segments = _sanitize_segments(compact_segments, config, holidays=global_holidays)
+        compact_segments = _fix_orphan_continuations(compact_segments)
+        compact_score = compute_score(compact_segments, final_lots, data, config=config)
+        compact_conflicts = len(_detect_tool_machine_overlaps(compact_segments, config))
+        if (compact_score["tardy_count"] <= compact_pre_score["tardy_count"]
+                and compact_conflicts <= compact_pre_conflicts):
+            final_segments = compact_segments
+            logger.info("Compaction applied: no tardy/contention regression")
+        else:
+            logger.warning(
+                "Compaction reverted: tardy %d>%d or conflicts %d>%d",
+                compact_score["tardy_count"], compact_pre_score["tardy_count"],
+                compact_conflicts, compact_pre_conflicts,
+            )
+
+    # Verification: no physical tool may be on two machines simultaneously.
+    tool_conflicts = _detect_tool_machine_overlaps(final_segments, config)
+    if tool_conflicts:
+        for tool_id, ma, mb, day in tool_conflicts[:5]:
+            logger.warning(
+                "Tool contention: tool %s on %s and %s simultaneously (day %d)",
+                tool_id, ma, mb, day,
+            )
+        warnings.append(
+            f"Tool contention: {len(tool_conflicts)} same-tool cross-machine overlap(s)"
+        )
+        journal.log(
+            "scoring", "warn",
+            f"{len(tool_conflicts)} same-tool cross-machine overlap(s) remain",
+        )
 
     # Phase 5: Final scoring
     journal.phase_start("scoring")
