@@ -36,6 +36,10 @@ class CopilotState:
     engine_data: object | None = None  # EngineData (avoid circular import)
     config: FactoryConfig | None = None
 
+    # Pristine config snapshot from the loaded ISOP — used to reset presets
+    # to a known baseline so they don't accumulate each other's overrides.
+    default_config: FactoryConfig | None = None
+
     # Schedule results
     segments: list[Segment] = field(default_factory=list)
     lots: list[Lot] = field(default_factory=list)
@@ -70,6 +74,11 @@ class CopilotState:
 
     # Simulation revert snapshot
     saved_schedule: ScheduleResult | None = None
+
+    # Active what-if mutations (simulate-apply / ctp-apply). Persisted so a
+    # subsequent recalculation (e.g. applying a preset) keeps them applied.
+    # Each entry: {"type": str, "params": dict}
+    active_mutations: list[dict] = field(default_factory=list)
 
     def save_current(self) -> None:
         """Save current schedule for revert after simulation apply."""

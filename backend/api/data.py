@@ -43,6 +43,44 @@ def _require_config():
         raise HTTPException(503, "Configuração não carregada.")
 
 
+def _recompute(config) -> None:
+    """Recalculate the schedule with the given config and update state.
+
+    Uses GA-backed `mode="normal"` (NOT "quick" — quick is greedy-only and
+    drops OTD). If there are active what-if mutations (machine down, rush
+    order, ...) they are re-applied on top so a config change (e.g. a preset)
+    does not silently discard the simulation.
+    """
+    if state.engine_data is None:
+        return
+
+    if state.active_mutations:
+        from backend.scheduler.types import ScheduleResult
+        from backend.simulator.simulator import Mutation, simulate
+
+        mutations = [
+            Mutation(type=m["type"], params=m.get("params", {}))
+            for m in state.active_mutations
+        ]
+        sim = simulate(state.engine_data, state.score, mutations, config=config)
+        result = ScheduleResult(
+            segments=sim.segments,
+            lots=sim.lots,
+            score=sim.score,
+            time_ms=sim.time_ms,
+            warnings=[],
+            operator_alerts=[],
+            audit_trail=None,
+            journal=None,
+        )
+    else:
+        from backend.cpo import optimize
+
+        result = optimize(state.engine_data, mode="normal", audit=True, config=config)
+
+    state.update_schedule(result)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # CORE (5)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -370,12 +408,8 @@ async def update_config(updates: dict):
     from backend.config.loader import save_config
     save_config(c)
 
-    # Recalculate if data is loaded
-    if state.engine_data:
-        from backend.cpo import optimize
-
-        result = optimize(state.engine_data, mode="quick", audit=True, config=c)
-        state.update_schedule(result)
+    # Recalculate if data is loaded (normal mode — keeps OTD)
+    _recompute(c)
 
     return {"status": "ok", "changed": changed, "score": state.score}
 
@@ -438,6 +472,11 @@ async def simulate_and_apply(request: SimulateRequest):
     )
     state.update_schedule(schedule_result)
 
+    # Persist mutations so a later recompute (e.g. preset) keeps them applied
+    state.active_mutations = [
+        {"type": m.type, "params": m.params} for m in request.mutations
+    ]
+
     return {
         "status": "applied",
         "score": result.score,
@@ -458,6 +497,7 @@ async def revert_simulation():
         raise HTTPException(400, "Nada para reverter.")
     state.update_schedule(state.saved_schedule)
     state.saved_schedule = None
+    state.active_mutations = []
     return {"status": "reverted", "score": state.score}
 
 
@@ -465,6 +505,19 @@ async def revert_simulation():
 async def can_revert():
     """Check if there is a saved schedule to revert to."""
     return {"can_revert": state.saved_schedule is not None}
+
+
+@router.get("/active-mutations")
+async def get_active_mutations():
+    """Return the what-if mutations currently applied to the schedule.
+
+    Lets the UI keep its simulation banner in sync — non-empty means a
+    simulation is active, empty means none.
+    """
+    return {
+        "active": bool(state.active_mutations),
+        "mutations": state.active_mutations,
+    }
 
 
 class CTPRequest(BaseModel):
@@ -511,10 +564,12 @@ async def apply_ctp(request: CTPRequest):
 
     state.save_current()
 
-    mutations = [Mutation(
-        type="rush_order",
-        params={"sku": request.sku, "qty": str(request.qty), "deadline_day": str(request.deadline)},
-    )]
+    rush_params = {
+        "sku": request.sku,
+        "qty": str(request.qty),
+        "deadline_day": str(request.deadline),
+    }
+    mutations = [Mutation(type="rush_order", params=rush_params)]
     result = simulate(state.engine_data, old_score, mutations, config=state.config)
 
     schedule_result = ScheduleResult(
@@ -528,6 +583,9 @@ async def apply_ctp(request: CTPRequest):
         journal=None,
     )
     state.update_schedule(schedule_result)
+
+    # Persist mutation so a later recompute (e.g. preset) keeps it applied
+    state.active_mutations = [{"type": "rush_order", "params": rush_params}]
 
     return {
         "status": "applied",
@@ -544,19 +602,17 @@ async def apply_ctp(request: CTPRequest):
 @router.post("/recalculate")
 async def recalculate():
     _require_data()
-    from backend.cpo import optimize
 
     old_score = dict(state.score) if state.score else {}
-    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
-    state.update_schedule(result)
+    _recompute(state.config)
 
     return {
         "status": "ok",
-        "score": result.score,
+        "score": state.score,
         "score_previous": old_score,
-        "time_ms": result.time_ms,
-        "n_segments": len(result.segments),
-        "warnings": result.warnings[:10],
+        "time_ms": state.score.get("time_ms", 0) if state.score else 0,
+        "n_segments": len(state.segments),
+        "warnings": state.warnings[:10],
     }
 
 
@@ -587,6 +643,8 @@ async def load_isop_upload(
 
     try:
         config = load_config(config_path)
+        state.default_config = copy.deepcopy(config)
+        state.active_mutations = []
         with open(master_path) as f:
             master = yaml.safe_load(f)
 
@@ -739,20 +797,40 @@ async def remove_twin(tool_id: str):
 
 @router.post("/presets/{name}")
 async def apply_preset_endpoint(name: str):
-    """Apply a named config preset (urgente, equilibrado, min_setups, max_otd)."""
+    """Apply a named config preset (urgente, equilibrado, min_setups, max_otd).
+
+    Each preset is PURE: it starts from the pristine `default_config` snapshot
+    captured at ISOP load and applies only its own overrides on top. Presets
+    therefore never accumulate each other's parameters, and `equilibrado` ({})
+    correctly resets everything back to the factory defaults.
+
+    Any active what-if simulation is preserved — `_recompute` re-applies the
+    stored mutations after rescheduling.
+    """
     _require_config()
-    from backend.config.presets import get_preset
+    from backend.config.loader import save_config
+    from backend.config.presets import apply_preset, get_preset
 
     try:
-        overrides = get_preset(name)
+        get_preset(name)  # validate name early
     except KeyError as e:
         raise HTTPException(400, str(e))
 
-    # Se ha simulacao ativa, limpar antes de aplicar preset
-    simulation_cleared = state.saved_schedule is not None
-    if simulation_cleared:
-        state.saved_schedule = None
+    # Baseline: pristine config from load (fallback to current if missing)
+    base = state.default_config if state.default_config is not None else state.config
+    new_config = apply_preset(copy.deepcopy(base), name)
 
-    result = await update_config(overrides)
-    result["simulation_cleared"] = simulation_cleared
-    return result
+    state.config = new_config
+    save_config(new_config)
+
+    old_score = dict(state.score) if state.score else {}
+    _recompute(new_config)
+
+    return {
+        "status": "ok",
+        "preset": name,
+        "changed": list(get_preset(name).keys()),
+        "score": state.score,
+        "score_previous": old_score,
+        "simulation_active": bool(state.active_mutations),
+    }

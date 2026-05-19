@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getScore, getSegments, getLots, getConfig, getLearning, simulateApply, revertSimulation, canRevert as fetchCanRevert } from "../api/endpoints";
+import { getScore, getSegments, getLots, getConfig, getLearning, simulateApply, revertSimulation, canRevert as fetchCanRevert, getActiveMutations } from "../api/endpoints";
 import type { Score, Segment, Lot, FactoryConfig, LearningInfo, MutationInput, SimulateApplyResponse } from "../api/types";
 
 interface DataState {
@@ -39,16 +39,22 @@ export const useDataStore = create<DataState>((set, get) => ({
       getConfig(),
       getLearning(),
       fetchCanRevert(),
+      getActiveMutations(),
     ]);
     const canRevertVal = results[5].status === "fulfilled" ? results[5].value.can_revert : false;
+    // Source of truth for "simulation active" is the backend's applied
+    // mutations — survives a preset/recalculate that reschedules in place.
+    const simActive = results[6].status === "fulfilled" ? results[6].value.active : false;
     set({
       score: results[0].status === "fulfilled" ? results[0].value : null,
       segments: results[1].status === "fulfilled" ? results[1].value : null,
       lots: results[2].status === "fulfilled" ? results[2].value : null,
       config: results[3].status === "fulfilled" ? results[3].value : null,
       learning: results[4].status === "fulfilled" ? results[4].value : null,
-      // Sync simulacao: se backend ja nao tem snapshot, limpar flag
-      ...(canRevertVal ? {} : { isSimulated: false, simulationSummary: [], canRevert: false }),
+      canRevert: canRevertVal,
+      isSimulated: simActive,
+      // Clear stale summary when no simulation is active
+      ...(simActive ? {} : { simulationSummary: [] }),
     });
   },
 

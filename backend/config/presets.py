@@ -15,6 +15,7 @@ PRESETS: dict[str, dict] = {
         "urgency_threshold": 2,
         "interleave_enabled": True,
         "lst_safety_buffer": 0,
+        "compact_enabled": True,
     },
     "equilibrado": {},  # factory defaults
     "min_setups": {
@@ -46,7 +47,7 @@ def get_preset(name: str) -> dict:
 def apply_preset(config: FactoryConfig, name: str) -> FactoryConfig:
     """Return a copy of config with preset overrides applied."""
     overrides = get_preset(name)
-    result = copy.copy(config)
+    result = copy.deepcopy(config)
     for key, value in overrides.items():
         if not hasattr(result, key):
             raise KeyError(f"FactoryConfig não tem atributo {key!r}")

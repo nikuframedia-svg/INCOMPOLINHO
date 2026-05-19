@@ -84,7 +84,14 @@ export const removeTwin = (tool_id: string) =>
   del<MasterDataResult>(`/api/data/twins/${encodeURIComponent(tool_id)}`);
 
 export const applyPreset = (name: string) =>
-  post<{ status: string; changed: string[]; score: Score }>(`/api/data/presets/${name}`, {});
+  post<{
+    status: string;
+    preset: string;
+    changed: string[];
+    score: Score;
+    score_previous: Score;
+    simulation_active: boolean;
+  }>(`/api/data/presets/${name}`, {});
 
 // ── Console ──────────────────────────────────────────────────
 
@@ -104,6 +111,9 @@ export const revertSimulation = () =>
 
 export const canRevert = () =>
   get<{ can_revert: boolean }>("/api/data/can-revert");
+
+export const getActiveMutations = () =>
+  get<{ active: boolean; mutations: MutationInput[] }>("/api/data/active-mutations");
 
 export const checkCTP = (sku: string, qty: number, deadline: number) =>
   post<CTPResult>("/api/data/ctp", { sku, qty, deadline });

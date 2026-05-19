@@ -139,6 +139,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
   onSaved: (c: FactoryConfig) => void;
   onDelta: (prev: Score, curr: Score) => void;
 }) {
+  const isSimulated = useDataStore((s) => s.isSimulated);
   const refreshAll = useDataStore((s) => s.refreshAll);
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
@@ -192,9 +193,14 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       setEdits({});
       const fresh = await getConfig();
       onSaved(fresh);
-      setMsg(`Preset "${name}" aplicado (${res.changed.length} parametros)`);
+      // Show the score delta so the planner sees the impact immediately
+      if (res.score && res.score_previous) {
+        onDelta(res.score_previous, res.score);
+      }
+      const simNote = res.simulation_active ? " — simulacao mantida" : "";
+      setMsg(`Preset "${name}" aplicado (${res.changed.length} parametros)${simNote}`);
       setActivePreset(name);
-      refreshAll();
+      await refreshAll();
     } catch (e) {
       setMsg(`Erro: ${e}`);
     } finally {
@@ -207,6 +213,11 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       {/* Presets row */}
       <div style={{ marginBottom: 12 }}>
         <Label style={{ marginBottom: 8 }}>Presets</Label>
+        {isSimulated && (
+          <div style={{ fontSize: 11, color: T.orange, marginBottom: 8 }}>
+            Simulacao activa — o preset sera aplicado por cima dela.
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6 }}>
           {PRESETS.map((p) => {
             const isActive = activePreset === p.id;
