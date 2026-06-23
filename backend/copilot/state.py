@@ -5,6 +5,7 @@ Singleton holding the current schedule, engine data, config, and rules.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from dataclasses import dataclass, field
@@ -26,6 +27,18 @@ def _compute_stress(segments, lots, engine_data):
         segments, lots, engine_data.n_days,
         n_holidays=len(getattr(engine_data, 'holidays', []) or []),
     )
+
+
+@dataclass
+class RevertSnapshot:
+    """Exact state snapshot used by the frontend Reverter banner."""
+
+    kind: str
+    config: FactoryConfig | None
+    schedule: ScheduleResult
+    active_mutations: list[dict]
+    active_simulation_summary: list[str] = field(default_factory=list)
+    engine_data: object | None = None
 
 
 @dataclass
@@ -72,26 +85,88 @@ class CopilotState:
     # User rules
     rules: list[dict] = field(default_factory=list)
 
-    # Simulation revert snapshot
+    # Revert snapshots. Kept separate so simulation revert cannot undo config,
+    # and config revert cannot erase an active what-if scenario.
+    simulation_snapshot: RevertSnapshot | None = None
+    config_snapshot: RevertSnapshot | None = None
+
+    # Legacy single-slot fields kept for older callers/tests.
     saved_schedule: ScheduleResult | None = None
+    saved_snapshot: RevertSnapshot | None = None
 
     # Active what-if mutations (simulate-apply / ctp-apply). Persisted so a
     # subsequent recalculation (e.g. applying a preset) keeps them applied.
     # Each entry: {"type": str, "params": dict}
     active_mutations: list[dict] = field(default_factory=list)
+    active_simulation_summary: list[str] = field(default_factory=list)
 
-    def save_current(self) -> None:
-        """Save current schedule for revert after simulation apply."""
-        self.saved_schedule = ScheduleResult(
-            segments=list(self.segments),
-            lots=list(self.lots),
-            score=dict(self.score),
-            warnings=list(self.warnings),
-            operator_alerts=list(self.operator_alerts or []),
+    def save_current(self, kind: str = "simulation") -> None:
+        """Save current config and schedule for exact revert."""
+        schedule = ScheduleResult(
+            segments=copy.deepcopy(self.segments),
+            lots=copy.deepcopy(self.lots),
+            score=copy.deepcopy(self.score),
+            warnings=copy.deepcopy(self.warnings),
+            operator_alerts=copy.deepcopy(self.operator_alerts or []),
             time_ms=0,
             audit_trail=None,
-            journal=self.journal_entries,
+            journal=copy.deepcopy(self.journal_entries),
         )
+        snapshot = RevertSnapshot(
+            kind=kind,
+            config=copy.deepcopy(self.config),
+            schedule=schedule,
+            active_mutations=copy.deepcopy(self.active_mutations),
+            active_simulation_summary=copy.deepcopy(self.active_simulation_summary),
+            engine_data=copy.deepcopy(self.engine_data),
+        )
+        if kind == "config":
+            self.config_snapshot = snapshot
+        else:
+            self.simulation_snapshot = snapshot
+        self.saved_schedule = schedule
+        self.saved_snapshot = snapshot
+
+    def restore_saved(self, kind: str | None = None) -> str:
+        """Restore a saved snapshot. Returns the restored snapshot kind."""
+        snapshot: RevertSnapshot | None
+        if kind == "simulation":
+            snapshot = self.simulation_snapshot
+        elif kind == "config":
+            snapshot = self.config_snapshot
+        else:
+            snapshot = self.saved_snapshot or self.simulation_snapshot or self.config_snapshot
+
+        if snapshot:
+            if snapshot.kind == "config":
+                self.config = copy.deepcopy(snapshot.config)
+                self.engine_data = copy.deepcopy(snapshot.engine_data)
+            self.active_mutations = copy.deepcopy(snapshot.active_mutations)
+            self.active_simulation_summary = copy.deepcopy(snapshot.active_simulation_summary)
+            self.update_schedule(copy.deepcopy(snapshot.schedule))
+            restored_kind = snapshot.kind
+            if restored_kind == "config":
+                self.config_snapshot = None
+            else:
+                self.simulation_snapshot = None
+        elif self.saved_schedule:
+            self.update_schedule(copy.deepcopy(self.saved_schedule))
+            self.active_mutations = []
+            self.active_simulation_summary = []
+            restored_kind = "simulation"
+        else:
+            raise ValueError("Nada para reverter.")
+
+        if self.saved_snapshot and self.saved_snapshot.kind == restored_kind:
+            self.saved_schedule = None
+            self.saved_snapshot = None
+        return restored_kind
+
+    def clear_revert(self) -> None:
+        self.simulation_snapshot = None
+        self.config_snapshot = None
+        self.saved_schedule = None
+        self.saved_snapshot = None
 
     def update_schedule(self, result: ScheduleResult) -> None:
         """Update state from a ScheduleResult. Saves audit trail if present."""

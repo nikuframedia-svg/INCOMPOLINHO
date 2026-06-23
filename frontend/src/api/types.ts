@@ -260,6 +260,7 @@ export interface FactoryConfig {
   twins: TwinConfig[];
   operators: Record<string, number>;
   holidays: string[];
+  subcontract_skus: Record<string, number>;
   oee_default: number;
   jit_enabled: boolean;
   jit_buffer_pct: number;
@@ -388,11 +389,14 @@ export interface DeltaReport {
 }
 
 export interface SimulateResponse {
+  status?: "ok" | "invalid";
   score_baseline: Score;
   score_scenario: Score;
   delta: DeltaReport;
   time_ms: number;
   summary: string[];
+  hard_gate_violations?: Record<string, number>;
+  plan_violations?: Record<string, number>;
 }
 
 export interface SimulateApplyResponse {
@@ -400,11 +404,15 @@ export interface SimulateApplyResponse {
   score: Score;
   score_previous: Score;
   summary: string[];
+  hard_gate_violations?: Record<string, number>;
+  plan_violations?: Record<string, number>;
   n_segments_before: number;
   n_segments_after: number;
   time_ms: number;
   can_revert: boolean;
 }
+
+export type RevertKind = "simulation" | "config" | null;
 
 export interface CTPResult {
   sku: string;

@@ -105,7 +105,7 @@ def exec_mover_referencia(args: dict) -> str:
             op.alt = None
 
     # Re-schedule on mutated data
-    result = optimize(mutated, mode="quick", audit=True, config=state.config)
+    result = optimize(mutated, mode="normal", audit=True, config=state.config)
 
     # Reject if tardy_count worsens
     old_tardy = state.score.get("tardy_count", 0)

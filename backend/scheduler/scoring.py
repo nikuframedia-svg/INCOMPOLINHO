@@ -1,6 +1,6 @@
 """Phase 5 — Scoring: Spec 02 v6 §7.
 
-KPIs: OTD (lot-level), OTD-D (demand-unit cumulative), tardiness,
+KPIs: OTD (global produced quantity vs demand), OTD-D (demand-unit cumulative), tardiness,
 earliness, setup count, utilisation per machine.
 """
 
@@ -32,7 +32,7 @@ def compute_score(
         if seg.day_idx > prev:
             lot_completion[seg.lot_id] = seg.day_idx
 
-    # OTD and tardiness
+    # Tardiness remains lot-level; OTD is global production vs demand.
     n_lots = len(lots)
     tardy_count = 0
     max_tardiness = 0
@@ -47,7 +47,7 @@ def compute_score(
             total_tardiness += delay
             max_tardiness = max(max_tardiness, delay)
 
-    otd = round((1 - tardy_count / max(n_lots, 1)) * 100, 1)
+    otd = _compute_global_otd(segments, lots, engine_data)
 
     # Earliness: average gap between last production day and EDD per run
     by_run: dict[str, list[Segment]] = defaultdict(list)
@@ -95,6 +95,35 @@ def compute_score(
         "total_segments": len(segments),
         "total_lots": n_lots,
     }
+
+
+def _compute_global_otd(
+    segments: list[Segment],
+    lots: list[Lot],
+    engine_data: EngineData,
+) -> float:
+    """Global OTD: total produced quantity must cover total demand."""
+    total_demand = sum(max(0, demand) for op in engine_data.ops for demand in op.d)
+    if total_demand <= 0:
+        return 100.0
+
+    lot_to_op: dict[str, str] = {lot.id: lot.op_id for lot in lots}
+    produced_by_op: dict[str, int] = defaultdict(int)
+    produced_unknown = 0
+
+    for seg in segments:
+        if seg.twin_outputs:
+            for oid, _sku, qty in seg.twin_outputs:
+                produced_by_op[oid] += max(0, qty)
+        else:
+            op_id = lot_to_op.get(seg.lot_id)
+            if op_id:
+                produced_by_op[op_id] += max(0, seg.qty)
+            else:
+                produced_unknown += max(0, seg.qty)
+
+    total_produced = sum(produced_by_op.values()) + produced_unknown
+    return round(min(100.0, (total_produced / total_demand) * 100), 1)
 
 
 def _compute_otd_d(

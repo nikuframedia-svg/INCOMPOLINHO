@@ -52,7 +52,56 @@ def create_lots(data: EngineData, config: FactoryConfig | None = None) -> list[L
             while lot.edd in holidays and lot.edd > 0:
                 lot.edd -= 1
 
+    _apply_subcontract_leads(lots, data, config, holidays)
+
     return lots
+
+
+def _apply_subcontract_leads(
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig | None,
+    holidays: set[int],
+) -> None:
+    """Pull selected SKU deadlines back by configured working-day lead time."""
+    if not config or not config.subcontract_skus:
+        return
+
+    op_sku = {op.id: op.sku for op in data.ops}
+
+    for lot in lots:
+        lead_days: list[int] = []
+        if lot.twin_outputs:
+            for _op_id, sku, qty in lot.twin_outputs:
+                if qty > 0 and sku in config.subcontract_skus:
+                    lead_days.append(config.subcontract_skus[sku])
+        else:
+            sku = op_sku.get(lot.op_id)
+            if sku in config.subcontract_skus:
+                lead_days.append(config.subcontract_skus[sku])
+
+        if not lead_days:
+            continue
+
+        lot.edd = _subtract_workdays(lot.edd, max(lead_days), holidays)
+
+
+def _subtract_workdays(day_idx: int, lead_days: int, holidays: set[int]) -> int:
+    """Subtract working days from a day index, skipping weekends/holidays."""
+    if lead_days <= 0:
+        return day_idx
+
+    day = day_idx
+    remaining = lead_days
+    while remaining > 0 and day > 0:
+        day -= 1
+        if day in holidays:
+            continue
+        remaining -= 1
+
+    while day in holidays and day > 0:
+        day -= 1
+    return max(0, day)
 
 
 def _create_solo_lots(op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float = MIN_PROD_MIN) -> list[Lot]:
@@ -103,7 +152,7 @@ def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = 
     """Create twin super-op lots.
 
     Factory rules for twin (peças gémeas) production:
-    - Both have demand → SAME qty for both (max eco lot). Smaller demand gets surplus.
+    - Both have demand → each SKU uses its own eco lot independently.
     - Only one has demand → only that one produces, other gets 0.
     - Time = ONE run for max(time_a, time_b).
     """
@@ -137,9 +186,8 @@ def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = 
         eco_b = _apply_eco_lot(need_b, op_b.eco_lot) if need_b > 0 else 0
 
         if eco_a > 0 and eco_b > 0:
-            # BOTH need production → max eco lot for BOTH (same qty)
-            qty = max(eco_a, eco_b)
-            qty_a, qty_b = qty, qty
+            # BOTH need production → per-SKU eco lot, not max forced on both.
+            qty_a, qty_b = eco_a, eco_b
         elif eco_a > 0:
             # Only A needs → solo A production
             qty_a, qty_b = eco_a, 0

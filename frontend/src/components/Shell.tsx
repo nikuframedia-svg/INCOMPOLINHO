@@ -54,6 +54,9 @@ export function Shell() {
   const refreshAll = useDataStore((s) => s.refreshAll);
   const isSimulated = useDataStore((s) => s.isSimulated);
   const simulationSummary = useDataStore((s) => s.simulationSummary);
+  const activeMutations = useDataStore((s) => s.activeMutations);
+  const canRevert = useDataStore((s) => s.canRevert);
+  const revertKind = useDataStore((s) => s.revertKind);
   const revert = useDataStore((s) => s.revert);
   const [recalcing, setRecalcing] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -166,7 +169,7 @@ export function Shell() {
           </div>
         </header>
 
-        {isSimulated && (
+        {canRevert && (
           <div style={{
             padding: "8px 24px",
             background: `${T.orange}15`,
@@ -176,10 +179,22 @@ export function Shell() {
             gap: 12,
             flexShrink: 0,
           }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: T.orange }}>Cenario simulado</span>
-            {simulationSummary.length > 0 && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.orange }}>
+              {revertKind === "config" ? "Alteracao de configuracao" : "Cenario simulado"}
+            </span>
+            {revertKind === "simulation" && simulationSummary.length > 0 && (
               <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
-                {simulationSummary[0]}
+                {simulationSummary.join(" · ")}
+              </span>
+            )}
+            {revertKind === "simulation" && simulationSummary.length === 0 && activeMutations.length > 0 && (
+              <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
+                {activeMutations.map((m) => `${m.type} ${Object.values(m.params).join(" ")}`).join(" · ")}
+              </span>
+            )}
+            {revertKind === "config" && (
+              <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
+                Podes restaurar exactamente a configuracao e o plano anteriores.
               </span>
             )}
             <button

@@ -4,6 +4,7 @@ import {
   getConfig, getOps, updateConfig,
   editMachine, editTool, updateOperators,
   addHoliday, removeHoliday, addTwin, removeTwin, applyPreset,
+  updateSubcontract,
 } from "../api/endpoints";
 import type { FactoryConfig, EOp, Score } from "../api/types";
 import { Card } from "../components/ui/Card";
@@ -36,6 +37,13 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   fontSize: 12, color: T.primary, padding: "6px 12px",
   borderBottom: `1px solid ${T.border}`, fontFamily: T.mono,
+};
+
+const formatPlanError = (violations?: Record<string, number>) => {
+  const details = Object.entries(violations ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+  return `Plano invalido${details ? `: ${details}` : ""}`;
 };
 
 const inputStyle: React.CSSProperties = {
@@ -171,6 +179,10 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     setMsg(null);
     try {
       const res = await updateConfig(edits);
+      if (res.status === "invalid") {
+        setMsg(formatPlanError(res.plan_violations ?? res.hard_gate_violations));
+        return;
+      }
       setEdits({});
       setActivePreset(null);
       const fresh = await getConfig();
@@ -190,6 +202,10 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     setMsg(null);
     try {
       const res = await applyPreset(name);
+      if (res.status === "invalid") {
+        setMsg(formatPlanError(res.plan_violations ?? res.hard_gate_violations));
+        return;
+      }
       setEdits({});
       const fresh = await getConfig();
       onSaved(fresh);
@@ -308,6 +324,7 @@ export function ConfigPage() {
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState<Section>("geral");
   const [opsSearch, setOpsSearch] = useState("");
+  const [subLeadEdits, setSubLeadEdits] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [delta, setDelta] = useState<{ prev: Score; curr: Score } | null>(null);
 
@@ -347,10 +364,14 @@ export function ConfigPage() {
   const showDelta = (prev: Score, curr: Score) => setDelta({ prev, curr });
 
   // Generic save wrapper
-  const withSave = async (fn: () => Promise<{ score?: Score; score_anterior?: Score; [k: string]: unknown }>) => {
+  const withSave = async (fn: () => Promise<{ status?: string; score?: Score; score_anterior?: Score; plan_violations?: Record<string, number>; hard_gate_violations?: Record<string, number>; [k: string]: unknown }>) => {
     setSaving(true);
     try {
       const res = await fn();
+      if (res.status === "invalid") {
+        alert(formatPlanError(res.plan_violations ?? res.hard_gate_violations));
+        return;
+      }
       await reload();
       if (res.score && res.score_anterior) {
         showDelta(res.score_anterior as Score, res.score as Score);
@@ -366,6 +387,7 @@ export function ConfigPage() {
   if (!config) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;
 
   const machineIds = Object.keys(config.machines);
+  const subcontract = config.subcontract_skus ?? {};
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -756,23 +778,75 @@ export function ConfigPage() {
                   <th style={thStyle}>Eco Lot</th>
                   <th style={thStyle}>Stock</th>
                   <th style={thStyle}>OEE</th>
+                  <th style={thStyle}>Subcontrato</th>
+                  <th style={thStyle}>Lead util</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredOps.map((op) => (
-                  <tr key={op.id}>
-                    <td style={tdStyle}>{op.sku}</td>
-                    <td style={{ ...tdStyle, fontFamily: T.sans }}>{op.client}</td>
-                    <td style={tdStyle}>{op.machine}</td>
-                    <td style={tdStyle}>{op.tool}</td>
-                    <td style={tdStyle}>{op.alt_machine ?? "-"}</td>
-                    <td style={tdStyle}>{op.pcs_hour}</td>
-                    <td style={tdStyle}>{op.setup_hours}</td>
-                    <td style={tdStyle}>{op.eco_lot.toLocaleString()}</td>
-                    <td style={tdStyle}>{op.stock.toLocaleString()}</td>
-                    <td style={tdStyle}>{op.oee}</td>
-                  </tr>
-                ))}
+                {filteredOps.map((op) => {
+                  const enabled = op.sku in subcontract;
+                  const lead = subLeadEdits[op.sku] ?? subcontract[op.sku] ?? 5;
+                  return (
+                    <tr key={op.id}>
+                      <td style={tdStyle}>{op.sku}</td>
+                      <td style={{ ...tdStyle, fontFamily: T.sans }}>{op.client}</td>
+                      <td style={tdStyle}>{op.machine}</td>
+                      <td style={tdStyle}>{op.tool}</td>
+                      <td style={tdStyle}>{op.alt_machine ?? "-"}</td>
+                      <td style={tdStyle}>{op.pcs_hour}</td>
+                      <td style={tdStyle}>{op.setup_hours}</td>
+                      <td style={tdStyle}>{op.eco_lot.toLocaleString()}</td>
+                      <td style={tdStyle}>{op.stock.toLocaleString()}</td>
+                      <td style={tdStyle}>{op.oee}</td>
+                      <td style={tdStyle}>
+                        <button
+                          disabled={saving}
+                          onClick={() => withSave(() => updateSubcontract(op.sku, !enabled, lead))}
+                          style={{
+                            background: enabled ? T.green + "22" : T.elevated,
+                            border: `1px solid ${enabled ? T.green : T.border}`,
+                            borderRadius: 6,
+                            padding: "2px 10px",
+                            cursor: saving ? "default" : "pointer",
+                            fontSize: 11,
+                            color: enabled ? T.green : T.secondary,
+                            fontFamily: "inherit",
+                            opacity: saving ? 0.5 : 1,
+                          }}
+                        >
+                          {enabled ? "Sim" : "Nao"}
+                        </button>
+                      </td>
+                      <td style={tdStyle}>
+                        <input
+                          type="number"
+                          min="0"
+                          disabled={!enabled || saving}
+                          value={lead}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            if (!isNaN(val)) setSubLeadEdits({ ...subLeadEdits, [op.sku]: val });
+                          }}
+                          onBlur={() => {
+                            if (enabled && lead !== subcontract[op.sku]) {
+                              withSave(() => updateSubcontract(op.sku, true, lead));
+                              const next = { ...subLeadEdits };
+                              delete next[op.sku];
+                              setSubLeadEdits(next);
+                            }
+                          }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          style={{
+                            ...inputStyle,
+                            width: 70,
+                            borderColor: enabled && lead !== subcontract[op.sku] ? T.blue : T.border,
+                            opacity: enabled ? 1 : 0.45,
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Card>

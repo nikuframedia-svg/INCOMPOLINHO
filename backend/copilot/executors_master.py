@@ -6,6 +6,7 @@ Pattern: validate → update config → SYNC EngineData → save YAML → re-sch
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 
@@ -15,6 +16,17 @@ from backend.copilot.state import state
 from backend.types import MachineInfo, TwinGroup
 
 logger = logging.getLogger(__name__)
+
+PHYSICAL_HARD_GATES = (
+    "tool_conflicts",
+    "machine_overlaps",
+    "day_cap_violations",
+    "ghost_segments",
+    "blocked_machine_segments",
+    "blocked_tool_segments",
+    "setup_sequence_violations",
+    "run_lot_order_violations",
+)
 
 
 def _dumps(obj: object) -> str:
@@ -29,13 +41,105 @@ def _guard() -> str | None:
     return None
 
 
-def _reschedule() -> dict:
-    """Re-schedule and return new score."""
+def _physical_violations(score: dict | None) -> dict[str, int]:
+    if not score:
+        return {"empty_result": 1}
+    return {
+        key: int(score.get(key, 0) or 0)
+        for key in PHYSICAL_HARD_GATES
+        if int(score.get(key, 0) or 0) > 0
+    }
+
+
+def _kpi_violations(score: dict | None) -> dict[str, float | int]:
+    if not score:
+        return {"empty_result": 1}
+
+    violations: dict[str, float | int] = {}
+    otd = float(score.get("otd", 0.0) or 0.0)
+    otd_d = float(score.get("otd_d", 0.0) or 0.0)
+    tardy_count = int(score.get("tardy_count", 0) or 0)
+    otd_d_failures = int(score.get("otd_d_failures", 0) or 0)
+    if otd < 99.999:
+        violations["otd_below_100"] = round(otd, 3)
+    if otd_d < 99.999:
+        violations["otd_d_below_100"] = round(otd_d, 3)
+    if tardy_count > 0:
+        violations["tardy_count"] = tardy_count
+    if otd_d_failures > 0:
+        violations["otd_d_failures"] = otd_d_failures
+    return violations
+
+
+def _plan_violations(score: dict | None) -> dict[str, float | int]:
+    return {**_physical_violations(score), **_kpi_violations(score)}
+
+
+def _schedule_with_active_mutations():
+    """Re-schedule current state, preserving active what-if mutations."""
+    if state.active_mutations:
+        from backend.scheduler.types import ScheduleResult
+        from backend.simulator.simulator import Mutation, simulate
+
+        mutations = [
+            Mutation(type=m["type"], params=m.get("params", {}))
+            for m in state.active_mutations
+        ]
+        sim = simulate(state.engine_data, state.score, mutations, config=state.config, mode="normal")
+        return ScheduleResult(
+            segments=sim.segments,
+            lots=sim.lots,
+            score=sim.score,
+            time_ms=sim.time_ms,
+            warnings=[],
+            operator_alerts=[],
+            audit_trail=None,
+            journal=None,
+        ), list(sim.summary)
+
     from backend.cpo import optimize
 
-    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
+    return optimize(state.engine_data, mode="normal", audit=True, config=state.config), []
+
+
+def _reschedule() -> dict:
+    """Re-schedule, validate, commit, and return an API-friendly outcome."""
+    result, summary = _schedule_with_active_mutations()
+    physical = _physical_violations(result.score)
+    plan = _plan_violations(result.score)
+    if plan:
+        candidate_score = copy.deepcopy(result.score)
+        try:
+            state.restore_saved("config")
+            save_config(state.config)
+        except Exception as exc:
+            logger.exception("Failed to rollback invalid master-data mutation: %s", exc)
+        return {
+            "status": "invalid",
+            "score": state.score,
+            "score_candidate": candidate_score,
+            "summary": summary,
+            "hard_gate_violations": physical,
+            "plan_violations": plan,
+        }
+
     state.update_schedule(result)
-    return result.score
+    if state.active_mutations:
+        state.active_simulation_summary = summary
+    return {"status": "ok", "score": result.score}
+
+
+def _reschedule_or_invalid(old_score: dict) -> tuple[dict | None, str | None]:
+    outcome = _reschedule()
+    if outcome.get("status") == "invalid":
+        outcome["score_anterior"] = old_score
+        return None, _dumps(outcome)
+    return outcome["score"], None
+
+
+def _save_config_snapshot() -> None:
+    """Save exact state before a master-data/config mutation."""
+    state.save_current(kind="config")
 
 
 def _sync_day_capacity() -> None:
@@ -59,6 +163,7 @@ def exec_adicionar_maquina(args: dict) -> str:
         return _dumps({"error": f"Máquina {mid} já existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     state.config.machines[mid] = MachineConfig(id=mid, group=grupo, active=activa)
 
     # 2. Sync EngineData
@@ -70,7 +175,9 @@ def exec_adicionar_maquina(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "maquina": mid, "score": new_score, "score_anterior": old_score})
 
@@ -88,6 +195,7 @@ def exec_editar_maquina(args: dict) -> str:
     mc = state.config.machines[mid]
 
     # 1. Update config
+    _save_config_snapshot()
     if "activa" in args:
         mc.active = args["activa"]
     if "grupo" in args:
@@ -110,7 +218,9 @@ def exec_editar_maquina(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "maquina": mid, "score": new_score, "score_anterior": old_score})
 
@@ -134,6 +244,7 @@ def exec_adicionar_ferramenta(args: dict) -> str:
         return _dumps({"error": f"Máquina alternativa {alt} não existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     tool_data = {"primary": primary, "setup_hours": setup_h}
     if alt:
         tool_data["alt"] = alt
@@ -144,7 +255,9 @@ def exec_adicionar_ferramenta(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "ferramenta": tid, "score": new_score, "score_anterior": old_score})
 
@@ -162,6 +275,7 @@ def exec_editar_ferramenta(args: dict) -> str:
     tool_data = state.config.tools[tid]
 
     # 1. Update config
+    _save_config_snapshot()
     if "setup_hours" in args:
         tool_data["setup_hours"] = args["setup_hours"]
     if "alt" in args:
@@ -181,7 +295,9 @@ def exec_editar_ferramenta(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "ferramenta": tid, "score": new_score, "score_anterior": old_score})
 
@@ -204,6 +320,7 @@ def exec_adicionar_twin(args: dict) -> str:
     op_b = next((o for o in state.engine_data.ops if o.sku == sku_b), None)
 
     # 1. Update config
+    _save_config_snapshot()
     state.config.twins[tid] = [sku_a, sku_b]
 
     # 2. Sync EngineData — add TwinGroup if both ops exist
@@ -215,7 +332,9 @@ def exec_adicionar_twin(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "twin": tid, "skus": [sku_a, sku_b], "score": new_score, "score_anterior": old_score})
 
@@ -231,6 +350,7 @@ def exec_remover_twin(args: dict) -> str:
         return _dumps({"error": f"Twin para ferramenta {tid} não existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     del state.config.twins[tid]
 
     # 2. Sync EngineData
@@ -241,7 +361,9 @@ def exec_remover_twin(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "twin_removido": tid, "score": new_score, "score_anterior": old_score})
 
@@ -257,6 +379,7 @@ def exec_adicionar_feriado(args: dict) -> str:
         return _dumps({"error": f"Feriado {data} já existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     state.config.holidays.append(data)
 
     # 2. Sync EngineData — convert date to workday index
@@ -270,7 +393,9 @@ def exec_adicionar_feriado(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "feriado": data, "score": new_score, "score_anterior": old_score})
 
@@ -286,6 +411,7 @@ def exec_remover_feriado(args: dict) -> str:
         return _dumps({"error": f"Feriado {data} não existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     state.config.holidays.remove(data)
 
     # 2. Sync EngineData
@@ -298,7 +424,9 @@ def exec_remover_feriado(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({"status": "ok", "feriado_removido": data, "score": new_score, "score_anterior": old_score})
 
@@ -315,6 +443,7 @@ def exec_editar_turno(args: dict) -> str:
         return _dumps({"error": f"Turno {tid} não existe."})
 
     # 1. Update config
+    _save_config_snapshot()
     if "inicio" in args:
         shift.start_min = _parse_time(args["inicio"])
     if "fim" in args:
@@ -326,7 +455,9 @@ def exec_editar_turno(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({
         "status": "ok", "turno": tid,
@@ -350,6 +481,7 @@ def exec_adicionar_turno(args: dict) -> str:
     label = args.get("label", "")
 
     # 1. Update config
+    _save_config_snapshot()
     state.config.shifts.append(ShiftConfig(id=tid, start_min=inicio, end_min=fim, label=label))
 
     # 2. Sync EngineData
@@ -358,7 +490,9 @@ def exec_adicionar_turno(args: dict) -> str:
     # 3. Save + re-schedule
     old_score = dict(state.score)
     save_config(state.config)
-    new_score = _reschedule()
+    new_score, invalid = _reschedule_or_invalid(old_score)
+    if invalid:
+        return invalid
 
     return _dumps({
         "status": "ok", "turno": tid,

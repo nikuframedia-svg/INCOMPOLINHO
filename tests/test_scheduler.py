@@ -21,7 +21,12 @@ from backend.scheduler.dispatch import (
 )
 from backend.scheduler.jit import compute_lst, compute_paced_lst, jit_dispatch
 from backend.scheduler.lot_sizing import _apply_eco_lot, create_lots
-from backend.scheduler.scheduler import schedule_all
+from backend.config.types import FactoryConfig
+from backend.scheduler.scheduler import (
+    _hard_gate_metrics,
+    finalize_schedule_segments,
+    schedule_all,
+)
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
 from backend.scheduler.types import Lot, Segment, ToolRun
@@ -211,6 +216,19 @@ class TestLotSizing:
         lots = create_lots(data)
         assert len(lots) == 1
         assert lots[0].prod_min >= MIN_PROD_MIN
+
+    def test_subcontract_sku_anticipates_by_workdays(self):
+        """Subcontract lead time skips weekend/holiday indices."""
+        op = _make_eop(sku="SUB1", d=[0, 0, 0, 0, 0, 0, 0, 500])
+        data = _make_engine_data(ops=[op], n_days=8, holidays=[5, 6])
+        data.workdays = [
+            "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05",
+            "2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09",
+        ]
+        cfg = FactoryConfig(subcontract_skus={"SUB1": 5})
+        lots = create_lots(data, config=cfg)
+        assert len(lots) == 1
+        assert lots[0].edd == 0
 
     def test_twin_lot_creation(self):
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000])
@@ -473,17 +491,30 @@ class TestScoring:
         assert score["tardy_count"] == 0
 
     def test_tardy_detection(self):
-        """Lot completed after EDD → tardy."""
-        lots = [_make_lot("L1", edd=2)]
+        """Lot completed after EDD is tardy, while global OTD is quantity-based."""
+        op = _make_eop(d=[0, 0, 500, 0, 0, 0])
+        lots = [_make_lot("L1", op_id=op.id, edd=2)]
         segments = [
             Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
                     day_idx=5, start_min=420, end_min=520, shift="A", qty=500, prod_min=100),
         ]
-        data = _make_engine_data(n_days=6)
+        data = _make_engine_data(ops=[op], n_days=6)
         score = compute_score(segments, lots, data)
         assert score["tardy_count"] == 1
         assert score["max_tardiness"] == 3
-        assert score["otd"] < 100.0
+        assert score["otd"] == 100.0
+
+    def test_global_otd_drops_only_when_quantity_short(self):
+        op = _make_eop(d=[0, 0, 800, 0, 0, 0])
+        lots = [_make_lot("L1", op_id=op.id, qty=500, edd=2)]
+        segments = [
+            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
+                    day_idx=1, start_min=420, end_min=520, shift="A", qty=500, prod_min=100),
+        ]
+        data = _make_engine_data(ops=[op], n_days=6)
+        score = compute_score(segments, lots, data)
+        assert score["tardy_count"] == 0
+        assert score["otd"] == 62.5
 
     def test_earliness_metric(self):
         """Earliness = average gap between last production day and EDD."""
@@ -530,6 +561,43 @@ class TestScheduleAll:
         assert len(result.lots) == 0
         assert len(result.segments) == 0
 
+    def test_finalizer_closes_same_sku_tool_shift_gap_without_changing_output(self):
+        op = _make_eop(d=[0, 200, 0], pH=120.0)
+        data = _make_engine_data(ops=[op], n_days=3)
+        lots = [
+            _make_lot("L1", op_id=op.id, qty=100, edd=2, setup_min=0),
+            _make_lot("L2", op_id=op.id, qty=100, edd=2, setup_min=0),
+        ]
+        segments = [
+            Segment(lot_id="L1", run_id="R1", machine_id="PRM031", tool_id="T1",
+                    day_idx=0, start_min=420, end_min=480, shift="A",
+                    qty=100, prod_min=60, setup_min=0, edd=2, sku="SKU_A"),
+            Segment(lot_id="L2", run_id="R2", machine_id="PRM031", tool_id="T1",
+                    day_idx=0, start_min=520, end_min=580, shift="A",
+                    qty=100, prod_min=60, setup_min=0, edd=2, sku="SKU_A"),
+        ]
+
+        final, warnings = finalize_schedule_segments(
+            segments, lots, data, config=FactoryConfig(), warnings=[],
+        )
+
+        moved = next(s for s in final if s.lot_id == "L2")
+        assert moved.start_min == 480
+        assert moved.end_min == 540
+        assert moved.qty == 100
+        assert moved.prod_min == 60
+        assert warnings == []
+        assert _hard_gate_metrics(final, FactoryConfig()) == {
+            "tool_conflicts": 0,
+            "machine_overlaps": 0,
+            "day_cap_violations": 0,
+            "ghost_segments": 0,
+            "blocked_machine_segments": 0,
+            "blocked_tool_segments": 0,
+            "setup_sequence_violations": 0,
+            "run_lot_order_violations": 0,
+        }
+
     def test_multi_machine(self):
         op1 = _make_eop(sku="A", machine="PRM031", tool="T1", d=[0, 500])
         op2 = _make_eop(sku="B", machine="PRM039", tool="T2", d=[0, 300])
@@ -565,7 +633,7 @@ class TestScheduleAll:
         assert result.score is not None
 
     def test_twin_joint_equal_qty(self):
-        """When both twins have demand, both produce max(eco_a, eco_b)."""
+        """When both twins have demand, each SKU uses its own required qty."""
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000], eco_lot=0)
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 800], eco_lot=0)
         twin = TwinGroup(
@@ -582,13 +650,12 @@ class TestScheduleAll:
         assert len(lots) == 1
         to = lots[0].twin_outputs
         assert to is not None
-        # Both produce max(1000, 800) = 1000
         assert to[0][2] == 1000  # A = 1000
-        assert to[1][2] == 1000  # B = 1000 (equal qty)
+        assert to[1][2] == 800  # B = its own demand
         assert lots[0].qty == 1000
 
     def test_twin_joint_with_eco_lot(self):
-        """Max eco lot determines qty for both twins."""
+        """Eco lot is applied independently per SKU."""
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 4500], eco_lot=5000)
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 2800], eco_lot=3000)
         twin = TwinGroup(
@@ -606,9 +673,8 @@ class TestScheduleAll:
         to = lots[0].twin_outputs
         assert to is not None
         # eco_a = ceil(4500/5000)*5000 = 5000, eco_b = ceil(2800/3000)*3000 = 3000
-        # qty = max(5000, 3000) = 5000
         assert to[0][2] == 5000  # A
-        assert to[1][2] == 5000  # B (not 3000)
+        assert to[1][2] == 3000  # B
         assert lots[0].qty == 5000
 
     def test_twin_solo_only_a(self):
@@ -1086,31 +1152,9 @@ class TestToolContention:
         )
 
 
-def _total_gap_min(segments) -> float:
-    """Sum of idle minutes between consecutive production blocks per machine."""
-    from backend.config.types import FactoryConfig
-
-    cfg = FactoryConfig()
-    by_machine: dict[str, list] = {}
-    for s in segments:
-        if s.end_min <= s.start_min:
-            continue  # skip zero-duration placeholders
-        by_machine.setdefault(s.machine_id, []).append(s)
-
-    total = 0.0
-    for segs in by_machine.values():
-        ordered = sorted(segs, key=lambda s: (s.day_idx, s.start_min))
-        for prev, curr in zip(ordered, ordered[1:]):
-            prev_abs = prev.day_idx * cfg.day_capacity_min + (prev.end_min - cfg.shift_a_start)
-            curr_abs = curr.day_idx * cfg.day_capacity_min + (curr.start_min - cfg.shift_a_start)
-            gap = curr_abs - prev_abs
-            if gap > 0:
-                total += gap
-    return total
-
-
-class TestCompaction:
-    """Opt-in compaction post-processing step (config.compact_enabled)."""
+class TestFinalizationGapRepair:
+    """Conservative gap repair in finalize_schedule_segments preserves OTD and
+    never violates EDD on a multi-run scenario with JIT-induced gaps."""
 
     def _scenario(self):
         """A multi-run scenario with JIT-induced gaps across machines."""
@@ -1133,44 +1177,10 @@ class TestCompaction:
         data = _make_engine_data(ops=ops, n_days=10)
         return data, FactoryConfig
 
-    def test_default_off_is_identical(self):
-        """With compact_enabled=False (default), result is unchanged."""
+    def test_finalization_preserves_otd_and_no_violations(self):
+        """Finalization keeps OTD/OTD-D at 100%, 0 tardy, 0 tool overlap."""
         data, FactoryConfig = self._scenario()
-        import copy
-
-        base = schedule_all(copy.deepcopy(data), config=FactoryConfig())
-        explicit_off = schedule_all(
-            copy.deepcopy(data), config=FactoryConfig(compact_enabled=False),
-        )
-        base_key = sorted(
-            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in base.segments
-        )
-        off_key = sorted(
-            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in explicit_off.segments
-        )
-        assert base_key == off_key, "Explicit compact_enabled=False diverged from default"
-
-    def test_compaction_reduces_gaps(self):
-        """compact_enabled=True reduces total idle time vs. compact_enabled=False."""
-        data, FactoryConfig = self._scenario()
-        import copy
-
-        off = schedule_all(copy.deepcopy(data), config=FactoryConfig(compact_enabled=False))
-        on = schedule_all(copy.deepcopy(data), config=FactoryConfig(compact_enabled=True))
-
-        gap_off = _total_gap_min(off.segments)
-        gap_on = _total_gap_min(on.segments)
-        assert gap_on <= gap_off, (
-            f"Compaction did not reduce gaps: on={gap_on} off={gap_off}"
-        )
-        assert gap_on < gap_off, (
-            f"Compaction left gaps unchanged: on={gap_on} off={gap_off}"
-        )
-
-    def test_compaction_preserves_otd_and_no_violations(self):
-        """compact_enabled=True keeps OTD/OTD-D at 100%, 0 tardy, 0 tool overlap."""
-        data, FactoryConfig = self._scenario()
-        result = schedule_all(data, config=FactoryConfig(compact_enabled=True))
+        result = schedule_all(data, config=FactoryConfig())
 
         assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
         assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
@@ -1178,12 +1188,12 @@ class TestCompaction:
             f"Tardy appeared: {result.score['tardy_count']}"
         )
         conflicts = _tool_machine_overlaps(result.segments)
-        assert conflicts == [], f"Tool overlaps after compaction: {conflicts[:5]}"
+        assert conflicts == [], f"Tool overlaps after finalization: {conflicts[:5]}"
 
-    def test_compaction_no_edd_violation(self):
-        """No segment is scheduled after its EDD with compaction on."""
+    def test_finalization_no_edd_violation(self):
+        """No segment is scheduled after its EDD."""
         data, FactoryConfig = self._scenario()
-        result = schedule_all(data, config=FactoryConfig(compact_enabled=True))
+        result = schedule_all(data, config=FactoryConfig())
         for s in result.segments:
             if s.end_min <= s.start_min:
                 continue

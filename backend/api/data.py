@@ -43,17 +43,15 @@ def _require_config():
         raise HTTPException(503, "Configuração não carregada.")
 
 
-def _recompute(config) -> None:
-    """Recalculate the schedule with the given config and update state.
+def _compute_schedule_for_config(config):
+    """Build a schedule for a config without mutating global state.
 
-    Uses GA-backed `mode="normal"` (NOT "quick" — quick is greedy-only and
-    drops OTD). If there are active what-if mutations (machine down, rush
-    order, ...) they are re-applied on top so a config change (e.g. a preset)
-    does not silently discard the simulation.
+    Always uses GA-backed `mode="normal"` (NOT "quick" — quick is greedy-only
+    and drops OTD), in BOTH branches. If there are active what-if mutations
+    (machine down, rush order, ...) they are re-applied on top — via
+    `simulate(..., mode="normal")` — so a config change (e.g. a preset) does
+    not silently discard the simulation nor downgrade its quality.
     """
-    if state.engine_data is None:
-        return
-
     if state.active_mutations:
         from backend.scheduler.types import ScheduleResult
         from backend.simulator.simulator import Mutation, simulate
@@ -62,8 +60,8 @@ def _recompute(config) -> None:
             Mutation(type=m["type"], params=m.get("params", {}))
             for m in state.active_mutations
         ]
-        sim = simulate(state.engine_data, state.score, mutations, config=config)
-        result = ScheduleResult(
+        sim = simulate(state.engine_data, state.score, mutations, config=config, mode="normal")
+        return ScheduleResult(
             segments=sim.segments,
             lots=sim.lots,
             score=sim.score,
@@ -72,13 +70,97 @@ def _recompute(config) -> None:
             operator_alerts=[],
             audit_trail=None,
             journal=None,
-        )
-    else:
-        from backend.cpo import optimize
+        ), list(sim.summary)
 
-        result = optimize(state.engine_data, mode="normal", audit=True, config=config)
+    from backend.cpo import optimize
 
+    return optimize(state.engine_data, mode="normal", audit=True, config=config), []
+
+
+def _commit_recompute(result, simulation_summary: list[str] | None = None) -> None:
+    """Commit a prevalidated schedule to global state."""
     state.update_schedule(result)
+    if state.active_mutations:
+        state.active_simulation_summary = list(simulation_summary or [])
+    elif not state.active_mutations:
+        state.active_simulation_summary = []
+
+
+def _validate_candidate_result(result, simulation_summary: list[str] | None = None) -> dict:
+    physical_violations = _physical_violations(result.score)
+    plan_violations = _plan_violations(result.score)
+    return {
+        "status": "invalid" if plan_violations else "ok",
+        "score": result.score,
+        "summary": list(simulation_summary or []),
+        "hard_gate_violations": physical_violations,
+        "plan_violations": plan_violations,
+    }
+
+
+def _recompute(config) -> dict:
+    """Recalculate and commit only if the candidate plan is valid."""
+    if state.engine_data is None:
+        return {"status": "skipped", "score": state.score}
+
+    result, simulation_summary = _compute_schedule_for_config(config)
+    validation = _validate_candidate_result(result, simulation_summary)
+    if validation["status"] == "invalid":
+        return validation
+
+    _commit_recompute(result, simulation_summary)
+    return validation | {"score": state.score}
+
+
+PHYSICAL_HARD_GATES = (
+    "tool_conflicts",
+    "machine_overlaps",
+    "day_cap_violations",
+    "ghost_segments",
+    "blocked_machine_segments",
+    "blocked_tool_segments",
+    "setup_sequence_violations",
+    "run_lot_order_violations",
+)
+
+
+def _physical_violations(score: dict | None) -> dict[str, int]:
+    """Return non-zero hard gate counters from a schedule score."""
+    if not score:
+        return {"empty_result": 1}
+    return {
+        key: int(score.get(key, 0) or 0)
+        for key in PHYSICAL_HARD_GATES
+        if int(score.get(key, 0) or 0) > 0
+    }
+
+
+def _kpi_violations(score: dict | None) -> dict[str, float | int]:
+    """Return delivery KPI violations that must not be applied to the Gantt."""
+    if not score:
+        return {"empty_result": 1}
+
+    violations: dict[str, float | int] = {}
+    otd = float(score.get("otd", 0.0) or 0.0)
+    otd_d = float(score.get("otd_d", 0.0) or 0.0)
+    tardy_count = int(score.get("tardy_count", 0) or 0)
+    otd_d_failures = int(score.get("otd_d_failures", 0) or 0)
+
+    if otd < 99.999:
+        violations["otd_below_100"] = round(otd, 3)
+    if otd_d < 99.999:
+        violations["otd_d_below_100"] = round(otd_d, 3)
+    if tardy_count > 0:
+        violations["tardy_count"] = tardy_count
+    if otd_d_failures > 0:
+        violations["otd_d_failures"] = otd_d_failures
+
+    return violations
+
+
+def _plan_violations(score: dict | None) -> dict[str, float | int]:
+    """Return all violations that make a user-visible plan invalid."""
+    return {**_physical_violations(score), **_kpi_violations(score)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -349,6 +431,7 @@ async def get_config():
         "weight_setups": c.weight_setups,
         "weight_balance": c.weight_balance,
         "eco_lot_mode": c.eco_lot_mode,
+        "subcontract_skus": dict(c.subcontract_skus),
     }
 
 
@@ -394,24 +477,154 @@ async def update_config(updates: dict):
         "weight_setups", "weight_balance", "eco_lot_mode",
     ]
     c = state.config
+    candidate = copy.deepcopy(c)
     changed = []
     for key in tunables:
         if key in updates:
-            old_val = getattr(c, key)
+            old_val = getattr(candidate, key)
             new_val = type(old_val)(updates[key])
-            setattr(c, key, new_val)
-            changed.append(key)
+            if new_val != old_val:
+                changed.append(key)
 
     if not changed:
         return {"status": "ok", "changed": [], "score": state.score}
 
-    from backend.config.loader import save_config
-    save_config(c)
+    for key in changed:
+        old_val = getattr(candidate, key)
+        setattr(candidate, key, type(old_val)(updates[key]))
 
-    # Recalculate if data is loaded (normal mode — keeps OTD)
-    _recompute(c)
+    candidate_result = None
+    candidate_summary: list[str] = []
+    if state.engine_data is not None:
+        candidate_result, candidate_summary = _compute_schedule_for_config(candidate)
+        validation = _validate_candidate_result(candidate_result, candidate_summary)
+        if validation["status"] == "invalid":
+            return {
+                "status": "invalid",
+                "changed": changed,
+                "score": state.score,
+                "score_candidate": candidate_result.score,
+                "summary": validation["summary"],
+                "hard_gate_violations": validation["hard_gate_violations"],
+                "plan_violations": validation["plan_violations"],
+            }
+
+    state.save_current(kind="config")
+    state.config = candidate
+
+    from backend.config.loader import save_config
+    save_config(candidate)
+
+    if candidate_result is not None:
+        _commit_recompute(candidate_result, candidate_summary)
 
     return {"status": "ok", "changed": changed, "score": state.score}
+
+
+class SubcontractRequest(BaseModel):
+    sku: str
+    enabled: bool
+    lead_days: int | None = None
+
+
+def _resolve_subcontract_sku(identifier: str) -> tuple[str, str | None]:
+    """Resolve user-facing subcontract identifiers to the real SKU key.
+
+    Operators often refer to rows by the ISOP/op prefix (e.g. HAN002), while
+    the scheduler stores subcontract lead times by SKU. Accept both exact SKU
+    and unique op_id/prefix matches, then persist the canonical SKU.
+    """
+    _require_data()
+    token = identifier.strip()
+    if not token:
+        raise HTTPException(400, "Campo 'sku' obrigatório.")
+
+    for op in state.engine_data.ops:
+        if op.sku == token:
+            return op.sku, None
+
+    matches = {
+        op.sku for op in state.engine_data.ops
+        if op.id == token or op.id.startswith(f"{token}_")
+    }
+    if len(matches) == 1:
+        return next(iter(matches)), token
+    if len(matches) > 1:
+        raise HTTPException(
+            400,
+            f"Identificador {token} é ambíguo; usa o SKU exacto.",
+        )
+    raise HTTPException(404, f"SKU {token} não encontrado.")
+
+
+@router.put("/subcontract")
+async def update_subcontract(request: SubcontractRequest):
+    """Enable/disable subcontract lead time for a SKU and recalculate."""
+    _require_config()
+    _require_data()
+
+    sku, alias = _resolve_subcontract_sku(request.sku)
+
+    lead_days = 5 if request.lead_days is None else int(request.lead_days)
+    if lead_days < 0:
+        raise HTTPException(400, "lead_days deve ser >= 0.")
+
+    current = dict(state.config.subcontract_skus)
+    if request.enabled:
+        current[sku] = lead_days
+    else:
+        current.pop(sku, None)
+
+    if current == state.config.subcontract_skus:
+        return {
+            "status": "ok",
+            "sku": sku,
+            "alias": alias,
+            "enabled": request.enabled,
+            "lead_days": current.get(sku),
+            "score": state.score,
+            "score_anterior": state.score,
+        }
+
+    old_score = dict(state.score) if state.score else {}
+    candidate = copy.deepcopy(state.config)
+    candidate.subcontract_skus = current
+
+    candidate_result, candidate_summary = _compute_schedule_for_config(candidate)
+    validation = _validate_candidate_result(candidate_result, candidate_summary)
+    if validation["status"] == "invalid":
+        return {
+            "status": "invalid",
+            "sku": sku,
+            "alias": alias,
+            "enabled": request.enabled,
+            "lead_days": current.get(sku),
+            "score": state.score,
+            "score_candidate": candidate_result.score,
+            "score_anterior": old_score,
+            "summary": validation["summary"],
+            "hard_gate_violations": validation["hard_gate_violations"],
+            "plan_violations": validation["plan_violations"],
+            "can_revert": bool(state.config_snapshot or state.simulation_snapshot),
+        }
+
+    state.save_current(kind="config")
+    state.config = candidate
+
+    from backend.config.loader import save_config
+    save_config(state.config)
+    _commit_recompute(candidate_result, candidate_summary)
+
+    return {
+        "status": "ok",
+        "sku": sku,
+        "alias": alias,
+        "enabled": request.enabled,
+        "lead_days": current.get(sku),
+        "score": state.score,
+        "score_anterior": old_score,
+        "can_revert": True,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -434,14 +647,19 @@ async def simulate_scenario(request: SimulateRequest):
     from backend.simulator.simulator import Mutation, simulate
 
     mutations = [Mutation(type=m.type, params=m.params) for m in request.mutations]
-    result = simulate(state.engine_data, state.score, mutations, config=state.config)
+    result = simulate(state.engine_data, state.score, mutations, config=state.config, mode="normal")
+    physical_violations = _physical_violations(result.score)
+    plan_violations = _plan_violations(result.score)
 
     return {
+        "status": "invalid" if plan_violations else "ok",
         "score_baseline": state.score,
         "score_scenario": result.score,
         "delta": asdict(result.delta),
         "time_ms": result.time_ms,
         "summary": result.summary,
+        "hard_gate_violations": physical_violations,
+        "plan_violations": plan_violations,
     }
 
 
@@ -454,10 +672,23 @@ async def simulate_and_apply(request: SimulateRequest):
     old_score = dict(state.score) if state.score else {}
     old_n = len(state.segments)
 
-    state.save_current()
-
     mutations = [Mutation(type=m.type, params=m.params) for m in request.mutations]
-    result = simulate(state.engine_data, old_score, mutations, config=state.config)
+    result = simulate(state.engine_data, old_score, mutations, config=state.config, mode="normal")
+    physical_violations = _physical_violations(result.score)
+    plan_violations = _plan_violations(result.score)
+    if plan_violations:
+        return {
+            "status": "invalid",
+            "score": result.score,
+            "score_previous": old_score,
+            "summary": result.summary,
+            "hard_gate_violations": physical_violations,
+            "plan_violations": plan_violations,
+            "n_segments_before": old_n,
+            "n_segments_after": len(result.segments),
+            "time_ms": result.time_ms,
+            "can_revert": bool(state.simulation_snapshot or state.config_snapshot),
+        }
 
     from backend.scheduler.types import ScheduleResult
     schedule_result = ScheduleResult(
@@ -470,18 +701,22 @@ async def simulate_and_apply(request: SimulateRequest):
         audit_trail=None,
         journal=None,
     )
+    state.save_current(kind="simulation")
     state.update_schedule(schedule_result)
 
     # Persist mutations so a later recompute (e.g. preset) keeps them applied
     state.active_mutations = [
         {"type": m.type, "params": m.params} for m in request.mutations
     ]
+    state.active_simulation_summary = list(result.summary)
 
     return {
         "status": "applied",
         "score": result.score,
         "score_previous": old_score,
         "summary": result.summary,
+        "hard_gate_violations": {},
+        "plan_violations": {},
         "n_segments_before": old_n,
         "n_segments_after": len(result.segments),
         "time_ms": result.time_ms,
@@ -489,22 +724,85 @@ async def simulate_and_apply(request: SimulateRequest):
     }
 
 
-@router.post("/revert")
+@router.post("/revert-simulation")
 async def revert_simulation():
-    """Revert to schedule saved before simulate-apply."""
+    """Revert the active simulation snapshot without changing config."""
     _require_data()
-    if not state.saved_schedule:
+    if not state.simulation_snapshot and not state.saved_schedule:
         raise HTTPException(400, "Nada para reverter.")
-    state.update_schedule(state.saved_schedule)
-    state.saved_schedule = None
+    try:
+        kind = state.restore_saved("simulation")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if state.config is not None:
+        recompute = _recompute(state.config)
+        if recompute.get("status") == "invalid":
+            return {"status": "invalid", "kind": kind, **recompute}
+    return {"status": "reverted", "kind": kind, "score": state.score}
+
+
+@router.post("/revert-config")
+async def revert_config():
+    """Revert the last config/master-data change without clearing simulations."""
+    _require_data()
+    if not state.config_snapshot:
+        raise HTTPException(400, "Nada para reverter.")
+    try:
+        kind = state.restore_saved("config")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if state.config is not None:
+        from backend.config.loader import save_config
+        save_config(state.config)
+    return {"status": "reverted", "kind": kind, "score": state.score}
+
+
+@router.post("/clear-simulation")
+async def clear_simulation():
+    """Clear active what-if mutations and recompute current config."""
+    _require_data()
+    old_active_mutations = copy.deepcopy(state.active_mutations)
+    old_summary = copy.deepcopy(state.active_simulation_summary)
+    old_snapshot = state.simulation_snapshot
     state.active_mutations = []
-    return {"status": "reverted", "score": state.score}
+    state.active_simulation_summary = []
+    state.simulation_snapshot = None
+    if state.config is not None:
+        recompute = _recompute(state.config)
+        if recompute.get("status") == "invalid":
+            state.active_mutations = old_active_mutations
+            state.active_simulation_summary = old_summary
+            state.simulation_snapshot = old_snapshot
+            return {"status": "invalid", "kind": "simulation", **recompute}
+    return {"status": "cleared", "kind": "simulation", "score": state.score}
+
+
+@router.post("/revert")
+async def revert_legacy():
+    """Backward-compatible alias; prefer explicit revert endpoints."""
+    _require_data()
+    kind = state.saved_snapshot.kind if state.saved_snapshot else None
+    if kind == "config":
+        return await revert_config()
+    return await revert_simulation()
 
 
 @router.get("/can-revert")
 async def can_revert():
     """Check if there is a saved schedule to revert to."""
-    return {"can_revert": state.saved_schedule is not None}
+    kind = state.saved_snapshot.kind if state.saved_snapshot else None
+    if kind is None and state.simulation_snapshot is not None:
+        kind = "simulation"
+    if kind is None and state.config_snapshot is not None:
+        kind = "config"
+    if kind is None and state.saved_schedule is not None:
+        kind = "simulation"
+    return {
+        "can_revert": bool(state.simulation_snapshot or state.config_snapshot or state.saved_snapshot or state.saved_schedule),
+        "kind": kind,
+        "can_revert_simulation": state.simulation_snapshot is not None,
+        "can_revert_config": state.config_snapshot is not None,
+    }
 
 
 @router.get("/active-mutations")
@@ -517,6 +815,7 @@ async def get_active_mutations():
     return {
         "active": bool(state.active_mutations),
         "mutations": state.active_mutations,
+        "summary": state.active_simulation_summary,
     }
 
 
@@ -562,15 +861,28 @@ async def apply_ctp(request: CTPRequest):
     old_score = dict(state.score) if state.score else {}
     old_n = len(state.segments)
 
-    state.save_current()
-
     rush_params = {
         "sku": request.sku,
         "qty": str(request.qty),
         "deadline_day": str(request.deadline),
     }
     mutations = [Mutation(type="rush_order", params=rush_params)]
-    result = simulate(state.engine_data, old_score, mutations, config=state.config)
+    result = simulate(state.engine_data, old_score, mutations, config=state.config, mode="normal")
+    physical_violations = _physical_violations(result.score)
+    plan_violations = _plan_violations(result.score)
+    if plan_violations:
+        return {
+            "status": "invalid",
+            "score": result.score,
+            "score_previous": old_score,
+            "summary": result.summary,
+            "hard_gate_violations": physical_violations,
+            "plan_violations": plan_violations,
+            "n_segments_before": old_n,
+            "n_segments_after": len(result.segments),
+            "time_ms": result.time_ms,
+            "can_revert": bool(state.simulation_snapshot or state.config_snapshot),
+        }
 
     schedule_result = ScheduleResult(
         segments=result.segments,
@@ -582,16 +894,20 @@ async def apply_ctp(request: CTPRequest):
         audit_trail=None,
         journal=None,
     )
+    state.save_current(kind="simulation")
     state.update_schedule(schedule_result)
 
     # Persist mutation so a later recompute (e.g. preset) keeps it applied
     state.active_mutations = [{"type": "rush_order", "params": rush_params}]
+    state.active_simulation_summary = list(result.summary)
 
     return {
         "status": "applied",
         "score": result.score,
         "score_previous": old_score,
         "summary": result.summary,
+        "hard_gate_violations": {},
+        "plan_violations": {},
         "n_segments_before": old_n,
         "n_segments_after": len(result.segments),
         "time_ms": result.time_ms,
@@ -604,7 +920,19 @@ async def recalculate():
     _require_data()
 
     old_score = dict(state.score) if state.score else {}
-    _recompute(state.config)
+    recompute = _recompute(state.config)
+    if recompute.get("status") == "invalid":
+        return {
+            "status": "invalid",
+            "score": state.score,
+            "score_candidate": recompute.get("score"),
+            "score_previous": old_score,
+            "summary": recompute.get("summary", []),
+            "hard_gate_violations": recompute.get("hard_gate_violations", {}),
+            "plan_violations": recompute.get("plan_violations", {}),
+            "n_segments": len(state.segments),
+            "warnings": state.warnings[:10],
+        }
 
     return {
         "status": "ok",
@@ -645,6 +973,8 @@ async def load_isop_upload(
         config = load_config(config_path)
         state.default_config = copy.deepcopy(config)
         state.active_mutations = []
+        state.active_simulation_summary = []
+        state.clear_revert()
         with open(master_path) as f:
             master = yaml.safe_load(f)
 
@@ -734,31 +1064,52 @@ async def update_operators(body: dict):
     _require_data()
 
     from backend.config.loader import save_config
-    from backend.cpo import optimize
 
     old_score = dict(state.score) if state.score else {}
     changed = []
+    pending: list[tuple[tuple[str, str], int, str]] = []
     for key, count in body.items():
         if key in state.config.operators:
-            state.config.operators[key] = int(count)
-            changed.append(key)
+            pending.append((key, int(count), key))
         else:
             # Try tuple key format: "Grandes A" → ("Grandes", "A")
             parts = key.split()
             if len(parts) == 2:
                 tkey = (parts[0], parts[1])
                 if tkey in state.config.operators:
-                    state.config.operators[tkey] = int(count)
-                    changed.append(key)
+                    pending.append((tkey, int(count), key))
+
+    for tkey, count, label in pending:
+        if state.config.operators[tkey] != count:
+            changed.append(label)
 
     if not changed:
         return {"status": "ok", "score": state.score, "score_anterior": old_score}
 
-    save_config(state.config)
-    result = optimize(state.engine_data, mode="quick", audit=True, config=state.config)
-    state.update_schedule(result)
+    candidate = copy.deepcopy(state.config)
+    for tkey, count, _label in pending:
+        candidate.operators[tkey] = count
 
-    return {"status": "ok", "changed": changed, "score": result.score, "score_anterior": old_score}
+    candidate_result, candidate_summary = _compute_schedule_for_config(candidate)
+    validation = _validate_candidate_result(candidate_result, candidate_summary)
+    if validation["status"] == "invalid":
+        return {
+            "status": "invalid",
+            "changed": changed,
+            "score": state.score,
+            "score_candidate": candidate_result.score,
+            "score_anterior": old_score,
+            "summary": validation["summary"],
+            "hard_gate_violations": validation["hard_gate_violations"],
+            "plan_violations": validation["plan_violations"],
+        }
+
+    state.save_current(kind="config")
+    state.config = candidate
+    save_config(state.config)
+    _commit_recompute(candidate_result, candidate_summary)
+
+    return {"status": "ok", "changed": changed, "score": state.score, "score_anterior": old_score}
 
 
 @router.post("/holidays")
@@ -816,15 +1167,36 @@ async def apply_preset_endpoint(name: str):
     except KeyError as e:
         raise HTTPException(400, str(e))
 
-    # Baseline: pristine config from load (fallback to current if missing)
-    base = state.default_config if state.default_config is not None else state.config
-    new_config = apply_preset(copy.deepcopy(base), name)
+    # Start from current config and reset only preset-owned fields to defaults.
+    base = state.default_config if state.default_config is not None else None
+    new_config = apply_preset(state.config, name, base_config=base)
 
+    old_score = dict(state.score) if state.score else {}
+    candidate_result = None
+    candidate_summary: list[str] = []
+    if state.engine_data is not None:
+        candidate_result, candidate_summary = _compute_schedule_for_config(new_config)
+        validation = _validate_candidate_result(candidate_result, candidate_summary)
+        if validation["status"] == "invalid":
+            return {
+                "status": "invalid",
+                "preset": name,
+                "changed": list(get_preset(name).keys()),
+                "score": state.score,
+                "score_candidate": candidate_result.score,
+                "score_previous": old_score,
+                "summary": validation["summary"],
+                "hard_gate_violations": validation["hard_gate_violations"],
+                "plan_violations": validation["plan_violations"],
+                "simulation_active": bool(state.active_mutations),
+            }
+
+    state.save_current(kind="config")
     state.config = new_config
     save_config(new_config)
 
-    old_score = dict(state.score) if state.score else {}
-    _recompute(new_config)
+    if candidate_result is not None:
+        _commit_recompute(candidate_result, candidate_summary)
 
     return {
         "status": "ok",

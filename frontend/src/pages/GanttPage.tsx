@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { T, toolColor } from "../theme/tokens";
 import { useDataStore } from "../stores/useDataStore";
-import { getWorkdays } from "../api/endpoints";
-import type { Segment, Score } from "../api/types";
+import { getOps, getWorkdays } from "../api/endpoints";
+import type { EOp, Lot, MutationInput, Segment, Score } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Modal } from "../components/ui/Modal";
@@ -13,7 +13,7 @@ const DEFAULT_DAY_W = 110;
 const LANE_H = 60;
 const SHIFT_CHANGE = 930;
 const DAY_START = 420;
-const DAY_CAP = 1020;
+const DEFAULT_DAY_CAP = 1020;
 const FALLBACK_MACHINES = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"];
 const SINGLE_BAR_H = 52;
 const SINGLE_BAR_PAD = 8;
@@ -33,6 +33,27 @@ function fmtDate(iso: string): { short: string; dow: string } {
   } catch {
     return { short: iso, dow: "" };
   }
+}
+
+function dayLabel(dayIdx: number, workdays: string[]): string {
+  if (dayIdx < 0) return `D${dayIdx}`;
+  const iso = workdays[dayIdx];
+  if (!iso) return `Dia ${dayIdx}`;
+  const dt = fmtDate(iso);
+  return `${dt.dow}, ${dt.short}`;
+}
+
+function mutationDayRange(m: MutationInput): [number, number] | null {
+  if (m.type !== "machine_down" && m.type !== "tool_down") return null;
+  const start = Number(m.params.start);
+  const end = Number(m.params.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return [Math.min(start, end), Math.max(start, end)];
+}
+
+function mutationAppliesOnDay(m: MutationInput, day: number): boolean {
+  const range = mutationDayRange(m);
+  return !!range && day >= range[0] && day <= range[1];
 }
 
 function fmtMin(min: number): string {
@@ -77,6 +98,7 @@ function exportGantt(
   score: Score,
   workdays: string[],
   dayRange: [number, number] | null,
+  dayCapacityMin: number,
 ) {
   const from = dayRange?.[0] ?? 0;
   const to = dayRange?.[1] ?? (segs.length ? Math.max(...segs.map((s) => s.day_idx)) : 0);
@@ -86,18 +108,20 @@ function exportGantt(
   // Section 1: Segments
   lines.push("--- SEGMENTOS ---");
   lines.push(
-    "Máquina,Dia,Data,Turno,Ferramenta,SKU,Quantidade,Setup(min),Produção(min),Início(min),Fim(min),EDD,Continuação,Gémeos,Twin_SKU_1,Twin_Qty_1,Twin_SKU_2,Twin_Qty_2",
+    "Máquina,DiaTecnico,Data,DiaSemana,Turno,Ferramenta,SKU,Quantidade,Setup(min),Produção(min),Início(min),Fim(min),EDDTecnico,EDDData,Continuação,Gémeos,Twin_SKU_1,Twin_Qty_1,Twin_SKU_2,Twin_Qty_2",
   );
   const sorted = [...rangeSegs].sort(
     (a, b) => a.day_idx - b.day_idx || a.machine_id.localeCompare(b.machine_id) || a.start_min - b.start_min,
   );
   for (const s of sorted) {
     const date = workdays[s.day_idx] ?? "";
+    const dt = date ? fmtDate(date) : null;
+    const eddDate = workdays[s.edd] ?? "";
     lines.push(
       [
-        s.machine_id, s.day_idx, date, s.shift, s.tool_id,
+        s.machine_id, s.day_idx, date, dt?.dow ?? "", s.shift, s.tool_id,
         `"${s.sku}"`, s.qty, s.setup_min.toFixed(1), s.prod_min.toFixed(1),
-        s.start_min, s.end_min, s.edd,
+        s.start_min, s.end_min, s.edd, eddDate,
         s.is_continuation ? "Sim" : "Não",
         s.twin_outputs ? "Sim" : "Não",
         s.twin_outputs ? `"${s.twin_outputs[0]?.[1] ?? ""}"` : "",
@@ -111,21 +135,22 @@ function exportGantt(
   // Section 2: Daily summary with logic
   lines.push("");
   lines.push("--- RESUMO POR DIA ---");
-  lines.push("Dia,Data,Máquina,Ferramentas,Setups,Produção(min),Utilização(%),Peças,Lógica");
+  lines.push("DiaTecnico,Data,DiaSemana,Máquina,Ferramentas,Setups,Produção(min),Utilização(%),Peças,Lógica");
   for (let d = from; d <= to; d++) {
     const daySegs = rangeSegs.filter((s) => s.day_idx === d);
     const byMachine: Record<string, Segment[]> = {};
     for (const s of daySegs) (byMachine[s.machine_id] ??= []).push(s);
     const date = workdays[d] ?? "";
+    const dt = date ? fmtDate(date) : null;
     for (const [mid, mSegs] of Object.entries(byMachine).sort()) {
       const tools = [...new Set(mSegs.map((s) => s.tool_id))];
       const setups = mSegs.filter((s) => s.setup_min > 0).length;
       const prodMin = mSegs.reduce((a, s) => a + s.prod_min + s.setup_min, 0);
-      const util = Math.round((prodMin / DAY_CAP) * 100);
+      const util = Math.round((prodMin / dayCapacityMin) * 100);
       const pcs = mSegs.reduce((a, s) => a + s.qty, 0);
       const logic = buildDayLogic(mSegs, d);
       lines.push(
-        [mid, d, date, `"${tools.join(";")}"`, setups, prodMin.toFixed(0), util, pcs, `"${logic}"`].join(","),
+        [d, date, dt?.dow ?? "", mid, `"${tools.join(";")}"`, setups, prodMin.toFixed(0), util, pcs, `"${logic}"`].join(","),
       );
     }
   }
@@ -191,9 +216,14 @@ const btnStyle = (active: boolean): React.CSSProperties => ({
 
 export function GanttPage() {
   const segments = useDataStore((s) => s.segments);
+  const lots = useDataStore((s) => s.lots);
   const score = useDataStore((s) => s.score);
   const config = useDataStore((s) => s.config);
   const learning = useDataStore((s) => s.learning);
+  const activeMutations = useDataStore((s) => s.activeMutations);
+  const dayCapacityMin = config?.day_capacity_min ?? DEFAULT_DAY_CAP;
+  const dayStart = config?.shifts?.[0]?.start_min ?? DAY_START;
+  const shiftChange = config?.shifts?.[0]?.end_min ?? SHIFT_CHANGE;
 
   const machines = useMemo(() => {
     if (!config?.machines) return FALLBACK_MACHINES;
@@ -209,6 +239,7 @@ export function GanttPage() {
   const [dayW, setDayW] = useState(DEFAULT_DAY_W);
   const [dayRange, setDayRange] = useState<[number, number] | null>(null);
   const [workdays, setWorkdays] = useState<string[]>([]);
+  const [ops, setOps] = useState<EOp[]>([]);
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [currentDay, setCurrentDay] = useState(0);
@@ -222,12 +253,17 @@ export function GanttPage() {
 
   useEffect(() => {
     getWorkdays().then(setWorkdays).catch(() => {});
+    getOps().then(setOps).catch(() => {});
   }, []);
 
   const minDay = useMemo(() => {
-    if (!segments?.length) return 0;
-    return Math.min(...segments.map((s) => s.day_idx));
-  }, [segments]);
+    const segmentMin = segments?.length ? Math.min(...segments.map((s) => s.day_idx)) : 0;
+    const mutationMins = activeMutations
+      .map(mutationDayRange)
+      .filter((r): r is [number, number] => r !== null)
+      .map(([from]) => from);
+    return Math.min(segmentMin, ...(mutationMins.length ? mutationMins : [segmentMin]));
+  }, [segments, activeMutations]);
 
   // Initialize currentDay to minDay on first load
   useEffect(() => {
@@ -238,9 +274,34 @@ export function GanttPage() {
   }, [minDay, segments, currentDayInitialized]);
 
   const nDays = useMemo(() => {
-    if (!segments?.length) return 14;
-    return Math.max(...segments.map((s) => s.day_idx)) + 1;
-  }, [segments]);
+    const segmentMax = segments?.length ? Math.max(...segments.map((s) => s.day_idx)) : 13;
+    const mutationMaxs = activeMutations
+      .map(mutationDayRange)
+      .filter((r): r is [number, number] => r !== null)
+      .map(([, to]) => to);
+    return Math.max(segmentMax, ...(mutationMaxs.length ? mutationMaxs : [segmentMax])) + 1;
+  }, [segments, activeMutations]);
+
+  const lotById = useMemo(() => {
+    const map: Record<string, Lot> = {};
+    for (const lot of lots ?? []) map[lot.id] = lot;
+    return map;
+  }, [lots]);
+
+  const opById = useMemo(() => {
+    const map: Record<string, EOp> = {};
+    for (const op of ops) map[op.id] = op;
+    return map;
+  }, [ops]);
+
+  const quantityLabel = (s: Segment): string => {
+    const lot = lotById[s.lot_id];
+    if (!lot) return `${s.qty.toLocaleString()} pç`;
+    const ecoLot = opById[lot.op_id]?.eco_lot;
+    const partial = s.qty < lot.qty ? " · segmento parcial" : "";
+    const eco = ecoLot ? ` · eco lot ${ecoLot.toLocaleString()}` : "";
+    return `${s.qty.toLocaleString()} de ${lot.qty.toLocaleString()} pç${partial}${eco}`;
+  };
 
   const filtered = useMemo(() => {
     if (!segments) return [];
@@ -273,10 +334,10 @@ export function GanttPage() {
     const nVisible = visibleDays.length;
     const result: Record<string, number> = {};
     for (const m of machines) {
-      result[m] = Math.round(((totals[m] || 0) / (nVisible * DAY_CAP)) * 100);
+      result[m] = Math.round(((totals[m] || 0) / (nVisible * dayCapacityMin)) * 100);
     }
     return result;
-  }, [visibleSegs, visibleDays.length, machines]);
+  }, [visibleSegs, visibleDays.length, machines, dayCapacityMin]);
 
   // Day detail (computed from segments when zoomed to single day)
   const dayDetail = useMemo(() => {
@@ -297,7 +358,7 @@ export function GanttPage() {
         const totalProd = sorted.reduce((a, s) => a + s.prod_min, 0);
         const totalSetup = sorted.reduce((a, s) => a + s.setup_min, 0);
         const totalPcs = sorted.reduce((a, s) => a + s.qty, 0);
-        const util = Math.round(((totalProd + totalSetup) / DAY_CAP) * 100);
+        const util = Math.round(((totalProd + totalSetup) / dayCapacityMin) * 100);
         const eddsHere = sorted.filter((s) => s.edd === dayIdx);
         const twins = sorted.filter((s) => s.twin_outputs);
         return { mid, segs: sorted, tools, setupSegs, totalProd, totalSetup, totalPcs, util, eddsHere, twins };
@@ -305,7 +366,7 @@ export function GanttPage() {
 
     const allEdds = daySegs.filter((s) => s.edd === dayIdx);
     return { machineDetails, allEdds, totalSegs: daySegs.length };
-  }, [isSingleDay, dayRange, segments]);
+  }, [isSingleDay, dayRange, segments, dayCapacityMin]);
 
   // Range presets
   const setPreset = (name: string) => {
@@ -330,7 +391,7 @@ export function GanttPage() {
   const applyCustomRange = () => {
     const f = parseInt(rangeFrom);
     const t = parseInt(rangeTo);
-    if (!isNaN(f) && !isNaN(t) && f >= minDay && t >= f && t < nDays) {
+    if (!isNaN(f) && !isNaN(t) && t >= f) {
       setDayRange([f, t]);
     }
   };
@@ -469,6 +530,11 @@ export function GanttPage() {
             placeholder="0"
             style={smallInputStyle}
           />
+          {rangeFrom && !isNaN(parseInt(rangeFrom)) && (
+            <span style={{ fontSize: 10, color: T.tertiary, minWidth: 54 }}>
+              {dayLabel(parseInt(rangeFrom), workdays)}
+            </span>
+          )}
           <span style={{ fontSize: 11, color: T.tertiary }}>a</span>
           <input
             value={rangeTo}
@@ -478,6 +544,11 @@ export function GanttPage() {
             placeholder={String(nDays - 1)}
             style={smallInputStyle}
           />
+          {rangeTo && !isNaN(parseInt(rangeTo)) && (
+            <span style={{ fontSize: 10, color: T.tertiary, minWidth: 54 }}>
+              {dayLabel(parseInt(rangeTo), workdays)}
+            </span>
+          )}
         </div>
 
         {/* Divider */}
@@ -485,7 +556,7 @@ export function GanttPage() {
 
         {/* Export button */}
         <button
-          onClick={() => score && exportGantt(segments, score, workdays, dayRange)}
+          onClick={() => score && exportGantt(segments, score, workdays, dayRange, dayCapacityMin)}
           style={{
             ...inputStyle,
             cursor: "pointer",
@@ -562,11 +633,10 @@ export function GanttPage() {
                 </button>
                 <div style={{ textAlign: "center", minWidth: 200 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>
-                    Dia {d}{d >= 0 && workdays[d] ? ` — ${fmtDate(workdays[d]).short}` : d < 0 ? " (Buffer)" : ""}
+                    {dayLabel(d, workdays)}
                   </div>
                   <div style={{ fontSize: 11, color: T.tertiary }}>
-                    {d >= 0 && workdays[d] ? fmtDate(workdays[d]).dow : ""}
-                    {" · "}{d - minDay + 1}/{nDays - minDay}
+                    idx {d} · {d - minDay + 1}/{nDays - minDay}
                   </div>
                 </div>
                 <button
@@ -617,15 +687,15 @@ export function GanttPage() {
               /* Hour ticks for single-day */
               (() => {
                 const totalW = Math.max(dayW * 4, 800);
-                const ticks = Array.from({ length: 18 }, (_, i) => {
-                  const min = DAY_START + i * 60;
+                const ticks = Array.from({ length: Math.floor(dayCapacityMin / 60) + 1 }, (_, i) => {
+                  const min = dayStart + i * 60;
                   const h = Math.floor(min / 60);
                   return { min, label: `${String(h % 24).padStart(2, "0")}:00` };
                 });
                 return (
                   <div style={{ position: "relative", minWidth: totalW, height: 32 }}>
                     {ticks.map((tick) => {
-                      const x = ((tick.min - DAY_START) / DAY_CAP) * totalW;
+                      const x = ((tick.min - dayStart) / dayCapacityMin) * totalW;
                       return (
                         <div
                           key={tick.label}
@@ -636,20 +706,20 @@ export function GanttPage() {
                             height: "100%",
                             display: "flex",
                             alignItems: "center",
-                            borderLeft: tick.min === SHIFT_CHANGE
+                            borderLeft: tick.min === shiftChange
                               ? `1.5px solid ${T.orange}55`
                               : `1px solid ${T.border}`,
                           }}
                         >
                           <span style={{
                             fontSize: 9,
-                            color: tick.min === SHIFT_CHANGE ? T.orange : T.tertiary,
+                            color: tick.min === shiftChange ? T.orange : T.tertiary,
                             fontFamily: T.mono,
                             marginLeft: 4,
                             whiteSpace: "nowrap",
                           }}>
                             {tick.label}
-                            {tick.min === SHIFT_CHANGE ? " (turno B)" : ""}
+                            {tick.min === shiftChange ? " (turno B)" : ""}
                           </span>
                         </div>
                       );
@@ -678,8 +748,8 @@ export function GanttPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = `${T.blue}08`)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
-                    <div style={{ fontSize: 10, color: i < 0 ? T.orange : T.secondary, fontFamily: T.mono }}>{dt?.short ?? `D${i}`}</div>
-                    <div style={{ fontSize: 9, color: T.tertiary }}>{dt?.dow ?? (i < 0 ? "Buffer" : "")}</div>
+                    <div style={{ fontSize: 10, color: i < 0 ? T.orange : T.secondary, fontFamily: T.mono }}>{dt?.short ?? (i < 0 ? `D${i}` : "Buffer")}</div>
+                    <div style={{ fontSize: 9, color: T.tertiary }}>{dt?.dow ?? (i < 0 ? "buffer" : `idx ${i}`)}</div>
                   </div>
                 );
               })
@@ -692,6 +762,10 @@ export function GanttPage() {
 
             return machines.map((m) => {
               const machineSegs = visibleSegs.filter((s) => s.machine_id === m);
+              const machineDown = activeMutations.filter(
+                (mut) => mut.type === "machine_down" && String(mut.params.machine_id) === m,
+              );
+              const toolDown = activeMutations.filter((mut) => mut.type === "tool_down");
               const laneH = isSingleDay
                 ? SINGLE_BAR_PAD + SINGLE_BAR_H + SINGLE_BAR_PAD
                 : LANE_H;
@@ -717,9 +791,9 @@ export function GanttPage() {
                   <div style={{ position: "relative", height: laneH, flex: 1, minWidth: totalW }}>
                     {isSingleDay ? (
                       /* Hour grid lines for single-day */
-                      Array.from({ length: 18 }, (_, i) => {
-                        const min = DAY_START + i * 60;
-                        const x = ((min - DAY_START) / DAY_CAP) * totalW;
+                      Array.from({ length: Math.floor(dayCapacityMin / 60) + 1 }, (_, i) => {
+                        const min = dayStart + i * 60;
+                        const x = ((min - dayStart) / dayCapacityMin) * totalW;
                         return (
                           <div
                             key={`h${i}`}
@@ -728,8 +802,8 @@ export function GanttPage() {
                               left: x,
                               top: 0,
                               bottom: 0,
-                              width: min === SHIFT_CHANGE ? 1.5 : 0.5,
-                              background: min === SHIFT_CHANGE ? `${T.orange}33` : T.border,
+                              width: min === shiftChange ? 1.5 : 0.5,
+                              background: min === shiftChange ? `${T.orange}33` : T.border,
                             }}
                           />
                         );
@@ -755,7 +829,7 @@ export function GanttPage() {
                             key={`s${idx}`}
                             style={{
                               position: "absolute",
-                              left: idx * dayW + ((SHIFT_CHANGE - DAY_START) / DAY_CAP) * dayW,
+                              left: idx * dayW + ((shiftChange - dayStart) / dayCapacityMin) * dayW,
                               top: 0,
                               bottom: 0,
                               width: 0.5,
@@ -766,21 +840,94 @@ export function GanttPage() {
                         ))}
                       </>
                     )}
+                    {/* Downtime overlays */}
+                    {isSingleDay
+                      ? (
+                        <>
+                          {machineDown.some((mut) => mutationAppliesOnDay(mut, dayRange![0])) && (
+                            <div
+                              title={`${m} parada`}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                background: `${T.red}14`,
+                                borderLeft: `3px solid ${T.red}66`,
+                                zIndex: 0,
+                              }}
+                            />
+                          )}
+                          {toolDown.filter((mut) => mutationAppliesOnDay(mut, dayRange![0])).map((mut, idx) => (
+                            <div
+                              key={`td-single-${idx}`}
+                              title={`Ferramenta ${String(mut.params.tool_id)} indisponivel`}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                backgroundImage: `repeating-linear-gradient(135deg, transparent, transparent 8px, ${T.orange}22 8px, ${T.orange}22 14px)`,
+                                zIndex: 0,
+                                pointerEvents: "none",
+                              }}
+                            />
+                          ))}
+                        </>
+                      )
+                      : visibleDays.map((day, idx) => {
+                        const isMachineDown = machineDown.some((mut) => mutationAppliesOnDay(mut, day));
+                        const toolDownHere = toolDown.filter((mut) => mutationAppliesOnDay(mut, day));
+                        if (!isMachineDown && toolDownHere.length === 0) return null;
+                        return (
+                          <div
+                            key={`down-${m}-${day}`}
+                            title={[
+                              isMachineDown ? `${m} parada` : "",
+                              ...toolDownHere.map((mut) => `Ferramenta ${String(mut.params.tool_id)} indisponivel`),
+                            ].filter(Boolean).join(" · ")}
+                            style={{
+                              position: "absolute",
+                              left: idx * dayW,
+                              top: 0,
+                              bottom: 0,
+                              width: dayW,
+                              background: isMachineDown ? `${T.red}14` : `${T.orange}10`,
+                              backgroundImage: toolDownHere.length > 0
+                                ? `repeating-linear-gradient(135deg, transparent, transparent 8px, ${T.orange}24 8px, ${T.orange}24 14px)`
+                                : undefined,
+                              borderLeft: isMachineDown ? `3px solid ${T.red}66` : `1px solid ${T.orange}44`,
+                              zIndex: 0,
+                              pointerEvents: "none",
+                            }}
+                          >
+                            {dayW > 72 && (
+                              <span style={{
+                                position: "absolute",
+                                left: 6,
+                                top: 4,
+                                fontSize: 8,
+                                fontWeight: 700,
+                                color: isMachineDown ? T.red : T.orange,
+                                fontFamily: T.mono,
+                              }}>
+                                {isMachineDown ? "PARADA" : "TOOL"}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     {/* Segments */}
                     {machineSegs.map((s) => {
                       const left = isSingleDay
-                        ? ((s.start_min - DAY_START) / DAY_CAP) * totalW
-                        : (s.day_idx - rangeOffset) * dayW + ((s.start_min - DAY_START) / DAY_CAP) * dayW;
+                        ? ((s.start_min - dayStart) / dayCapacityMin) * totalW
+                        : (s.day_idx - rangeOffset) * dayW + ((s.start_min - dayStart) / dayCapacityMin) * dayW;
                       const width = isSingleDay
-                        ? Math.max(((s.end_min - s.start_min) / DAY_CAP) * totalW, 40)
-                        : Math.max(((s.end_min - s.start_min) / DAY_CAP) * dayW, 3);
+                        ? Math.max(((s.end_min - s.start_min) / dayCapacityMin) * totalW, 40)
+                        : Math.max(((s.end_min - s.start_min) / dayCapacityMin) * dayW, 3);
                       const col = toolColor(s.tool_id);
                       const top = isSingleDay ? SINGLE_BAR_PAD : 10;
                       const barH = isSingleDay ? SINGLE_BAR_H : 40;
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}
-                          title={`${s.tool_id} | ${s.sku} | ${s.qty.toLocaleString()} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | EDD d${s.edd}${s.twin_outputs ? " | Twin" : ""}`}
+                          title={`${s.tool_id} | ${s.sku} | ${quantityLabel(s)} | ${fmtMin(s.start_min)}-${fmtMin(s.end_min)} | EDD ${dayLabel(s.edd, workdays)}${s.twin_outputs ? " | Twin" : ""}`}
                           onClick={() => setSel(s)}
                           style={{
                             position: "absolute",
@@ -842,7 +989,7 @@ export function GanttPage() {
                                 }}>
                                   {s.twin_outputs
                                     ? s.twin_outputs.map(([, sku, qty]: [string, string, number]) => `${sku}: ${qty.toLocaleString()}`).join(" + ")
-                                    : `${s.sku} · ${s.qty.toLocaleString()} pç`}
+                                    : `${s.sku} · ${quantityLabel(s)}`}
                                 </span>
                               )}
                               {width > 100 && (
@@ -938,7 +1085,7 @@ export function GanttPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ position: "sticky", top: 0, background: T.card }}>
-                {["Máq", "Dia", "Data", "Turno", "Tool", "SKU", "Qty", "Setup", "Prod", "EDD"].map((h) => (
+                {["Data", "Semana", "Máq", "Turno", "Tool", "SKU", "Qty", "Setup", "Prod", "EDD", "idx"].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -958,22 +1105,24 @@ export function GanttPage() {
             <tbody>
               {visibleSegs.slice(0, 200).map((s, i) => {
                 const dt = workdays[s.day_idx] ? fmtDate(workdays[s.day_idx]) : null;
+                const edd = workdays[s.edd] ? fmtDate(workdays[s.edd]) : null;
                 return (
                   <tr
                     key={i}
                     style={{ borderBottom: `1px solid ${T.border}`, cursor: "pointer" }}
                     onClick={() => setSel(s)}
                   >
-                    <td style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, color: T.primary, fontFamily: T.mono }}>{s.machine_id}</td>
-                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.day_idx}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.tertiary }}>{dt?.short ?? ""}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.tertiary }}>{dt?.dow ?? (s.day_idx < 0 ? "Buffer" : "")}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, color: T.primary, fontFamily: T.mono }}>{s.machine_id}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.tertiary }}>{s.shift}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: toolColor(s.tool_id), fontWeight: 500 }}>{s.tool_id}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary, fontFamily: T.mono }}>{s.sku}</td>
-                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.qty}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{quantityLabel(s)}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: s.setup_min > 0 ? T.orange : T.tertiary }}>{s.setup_min.toFixed(0)}m</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.prod_min.toFixed(0)}m</td>
-                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.edd}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{edd?.short ?? s.edd}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.tertiary }}>{s.day_idx}</td>
                   </tr>
                 );
               })}
@@ -1042,7 +1191,7 @@ export function GanttPage() {
                     </div>
                     {toolSegs.map((s, si) => (
                       <div key={si} style={{ fontSize: 11, color: T.secondary, marginLeft: 8, lineHeight: 1.6 }}>
-                        → {s.qty.toLocaleString()} pç ({s.sku})
+                        → {quantityLabel(s)} ({s.sku})
                         {s.twin_outputs && (
                           <span style={{
                             fontSize: 9,
@@ -1090,16 +1239,19 @@ export function GanttPage() {
         <Modal title="Segmento" onClose={() => setSel(null)}>
           {[
             ["Máquina", sel.machine_id],
-            ["Dia", `${sel.day_idx}${workdays[sel.day_idx] ? ` (${fmtDate(workdays[sel.day_idx]).short})` : ""}`],
+            ["Data", dayLabel(sel.day_idx, workdays)],
+            ["Dia tecnico", sel.day_idx],
             ["Turno", sel.shift],
             ["Ferramenta", sel.tool_id],
             ["SKU", sel.sku],
-            ["Quantidade", sel.qty],
+            ["Quantidade", quantityLabel(sel)],
+            ...(lotById[sel.lot_id] ? [["Lote total", `${lotById[sel.lot_id].qty.toLocaleString()} pç`]] : []),
             ["Setup", `${sel.setup_min.toFixed(1)} min`],
             ["Produção", `${sel.prod_min.toFixed(1)} min`],
             ["Início", fmtMin(sel.start_min)],
             ["Fim", fmtMin(sel.end_min)],
-            ["EDD", `Dia ${sel.edd}${workdays[sel.edd] ? ` (${fmtDate(workdays[sel.edd]).short})` : ""}`],
+            ["EDD", dayLabel(sel.edd, workdays)],
+            ["EDD tecnico", sel.edd],
             ["Lot", sel.lot_id],
             ["Continuação", sel.is_continuation ? "Sim" : "Não"],
             ["Gémeos", sel.twin_outputs ? "Sim" : "Não"],

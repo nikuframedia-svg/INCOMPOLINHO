@@ -15,7 +15,6 @@ PRESETS: dict[str, dict] = {
         "urgency_threshold": 2,
         "interleave_enabled": True,
         "lst_safety_buffer": 0,
-        "compact_enabled": True,
     },
     "equilibrado": {},  # factory defaults
     "min_setups": {
@@ -31,6 +30,10 @@ PRESETS: dict[str, dict] = {
     },
 }
 
+PRESET_OWNED_FIELDS: set[str] = {
+    key for overrides in PRESETS.values() for key in overrides
+}
+
 
 def list_presets() -> list[str]:
     """Return available preset names."""
@@ -44,10 +47,23 @@ def get_preset(name: str) -> dict:
     return PRESETS[name].copy()
 
 
-def apply_preset(config: FactoryConfig, name: str) -> FactoryConfig:
-    """Return a copy of config with preset overrides applied."""
+def apply_preset(
+    config: FactoryConfig,
+    name: str,
+    base_config: FactoryConfig | None = None,
+) -> FactoryConfig:
+    """Return a copy of config with preset-owned scheduling fields applied.
+
+    Presets are scheduling/scoring profiles. They must not wipe persistent
+    user/master-data choices such as subcontract_skus, machine/tool changes,
+    twins, holidays, operators, or shifts.
+    """
     overrides = get_preset(name)
     result = copy.deepcopy(config)
+    if base_config is not None:
+        for key in PRESET_OWNED_FIELDS:
+            if hasattr(result, key) and hasattr(base_config, key):
+                setattr(result, key, copy.deepcopy(getattr(base_config, key)))
     for key, value in overrides.items():
         if not hasattr(result, key):
             raise KeyError(f"FactoryConfig não tem atributo {key!r}")

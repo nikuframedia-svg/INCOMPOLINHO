@@ -81,9 +81,17 @@ class CachedPipeline:
         machine_runs = self._sequence_with_chromosome(machine_runs, chrom)
 
         # Auto buffer detection
-        from backend.scheduler.scheduler import _detect_buffer_need, _apply_buffer, _shift_engine_data
+        from backend.scheduler.scheduler import (
+            _apply_buffer,
+            _blocked_buffer_need,
+            _detect_buffer_need,
+            _shift_engine_data,
+        )
         global_holidays = set(self.data.holidays) if self.data.holidays else set()
-        buffer_days = _detect_buffer_need(runs, config=self.config, machine_runs=machine_runs, holidays=global_holidays)
+        buffer_days = max(
+            _detect_buffer_need(runs, config=self.config, machine_runs=machine_runs, holidays=global_holidays),
+            _blocked_buffer_need(self.data),
+        )
 
         data = self.data
         if buffer_days > 0:
@@ -102,7 +110,11 @@ class CachedPipeline:
         # Phase 4: JIT
         jit_machine_runs = None
         jit_gates = None
-        if self.config.jit_enabled and baseline_score["otd"] >= self.config.jit_threshold:
+        if (
+            self.config.jit_enabled
+            and baseline_score["otd"] >= self.config.jit_threshold
+            and baseline_score["tardy_count"] == 0
+        ):
             jit_cfg = copy.copy(self.config)
             jit_cfg.jit_buffer_pct = chrom.buffer_pct
             jit_segs, jit_lots, jit_warnings, jit_machine_runs, jit_gates = jit_dispatch(
@@ -135,69 +147,27 @@ class CachedPipeline:
             lots = _unshift_lots(lots, buffer_days)
             data = _shift_engine_data(data, -buffer_days)
 
-        # Post-processing
+        # Shared final post-processing (same as schedule_all).
         from backend.scheduler.scheduler import (
-            _fix_day_overlaps,
-            _serialize_crew_safe,
-            _serialize_crew_setups,
-            _sanitize_segments,
+            _annotate_hard_gate_metrics,
+            finalize_schedule_segments,
         )
-        global_holidays = set(getattr(data, "holidays", []))
-        segments = _fix_day_overlaps(segments, self.config, holidays=global_holidays)
-
-        # Crew serialization (safe — revert if tardy worsens)
-        pre_crew_score = compute_score(segments, lots, data, config=self.config)
-        crew_segments = copy.deepcopy(segments)
-        prev_hash = None
-        for _ in range(10):  # max 10 passes (convergence typically in 2-3)
-            crew_segments = _serialize_crew_setups(crew_segments, self.config, holidays=global_holidays, crew_priority=chrom.crew_priority)
-            crew_segments = _fix_day_overlaps(crew_segments, self.config, holidays=global_holidays)
-            crew_segments = _sanitize_segments(crew_segments, self.config, holidays=global_holidays)
-            curr_hash = hash(tuple(
-                (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in crew_segments
-            ))
-            if curr_hash == prev_hash:
-                break
-            prev_hash = curr_hash
-        crew_score = compute_score(crew_segments, lots, data, config=self.config)
-        if crew_score["tardy_count"] <= pre_crew_score["tardy_count"]:
-            segments = crew_segments
-        else:
-            # EDD-safe fallback: per-overlap resolution
-            safe_segments = copy.deepcopy(segments)
-            prev_hash_s = None
-            for _ in range(10):
-                safe_segments = _serialize_crew_safe(safe_segments, self.config, holidays=global_holidays, crew_priority=chrom.crew_priority)
-                safe_segments = _fix_day_overlaps(safe_segments, self.config, holidays=global_holidays)
-                safe_segments = _sanitize_segments(safe_segments, self.config, holidays=global_holidays)
-                curr_hash_s = hash(tuple(
-                    (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in safe_segments
-                ))
-                if curr_hash_s == prev_hash_s:
-                    break
-                prev_hash_s = curr_hash_s
-            safe_score = compute_score(safe_segments, lots, data, config=self.config)
-            if safe_score["tardy_count"] <= pre_crew_score["tardy_count"]:
-                segments = safe_segments
-
-        segments = _sanitize_segments(segments, self.config, holidays=global_holidays)
+        segments, warnings = finalize_schedule_segments(
+            segments, lots, data, config=self.config, warnings=warnings,
+            crew_priority=chrom.crew_priority,
+        )
 
         # Final score
         score = compute_score(segments, lots, data, config=self.config)
+        score = _annotate_hard_gate_metrics(score, segments, self.config, data=data, lots=lots)
         score["buffer_days"] = buffer_days
         score["_earliness_target"] = self.config.jit_earliness_target if self.config else 5.5
 
-        # Day capacity violation count (for fitness penalty)
-        # Use actual segment span (end - start) to account for shift gaps
         day_cap = self.config.day_capacity_min if self.config else DAY_CAP
         day_span: dict[tuple[str, int], float] = defaultdict(float)
         for seg in segments:
             if seg.day_idx >= 0:
                 day_span[(seg.machine_id, seg.day_idx)] += seg.end_min - seg.start_min
-        day_cap_violations = sum(
-            1 for total in day_span.values() if total > day_cap + 1.0
-        )
-        score["day_cap_violations"] = day_cap_violations
 
         # Weighted setup cost: setup_min × machine utilisation
         machine_total_used: dict[str, float] = {}

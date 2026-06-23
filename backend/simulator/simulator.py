@@ -52,14 +52,19 @@ def simulate(
     baseline_score: dict,
     mutations: list[Mutation],
     config=None,
+    mode: str = "normal",
 ) -> SimulateResponse:
     """Run what-if simulation.
 
     1. deepcopy(engine_data)
     2. Apply each mutation
-    3. schedule_all(mutated)
+    3. optimize(mutated, mode=mode)
     4. Build DeltaReport comparing baseline_score vs new score
     5. Generate Portuguese summary
+
+    `mode` defaults to "normal" because user-visible and persisted plans must
+    pass the same physical gates as the scheduler/CPO path. Callers that want a
+    transient greedy preview must opt into "quick" explicitly.
     """
     t0 = time.perf_counter()
 
@@ -75,7 +80,7 @@ def simulate(
 
     # 3. Re-schedule with (possibly modified) config
     try:
-        result = optimize(mutated, mode="quick", config=sim_config)
+        result = optimize(mutated, mode=mode, config=sim_config)
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         summaries.append(f"ERRO no scheduler: {exc}")

@@ -17,7 +17,11 @@ import time
 from backend.config.types import FactoryConfig
 from backend.scheduler.dispatch import assign_machines
 from backend.scheduler.lot_sizing import create_lots
-from backend.scheduler.scheduler import schedule_all
+from backend.scheduler.scheduler import (
+    _annotate_hard_gate_metrics,
+    finalize_schedule_segments,
+    schedule_all,
+)
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
 from backend.scheduler.types import ScheduleResult
@@ -147,6 +151,14 @@ def optimize(
             best_result.segments, best_result.lots, machine_runs,
             engine_data, config, time_limit_per_machine=time_per_machine,
         )
+        polished_segs, polished_warnings = finalize_schedule_segments(
+            polished_segs, polished_lots, engine_data, config=config,
+            warnings=list(best_result.warnings),
+        )
+        polished_score = compute_score(polished_segs, polished_lots, engine_data, config=config)
+        polished_score = _annotate_hard_gate_metrics(
+            polished_score, polished_segs, config, data=engine_data, lots=polished_lots
+        )
         if polished_score.get("tardy_count", 1) <= best_result.score.get("tardy_count", 0):
             polished_score["buffer_days"] = best_result.score.get("buffer_days", 0)
             best_result = ScheduleResult(
@@ -154,7 +166,7 @@ def optimize(
                 lots=polished_lots,
                 score=polished_score,
                 time_ms=0.0,
-                warnings=best_result.warnings,
+                warnings=polished_warnings,
                 operator_alerts=best_result.operator_alerts,
                 journal=baseline.journal,
             )
@@ -164,8 +176,20 @@ def optimize(
 
     # Safety: never return worse than baseline
     best_score = best_result.score
+    physical_gates = (
+        "tool_conflicts",
+        "machine_overlaps",
+        "day_cap_violations",
+        "ghost_segments",
+        "blocked_machine_segments",
+        "blocked_tool_segments",
+        "setup_sequence_violations",
+        "run_lot_order_violations",
+    )
+
     if (best_score.get("tardy_count", 1) > baseline_score.get("tardy_count", 0)
-            or best_score.get("otd_d", 0) < baseline_score.get("otd_d", 100)):
+            or best_score.get("otd_d", 0) < baseline_score.get("otd_d", 100)
+            or any(best_score.get(k, 0) > baseline_score.get(k, 0) for k in physical_gates)):
         logger.warning("CPO result worse than baseline — reverting to baseline")
         best_result = baseline
 
@@ -198,10 +222,34 @@ def _fitness_cost(score: dict) -> float:
     tardy = score.get("tardy_count", 0)
     otd_d_fail = score.get("otd_d_failures", 0)
     day_cap_fail = score.get("day_cap_violations", 0)
+    tool_conflicts = score.get("tool_conflicts", 0)
+    machine_overlaps = score.get("machine_overlaps", 0)
+    ghost_segments = score.get("ghost_segments", 0)
+    blocked_machine = score.get("blocked_machine_segments", 0)
+    blocked_tool = score.get("blocked_tool_segments", 0)
+    setup_sequence = score.get("setup_sequence_violations", 0)
+    run_lot_order = score.get("run_lot_order_violations", 0)
 
-    if tardy > 0 or otd_d_fail > 0 or day_cap_fail > 0:
+    if (
+        tardy > 0 or otd_d_fail > 0 or day_cap_fail > 0
+        or tool_conflicts > 0 or machine_overlaps > 0 or ghost_segments > 0
+        or blocked_machine > 0 or blocked_tool > 0
+        or setup_sequence > 0 or run_lot_order > 0
+    ):
         # Infeasible: large penalty proportional to violations
-        return 10000.0 + tardy * 100.0 + otd_d_fail * 50.0 + day_cap_fail * 200.0
+        return (
+            10000.0
+            + tardy * 100.0
+            + otd_d_fail * 50.0
+            + day_cap_fail * 200.0
+            + tool_conflicts * 500.0
+            + machine_overlaps * 500.0
+            + ghost_segments * 500.0
+            + blocked_machine * 1000.0
+            + blocked_tool * 1000.0
+            + setup_sequence * 800.0
+            + run_lot_order * 800.0
+        )
 
     earliness = score.get("earliness_avg_days", 10.0)
 

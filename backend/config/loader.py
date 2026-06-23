@@ -101,6 +101,13 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
         config.min_prod_min = prod.get("min_prod_min", config.min_prod_min)
         config.eco_lot_mode = prod.get("eco_lot_mode", config.eco_lot_mode)
 
+    subcontract_raw = raw.get("subcontract_skus", {})
+    if isinstance(subcontract_raw, dict):
+        config.subcontract_skus = {
+            str(sku): max(0, int(days))
+            for sku, days in subcontract_raw.items()
+        }
+
     # Scheduler
     sched = raw.get("scheduler", {})
     if sched:
@@ -177,6 +184,7 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
             "eco_lot_mode": config.eco_lot_mode,
             "min_prod_min": config.min_prod_min,
         },
+        "subcontract_skus": dict(sorted(config.subcontract_skus.items())),
         "scheduler": {
             "max_run_days": config.max_run_days,
             "max_edd_gap": config.max_edd_gap,
@@ -253,6 +261,12 @@ def validate_config(config: FactoryConfig) -> list[str]:
     # OEE range
     if not 0.1 <= config.oee_default <= 1.0:
         errors.append(f"OEE default {config.oee_default} fora do range 0.1-1.0")
+
+    for sku, lead_days in config.subcontract_skus.items():
+        if not sku:
+            errors.append("Subcontrato: SKU vazio")
+        if lead_days < 0:
+            errors.append(f"Subcontrato {sku}: lead_days {lead_days} deve ser >= 0")
 
     # Setup crews
     if config.setup_crews < 1:

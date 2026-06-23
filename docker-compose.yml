@@ -1,21 +1,28 @@
 # PP1 — Industrial APS Scheduler
 #
-# Run anywhere (Linux x86-64, Apple-Silicon / Intel Mac):
+# Mac (dev) — build local para a arquitectura da máquina:
 #   docker compose up --build -d      → http://localhost:3000
-#   docker compose down               → stop
 #
-# `build:` makes the image locally for your machine's architecture, so the
-# Mac↔Linux mismatch never arises. See DOCKER.md for details.
+# Linux (deploy) — puxar a imagem multi-arch já publicada no Docker Hub:
+#   docker compose pull
+#   docker compose up -d              → http://localhost:3000
+#   docker compose down               → parar
+#
+# A mesma imagem (yrdftugyihjonkpmnohugiyftd7r6s/pp1-scheduler:latest) serve ambos os fluxos:
+# o `build:` constrói/tag-a localmente; `pull` puxa a variante certa do Hub.
+# Ver DOCKER.md §8 + push-image.sh para publicar multi-arch (amd64+arm64).
 
 services:
   pp1:
     build:
       context: .
       dockerfile: Dockerfile
-    image: pp1-scheduler:latest
+    image: yrdftugyihjonkpmnohugiyftd7r6s/pp1-scheduler:latest
     container_name: pp1-scheduler
     ports:
-      - "3000:80"
+      # Bind to localhost only. Use an SSH tunnel for remote access:
+      #   ssh -L 3000:localhost:${PP1_HTTP_PORT:-3000} user@linux-host
+      - "127.0.0.1:${PP1_HTTP_PORT:-3000}:80"
     volumes:
       # ISOP Excel drop folder (optional — uploads also work via the UI).
       - ./isop:/app/isop

@@ -18,6 +18,7 @@ import type {
   MasterDataResult,
   MutationInput,
   RiskResult,
+  RevertKind,
   Score,
   Segment,
   SimulateApplyResponse,
@@ -56,7 +57,30 @@ export const getWorkforce = (window = 10) =>
 
 export const getConfig = () => get<FactoryConfig>("/api/data/config");
 export const updateConfig = (updates: Record<string, unknown>) =>
-  put<{ status: string; changed: string[]; score: Score }>("/api/data/config", updates);
+  put<{
+    status: string;
+    changed: string[];
+    score: Score;
+    score_candidate?: Score;
+    summary?: string[];
+    hard_gate_violations?: Record<string, number>;
+    plan_violations?: Record<string, number>;
+  }>("/api/data/config", updates);
+export const updateSubcontract = (sku: string, enabled: boolean, lead_days = 5) =>
+  put<{
+    status: string;
+    sku: string;
+    alias?: string | null;
+    enabled: boolean;
+    lead_days: number | null;
+    score: Score;
+    score_candidate?: Score;
+    score_anterior: Score;
+    summary?: string[];
+    hard_gate_violations?: Record<string, number>;
+    plan_violations?: Record<string, number>;
+    can_revert: boolean;
+  }>("/api/data/subcontract", { sku, enabled, lead_days });
 export const getOps = () => get<EOp[]>("/api/data/ops");
 export const getRules = () => get<{ id: string; tipo: string; descricao: string }[]>("/api/data/rules");
 
@@ -89,7 +113,11 @@ export const applyPreset = (name: string) =>
     preset: string;
     changed: string[];
     score: Score;
+    score_candidate?: Score;
     score_previous: Score;
+    summary?: string[];
+    hard_gate_violations?: Record<string, number>;
+    plan_violations?: Record<string, number>;
     simulation_active: boolean;
   }>(`/api/data/presets/${name}`, {});
 
@@ -107,13 +135,24 @@ export const simulateApply = (mutations: MutationInput[]) =>
   post<SimulateApplyResponse>("/api/data/simulate-apply", { mutations });
 
 export const revertSimulation = () =>
-  post<{ status: string; score: Score }>("/api/data/revert", {});
+  post<{ status: string; kind: RevertKind; score: Score }>("/api/data/revert-simulation", {});
+
+export const revertConfig = () =>
+  post<{ status: string; kind: RevertKind; score: Score }>("/api/data/revert-config", {});
+
+export const clearSimulation = () =>
+  post<{ status: string; kind: RevertKind; score: Score }>("/api/data/clear-simulation", {});
 
 export const canRevert = () =>
-  get<{ can_revert: boolean }>("/api/data/can-revert");
+  get<{
+    can_revert: boolean;
+    kind: RevertKind;
+    can_revert_simulation: boolean;
+    can_revert_config: boolean;
+  }>("/api/data/can-revert");
 
 export const getActiveMutations = () =>
-  get<{ active: boolean; mutations: MutationInput[] }>("/api/data/active-mutations");
+  get<{ active: boolean; mutations: MutationInput[]; summary: string[] }>("/api/data/active-mutations");
 
 export const checkCTP = (sku: string, qty: number, deadline: number) =>
   post<CTPResult>("/api/data/ctp", { sku, qty, deadline });

@@ -23,7 +23,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   ctpResult: null,
   nextKey: 0,
 
-  setMutations: (m) => set({ mutations: m }),
+  setMutations: (m) => set({ mutations: m, nextKey: m.length ? Math.max(...m.map((x) => x._key)) + 1 : 0 }),
   setResult: (r) => set({ result: r }),
   setCtpResult: (r) => set({ ctpResult: r }),
 

@@ -1,139 +1,245 @@
-# PP1 Factory Configuration — Incompol
-# Todas as definições da fábrica vivem aqui.
-# O código lê este ficheiro; nunca assume valores.
-
-# ─── IDENTIDADE ───
 factory:
-  name: "Incompol"
-  site: "Vila Nova de Gaia"
-  timezone: "Europe/Lisbon"
-
-# ─── TURNOS ───
-# DAY_CAP calculado automaticamente (soma dos turnos).
+  name: Incompol
+  site: Vila Nova de Gaia
+  timezone: Europe/Lisbon
 shifts:
-  - id: "A"
-    start: "07:00"
-    end: "15:30"
-    label: "Manhã"
-  - id: "B"
-    start: "15:30"
-    end: "00:00"
-    label: "Tarde"
-
-# ─── MÁQUINAS ───
+- id: A
+  start: 07:00
+  end: '15:30'
+  label: Manhã
+- id: B
+  start: '15:30'
+  end: 00:00
+  label: Tarde
 machines:
   PRM019:
-    group: "Grandes"
+    group: Grandes
     active: true
     day_capacity_min: 1020
   PRM031:
-    group: "Grandes"
+    group: Grandes
     active: true
     day_capacity_min: 1020
   PRM039:
-    group: "Grandes"
+    group: Grandes
     active: true
     day_capacity_min: 1020
   PRM042:
-    group: "Medias"
+    group: Medias
     active: true
     day_capacity_min: 1020
   PRM043:
-    group: "Grandes"
+    group: Grandes
     active: true
     day_capacity_min: 1020
   PRM020:
-    group: "Grandes"
+    group: Grandes
     active: false
-
-# ─── FERRAMENTAS ───
-# Alt machines + setup hours (merged from incompol.yaml)
+    day_capacity_min: null
 tools:
   _default:
     setup_hours: 0.5
-
-  # PRM031 → PRM039
-  BFP079: { primary: PRM031, alt: PRM039, setup_hours: 1.0 }
-  BFP083: { primary: PRM031, alt: PRM039, setup_hours: 1.0 }
-  BFP114: { primary: PRM031, alt: PRM039, setup_hours: 1.25 }
-  BFP162: { primary: PRM031, alt: PRM039, setup_hours: 1.25 }
-  BFP171: { primary: PRM031, alt: PRM039, setup_hours: 0.5 }
-  BFP183: { primary: PRM031, alt: PRM039, setup_hours: 0.5 }
-  BFP184: { primary: PRM031, alt: PRM039, setup_hours: 0.5 }
-
-  # PRM039 → PRM043
-  BFP091: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP092: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP096: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP100: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP101: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP110: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-  BFP178: { primary: PRM039, alt: PRM043, setup_hours: 0.5 }
-  VUL127: { primary: PRM039, alt: PRM043, setup_hours: 1.0 }
-
-  # PRM019 → PRM043
-  BFP179: { primary: PRM019, alt: PRM043, setup_hours: 0.5 }
-  BFP181: { primary: PRM019, alt: PRM043, setup_hours: 0.5 }
-  BFP192: { primary: PRM019, alt: PRM043, setup_hours: 0.5 }
-  BFP197: { primary: PRM019, alt: PRM043, setup_hours: 0.5 }
-  VUL038: { primary: PRM019, alt: PRM043, setup_hours: 1.25 }
-
-  # PRM043 → PRM039
-  BFP125: { primary: PRM043, alt: PRM039, setup_hours: 1.0 }
-  BFP172: { primary: PRM043, alt: PRM039, setup_hours: 0.5 }
-  BFP187: { primary: PRM043, alt: PRM039, setup_hours: 0.5 }
-  BFP204: { primary: PRM043, alt: PRM039, setup_hours: 0.5 }
-
-  # PRM019 → PRM039
-  BFP080: { primary: PRM019, alt: PRM039, setup_hours: 1.25 }
-  BFP082: { primary: PRM019, alt: PRM039, setup_hours: 1.25 }
-
-  # PRM039 → PRM031
-  BFP112: { primary: PRM039, alt: PRM031, setup_hours: 0.5 }
-  BFP186: { primary: PRM039, alt: PRM031, setup_hours: 0.5 }
-
-  # PRM043 → PRM031
-  BFP188: { primary: PRM043, alt: PRM031, setup_hours: 0.5 }
-
-  # Tools without alt (setup times only)
-  BFP195: { setup_hours: 0.5 }
-  BFP202: { setup_hours: 0.5 }
-  EBR001: { setup_hours: 0.5 }
-  HAN002: { setup_hours: 0.5 }
-  HAN004: { setup_hours: 0.5 }
-  LEC002: { setup_hours: 0.5 }
-  MIC009: { setup_hours: 0.5 }
-  JDE002: { setup_hours: 1.0 }
-  JTE001: { setup_hours: 1.0 }
-  JTE003: { setup_hours: 1.0 }
-  VUL031: { setup_hours: 1.0 }
-  VUL068: { setup_hours: 1.0 }
-  VUL115: { setup_hours: 1.0 }
-  DYE025: { setup_hours: 1.5 }
-  VUL111: { setup_hours: 1.5 }
-
-# ─── PEÇAS GÉMEAS ───
+  BFP079:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 1.0
+  BFP083:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 1.0
+  BFP114:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 1.25
+  BFP162:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 1.25
+  BFP171:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 0.5
+  BFP183:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 0.5
+  BFP184:
+    primary: PRM031
+    alt: PRM039
+    setup_hours: 0.5
+  BFP091:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP092:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP096:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP100:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP101:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP110:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP178:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 0.5
+  VUL127:
+    primary: PRM039
+    alt: PRM043
+    setup_hours: 1.0
+  BFP179:
+    primary: PRM019
+    alt: PRM043
+    setup_hours: 0.5
+  BFP181:
+    primary: PRM019
+    alt: PRM043
+    setup_hours: 0.5
+  BFP192:
+    primary: PRM019
+    alt: PRM043
+    setup_hours: 0.5
+  BFP197:
+    primary: PRM019
+    alt: PRM043
+    setup_hours: 0.5
+  VUL038:
+    primary: PRM019
+    alt: PRM043
+    setup_hours: 1.25
+  BFP125:
+    primary: PRM043
+    alt: PRM039
+    setup_hours: 1.0
+  BFP172:
+    primary: PRM043
+    alt: PRM039
+    setup_hours: 0.5
+  BFP187:
+    primary: PRM043
+    alt: PRM039
+    setup_hours: 0.5
+  BFP204:
+    primary: PRM043
+    alt: PRM039
+    setup_hours: 0.5
+  BFP080:
+    primary: PRM019
+    alt: PRM039
+    setup_hours: 1.25
+  BFP082:
+    primary: PRM019
+    alt: PRM039
+    setup_hours: 1.25
+  BFP112:
+    primary: PRM039
+    alt: PRM031
+    setup_hours: 0.5
+  BFP186:
+    primary: PRM039
+    alt: PRM031
+    setup_hours: 0.5
+  BFP188:
+    primary: PRM043
+    alt: PRM031
+    setup_hours: 0.5
+  BFP195:
+    setup_hours: 0.5
+  BFP202:
+    setup_hours: 0.5
+  EBR001:
+    setup_hours: 0.5
+  HAN002:
+    setup_hours: 0.5
+  HAN004:
+    setup_hours: 0.5
+  LEC002:
+    setup_hours: 0.5
+  MIC009:
+    setup_hours: 0.5
+  JDE002:
+    setup_hours: 1.0
+  JTE001:
+    setup_hours: 1.0
+  JTE003:
+    setup_hours: 1.0
+  VUL031:
+    setup_hours: 1.0
+  VUL068:
+    setup_hours: 1.0
+  VUL115:
+    setup_hours: 1.0
+  DYE025:
+    setup_hours: 1.5
+  VUL111:
+    setup_hours: 1.5
 twins:
-  BFP079: ["1064169X100", "1064186X100"]
-  BFP110: ["1177295X150", "1177297X150"]
-  BFP114: ["1172769X030", "1694825X040"]
-  BFP125: ["1403150X050", "1413147X070"]
-  BFP162: ["1768601X030", "1768602X030"]
-  BFP171: ["2689556X090", "2689557X090"]
-  BFP172: ["2513974X100", "2785359X050"]
-  BFP178: ["2100373X120.10", "2185094X110.10"]
-  BFP179: ["5246946X080", "5246947X080"]
-  BTL013: ["VW2872957", "VW2872960"]
-  BFP083: ["1115324X080", "1115328X080"]
-  BFP100: ["1086227X070", "1954311X030"]
-  BFP101: ["1135760X070", "1955341X030"]
-  BFP186: ["3778765060.10", "3778766060.10"]
-  BFP197: ["3822924050", "3822925050.10"]
-  VUL127: ["8750302197.20", "8750302200.20"]
-  VUL115: ["8718696125", "8716774145"]
-  JTE004: ["JJB14-000760D.10", "JJB14-000761A.10"]
-
-# ─── OPERADORES ───
+  BFP079:
+  - 1064169X100
+  - 1064186X100
+  BFP110:
+  - 1177295X150
+  - 1177297X150
+  BFP114:
+  - 1172769X030
+  - 1694825X040
+  BFP125:
+  - 1403150X050
+  - 1413147X070
+  BFP162:
+  - 1768601X030
+  - 1768602X030
+  BFP171:
+  - 2689556X090
+  - 2689557X090
+  BFP172:
+  - 2513974X100
+  - 2785359X050
+  BFP178:
+  - 2100373X120.10
+  - 2185094X110.10
+  BFP179:
+  - 5246946X080
+  - 5246947X080
+  BTL013:
+  - VW2872957
+  - VW2872960
+  BFP083:
+  - 1115324X080
+  - 1115328X080
+  BFP100:
+  - 1086227X070
+  - 1954311X030
+  BFP101:
+  - 1135760X070
+  - 1955341X030
+  BFP186:
+  - '3778765060.10'
+  - '3778766060.10'
+  BFP197:
+  - '3822924050'
+  - '3822925050.10'
+  VUL127:
+  - '8750302197.20'
+  - '8750302200.20'
+  VUL115:
+  - '8718696125'
+  - '8716774145'
+  JTE004:
+  - JJB14-000760D.10
+  - JJB14-000761A.10
 operators:
   Grandes:
     A: 6
@@ -141,33 +247,26 @@ operators:
   Medias:
     A: 9
     B: 4
-
-# ─── CREW DE SETUP ───
 setup_crews: 1
-
-# ─── FERIADOS 2026 ───
 holidays:
-  - "2026-01-01"
-  - "2026-04-03"
-  - "2026-04-05"
-  - "2026-04-25"
-  - "2026-05-01"
-  - "2026-06-04"
-  - "2026-06-10"
-  - "2026-08-15"
-  - "2026-10-05"
-  - "2026-11-01"
-  - "2026-12-01"
-  - "2026-12-08"
-  - "2026-12-25"
-
-# ─── PRODUÇÃO ───
+- '2026-01-01'
+- '2026-04-03'
+- '2026-04-05'
+- '2026-04-25'
+- '2026-05-01'
+- '2026-06-04'
+- '2026-06-10'
+- '2026-08-15'
+- '2026-10-05'
+- '2026-11-01'
+- '2026-12-01'
+- '2026-12-08'
+- '2026-12-25'
 production:
   oee_default: 0.66
-  eco_lot_mode: "hard"
+  eco_lot_mode: hard
   min_prod_min: 1.0
-
-# ─── SCHEDULER ───
+subcontract_skus: {}
 scheduler:
   max_run_days: 5
   max_edd_gap: 10
@@ -182,19 +281,15 @@ scheduler:
     buffer_pct: 0.05
     threshold: 95.0
     earliness_target: 5.5
-
-# ─── SCORING ───
 scoring:
   weights:
-    earliness: 0.40
-    setups: 0.30
-    utilization_balance: 0.30
-
-# ─── RISK ───
+    earliness: 0.4
+    setups: 0.3
+    utilization_balance: 0.3
 risk:
   oee_distribution:
-    type: "beta"
+    type: beta
     alpha: 10.6
     beta: 5.5
-  setup_cv: 0.20
-  processing_cv: 0.10
+  setup_cv: 0.2
+  processing_cv: 0.1

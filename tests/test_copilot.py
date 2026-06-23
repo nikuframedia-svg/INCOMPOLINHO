@@ -84,6 +84,8 @@ def _setup_state():
 
     state.engine_data = engine
     state.config = config
+    state.active_mutations = []
+    state.clear_revert()
     state.update_schedule(result)
     return engine, config, result
 
@@ -108,6 +110,7 @@ class TestSaveConfig:
         original.tools = {"BFP079": {"primary": "PRM019", "alt": "PRM042", "setup_hours": 1.0}}
         original.twins = {"BFP079": ["SKU_A", "SKU_B"]}
         original.holidays = ["2026-01-01", "2026-12-25"]
+        original.subcontract_skus = {"SKU_A": 5}
 
         with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
             path = f.name
@@ -118,6 +121,7 @@ class TestSaveConfig:
 
             assert loaded.day_capacity_min == original.day_capacity_min
             assert len(loaded.tools) == len(original.tools)
+            assert loaded.subcontract_skus == {"SKU_A": 5}
             assert len(loaded.twins) == len(original.twins)
             assert loaded.oee_default == original.oee_default
             assert loaded.jit_enabled == original.jit_enabled
@@ -343,6 +347,28 @@ class TestMasterExecutors:
         # Check all machines synced
         for m in state.engine_data.machines:
             assert m.day_capacity == new_cap
+
+    def test_snapshot_revert_restores_config_and_schedule_exactly(self):
+        state.save_current(kind="config")
+        old_cap = state.config.day_capacity_min
+        old_segments = [
+            (s.lot_id, s.day_idx, s.start_min, s.end_min)
+            for s in state.segments
+        ]
+
+        state.config.shifts[0].end_min += 30
+        state.segments[0].start_min += 15
+        state.active_mutations = [{"type": "machine_down", "params": {"machine_id": "M1"}}]
+
+        kind = state.restore_saved()
+
+        assert kind == "config"
+        assert state.config.day_capacity_min == old_cap
+        assert [
+            (s.lot_id, s.day_idx, s.start_min, s.end_min)
+            for s in state.segments
+        ] == old_segments
+        assert state.active_mutations == []
 
 
 # ─── TestVizExecutors ─────────────────────────────────────────────────────

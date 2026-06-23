@@ -105,6 +105,7 @@ class FactoryConfig:
     oee_default: float = 0.66
     min_prod_min: float = 1.0
     eco_lot_mode: str = "hard"
+    subcontract_skus: dict[str, int] = field(default_factory=dict)
 
     # Scheduler tunables (base values — SchedulerParams can override)
     max_run_days: int = 5
@@ -126,9 +127,6 @@ class FactoryConfig:
     # VNS post-processing
     vns_enabled: bool = True
     vns_max_iter: int = 150
-
-    # Compaction post-processing (opt-in — default OFF preserves validated results)
-    compact_enabled: bool = False
 
     # Scoring weights
     weight_earliness: float = 0.40

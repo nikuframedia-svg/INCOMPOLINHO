@@ -21,6 +21,8 @@ from backend.scheduler.scheduler import schedule_all
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import ScheduleResult
 from backend.types import EngineData, EOp, MachineInfo, TwinGroup
+from backend.cpo.cached_pipeline import CachedPipeline
+from backend.cpo.chromosome import Chromosome
 from backend.cpo.optimizer import optimize
 
 
@@ -185,6 +187,18 @@ class TestHardConstraints:
         """No lot completes after its EDD."""
         score = normal_result.score
         assert score["tardy_count"] == 0, f"Tardy={score['tardy_count']}, expected 0"
+
+    def test_final_hard_gate_metrics_zero(self, normal_result):
+        """Final post-processing exposes the physical hard gates."""
+        score = normal_result.score
+        assert score["tool_conflicts"] == 0
+        assert score["machine_overlaps"] == 0
+        assert score["day_cap_violations"] == 0
+        assert score["ghost_segments"] == 0
+        assert score["blocked_machine_segments"] == 0
+        assert score["blocked_tool_segments"] == 0
+        assert score["setup_sequence_violations"] == 0
+        assert score["run_lot_order_violations"] == 0
 
     def test_shift_bounds(self, normal_result):
         """All segments within [420, 1440] (07:00-00:00)."""
@@ -399,6 +413,18 @@ class TestCPOSpecific:
         assert normal_result.score["tardy_count"] <= baseline_result.score["tardy_count"]
         assert normal_result.score["otd"] >= baseline_result.score["otd"]
         assert normal_result.score["otd_d"] >= baseline_result.score["otd_d"]
+
+    def test_cached_pipeline_uses_same_final_hard_gates(self, realistic_data):
+        """GA evaluations go through the same final physical validation."""
+        result = CachedPipeline(realistic_data, FactoryConfig()).evaluate(Chromosome())
+        assert result.score["tool_conflicts"] == 0
+        assert result.score["machine_overlaps"] == 0
+        assert result.score["day_cap_violations"] == 0
+        assert result.score["ghost_segments"] == 0
+        assert result.score["blocked_machine_segments"] == 0
+        assert result.score["blocked_tool_segments"] == 0
+        assert result.score["setup_sequence_violations"] == 0
+        assert result.score["run_lot_order_violations"] == 0
 
     def test_deterministic_seed(self, realistic_data):
         """Same seed produces same result."""

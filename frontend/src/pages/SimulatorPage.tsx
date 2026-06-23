@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { T } from "../theme/tokens";
 import { simulate, checkCTP, applyCTP } from "../api/endpoints";
 import { useDataStore } from "../stores/useDataStore";
@@ -151,11 +151,12 @@ export function SimulatorPage() {
   const {
     mutations, result, ctpResult,
     addMutation, removeMutation, updateMutationType, updateMutationParam,
-    setResult, setCtpResult,
+    setMutations, setResult, setCtpResult,
   } = useSimulatorStore();
   const refreshAll = useDataStore((s) => s.refreshAll);
   const applySimulation = useDataStore((s) => s.applySimulation);
   const isSimulated = useDataStore((s) => s.isSimulated);
+  const activeMutations = useDataStore((s) => s.activeMutations);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(false);
@@ -170,6 +171,12 @@ export function SimulatorPage() {
   const [ctpApplied, setCtpApplied] = useState(false);
   const [ctpError, setCtpError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (activeMutations.length > 0 && mutations.length === 0) {
+      setMutations(activeMutations.map((m, i) => ({ ...m, _key: i })));
+    }
+  }, [activeMutations, mutations.length, setMutations]);
+
   const runSimulation = async () => {
     const validMutations = mutations.filter((m) => m.type).map(({ type, params }) => ({ type, params }));
     if (validMutations.length === 0) return;
@@ -179,6 +186,12 @@ export function SimulatorPage() {
     try {
       const res = await simulate(validMutations);
       setResult(res);
+      if (res.status === "invalid") {
+        const details = Object.entries(res.plan_violations ?? res.hard_gate_violations ?? {})
+          .map(([key, value]) => `${key}=${value}`)
+          .join(", ");
+        setError(`Plano invalido${details ? `: ${details}` : ""}`);
+      }
       refreshAll();
     } catch (e) {
       setError(String(e));
@@ -330,14 +343,14 @@ export function SimulatorPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
               onClick={handleApply}
-              disabled={applying || applied || isSimulated}
+              disabled={applying || applied}
               style={{
                 ...btnStyle,
-                background: applied ? T.green : isSimulated ? T.tertiary : T.blue,
-                opacity: applying || applied || isSimulated ? 0.6 : 1,
+                background: applied ? T.green : T.blue,
+                opacity: applying || applied ? 0.6 : 1,
               }}
             >
-              {applying ? "A aplicar..." : applied ? "Aplicado" : isSimulated ? "Cenario ja activo" : "Aplicar no Gantt"}
+              {applying ? "A aplicar..." : applied ? "Aplicado" : isSimulated ? "Substituir cenario" : "Aplicar no Gantt"}
             </button>
             <span style={{ fontSize: 11, color: T.tertiary }}>Tempo: {result.time_ms.toFixed(0)}ms</span>
           </div>
