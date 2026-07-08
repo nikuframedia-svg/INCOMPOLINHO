@@ -4,9 +4,10 @@ interface Props {
   children: React.ReactNode;
   onClose: () => void;
   title: string;
+  width?: number | string;
 }
 
-export function Modal({ children, onClose, title }: Props) {
+export function Modal({ children, onClose, title, width = 400 }: Props) {
   return (
     <div
       style={{
@@ -27,7 +28,8 @@ export function Modal({ children, onClose, title }: Props) {
           background: T.card,
           borderRadius: 16,
           padding: 28,
-          width: 400,
+          width,
+          maxWidth: "calc(100vw - 32px)",
           maxHeight: "80vh",
           overflowY: "auto",
           border: `1px solid ${T.border}`,

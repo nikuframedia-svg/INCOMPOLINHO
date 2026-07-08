@@ -30,22 +30,28 @@ def compute_diff(
     # REMOVED
     for lid in old_map:
         if lid not in new_map:
-            changes.append(DiffEntry(
-                lot_id=lid, change_type="REMOVED",
-                old_value=f"{old_map[lid][0]} dia {old_map[lid][1]}",
-                new_value=None,
-                reason="Lot removido",
-            ))
+            changes.append(
+                DiffEntry(
+                    lot_id=lid,
+                    change_type="REMOVED",
+                    old_value=f"{old_map[lid][0]} dia {old_map[lid][1]}",
+                    new_value=None,
+                    reason="Lot removido",
+                )
+            )
 
     # ADDED
     for lid in new_map:
         if lid not in old_map:
-            changes.append(DiffEntry(
-                lot_id=lid, change_type="ADDED",
-                old_value=None,
-                new_value=f"{new_map[lid][0]} dia {new_map[lid][1]}",
-                reason="Lot novo",
-            ))
+            changes.append(
+                DiffEntry(
+                    lot_id=lid,
+                    change_type="ADDED",
+                    old_value=None,
+                    new_value=f"{new_map[lid][0]} dia {new_map[lid][1]}",
+                    reason="Lot novo",
+                )
+            )
 
     # MOVED / RETIMED
     for lid in old_map:
@@ -54,19 +60,25 @@ def compute_diff(
             new_m, new_d = new_map[lid]
 
             if old_m != new_m:
-                changes.append(DiffEntry(
-                    lot_id=lid, change_type="MOVED",
-                    old_value=f"{old_m} dia {old_d}",
-                    new_value=f"{new_m} dia {new_d}",
-                    reason=f"Mudou de {old_m} para {new_m}",
-                ))
+                changes.append(
+                    DiffEntry(
+                        lot_id=lid,
+                        change_type="MOVED",
+                        old_value=f"{old_m} dia {old_d}",
+                        new_value=f"{new_m} dia {new_d}",
+                        reason=f"Mudou de {old_m} para {new_m}",
+                    )
+                )
             elif old_d != new_d:
-                changes.append(DiffEntry(
-                    lot_id=lid, change_type="RETIMED",
-                    old_value=f"dia {old_d}",
-                    new_value=f"dia {new_d}",
-                    reason=f"Deslocado de dia {old_d} para dia {new_d}",
-                ))
+                changes.append(
+                    DiffEntry(
+                        lot_id=lid,
+                        change_type="RETIMED",
+                        old_value=f"dia {old_d}",
+                        new_value=f"dia {new_d}",
+                        reason=f"Deslocado de dia {old_d} para dia {new_d}",
+                    )
+                )
 
     # Summary
     counts: dict[str, int] = defaultdict(int)

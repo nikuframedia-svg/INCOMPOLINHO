@@ -9,7 +9,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -17,13 +16,13 @@ from backend.types import EngineData
 @dataclass(slots=True)
 class Proposal:
     id: str
-    type: str          # "move_to_alt" | "night_shift" | "advance_production" | "merge_runs"
-    description: str   # Portuguese
+    type: str  # "move_to_alt" | "night_shift" | "advance_production" | "merge_runs"
+    description: str  # Portuguese
     estimated_impact: str
     affected_lots: list[str]
     machine_from: str | None
     machine_to: str | None
-    priority: int      # 1=highest
+    priority: int  # 1=highest
 
 
 @dataclass(slots=True)
@@ -90,19 +89,21 @@ def generate_proposals(
 
         if free >= needed_min:
             pid += 1
-            proposals.append(Proposal(
-                id=f"P{pid:03d}",
-                type="move_to_alt",
-                description=(
-                    f"Mover {lot.op_id} de {op.m} para {op.alt}. "
-                    f"Alt tem {free:.0f} min livres nos dias {lot.edd - 2}-{lot.edd}."
-                ),
-                estimated_impact=f"Resolve atraso de {completion - lot.edd} dia(s)",
-                affected_lots=[lot.id],
-                machine_from=op.m,
-                machine_to=op.alt,
-                priority=1,
-            ))
+            proposals.append(
+                Proposal(
+                    id=f"P{pid:03d}",
+                    type="move_to_alt",
+                    description=(
+                        f"Mover {lot.op_id} de {op.m} para {op.alt}. "
+                        f"Alt tem {free:.0f} min livres nos dias {lot.edd - 2}-{lot.edd}."
+                    ),
+                    estimated_impact=f"Resolve atraso de {completion - lot.edd} dia(s)",
+                    affected_lots=[lot.id],
+                    machine_from=op.m,
+                    machine_to=op.alt,
+                    priority=1,
+                )
+            )
 
     # ── B. Night shift ──
     machine_tardy_count: dict[str, int] = defaultdict(int)
@@ -119,22 +120,25 @@ def generate_proposals(
             continue
 
         pid += 1
-        proposals.append(Proposal(
-            id=f"P{pid:03d}",
-            type="night_shift",
-            description=(
-                f"Turno noite na {m_id} (utilização {util * 100:.0f}%). "
-                f"{n_tardy} lote{'s' if n_tardy > 1 else ''} em atraso nesta máquina."
-            ),
-            estimated_impact=f"Pode resolver até {n_tardy} atraso(s)",
-            affected_lots=[
-                lot.id for lot, _ in tardy_lots
-                if lot_segs.get(lot.id, [{}])[0].machine_id == m_id  # type: ignore[union-attr]
-            ][:5],
-            machine_from=m_id,
-            machine_to=None,
-            priority=2,
-        ))
+        proposals.append(
+            Proposal(
+                id=f"P{pid:03d}",
+                type="night_shift",
+                description=(
+                    f"Turno noite na {m_id} (utilização {util * 100:.0f}%). "
+                    f"{n_tardy} lote{'s' if n_tardy > 1 else ''} em atraso nesta máquina."
+                ),
+                estimated_impact=f"Pode resolver até {n_tardy} atraso(s)",
+                affected_lots=[
+                    lot.id
+                    for lot, _ in tardy_lots
+                    if lot_segs.get(lot.id, [{}])[0].machine_id == m_id  # type: ignore[union-attr]
+                ][:5],
+                machine_from=m_id,
+                machine_to=None,
+                priority=2,
+            )
+        )
 
     # ── C. Merge runs (save setups) ──
     # Find consecutive segments on same machine with same tool that have separate run_ids
@@ -152,19 +156,21 @@ def generate_proposals(
                 gap = abs(s2.day_idx - s1.day_idx)
                 if gap <= 2:
                     pid += 1
-                    proposals.append(Proposal(
-                        id=f"P{pid:03d}",
-                        type="merge_runs",
-                        description=(
-                            f"Juntar runs de {s1.tool_id} na {m_id} "
-                            f"(dias {s1.day_idx}-{s2.day_idx}). Poupa 1 setup."
-                        ),
-                        estimated_impact="Poupa 1 setup",
-                        affected_lots=[s1.lot_id, s2.lot_id],
-                        machine_from=m_id,
-                        machine_to=None,
-                        priority=3,
-                    ))
+                    proposals.append(
+                        Proposal(
+                            id=f"P{pid:03d}",
+                            type="merge_runs",
+                            description=(
+                                f"Juntar runs de {s1.tool_id} na {m_id} "
+                                f"(dias {s1.day_idx}-{s2.day_idx}). Poupa 1 setup."
+                            ),
+                            estimated_impact="Poupa 1 setup",
+                            affected_lots=[s1.lot_id, s2.lot_id],
+                            machine_from=m_id,
+                            machine_to=None,
+                            priority=3,
+                        )
+                    )
                     if len([p for p in proposals if p.type == "merge_runs"]) >= 5:
                         break
 

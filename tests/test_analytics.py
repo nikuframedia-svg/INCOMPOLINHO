@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from backend.analytics import (
-    CTPResult,
-    ExpeditionKPIs,
-    StockProjection,
     build_production_by_op,
     compute_ctp,
     compute_expedition,
@@ -14,15 +11,20 @@ from backend.analytics import (
 )
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Lot, Segment
-from backend.types import ClientDemandEntry, EngineData, EOp, MachineInfo, TwinGroup
+from backend.types import ClientDemandEntry, EngineData, EOp, MachineInfo
 
 WORKDAYS = [
-    "2026-03-05", "2026-03-06", "2026-03-07",
-    "2026-03-10", "2026-03-11", "2026-03-12",
+    "2026-03-05",
+    "2026-03-06",
+    "2026-03-07",
+    "2026-03-10",
+    "2026-03-11",
+    "2026-03-12",
 ]
 
 
 # --- Fixtures ---
+
 
 def _eop(
     op_id: str = "op1",
@@ -37,10 +39,22 @@ def _eop(
     client: str = "CLIENT",
 ) -> EOp:
     return EOp(
-        id=op_id, sku=sku, client=client, designation="Test",
-        m=machine, t=tool, pH=pH, sH=sH, operators=1,
-        eco_lot=0, alt=alt, stk=0, backlog=0,
-        d=d or [0, 500, 0, 300, 0], oee=oee, wip=0,
+        id=op_id,
+        sku=sku,
+        client=client,
+        designation="Test",
+        m=machine,
+        t=tool,
+        pH=pH,
+        sH=sH,
+        operators=1,
+        eco_lot=0,
+        alt=alt,
+        stk=0,
+        backlog=0,
+        d=d or [0, 500, 0, 300, 0],
+        oee=oee,
+        wip=0,
     )
 
 
@@ -78,10 +92,17 @@ def _lot(
     twin_outputs: list[tuple[str, str, int]] | None = None,
 ) -> Lot:
     return Lot(
-        id=lot_id, op_id=op_id, tool_id=tool_id,
-        machine_id=machine_id, alt_machine_id=None,
-        qty=qty, prod_min=prod_min, setup_min=setup_min,
-        edd=edd, is_twin=is_twin, twin_outputs=twin_outputs,
+        id=lot_id,
+        op_id=op_id,
+        tool_id=tool_id,
+        machine_id=machine_id,
+        alt_machine_id=None,
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
+        edd=edd,
+        is_twin=is_twin,
+        twin_outputs=twin_outputs,
     )
 
 
@@ -98,15 +119,25 @@ def _seg(
     twin_outputs: list[tuple[str, str, int]] | None = None,
 ) -> Segment:
     return Segment(
-        lot_id=lot_id, run_id=run_id, machine_id=machine,
-        tool_id=tool, day_idx=day,
-        start_min=420, end_min=520, shift="A",
-        qty=qty, prod_min=prod_min, setup_min=setup_min,
-        edd=3, sku=sku, twin_outputs=twin_outputs,
+        lot_id=lot_id,
+        run_id=run_id,
+        machine_id=machine,
+        tool_id=tool,
+        day_idx=day,
+        start_min=420,
+        end_min=520,
+        shift="A",
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
+        edd=3,
+        sku=sku,
+        twin_outputs=twin_outputs,
     )
 
 
 # ═══ BUILD PRODUCTION BY OP ═══
+
 
 class TestBuildProductionByOp:
     def test_basic(self):
@@ -116,10 +147,10 @@ class TestBuildProductionByOp:
         assert prod["op1"][0] == 1000
 
     def test_twin_outputs(self):
-        lots = [_lot(op_id="op1", is_twin=True,
-                     twin_outputs=[("op1", "A", 500), ("op2", "B", 300)])]
-        segs = [_seg(day=0, qty=500,
-                     twin_outputs=[("op1", "A", 500), ("op2", "B", 300)])]
+        lots = [
+            _lot(op_id="op1", is_twin=True, twin_outputs=[("op1", "A", 500), ("op2", "B", 300)])
+        ]
+        segs = [_seg(day=0, qty=500, twin_outputs=[("op1", "A", 500), ("op2", "B", 300)])]
         prod = build_production_by_op(segs, lots)
         assert prod["op1"][0] == 500
         assert prod["op2"][0] == 300
@@ -130,6 +161,7 @@ class TestBuildProductionByOp:
 
 
 # ═══ STOCK PROJECTION ═══
+
 
 class TestStockProjection:
     def test_basic(self):
@@ -144,14 +176,16 @@ class TestStockProjection:
 
     def test_twin(self):
         """Twin segment credits both ops."""
-        lots = [_lot(op_id="op1", is_twin=True,
-                     twin_outputs=[("op1", "A", 5000), ("op2", "B", 5000)])]
-        segs = [_seg(day=0, qty=5000,
-                     twin_outputs=[("op1", "A", 5000), ("op2", "B", 5000)])]
-        engine = _engine(ops=[
-            _eop(op_id="op1", sku="A", d=[3000, 0, 0, 0, 0]),
-            _eop(op_id="op2", sku="B", d=[2000, 0, 0, 0, 0]),
-        ])
+        lots = [
+            _lot(op_id="op1", is_twin=True, twin_outputs=[("op1", "A", 5000), ("op2", "B", 5000)])
+        ]
+        segs = [_seg(day=0, qty=5000, twin_outputs=[("op1", "A", 5000), ("op2", "B", 5000)])]
+        engine = _engine(
+            ops=[
+                _eop(op_id="op1", sku="A", d=[3000, 0, 0, 0, 0]),
+                _eop(op_id="op2", sku="B", d=[2000, 0, 0, 0, 0]),
+            ]
+        )
 
         projs = compute_stock_projections(segs, lots, engine)
         p1 = next(p for p in projs if p.op_id == "op1")
@@ -194,16 +228,28 @@ class TestStockProjection:
         segs = []  # no production
         # stk=200, demand=500 on day 1
         op = EOp(
-            id="op1", sku="SKU1", client="C", designation="T",
-            m="M1", t="T1", pH=100.0, sH=0.5, operators=1,
-            eco_lot=0, alt=None, stk=200, backlog=0,
-            d=[0, 500, 0, 0, 0], oee=0.66, wip=0,
+            id="op1",
+            sku="SKU1",
+            client="C",
+            designation="T",
+            m="M1",
+            t="T1",
+            pH=100.0,
+            sH=0.5,
+            operators=1,
+            eco_lot=0,
+            alt=None,
+            stk=200,
+            backlog=0,
+            d=[0, 500, 0, 0, 0],
+            oee=0.66,
+            wip=0,
         )
         engine = _engine(ops=[op])
 
         projs = compute_stock_projections(segs, lots, engine)
         assert projs[0].initial_stock == 200  # stored but not in formula
-        assert projs[0].days[0].stock == 0    # day 0: 0 - 0 = 0
+        assert projs[0].days[0].stock == 0  # day 0: 0 - 0 = 0
         assert projs[0].days[1].stock == -500  # day 1: 0 - 500 = -500
 
     def test_buffer_days(self):
@@ -214,16 +260,16 @@ class TestStockProjection:
 
         projs = compute_stock_projections(segs, lots, engine, buffer_days=2)
         # First 2 entries are buffer days
-        assert projs[0].days[0].is_buffer is True   # day -2
+        assert projs[0].days[0].is_buffer is True  # day -2
         assert projs[0].days[0].day_idx == -2
         assert projs[0].days[0].produced == 0
-        assert projs[0].days[1].is_buffer is True   # day -1
+        assert projs[0].days[1].is_buffer is True  # day -1
         assert projs[0].days[1].day_idx == -1
         assert projs[0].days[1].produced == 300
-        assert projs[0].days[1].stock == 300         # 300 produced, 0 demand
+        assert projs[0].days[1].stock == 300  # 300 produced, 0 demand
         # Regular days follow
-        assert projs[0].days[2].is_buffer is False   # day 0
-        assert projs[0].days[2].stock == 300          # carry from buffer
+        assert projs[0].days[2].is_buffer is False  # day 0
+        assert projs[0].days[2].stock == 300  # carry from buffer
         assert projs[0].days[3].stock == 300 + 200 - 500  # day 1: +200 prod, -500 demand = 0
 
     def test_buffer_zero(self):
@@ -238,6 +284,7 @@ class TestStockProjection:
 
 
 # ═══ CTP ═══
+
 
 class TestCTP:
     def test_feasible_primary(self):
@@ -261,10 +308,9 @@ class TestCTP:
     def test_infeasible(self):
         """Both machines full → not feasible."""
         engine = _engine(ops=[_eop(alt="M2")], n_days=3)
-        segs = (
-            [_seg(machine="M1", day=d, prod_min=DAY_CAP, setup_min=0) for d in range(3)]
-            + [_seg(machine="M2", day=d, prod_min=DAY_CAP, setup_min=0) for d in range(3)]
-        )
+        segs = [_seg(machine="M1", day=d, prod_min=DAY_CAP, setup_min=0) for d in range(3)] + [
+            _seg(machine="M2", day=d, prod_min=DAY_CAP, setup_min=0) for d in range(3)
+        ]
         result = compute_ctp("SKU1", 500, 2, segs, engine)
         assert result.feasible is False
 
@@ -292,6 +338,7 @@ class TestCTP:
 
 # ═══ EXPEDITION ═══
 
+
 class TestExpedition:
     def test_ready(self):
         """Production before demand day → ready."""
@@ -299,10 +346,18 @@ class TestExpedition:
         segs = [_seg(day=0, qty=1000)]
         engine = _engine(
             ops=[_eop(d=[0, 0, 800, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="FAUR", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=800, np_value=-800),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="FAUR",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=800,
+                        np_value=-800,
+                    ),
+                ]
+            },
         )
         exp = compute_expedition(segs, lots, engine)
         assert len(exp.days) == 1
@@ -314,10 +369,18 @@ class TestExpedition:
         segs = [_seg(day=0, qty=500)]
         engine = _engine(
             ops=[_eop(d=[0, 0, 800, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="FAUR", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=800, np_value=-800),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="FAUR",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=800,
+                        np_value=-800,
+                    ),
+                ]
+            },
         )
         exp = compute_expedition(segs, lots, engine)
         assert exp.days[0].entries[0].status == "partial"
@@ -329,12 +392,26 @@ class TestExpedition:
         segs = [_seg(day=0, qty=20000)]
         engine = _engine(
             ops=[_eop(d=[0, 0, 15000, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="FAURECIA", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=10000, np_value=-10000),
-                ClientDemandEntry(client="FAUR-SIEGE", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=5000, np_value=-5000),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="FAURECIA",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=10000,
+                        np_value=-10000,
+                    ),
+                    ClientDemandEntry(
+                        client="FAUR-SIEGE",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=5000,
+                        np_value=-5000,
+                    ),
+                ]
+            },
         )
         exp = compute_expedition(segs, lots, engine)
         assert len(exp.days) == 1
@@ -355,12 +432,26 @@ class TestExpedition:
         segs = [_seg(day=0, qty=500)]
         engine = _engine(
             ops=[_eop(d=[0, 800, 500, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=1,
-                                  date="2026-03-06", order_qty=800, np_value=-800),
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=500, np_value=-500),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=800,
+                        np_value=-800,
+                    ),
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=500,
+                        np_value=-500,
+                    ),
+                ]
+            },
         )
         exp = compute_expedition(segs, lots, engine)
         # Day 1: produced=500, cum_demand=800 → partial
@@ -371,6 +462,7 @@ class TestExpedition:
 
 # ═══ ORDER TRACKING ═══
 
+
 class TestOrderTracking:
     def test_covers_all_demands(self):
         """Every ClientDemandEntry gets an OrderTracking."""
@@ -378,12 +470,26 @@ class TestOrderTracking:
         segs = [_seg(day=0, qty=1000)]
         engine = _engine(
             ops=[_eop(d=[0, 500, 300, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=1,
-                                  date="2026-03-06", order_qty=500, np_value=-500),
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=300, np_value=-300),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    ),
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=300,
+                        np_value=-300,
+                    ),
+                ]
+            },
         )
         result = compute_order_tracking(segs, lots, engine)
         total_tracked = sum(len(c.orders) for c in result)
@@ -396,12 +502,26 @@ class TestOrderTracking:
         segs = [_seg(day=0, qty=1000)]
         engine = _engine(
             ops=[_eop(d=[0, 500, 300, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=1,
-                                  date="2026-03-06", order_qty=500, np_value=-500),
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=2,
-                                  date="2026-03-07", order_qty=300, np_value=-300),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    ),
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=2,
+                        date="2026-03-07",
+                        order_qty=300,
+                        np_value=-300,
+                    ),
+                ]
+            },
         )
         result = compute_order_tracking(segs, lots, engine)
         orders = result[0].orders
@@ -413,10 +533,18 @@ class TestOrderTracking:
         """Demand with no lot → source='not_planned'."""
         engine = _engine(
             ops=[_eop(d=[0, 500, 0, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=1,
-                                  date="2026-03-06", order_qty=500, np_value=-500),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    ),
+                ]
+            },
         )
         result = compute_order_tracking([], [], engine)
         assert result[0].orders[0].source == "not_planned"
@@ -428,10 +556,18 @@ class TestOrderTracking:
         segs = [_seg(day=0, qty=1000)]
         engine = _engine(
             ops=[_eop(d=[0, 500, 0, 0, 0])],
-            client_demands={"SKU1": [
-                ClientDemandEntry(client="C1", sku="SKU1", day_idx=1,
-                                  date="2026-03-06", order_qty=500, np_value=-500),
-            ]},
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    ),
+                ]
+            },
         )
         result = compute_order_tracking(segs, lots, engine)
         for client in result:
@@ -441,21 +577,47 @@ class TestOrderTracking:
     def test_twin_tracking(self):
         """Twin lots credit correct SKU."""
         twin_lot = _lot(
-            lot_id="LT1", op_id="op1", qty=500, edd=1, is_twin=True,
+            lot_id="LT1",
+            op_id="op1",
+            qty=500,
+            edd=1,
+            is_twin=True,
             twin_outputs=[("op1", "SKU-A", 500), ("op2", "SKU-B", 300)],
         )
-        segs = [_seg(lot_id="LT1", day=0, qty=500,
-                      twin_outputs=[("op1", "SKU-A", 500), ("op2", "SKU-B", 300)])]
+        segs = [
+            _seg(
+                lot_id="LT1",
+                day=0,
+                qty=500,
+                twin_outputs=[("op1", "SKU-A", 500), ("op2", "SKU-B", 300)],
+            )
+        ]
         engine = _engine(
             ops=[
                 _eop(op_id="op1", sku="SKU-A", d=[0, 500, 0, 0, 0]),
                 _eop(op_id="op2", sku="SKU-B", d=[0, 300, 0, 0, 0]),
             ],
             client_demands={
-                "SKU-A": [ClientDemandEntry(client="C1", sku="SKU-A", day_idx=1,
-                                            date="2026-03-06", order_qty=500, np_value=-500)],
-                "SKU-B": [ClientDemandEntry(client="C2", sku="SKU-B", day_idx=1,
-                                            date="2026-03-06", order_qty=300, np_value=-300)],
+                "SKU-A": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU-A",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    )
+                ],
+                "SKU-B": [
+                    ClientDemandEntry(
+                        client="C2",
+                        sku="SKU-B",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=300,
+                        np_value=-300,
+                    )
+                ],
             },
         )
         result = compute_order_tracking(segs, [twin_lot], engine)

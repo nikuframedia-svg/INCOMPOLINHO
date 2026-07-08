@@ -12,7 +12,7 @@ from backend.risk.slack_analytics import (
     compute_machine_risks,
 )
 from backend.risk.surrogate import extract_features, predict_risk
-from backend.risk.types import HeatmapCell, LotRisk, MachineRisk
+from backend.risk.types import LotRisk, MachineRisk
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData, EOp, MachineInfo
@@ -35,10 +35,22 @@ def _eop(
     alt: str | None = None,
 ) -> EOp:
     return EOp(
-        id=op_id, sku=sku, client="CLIENT", designation="Test",
-        m=machine, t=tool, pH=pH, sH=sH, operators=1,
-        eco_lot=0, alt=alt, stk=0, backlog=0,
-        d=d or [0, 500, 0, 300, 0], oee=oee, wip=0,
+        id=op_id,
+        sku=sku,
+        client="CLIENT",
+        designation="Test",
+        m=machine,
+        t=tool,
+        pH=pH,
+        sH=sH,
+        operators=1,
+        eco_lot=0,
+        alt=alt,
+        stk=0,
+        backlog=0,
+        d=d or [0, 500, 0, 300, 0],
+        oee=oee,
+        wip=0,
     )
 
 
@@ -51,8 +63,13 @@ def _engine(
     machine_ids = list({op.m for op in ops})
     machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machine_ids]
     return EngineData(
-        ops=ops, machines=machines, twin_groups=[], client_demands={},
-        workdays=WORKDAYS[:n_days], n_days=n_days, holidays=[],
+        ops=ops,
+        machines=machines,
+        twin_groups=[],
+        client_demands={},
+        workdays=WORKDAYS[:n_days],
+        n_days=n_days,
+        holidays=[],
     )
 
 
@@ -67,9 +84,16 @@ def _lot(
     setup_min: float = 30.0,
 ) -> Lot:
     return Lot(
-        id=lot_id, op_id=op_id, tool_id=tool, machine_id=machine,
-        alt_machine_id=None, qty=qty, prod_min=prod_min, setup_min=setup_min,
-        edd=edd, is_twin=False,
+        id=lot_id,
+        op_id=op_id,
+        tool_id=tool,
+        machine_id=machine,
+        alt_machine_id=None,
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
+        edd=edd,
+        is_twin=False,
     )
 
 
@@ -85,13 +109,22 @@ def _seg(
     setup_min: float = 30.0,
 ) -> Segment:
     return Segment(
-        lot_id=lot_id, run_id="R1", machine_id=machine, tool_id=tool,
-        day_idx=day, start_min=start, end_min=end, shift="A", qty=qty,
-        prod_min=prod_min, setup_min=setup_min,
+        lot_id=lot_id,
+        run_id="R1",
+        machine_id=machine,
+        tool_id=tool,
+        day_idx=day,
+        start_min=start,
+        end_min=end,
+        shift="A",
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
     )
 
 
 # --- Tier 1: Lot Risks ---
+
 
 class TestLotRisks:
     def test_large_slack_is_low_risk(self):
@@ -150,6 +183,7 @@ class TestLotRisks:
 
 # --- Tier 1: Machine Risks ---
 
+
 class TestMachineRisks:
     def test_utilization_computed(self):
         """Machine utilization from segments."""
@@ -176,6 +210,7 @@ class TestMachineRisks:
 
 
 # --- Tier 1: Health Score ---
+
 
 class TestHealthScore:
     def test_health_in_range(self):
@@ -218,6 +253,7 @@ class TestHealthScore:
 
 # --- Tier 1: Heatmap ---
 
+
 class TestHeatmap:
     def test_heatmap_dimensions(self):
         """Heatmap = n_machines × n_days cells."""
@@ -253,6 +289,7 @@ class TestHeatmap:
 
 # --- Tier 2: Surrogate ---
 
+
 class TestSurrogate:
     def test_extract_features_length(self):
         """Feature vector has exactly 10 elements."""
@@ -275,6 +312,7 @@ class TestSurrogate:
 
 
 # --- Integration: compute_risk ---
+
 
 class TestComputeRisk:
     def test_returns_risk_result(self):
@@ -326,7 +364,10 @@ class TestComputeRisk:
         """compute_risk completes in <200ms for small input."""
         ops = [_eop(op_id=f"T{i}_M1_SKU{i}", sku=f"SKU{i}", tool=f"T{i}") for i in range(10)]
         engine = _engine(ops=ops, n_days=20)
-        lots = [_lot(lot_id=f"L{i}", op_id=f"T{i}_M1_SKU{i}", tool=f"T{i}", edd=i + 5) for i in range(10)]
+        lots = [
+            _lot(lot_id=f"L{i}", op_id=f"T{i}_M1_SKU{i}", tool=f"T{i}", edd=i + 5)
+            for i in range(10)
+        ]
         segs = [_seg(lot_id=f"L{i}", tool=f"T{i}", day=i % 5) for i in range(10)]
 
         t0 = time.perf_counter()

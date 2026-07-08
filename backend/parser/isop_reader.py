@@ -56,9 +56,7 @@ def _find_header_row(ws) -> int:
 # --- Dynamic column mapping ---
 
 
-def _build_column_map(
-    ws, header_row: int
-) -> tuple[dict[str, int], int | None, bool]:
+def _build_column_map(ws, header_row: int) -> tuple[dict[str, int], int | None, bool]:
     """Build column index map from header names.
 
     Returns:
@@ -233,9 +231,7 @@ def read_isop(path: str | Path) -> tuple[list[RawRow], list[str], bool]:
                 wip=_safe_int(_get(ws, row_idx, col_map, "wip", 0)),
                 backlog=_safe_int(_get(ws, row_idx, col_map, "backlog", 0)),
                 twin_ref=(
-                    str(_get(ws, row_idx, col_map, "twin_ref", "")).strip()
-                    if has_twin
-                    else ""
+                    str(_get(ws, row_idx, col_map, "twin_ref", "")).strip() if has_twin else ""
                 ),
                 np_values=np_values,
             )

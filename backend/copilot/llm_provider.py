@@ -33,11 +33,18 @@ class OpenAIProvider(LLMProvider):
     """OpenAI-compatible provider (GPT-4o, etc.)."""
 
     def __init__(self) -> None:
-        import openai
-
-        api_key = os.environ.get("PP1_OPENAI_API_KEY", "")
+        self.api_key = os.environ.get("PP1_OPENAI_API_KEY", "")
         self.model = os.environ.get("PP1_OPENAI_MODEL", "gpt-4o")
-        self.client = openai.OpenAI(api_key=api_key)
+        self.client = None
+
+    def _client(self):
+        if self.api_key.strip() in {"", "dummy", "sk-proj-YOUR_KEY_HERE"}:
+            raise RuntimeError("Copilot indisponível: PP1_OPENAI_API_KEY não configurada.")
+        if self.client is None:
+            import openai
+
+            self.client = openai.OpenAI(api_key=self.api_key)
+        return self.client
 
     async def chat_with_tools(
         self,
@@ -47,7 +54,7 @@ class OpenAIProvider(LLMProvider):
     ) -> LLMResponse:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
-        response = self.client.chat.completions.create(
+        response = self._client().chat.completions.create(
             model=self.model,
             messages=full_messages,
             tools=tools,
@@ -98,14 +105,16 @@ class OllamaProvider(LLMProvider):
         ollama_tools = []
         for t in tools:
             fn = t.get("function", t)
-            ollama_tools.append({
-                "type": "function",
-                "function": {
-                    "name": fn["name"],
-                    "description": fn.get("description", ""),
-                    "parameters": fn.get("parameters", {}),
-                },
-            })
+            ollama_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": fn["name"],
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {}),
+                    },
+                }
+            )
 
         payload = {
             "model": self.model,
@@ -130,11 +139,13 @@ class OllamaProvider(LLMProvider):
                 args = fn.get("arguments", {})
                 if isinstance(args, dict):
                     args = json.dumps(args)
-                tool_calls.append(ToolCall(
-                    id=f"ollama_{i}",
-                    name=fn.get("name", ""),
-                    arguments=args,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=f"ollama_{i}",
+                        name=fn.get("name", ""),
+                        arguments=args,
+                    )
+                )
 
         finish = "tool_calls" if tool_calls else "stop"
         return LLMResponse(

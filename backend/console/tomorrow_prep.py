@@ -17,10 +17,7 @@ from backend.types import EngineData
 
 def _find_previous_tool(segments: list[Segment], machine_id: str, day_idx: int) -> str | None:
     """Last tool_id on this machine the day before."""
-    prev_segs = [
-        s for s in segments
-        if s.machine_id == machine_id and s.day_idx == day_idx - 1
-    ]
+    prev_segs = [s for s in segments if s.machine_id == machine_id and s.day_idx == day_idx - 1]
     if not prev_segs:
         return None
     return max(prev_segs, key=lambda s: s.end_min).tool_id
@@ -63,12 +60,14 @@ def check_crew_bottleneck(
             for idx in nearby_idx:
                 seen.add(idx)
             total_setup = sum(ns.setup_min for ns in nearby)
-            conflicts.append({
-                "time": _min_to_time(s.start_min),
-                "simultaneous": len(nearby),
-                "machines": [ns.machine_id for ns in nearby],
-                "wait_min": round(total_setup - max(ns.setup_min for ns in nearby), 1),
-            })
+            conflicts.append(
+                {
+                    "time": _min_to_time(s.start_min),
+                    "simultaneous": len(nearby),
+                    "machines": [ns.machine_id for ns in nearby],
+                    "wait_min": round(total_setup - max(ns.setup_min for ns in nearby), 1),
+                }
+            )
 
     return conflicts
 
@@ -95,14 +94,16 @@ def compute_tomorrow_prep(
     for s in setup_segs:
         prev = _find_previous_tool(segments, s.machine_id, day_idx)
         already_mounted = prev is not None and prev == s.tool_id
-        setups.append({
-            "time": _min_to_time(s.start_min),
-            "machine": s.machine_id,
-            "from_tool": prev,
-            "to_tool": s.tool_id,
-            "duration_min": round(s.setup_min, 1),
-            "already_mounted": already_mounted,
-        })
+        setups.append(
+            {
+                "time": _min_to_time(s.start_min),
+                "machine": s.machine_id,
+                "from_tool": prev,
+                "to_tool": s.tool_id,
+                "duration_min": round(s.setup_min, 1),
+                "already_mounted": already_mounted,
+            }
+        )
 
     # ── Operators ──
     op_alerts = compute_operator_alerts(segments, engine_data, config)
@@ -135,16 +136,12 @@ def compute_tomorrow_prep(
         if a.deficit > 0:
             pl = "m" if a.deficit > 1 else ""
             ps = "es" if a.deficit > 1 else ""
-            problems.append(
-                f"Falta{pl} {a.deficit} operador{ps} "
-                f"{a.machine_group} turno {a.shift}"
-            )
+            problems.append(f"Falta{pl} {a.deficit} operador{ps} {a.machine_group} turno {a.shift}")
 
     crew = check_crew_bottleneck(segments, day_idx)
     for c in crew:
         problems.append(
-            f"{c['simultaneous']} setups próximos às {c['time']} "
-            f"({', '.join(c['machines'])})"
+            f"{c['simultaneous']} setups próximos às {c['time']} ({', '.join(c['machines'])})"
         )
 
     # ── Date ──

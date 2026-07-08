@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
-from backend.config.types import FactoryConfig, MachineConfig, ShiftConfig
+from backend.config.types import FactoryConfig, MachineConfig
 from backend.console.action_items import (
     ActionItem,
-    Fix,
     _aggregate_and_cap,
     _diagnose_why_short,
     _find_fix,
@@ -43,10 +41,22 @@ def _eop(
     client: str = "CLIENTE",
 ) -> EOp:
     return EOp(
-        id=op_id, sku=sku, client=client, designation="Peça teste",
-        m=machine, t=tool, pH=pH, sH=sH, operators=1,
-        eco_lot=eco_lot, alt=alt, stk=0, backlog=0,
-        d=d or [0, 500, 0, 300, 0, 200, 0, 0, 0, 0], oee=oee, wip=0,
+        id=op_id,
+        sku=sku,
+        client=client,
+        designation="Peça teste",
+        m=machine,
+        t=tool,
+        pH=pH,
+        sH=sH,
+        operators=1,
+        eco_lot=eco_lot,
+        alt=alt,
+        stk=0,
+        backlog=0,
+        d=d or [0, 500, 0, 300, 0, 200, 0, 0, 0, 0],
+        oee=oee,
+        wip=0,
     )
 
 
@@ -59,10 +69,8 @@ def _engine(
     if ops is None:
         ops = [
             _eop("T1_M1_SKU1", "SKU1", "M1", "T1", alt="M2"),
-            _eop("T2_M2_SKU2", "SKU2", "M2", "T2",
-                 d=[0, 0, 400, 0, 300, 0, 0, 0, 0, 0]),
-            _eop("T3_M1_SKU3", "SKU3", "M1", "T3",
-                 d=[0, 600, 0, 0, 400, 0, 0, 0, 0, 0]),
+            _eop("T2_M2_SKU2", "SKU2", "M2", "T2", d=[0, 0, 400, 0, 300, 0, 0, 0, 0, 0]),
+            _eop("T3_M1_SKU3", "SKU3", "M1", "T3", d=[0, 600, 0, 0, 400, 0, 0, 0, 0, 0]),
         ]
     machine_ids = list({op.m for op in ops})
     for op in ops:
@@ -78,19 +86,27 @@ def _engine(
             entries = []
             for day_idx, qty in enumerate(op.d):
                 if qty > 0:
-                    entries.append(ClientDemandEntry(
-                        client=op.client, sku=op.sku,
-                        day_idx=day_idx,
-                        date=workdays[day_idx] if day_idx < len(workdays) else "",
-                        order_qty=qty, np_value=-qty,
-                    ))
+                    entries.append(
+                        ClientDemandEntry(
+                            client=op.client,
+                            sku=op.sku,
+                            day_idx=day_idx,
+                            date=workdays[day_idx] if day_idx < len(workdays) else "",
+                            order_qty=qty,
+                            np_value=-qty,
+                        )
+                    )
             if entries:
                 client_demands[op.sku] = entries
 
     return EngineData(
-        ops=ops, machines=machines, twin_groups=twin_groups or [],
+        ops=ops,
+        machines=machines,
+        twin_groups=twin_groups or [],
         client_demands=client_demands,
-        workdays=workdays, n_days=n_days, holidays=[],
+        workdays=workdays,
+        n_days=n_days,
+        holidays=[],
     )
 
 
@@ -129,12 +145,17 @@ class TestStatePhrase:
 
     def test_red_critical(self):
         item = ActionItem(
-            severity="critical", phrase="Entrega Faurecia em risco.",
-            body="", actions=[], deadline="2026-03-06", client="FAURECIA",
+            severity="critical",
+            phrase="Entrega Faurecia em risco.",
+            body="",
+            actions=[],
+            deadline="2026-03-06",
+            client="FAURECIA",
             category="delivery",
         )
         color, phrase = compute_state_phrase(
-            [item], {"total_orders": 1, "total_ready": 0},
+            [item],
+            {"total_orders": 1, "total_ready": 0},
             {"machines": [{"util": 0.5}]},
         )
         assert color == "red"
@@ -142,25 +163,45 @@ class TestStatePhrase:
 
     def test_yellow_warning(self):
         item = ActionItem(
-            severity="warning", phrase="Stock de SKU1 esgota.",
-            body="", actions=[], deadline="2026-03-08", client="",
+            severity="warning",
+            phrase="Stock de SKU1 esgota.",
+            body="",
+            actions=[],
+            deadline="2026-03-08",
+            client="",
             category="stockout",
         )
         color, phrase = compute_state_phrase(
-            [item], {"total_orders": 2, "total_ready": 2},
+            [item],
+            {"total_orders": 2, "total_ready": 2},
             {"machines": [{"util": 0.5}]},
         )
         assert color == "yellow"
 
     def test_multiple_critical(self):
         items = [
-            ActionItem(severity="critical", phrase="P1", body="", actions=[],
-                       deadline="", client="A", category="delivery"),
-            ActionItem(severity="critical", phrase="P2", body="", actions=[],
-                       deadline="", client="B", category="delivery"),
+            ActionItem(
+                severity="critical",
+                phrase="P1",
+                body="",
+                actions=[],
+                deadline="",
+                client="A",
+                category="delivery",
+            ),
+            ActionItem(
+                severity="critical",
+                phrase="P2",
+                body="",
+                actions=[],
+                deadline="",
+                client="B",
+                category="delivery",
+            ),
         ]
         color, phrase = compute_state_phrase(
-            items, {"total_orders": 0, "total_ready": 0},
+            items,
+            {"total_orders": 0, "total_ready": 0},
             {"machines": []},
         )
         assert color == "red"
@@ -187,10 +228,7 @@ class TestMachinesToday:
     def test_setup_count(self):
         engine, config, result = _schedule()
         r = compute_machines_today(result.segments, engine, config, 0)
-        expected = sum(
-            1 for s in result.segments
-            if s.day_idx == 0 and s.setup_min > 0
-        )
+        expected = sum(1 for s in result.segments if s.day_idx == 0 and s.setup_min > 0)
         assert r["total_setups"] == expected
 
     def test_tool_sequence_no_repeats(self):
@@ -273,27 +311,77 @@ class TestTomorrowPrep:
 class TestCrewBottleneck:
     def test_no_bottleneck_few_setups(self):
         segs = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=1, start_min=420, end_min=480, shift="A", qty=100,
-                    prod_min=30, setup_min=30),
-            Segment(lot_id="L2", run_id="R2", machine_id="M2", tool_id="T2",
-                    day_idx=1, start_min=500, end_min=560, shift="A", qty=100,
-                    prod_min=30, setup_min=30),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=1,
+                start_min=420,
+                end_min=480,
+                shift="A",
+                qty=100,
+                prod_min=30,
+                setup_min=30,
+            ),
+            Segment(
+                lot_id="L2",
+                run_id="R2",
+                machine_id="M2",
+                tool_id="T2",
+                day_idx=1,
+                start_min=500,
+                end_min=560,
+                shift="A",
+                qty=100,
+                prod_min=30,
+                setup_min=30,
+            ),
         ]
         result = check_crew_bottleneck(segs, day_idx=1)
         assert len(result) == 0
 
     def test_bottleneck_3_setups(self):
         segs = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=1, start_min=420, end_min=480, shift="A", qty=100,
-                    prod_min=30, setup_min=30),
-            Segment(lot_id="L2", run_id="R2", machine_id="M2", tool_id="T2",
-                    day_idx=1, start_min=450, end_min=510, shift="A", qty=100,
-                    prod_min=30, setup_min=30),
-            Segment(lot_id="L3", run_id="R3", machine_id="M3", tool_id="T3",
-                    day_idx=1, start_min=480, end_min=540, shift="A", qty=100,
-                    prod_min=30, setup_min=30),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=1,
+                start_min=420,
+                end_min=480,
+                shift="A",
+                qty=100,
+                prod_min=30,
+                setup_min=30,
+            ),
+            Segment(
+                lot_id="L2",
+                run_id="R2",
+                machine_id="M2",
+                tool_id="T2",
+                day_idx=1,
+                start_min=450,
+                end_min=510,
+                shift="A",
+                qty=100,
+                prod_min=30,
+                setup_min=30,
+            ),
+            Segment(
+                lot_id="L3",
+                run_id="R3",
+                machine_id="M3",
+                tool_id="T3",
+                day_idx=1,
+                start_min=480,
+                end_min=540,
+                shift="A",
+                qty=100,
+                prod_min=30,
+                setup_min=30,
+            ),
         ]
         result = check_crew_bottleneck(segs, day_idx=1)
         assert len(result) >= 1
@@ -314,19 +402,44 @@ class TestActionItems:
     def test_delivery_risk_with_shortfall(self):
         """Shortfall in production → delivery alert."""
         # Create segments that only produce 200 of 500 needed by day 1
-        ops = [_eop("T1_M1_SKU1", "SKU1", "M1", "T1",
-                     d=[0, 500, 0, 0, 0, 0, 0, 0, 0, 0], pH=100.0)]
+        ops = [_eop("T1_M1_SKU1", "SKU1", "M1", "T1", d=[0, 500, 0, 0, 0, 0, 0, 0, 0, 0], pH=100.0)]
         engine = _engine(ops=ops)
         config = _config()
         # Manually create insufficient segments (bypass scheduler)
         from backend.scheduler.types import Lot, Segment
-        lots = [Lot(id="L1", op_id="T1_M1_SKU1", tool_id="T1",
-                     machine_id="M1", alt_machine_id=None, qty=200,
-                     prod_min=20, setup_min=30, edd=1, is_twin=False)]
-        segs = [Segment(lot_id="L1", run_id="R1", machine_id="M1",
-                        tool_id="T1", day_idx=0, start_min=420, end_min=440,
-                        shift="A", qty=200, prod_min=20, setup_min=0,
-                        is_continuation=False, edd=1, sku="SKU1")]
+
+        lots = [
+            Lot(
+                id="L1",
+                op_id="T1_M1_SKU1",
+                tool_id="T1",
+                machine_id="M1",
+                alt_machine_id=None,
+                qty=200,
+                prod_min=20,
+                setup_min=30,
+                edd=1,
+                is_twin=False,
+            )
+        ]
+        segs = [
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=0,
+                start_min=420,
+                end_min=440,
+                shift="A",
+                qty=200,
+                prod_min=20,
+                setup_min=0,
+                is_continuation=False,
+                edd=1,
+                sku="SKU1",
+            )
+        ]
         actions = compute_action_items(segs, lots, engine, config)
         delivery = [a for a in actions if a.category == "delivery"]
         assert len(delivery) >= 1
@@ -334,8 +447,7 @@ class TestActionItems:
 
     def test_no_alert_distant_delivery(self):
         """Delivery far in the future (day > 5) → no alert."""
-        ops = [_eop("T1_M1_FAR", "FAR", "M1", "T1",
-                     d=[0, 0, 0, 0, 0, 0, 0, 500, 0, 0], pH=100.0)]
+        ops = [_eop("T1_M1_FAR", "FAR", "M1", "T1", d=[0, 0, 0, 0, 0, 0, 0, 500, 0, 0], pH=100.0)]
         engine = _engine(ops=ops)
         config = _config()
         result = schedule_all(engine, config=config)
@@ -345,19 +457,39 @@ class TestActionItems:
 
     def test_critical_before_warning(self):
         items = [
-            ActionItem(severity="warning", phrase="W", body="", actions=[],
-                       deadline="2026-03-06", client="A", category="delivery"),
-            ActionItem(severity="critical", phrase="C", body="", actions=[],
-                       deadline="2026-03-07", client="B", category="delivery"),
+            ActionItem(
+                severity="warning",
+                phrase="W",
+                body="",
+                actions=[],
+                deadline="2026-03-06",
+                client="A",
+                category="delivery",
+            ),
+            ActionItem(
+                severity="critical",
+                phrase="C",
+                body="",
+                actions=[],
+                deadline="2026-03-07",
+                client="B",
+                category="delivery",
+            ),
         ]
         agg = _aggregate_and_cap(items)
         assert agg[0].severity == "critical"
 
     def test_max_7_alerts(self):
         items = [
-            ActionItem(severity="warning", phrase=f"W{i}", body="", actions=[],
-                       deadline=f"2026-03-{6 + i:02d}", client=f"C{i}",
-                       category="delivery")
+            ActionItem(
+                severity="warning",
+                phrase=f"W{i}",
+                body="",
+                actions=[],
+                deadline=f"2026-03-{6 + i:02d}",
+                client=f"C{i}",
+                category="delivery",
+            )
             for i in range(20)
         ]
         agg = _aggregate_and_cap(items)
@@ -365,9 +497,15 @@ class TestActionItems:
 
     def test_aggregation_same_client(self):
         items = [
-            ActionItem(severity="warning", phrase="W", body=f"B{i}", actions=[],
-                       deadline="2026-03-06", client="FAURECIA",
-                       category="delivery")
+            ActionItem(
+                severity="warning",
+                phrase="W",
+                body=f"B{i}",
+                actions=[],
+                deadline="2026-03-06",
+                client="FAURECIA",
+                category="delivery",
+            )
             for i in range(5)
         ]
         agg = _aggregate_and_cap(items)
@@ -382,10 +520,17 @@ class TestActionItems:
 class TestDiagnose:
     def test_diagnose_no_plan(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="TEST", sku="NOPE",
-            order_qty=100, produced_qty=0, status="not_planned",
-            coverage_pct=0, shortfall=100,
+            day_idx=1,
+            date="2026-03-06",
+            client="TEST",
+            sku="NOPE",
+            order_qty=100,
+            produced_qty=0,
+            status="not_planned",
+            coverage_pct=0,
+            shortfall=100,
         )
         engine = _engine()
         result = _diagnose_why_short(entry, [], [], engine)
@@ -393,10 +538,17 @@ class TestDiagnose:
 
     def test_diagnose_no_segments(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="CLIENTE", sku="SKU1",
-            order_qty=500, produced_qty=0, status="not_planned",
-            coverage_pct=0, shortfall=500,
+            day_idx=1,
+            date="2026-03-06",
+            client="CLIENTE",
+            sku="SKU1",
+            order_qty=500,
+            produced_qty=0,
+            status="not_planned",
+            coverage_pct=0,
+            shortfall=500,
         )
         engine = _engine()
         result = _diagnose_why_short(entry, [], [], engine)
@@ -404,18 +556,49 @@ class TestDiagnose:
 
     def test_diagnose_late_production(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="CLIENTE", sku="SKU1",
-            order_qty=500, produced_qty=0, status="partial",
-            coverage_pct=0, shortfall=500,
+            day_idx=1,
+            date="2026-03-06",
+            client="CLIENTE",
+            sku="SKU1",
+            order_qty=500,
+            produced_qty=0,
+            status="partial",
+            coverage_pct=0,
+            shortfall=500,
         )
         engine = _engine()
-        lots = [Lot(id="L1", op_id="T1_M1_SKU1", tool_id="T1", machine_id="M1",
-                     alt_machine_id=None, qty=500, prod_min=100, setup_min=30,
-                     edd=1, is_twin=False, twin_outputs=None)]
-        segs = [Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                        day_idx=5, start_min=420, end_min=550, shift="A", qty=500,
-                        prod_min=100, setup_min=30)]
+        lots = [
+            Lot(
+                id="L1",
+                op_id="T1_M1_SKU1",
+                tool_id="T1",
+                machine_id="M1",
+                alt_machine_id=None,
+                qty=500,
+                prod_min=100,
+                setup_min=30,
+                edd=1,
+                is_twin=False,
+                twin_outputs=None,
+            )
+        ]
+        segs = [
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=5,
+                start_min=420,
+                end_min=550,
+                shift="A",
+                qty=500,
+                prod_min=100,
+                setup_min=30,
+            )
+        ]
         result = _diagnose_why_short(entry, segs, lots, engine)
         assert "depois da entrega" in result.lower()
 
@@ -426,10 +609,17 @@ class TestDiagnose:
 class TestFindFix:
     def test_fix_alt_machine(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="CLIENTE", sku="SKU1",
-            order_qty=500, produced_qty=0, status="partial",
-            coverage_pct=0, shortfall=500,
+            day_idx=1,
+            date="2026-03-06",
+            client="CLIENTE",
+            sku="SKU1",
+            order_qty=500,
+            produced_qty=0,
+            status="partial",
+            coverage_pct=0,
+            shortfall=500,
         )
         engine = _engine()
         config = _config()
@@ -440,11 +630,18 @@ class TestFindFix:
 
     def test_fix_none_no_alt(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         # SKU2 has no alt machine
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="CLIENTE", sku="SKU2",
-            order_qty=500, produced_qty=0, status="partial",
-            coverage_pct=0, shortfall=500,
+            day_idx=1,
+            date="2026-03-06",
+            client="CLIENTE",
+            sku="SKU2",
+            order_qty=500,
+            produced_qty=0,
+            status="partial",
+            coverage_pct=0,
+            shortfall=500,
         )
         engine = _engine()
         config = _config()
@@ -456,11 +653,18 @@ class TestFindFix:
 
     def test_fix_night_shift(self):
         from backend.analytics.expedition import ExpeditionEntry
+
         # SKU3 has no alt, but small shortfall fits in night shift
         entry = ExpeditionEntry(
-            day_idx=1, date="2026-03-06", client="CLIENTE", sku="SKU3",
-            order_qty=200, produced_qty=0, status="partial",
-            coverage_pct=0, shortfall=200,
+            day_idx=1,
+            date="2026-03-06",
+            client="CLIENTE",
+            sku="SKU3",
+            order_qty=200,
+            produced_qty=0,
+            status="partial",
+            coverage_pct=0,
+            shortfall=200,
         )
         engine = _engine()
         config = _config()
@@ -476,26 +680,64 @@ class TestFindFix:
 
 class TestHasProductionBefore:
     def test_has_production(self):
-        from backend.analytics.stock_projection import StockProjection, StockDay
+        from backend.analytics.stock_projection import StockProjection
+
         proj = StockProjection(
-            op_id="T1_M1_SKU1", sku="SKU1", client="CLIENTE",
-            days=[], initial_stock=0, stockout_day=3,
-            coverage_days=3.0, total_demand=1000, total_produced=500,
+            op_id="T1_M1_SKU1",
+            sku="SKU1",
+            client="CLIENTE",
+            days=[],
+            initial_stock=0,
+            stockout_day=3,
+            coverage_days=3.0,
+            total_demand=1000,
+            total_produced=500,
         )
-        lots = [Lot(id="L1", op_id="T1_M1_SKU1", tool_id="T1", machine_id="M1",
-                     alt_machine_id=None, qty=500, prod_min=100, setup_min=30,
-                     edd=1, is_twin=False, twin_outputs=None)]
-        segs = [Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                        day_idx=2, start_min=420, end_min=550, shift="A", qty=500,
-                        prod_min=100, setup_min=30)]
+        lots = [
+            Lot(
+                id="L1",
+                op_id="T1_M1_SKU1",
+                tool_id="T1",
+                machine_id="M1",
+                alt_machine_id=None,
+                qty=500,
+                prod_min=100,
+                setup_min=30,
+                edd=1,
+                is_twin=False,
+                twin_outputs=None,
+            )
+        ]
+        segs = [
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=2,
+                start_min=420,
+                end_min=550,
+                shift="A",
+                qty=500,
+                prod_min=100,
+                setup_min=30,
+            )
+        ]
         assert _has_production_before(proj, segs, lots) is True
 
     def test_no_production(self):
         from backend.analytics.stock_projection import StockProjection
+
         proj = StockProjection(
-            op_id="T1_M1_SKU1", sku="SKU1", client="CLIENTE",
-            days=[], initial_stock=0, stockout_day=3,
-            coverage_days=3.0, total_demand=1000, total_produced=0,
+            op_id="T1_M1_SKU1",
+            sku="SKU1",
+            client="CLIENTE",
+            days=[],
+            initial_stock=0,
+            stockout_day=3,
+            coverage_days=3.0,
+            total_demand=1000,
+            total_produced=0,
         )
         assert _has_production_before(proj, [], []) is False
 

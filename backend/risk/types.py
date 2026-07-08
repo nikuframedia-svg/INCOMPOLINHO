@@ -14,39 +14,39 @@ class LotRisk:
     completion_day: int
     slack_days: int
     slack_min: float
-    risk_score: float          # 0.0 (safe) to 1.0 (critical)
-    risk_level: str            # "low" | "medium" | "high" | "critical"
-    binding_constraint: str    # "capacity" | "crew" | "none"
+    risk_score: float  # 0.0 (safe) to 1.0 (critical)
+    risk_level: str  # "low" | "medium" | "high" | "critical"
+    binding_constraint: str  # "capacity" | "crew" | "none"
 
 
 @dataclass(slots=True)
 class MachineRisk:
     machine_id: str
-    peak_utilization: float    # max utilisation in a single day (0-1)
+    peak_utilization: float  # max utilisation in a single day (0-1)
     avg_utilization: float
-    critical_lot_count: int    # lots with slack < 2 days on this machine
-    bottleneck_score: float    # 0-1, sensitivity of OTD to this machine
+    critical_lot_count: int  # lots with slack < 2 days on this machine
+    bottleneck_score: float  # 0-1, sensitivity of OTD to this machine
 
 
 @dataclass(slots=True)
 class HeatmapCell:
     machine_id: str
     day_idx: int
-    utilization: float         # 0-1
-    min_slack_min: float       # min slack of active lots (-1 if none)
-    risk_level: str            # "low" | "medium" | "high" | "critical"
+    utilization: float  # 0-1
+    min_slack_min: float  # min slack of active lots (-1 if none)
+    risk_level: str  # "low" | "medium" | "high" | "critical"
 
 
 @dataclass(slots=True)
 class RiskResult:
     # Tier 1 (always present)
-    health_score: int          # 0-100 (100 = safe)
+    health_score: int  # 0-100 (100 = safe)
     lot_risks: list[LotRisk]
     machine_risks: list[MachineRisk]
     heatmap: list[HeatmapCell]
     critical_count: int
     top_risks: list[LotRisk]  # top 5 riskiest
-    bottleneck: str            # machine_id
+    bottleneck: str  # machine_id
 
     # Tier 2 (if surrogate trained)
     surrogate_otd_prob: float | None

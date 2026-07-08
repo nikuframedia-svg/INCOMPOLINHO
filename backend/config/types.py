@@ -11,7 +11,7 @@ class ShiftConfig:
 
     id: str
     start_min: int  # minutes from midnight (07:00 = 420)
-    end_min: int    # minutes from midnight (00:00 = 1440)
+    end_min: int  # minutes from midnight (00:00 = 1440)
     label: str = ""
 
     @property
@@ -42,10 +42,12 @@ class FactoryConfig:
     timezone: str = "Europe/Lisbon"
 
     # Shifts (defaults = Incompol: A 07:00-15:30, B 15:30-00:00)
-    shifts: list[ShiftConfig] = field(default_factory=lambda: [
-        ShiftConfig("A", 420, 930, "Manhã"),
-        ShiftConfig("B", 930, 1440, "Tarde"),
-    ])
+    shifts: list[ShiftConfig] = field(
+        default_factory=lambda: [
+            ShiftConfig("A", 420, 930, "Manhã"),
+            ShiftConfig("B", 930, 1440, "Tarde"),
+        ]
+    )
 
     # Computed from shifts
     @property
@@ -88,12 +90,14 @@ class FactoryConfig:
     twins: dict[str, list[str]] = field(default_factory=dict)
 
     # Operators: (group, shift) → count
-    operators: dict[tuple[str, str], int] = field(default_factory=lambda: {
-        ("Grandes", "A"): 6,
-        ("Grandes", "B"): 5,
-        ("Medias", "A"): 9,
-        ("Medias", "B"): 4,
-    })
+    operators: dict[tuple[str, str], int] = field(
+        default_factory=lambda: {
+            ("Grandes", "A"): 6,
+            ("Grandes", "B"): 5,
+            ("Medias", "A"): 9,
+            ("Medias", "B"): 4,
+        }
+    )
 
     # Setup crews
     setup_crews: int = 1
@@ -105,6 +109,10 @@ class FactoryConfig:
     oee_default: float = 0.66
     min_prod_min: float = 1.0
     eco_lot_mode: str = "hard"
+    subcontract_skus: list[str] = field(default_factory=list)
+    sku_planning_rules: dict[str, dict] = field(default_factory=dict)
+    subcontract_companies: list[dict] = field(default_factory=list)
+    sku_subcontracts: dict[str, dict] = field(default_factory=dict)
 
     # Scheduler tunables (base values — SchedulerParams can override)
     max_run_days: int = 5
@@ -125,7 +133,14 @@ class FactoryConfig:
 
     # VNS post-processing
     vns_enabled: bool = True
+    vns_block_moves_enabled: bool = False
     vns_max_iter: int = 150
+
+    # Business-approved CPO apply envelope. Hard gates and delivery remain non-negotiable.
+    productivity_earliness_ceiling_days: float = 6.5
+
+    # Internal CPO/LNS neighborhood controls. Empty by default; not user-tunable.
+    forced_run_splits: dict[str, list[int]] = field(default_factory=dict)
 
     # Compaction post-processing (opt-in — default OFF preserves validated results)
     compact_enabled: bool = False

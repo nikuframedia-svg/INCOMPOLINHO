@@ -23,7 +23,7 @@ def _estimate_eta(
     if not op:
         return None
 
-    lot_to_op = {l.id: l.op_id for l in lots}
+    lot_to_op = {lot.id: lot.op_id for lot in lots}
     op_segs = [s for s in segments if lot_to_op.get(s.lot_id) == op.id]
     if not op_segs:
         return None
@@ -59,24 +59,30 @@ def compute_expedition_today(
 
     by_client: dict[str, list[dict]] = defaultdict(list)
     for e in today.entries:
-        by_client[e.client].append({
-            "sku": e.sku,
-            "qty": e.order_qty,
-            "status": e.status,
-            "coverage_pct": e.coverage_pct,
-            "shortfall": e.shortfall,
-            "eta": _estimate_eta(e, segments, lots, engine_data) if e.status != "ready" else None,
-        })
+        by_client[e.client].append(
+            {
+                "sku": e.sku,
+                "qty": e.order_qty,
+                "status": e.status,
+                "coverage_pct": e.coverage_pct,
+                "shortfall": e.shortfall,
+                "eta": _estimate_eta(e, segments, lots, engine_data)
+                if e.status != "ready"
+                else None,
+            }
+        )
 
     clients = []
     for client, orders in sorted(by_client.items()):
         ready = sum(1 for o in orders if o["status"] == "ready")
-        clients.append({
-            "client": client,
-            "orders": orders,
-            "ready": ready,
-            "total": len(orders),
-        })
+        clients.append(
+            {
+                "client": client,
+                "orders": orders,
+                "ready": ready,
+                "total": len(orders),
+            }
+        )
 
     total_r = sum(c["ready"] for c in clients)
     total_o = sum(c["total"] for c in clients)

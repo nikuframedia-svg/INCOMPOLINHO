@@ -11,6 +11,7 @@ from collections import defaultdict
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Lot, Segment
+from backend.scheduler.validation import validate_plan_metrics
 from backend.types import EngineData
 
 
@@ -25,9 +26,11 @@ def compute_score(
     # Completion day per lot (sentinel must be below any possible day_idx)
     _NO_COMPLETION = -999
     lot_completion: dict[str, int] = {}
+    lot_start: dict[str, int] = {}
     for seg in segments:
         if seg.setup_min > 0 and seg.qty == 0:
             continue
+        lot_start[seg.lot_id] = min(lot_start.get(seg.lot_id, seg.day_idx), seg.day_idx)
         prev = lot_completion.get(seg.lot_id, _NO_COMPLETION)
         if seg.day_idx > prev:
             lot_completion[seg.lot_id] = seg.day_idx
@@ -49,6 +52,29 @@ def compute_score(
 
     otd = round((1 - tardy_count / max(n_lots, 1)) * 100, 1)
 
+    start_late_count = 0
+    start_late_days = 0
+    finish_late_count = 0
+    finish_late_days = 0
+    economic_warning_count = 0
+    for lot in lots:
+        completion = lot_completion.get(lot.id, engine_data.n_days)
+        start_day = lot_start.get(lot.id, completion)
+        if lot.target_start_day is not None and start_day > lot.target_start_day:
+            start_late_count += 1
+            start_late_days += start_day - lot.target_start_day
+        if lot.internal_deadline is not None and completion > lot.internal_deadline:
+            finish_late_count += 1
+            finish_late_days += completion - lot.internal_deadline
+        if lot.economic_warning:
+            economic_warning_count += 1
+
+    planning_penalty = (
+        start_late_days * 2.0
+        + finish_late_days * 25.0
+        + economic_warning_count * 0.5
+    )
+
     # Earliness: average gap between last production day and EDD per run
     by_run: dict[str, list[Segment]] = defaultdict(list)
     for seg in segments:
@@ -68,19 +94,30 @@ def compute_score(
 
     # Setups
     setups = sum(1 for s in segments if s.setup_min > 0)
+    setup_time_min = round(sum(s.setup_min for s in segments), 1)
+    prod_time_min = round(sum(s.prod_min for s in segments), 1)
+    work_time_min = round(setup_time_min + prod_time_min, 1)
 
     # Utilisation per machine
     util: dict[str, float] = {}
+    machine_work_min: dict[str, float] = {}
+    day_cap = config.day_capacity_min if config else DAY_CAP
+    n_holidays = len(set(getattr(engine_data, "holidays", []) or []))
     for m in engine_data.machines:
-        used = sum(
-            s.prod_min + s.setup_min
-            for s in segments
-            if s.machine_id == m.id
-        )
-        day_cap = config.day_capacity_min if config else DAY_CAP
-        n_holidays = len(set(getattr(engine_data, "holidays", []) or []))
+        used = sum(s.prod_min + s.setup_min for s in segments if s.machine_id == m.id)
+        machine_work_min[m.id] = round(used, 1)
         total_available = (engine_data.n_days - n_holidays) * day_cap
         util[m.id] = round(used / total_available * 100, 1) if total_available > 0 else 0.0
+    available_capacity_min = max(
+        0,
+        len(engine_data.machines) * (engine_data.n_days - n_holidays) * day_cap,
+    )
+    idle_capacity_min = round(max(0.0, available_capacity_min - work_time_min), 1)
+    bottleneck_machine = ""
+    if machine_work_min:
+        bottleneck_machine = max(machine_work_min, key=machine_work_min.get)
+
+    violations, physical_metrics = validate_plan_metrics(segments, engine_data, config)
 
     return {
         "otd": otd,
@@ -88,12 +125,27 @@ def compute_score(
         "otd_d_failures": otd_d_failures,
         "earliness_avg_days": earliness_avg,
         "setups": setups,
+        "setup_time_min": setup_time_min,
+        "prod_time_min": prod_time_min,
+        "work_time_min": work_time_min,
+        "available_capacity_min": available_capacity_min,
+        "idle_capacity_min": idle_capacity_min,
+        "machine_work_min": machine_work_min,
+        "bottleneck_machine": bottleneck_machine,
         "utilisation": util,
         "tardy_count": tardy_count,
         "max_tardiness": max_tardiness,
         "total_tardiness": total_tardiness,
         "total_segments": len(segments),
         "total_lots": n_lots,
+        "sku_start_violations": start_late_count,
+        "sku_start_late_days": start_late_days,
+        "sku_finish_violations": finish_late_count,
+        "sku_finish_late_days": finish_late_days,
+        "economic_warning_count": economic_warning_count,
+        "planning_penalty": round(planning_penalty, 1),
+        "hard_violations": len(violations),
+        **physical_metrics,
     }
 
 

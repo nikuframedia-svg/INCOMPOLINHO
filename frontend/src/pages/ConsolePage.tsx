@@ -10,11 +10,13 @@ import { Dot } from "../components/ui/Dot";
 import { Divider } from "../components/ui/Divider";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { TH } from "../constants/thresholds";
+import { LateDeliveriesModal } from "../components/LateDeliveriesModal";
 
 export function ConsolePage() {
   const [day, setDay] = useState<number | null>(null);
   const [data, setData] = useState<ConsoleData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showLate, setShowLate] = useState(false);
   const score = useDataStore((s) => s.score);
 
   // Auto-detect today on mount
@@ -70,15 +72,22 @@ export function ConsolePage() {
             { l: "Setups", v: score.setups, c: T.primary },
             { l: "Antecipação", v: score.earliness_avg_days?.toFixed(1), u: "d", c: T.primary },
             { l: "Buffer", v: Number(score.buffer_days) || 0, u: "d", c: T.primary },
-          ].map((k, i) => (
-            <Card key={i} style={{ padding: 16 }}>
-              <Label>{k.l}</Label>
-              <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 3 }}>
-                <Num size={28} color={k.c}>{k.v}</Num>
-                {k.u && <span style={{ fontSize: 13, color: T.tertiary, fontWeight: 500 }}>{k.u}</span>}
-              </div>
-            </Card>
-          ))}
+          ].map((k, i) => {
+            const clickable = k.l === "Atrasos";
+            return (
+              <Card
+                key={i}
+                style={{ padding: 16, cursor: clickable ? "pointer" : "default" }}
+                onClick={clickable ? () => setShowLate(true) : undefined}
+              >
+                <Label>{k.l}</Label>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 3 }}>
+                  <Num size={28} color={k.c}>{k.v}</Num>
+                  {k.u && <span style={{ fontSize: 13, color: T.tertiary, fontWeight: 500 }}>{k.u}</span>}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -286,6 +295,7 @@ export function ConsolePage() {
           )}
         </Card>
       )}
+      {showLate && <LateDeliveriesModal onClose={() => setShowLate(false)} />}
     </div>
   );
 }

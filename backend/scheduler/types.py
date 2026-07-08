@@ -10,16 +10,32 @@ class Lot:
     """Production unit — output of Phase 1 (lot sizing)."""
 
     id: str
-    op_id: str                # EOp.id de origem
+    op_id: str  # EOp.id de origem
     tool_id: str
-    machine_id: str           # primária
+    machine_id: str  # primária
     alt_machine_id: str | None
-    qty: int                  # peças (eco lot rounded)
-    prod_min: float           # minutos de produção
-    setup_min: float          # minutos de setup (do YAML)
-    edd: int                  # deadline (day_idx)
+    qty: int  # peças (eco lot rounded)
+    prod_min: float  # minutos de produção
+    setup_min: float  # minutos de setup (do YAML)
+    edd: int  # deadline (day_idx)
     is_twin: bool
     twin_outputs: list[tuple[str, str, int]] | None = None  # [(op_id, sku, qty)]
+    original_edd: int | None = None
+    internal_deadline: int | None = None
+    delivery_day: int | None = None
+    eco_lot_isop: int | None = None
+    eco_lot_effective: int | None = None
+    start_buffer_days: int = 0
+    finish_buffer_days: int = 0
+    target_start_day: int | None = None
+    min_campaign_qty: int | None = None
+    min_campaign_prod_min: float | None = None
+    max_group_gap_days: int | None = None
+    planning_source: str = "isop"
+    economic_warning: str | None = None
+    subcontract_company_id: str | None = None
+    subcontract_lead_time_days: int = 0
+    subcontract_buffer_days: int = 0
 
 
 @dataclass(slots=True)
@@ -30,12 +46,13 @@ class ToolRun:
     tool_id: str
     machine_id: str
     alt_machine_id: str | None
-    lots: list[Lot]           # ordered by EDD
-    setup_min: float          # ONE setup for the whole group
-    total_prod_min: float     # sum of prod_min
-    total_min: float          # setup + prod
-    edd: int                  # EDD of most urgent lot
-    lst: int = 0             # Latest Start Time (filled in Phase 4)
+    lots: list[Lot]  # ordered by EDD
+    setup_min: float  # ONE setup for the whole group
+    total_prod_min: float  # sum of prod_min
+    total_min: float  # setup + prod
+    edd: int  # EDD of most urgent lot
+    lst: int = 0  # Latest Start Time (filled in Phase 4)
+    target_start_day: int | None = None
 
 
 @dataclass(slots=True)
@@ -43,20 +60,40 @@ class Segment:
     """Scheduled block on Gantt — output of Phase 3."""
 
     lot_id: str
-    run_id: str               # ToolRun de origem
+    run_id: str  # ToolRun de origem
     machine_id: str
     tool_id: str
     day_idx: int
-    start_min: int            # minute in day (clock from midnight)
+    start_min: int  # minute in day (clock from midnight)
     end_min: int
-    shift: str                # "A" or "B"
+    shift: str  # "A" or "B"
     qty: int
     prod_min: float
-    setup_min: float = 0.0    # >0 ONLY on first segment of ToolRun
+    setup_min: float = 0.0  # >0 ONLY on first segment of ToolRun
     is_continuation: bool = False
     edd: int = 0
     sku: str = ""
     twin_outputs: list[tuple[str, str, int]] | None = None
+    lot_qty: int = 0
+    run_qty: int = 0
+    run_setup_min: float = 0.0
+    run_lot_count: int = 0
+    original_edd: int | None = None
+    internal_deadline: int | None = None
+    delivery_day: int | None = None
+    eco_lot_isop: int | None = None
+    eco_lot_effective: int | None = None
+    start_buffer_days: int = 0
+    finish_buffer_days: int = 0
+    target_start_day: int | None = None
+    min_campaign_qty: int | None = None
+    min_campaign_prod_min: float | None = None
+    max_group_gap_days: int | None = None
+    planning_source: str = "isop"
+    economic_warning: str | None = None
+    subcontract_company_id: str | None = None
+    subcontract_lead_time_days: int = 0
+    subcontract_buffer_days: int = 0
 
 
 @dataclass
@@ -65,7 +102,7 @@ class MachineState:
 
     machine_id: str
     group: str
-    available_at: float = 0.0   # absolute minute in scheduling timeline
+    available_at: float = 0.0  # absolute minute in scheduling timeline
     last_tool: str = ""
     used_per_day: dict[int, float] = field(default_factory=dict)
 
@@ -95,9 +132,7 @@ class ToolTimeline:
                 return False
         return True
 
-    def interval_free(
-        self, tool_id: str, start: float, end: float, machine_id: str
-    ) -> bool:
+    def interval_free(self, tool_id: str, start: float, end: float, machine_id: str) -> bool:
         """Check that the WHOLE interval [start, end) is free on other machines."""
         for b_start, b_end, booked_machine in self.bookings.get(tool_id, []):
             if booked_machine == machine_id:
@@ -106,9 +141,7 @@ class ToolTimeline:
                 return False
         return True
 
-    def next_free_after(
-        self, tool_id: str, start: float, machine_id: str
-    ) -> float:
+    def next_free_after(self, tool_id: str, start: float, machine_id: str) -> float:
         """Return the earliest time >= start where the tool is free on `machine_id`.
 
         Skips past any booking owned by another machine that covers `start`.
@@ -156,3 +189,5 @@ class ScheduleResult:
     audit_trail: object | None = None  # AuditTrail when audit=True
     study: object | None = None  # StudyResult when smart_schedule(learn=True)
     journal: list[dict] | None = None  # Spec 12: structured phase telemetry
+    machine_runs: dict[str, list[ToolRun]] | None = None
+    gate_report: dict | None = None

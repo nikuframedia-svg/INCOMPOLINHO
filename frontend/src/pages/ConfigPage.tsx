@@ -4,15 +4,23 @@ import {
   getConfig, getOps, updateConfig,
   editMachine, editTool, updateOperators,
   addHoliday, removeHoliday, addTwin, removeTwin, applyPreset,
+  previewSkuPlanning, previewSubcontracts, resetSkuPlanning, updateSkuPlanning, updateSubcontracts,
 } from "../api/endpoints";
-import type { FactoryConfig, EOp, Score } from "../api/types";
+import type {
+  EOp,
+  FactoryConfig,
+  PlanningDelta,
+  Score,
+  SkuPlanningResponse,
+  SkuPlanningRule,
+} from "../api/types";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
 import { Divider } from "../components/ui/Divider";
 import { Modal } from "../components/ui/Modal";
 import { useDataStore } from "../stores/useDataStore";
 
-type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "operadores" | "feriados" | "parametros" | "operacoes";
+type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "operadores" | "feriados" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes";
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "geral", label: "Geral" },
@@ -23,6 +31,8 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "operadores", label: "Operadores" },
   { id: "feriados", label: "Feriados" },
   { id: "parametros", label: "Parametros" },
+  { id: "planeamento", label: "Planeamento SKU" },
+  { id: "subcontratacoes", label: "Subcontratacoes" },
   { id: "operacoes", label: "Operacoes" },
 ];
 
@@ -120,12 +130,19 @@ const TUNABLES: { key: string; label: string; type: "number" | "boolean" | "sele
   { key: "jit_enabled", label: "JIT Activo", type: "boolean" },
   { key: "jit_buffer_pct", label: "JIT Buffer %", type: "number" },
   { key: "jit_threshold", label: "JIT Threshold", type: "number" },
+  { key: "jit_max_retries", label: "JIT Max Retries", type: "number" },
   { key: "max_run_days", label: "Max Run Days", type: "number" },
   { key: "max_edd_gap", label: "Max EDD Gap", type: "number" },
+  { key: "max_edd_span", label: "Max EDD Span", type: "number" },
   { key: "edd_swap_tolerance", label: "EDD Swap Tolerance", type: "number" },
+  { key: "edd_assign_threshold", label: "EDD Assign Threshold", type: "number" },
   { key: "campaign_window", label: "Campaign Window", type: "number" },
   { key: "urgency_threshold", label: "Urgency Threshold", type: "number" },
   { key: "interleave_enabled", label: "Interleave Activo", type: "boolean" },
+  { key: "auto_buffer", label: "Auto Buffer", type: "boolean" },
+  { key: "vns_enabled", label: "VNS Activo", type: "boolean" },
+  { key: "vns_max_iter", label: "VNS Max Iter", type: "number" },
+  { key: "compact_enabled", label: "Compactar Plano", type: "boolean" },
   { key: "weight_earliness", label: "Peso Earliness", type: "number" },
   { key: "weight_setups", label: "Peso Setups", type: "number" },
   { key: "weight_balance", label: "Peso Balance", type: "number" },
@@ -299,6 +316,387 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
   );
 }
 
+function cleanRule(rule: SkuPlanningRule): SkuPlanningRule {
+  const cleaned: Record<string, number> = {};
+  for (const [key, value] of Object.entries(rule) as [string, number | undefined][]) {
+    if (value !== undefined && value !== null && !Number.isNaN(value)) {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned as SkuPlanningRule;
+}
+
+function metricDelta(res: { delta?: PlanningDelta } | null) {
+  if (!res?.delta) return null;
+  const d = res.delta;
+  return `OTD ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Setups ${d.setups >= 0 ? "+" : ""}${d.setups} · Penalização ${d.planning_penalty >= 0 ? "+" : ""}${d.planning_penalty.toFixed(1)}`;
+}
+
+function apiErrorMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { detail?: unknown };
+    if (typeof parsed.detail === "string") return parsed.detail;
+    if (
+      parsed.detail &&
+      typeof parsed.detail === "object" &&
+      "message" in parsed.detail &&
+      typeof parsed.detail.message === "string"
+    ) {
+      return parsed.detail.message;
+    }
+  } catch {
+    // Keep the original message when the backend did not send JSON.
+  }
+  return raw;
+}
+
+function SkuPlanningEditor({
+  config,
+  ops,
+  onReload,
+  onDelta,
+}: {
+  config: FactoryConfig;
+  ops: EOp[];
+  onReload: () => Promise<void>;
+  onDelta: (prev: Score, curr: Score) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, SkuPlanningRule>>({});
+  const [preview, setPreview] = useState<Record<string, SkuPlanningResponse>>({});
+  const [busySku, setBusySku] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const visible = useMemo(() => {
+    const q = search.toLowerCase();
+    return ops
+      .filter((op) => !q || op.sku.toLowerCase().includes(q) || op.client.toLowerCase().includes(q) || op.tool.toLowerCase().includes(q))
+      .slice(0, 80);
+  }, [ops, search]);
+
+  const ruleFor = (sku: string) => drafts[sku] ?? config.sku_planning_rules?.[sku] ?? {};
+  const setField = (sku: string, field: keyof SkuPlanningRule, raw: string) => {
+    const base = { ...(drafts[sku] ?? config.sku_planning_rules?.[sku] ?? {}) };
+    if (raw === "") {
+      delete base[field];
+    } else {
+      base[field] = Number(raw);
+    }
+    setDrafts({ ...drafts, [sku]: base });
+  };
+
+  const runPreview = async (sku: string) => {
+    setBusySku(sku);
+    setMsg(null);
+    try {
+      const res = await previewSkuPlanning(sku, cleanRule(ruleFor(sku)));
+      setPreview({ ...preview, [sku]: res });
+    } catch (e) {
+      setMsg(`Erro: ${e}`);
+    } finally {
+      setBusySku(null);
+    }
+  };
+
+  const apply = async (sku: string) => {
+    setBusySku(sku);
+    setMsg(null);
+    try {
+      const res = await updateSkuPlanning(sku, cleanRule(ruleFor(sku)));
+      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[sku];
+      setDrafts(nextDrafts);
+      setMsg(`Aplicado ${sku}: ${metricDelta(res) ?? "plano recalculado"}`);
+      await onReload();
+    } catch (e) {
+      setMsg(`Erro: ${e}`);
+    } finally {
+      setBusySku(null);
+    }
+  };
+
+  const reset = async (sku: string) => {
+    setBusySku(sku);
+    setMsg(null);
+    try {
+      const res = await resetSkuPlanning(sku);
+      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[sku];
+      setDrafts(nextDrafts);
+      setMsg(`Reposto para ISOP: ${sku}`);
+      await onReload();
+    } catch (e) {
+      setMsg(`Erro: ${e}`);
+    } finally {
+      setBusySku(null);
+    }
+  };
+
+  const numberInput = (op: EOp, field: keyof SkuPlanningRule, width = 88) => {
+    const rule = ruleFor(op.sku);
+    return (
+      <input
+        type="number"
+        min="0"
+        step={field === "min_campaign_prod_min" ? "0.1" : "1"}
+        value={rule[field] ?? ""}
+        onChange={(e) => setField(op.sku, field, e.target.value)}
+        style={{ ...inputStyle, width, borderColor: op.sku in drafts ? T.blue : T.border }}
+      />
+    );
+  };
+
+  return (
+    <>
+      <input
+        type="text"
+        placeholder="Filtrar SKU, cliente, ferramenta..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{
+          background: T.elevated, border: `1px solid ${T.border}`,
+          borderRadius: 8, padding: "6px 12px", fontSize: 12,
+          color: T.primary, fontFamily: T.mono, outline: "none", width: 300,
+        }}
+      />
+      {msg && <div style={{ fontSize: 12, color: msg.startsWith("Erro") ? T.red : T.green }}>{msg}</div>}
+      <Card style={{ padding: 0, overflow: "auto", maxHeight: 620 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>SKU</th>
+              <th style={thStyle}>Cliente</th>
+              <th style={thStyle}>Eco ISOP</th>
+              <th style={thStyle}>Eco efetivo</th>
+              <th style={thStyle}>Novo eco</th>
+              <th style={thStyle}>Começar antes</th>
+              <th style={thStyle}>Acabar antes</th>
+              <th style={thStyle}>Campanha min pç</th>
+              <th style={thStyle}>Campanha min min</th>
+              <th style={thStyle}>Janela dias</th>
+              <th style={thStyle}>Impacto</th>
+              <th style={thStyle}>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((op) => {
+              const rule = ruleFor(op.sku);
+              const hasOverride = (op.eco_lot_isop ?? op.eco_lot) !== (op.eco_lot_effective ?? op.eco_lot);
+              const isBusy = busySku === op.sku;
+              const p = preview[op.sku];
+              return (
+                <tr key={op.id}>
+                  <td style={tdStyle}>{op.sku}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.sans }}>{op.client}</td>
+                  <td style={tdStyle}>{(op.eco_lot_isop ?? op.eco_lot).toLocaleString()}</td>
+                  <td style={{ ...tdStyle, color: hasOverride ? T.orange : T.primary }}>
+                    {(op.eco_lot_effective ?? op.eco_lot).toLocaleString()}
+                  </td>
+                  <td style={tdStyle}>{numberInput(op, "eco_lot")}</td>
+                  <td style={tdStyle}>{numberInput(op, "start_buffer_days", 76)}</td>
+                  <td style={tdStyle}>{numberInput(op, "finish_buffer_days", 76)}</td>
+                  <td style={tdStyle}>{numberInput(op, "min_campaign_qty")}</td>
+                  <td style={tdStyle}>{numberInput(op, "min_campaign_prod_min", 86)}</td>
+                  <td style={tdStyle}>{numberInput(op, "max_group_gap_days", 76)}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.sans, color: p ? T.secondary : T.tertiary }}>
+                    {p ? `${metricDelta(p)} · lotes ${p.impact_before?.lots ?? 0}→${p.impact_after?.lots ?? 0}` : "-"}
+                    {p?.impact_after?.warnings?.length ? (
+                      <div style={{ color: T.orange, marginTop: 3 }}>{p.impact_after.warnings[0]}</div>
+                    ) : null}
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button disabled={isBusy} onClick={() => runPreview(op.sku)} style={btnStyle}>Preview</button>
+                      <button disabled={isBusy} onClick={() => apply(op.sku)} style={{ ...btnStyle, color: T.blue }}>Aplicar</button>
+                      <button disabled={isBusy || (!config.sku_planning_rules?.[op.sku] && !(op.sku in drafts))} onClick={() => reset(op.sku)} style={{ ...btnStyle, color: T.red }}>ISOP</button>
+                    </div>
+                    {Object.keys(rule).length > 0 && (
+                      <div style={{ fontSize: 10, color: T.tertiary, marginTop: 4 }}>regra ativa</div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </>
+  );
+}
+
+const SUBCONTRACT_COMPANY = {
+  id: "SUBCONTRATO",
+  name: "Subcontrato",
+  lead_time_days: 7,
+};
+
+function subcontractInitialSelection(config: FactoryConfig) {
+  return new Set([
+    ...(config.subcontract_skus ?? []),
+    ...Object.entries(config.sku_subcontracts ?? {})
+      .filter(([, rule]) => rule.enabled !== false)
+      .map(([sku]) => sku),
+  ]);
+}
+
+function SubcontractEditor({
+  config,
+  ops,
+  onReload,
+  onDelta,
+}: {
+  config: FactoryConfig;
+  ops: EOp[];
+  onReload: () => Promise<void>;
+  onDelta: (prev: Score, curr: Score) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(() => subcontractInitialSelection(config));
+  const [busy, setBusy] = useState<"preview" | "save" | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [previewDelta, setPreviewDelta] = useState<PlanningDelta | null>(null);
+
+  useEffect(() => {
+    setSelected(subcontractInitialSelection(config));
+    setPreviewDelta(null);
+  }, [config]);
+
+  const visible = useMemo(() => {
+    const q = search.toLowerCase();
+    const unique = new Map<string, EOp>();
+    for (const op of ops) {
+      if (!unique.has(op.sku)) unique.set(op.sku, op);
+    }
+    return [...unique.values()]
+      .filter((op) => !q || op.sku.toLowerCase().includes(q) || op.client.toLowerCase().includes(q))
+      .slice(0, 80);
+  }, [ops, search]);
+
+  const toggle = (sku: string) => {
+    const next = new Set(selected);
+    if (next.has(sku)) next.delete(sku);
+    else next.add(sku);
+    setSelected(next);
+    setPreviewDelta(null);
+  };
+
+  const bodyFor = () => {
+    const companies = [
+      ...(config.subcontract_companies ?? []).filter((c) => c.id !== SUBCONTRACT_COMPANY.id),
+      SUBCONTRACT_COMPANY,
+    ];
+    const sku_subcontracts = Object.fromEntries(
+      [...selected].sort().map((sku) => [
+        sku,
+        {
+          enabled: true,
+          company_id: SUBCONTRACT_COMPANY.id,
+          lead_time_days: 7,
+          buffer_days: 0,
+        },
+      ]),
+    );
+    return {
+      companies,
+      sku_subcontracts,
+    };
+  };
+
+  const runPreview = async () => {
+    setBusy("preview");
+    setMsg(null);
+    try {
+      const res = await previewSubcontracts(bodyFor());
+      setPreviewDelta(res.delta ?? null);
+      setMsg(`Preview: ${metricDelta(res) ?? "plano recalculado"}`);
+    } catch (e) {
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const save = async () => {
+    setBusy("save");
+    setMsg(null);
+    try {
+      const res = await updateSubcontracts(bodyFor());
+      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
+      setPreviewDelta(res.delta ?? null);
+      setMsg(`${selected.size} referência${selected.size === 1 ? "" : "s"} guardada${selected.size === 1 ? "" : "s"} para subcontrato.`);
+      await onReload();
+    } catch (e) {
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <input
+          type="text"
+          placeholder="Filtrar SKU ou cliente..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{
+            background: T.elevated, border: `1px solid ${T.border}`,
+            borderRadius: 8, padding: "6px 12px", fontSize: 12,
+            color: T.primary, fontFamily: T.mono, outline: "none", width: 300,
+          }}
+        />
+        <span style={{ fontSize: 12, color: T.secondary, fontFamily: T.mono }}>
+          {selected.size} selecionada{selected.size === 1 ? "" : "s"} · lead 7d
+        </span>
+        <button type="button" disabled={busy !== null} onClick={runPreview} style={btnStyle}>
+          {busy === "preview" ? "A calcular..." : "Preview"}
+        </button>
+        <button type="button" disabled={busy !== null} onClick={save} style={{ ...btnStyle, color: T.blue }}>
+          {busy === "save" ? "A guardar..." : "Guardar"}
+        </button>
+        {previewDelta && <span style={{ fontSize: 12, color: T.secondary }}>{metricDelta({ delta: previewDelta })}</span>}
+      </div>
+      {msg && <div style={{ fontSize: 12, color: msg.startsWith("Erro") ? T.red : T.green }}>{msg}</div>}
+      <Card style={{ padding: 0, overflow: "auto", maxHeight: 620 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>Subcontratar</th>
+              <th style={thStyle}>Referência</th>
+              <th style={thStyle}>Cliente</th>
+              <th style={thStyle}>Procura</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((op) => {
+              const active = selected.has(op.sku);
+              return (
+                <tr key={op.sku}>
+                  <td style={tdStyle}>
+                    <input
+                      type="checkbox"
+                      checked={active}
+                      onChange={() => toggle(op.sku)}
+                      style={{ width: 16, height: 16, cursor: "pointer" }}
+                    />
+                  </td>
+                  <td style={{ ...tdStyle, color: active ? T.primary : T.secondary }}>{op.sku}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.sans }}>{op.client}</td>
+                  <td style={tdStyle}>{op.demand.reduce((sum, qty) => sum + qty, 0).toLocaleString()} pç</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </>
+  );
+}
+
 // ── Main ConfigPage ──────────────────────────────────────────────
 
 export function ConfigPage() {
@@ -339,8 +737,9 @@ export function ConfigPage() {
   }, [ops, opsSearch]);
 
   const reload = async () => {
-    const fresh = await getConfig();
+    const [fresh, freshOps] = await Promise.all([getConfig(), getOps()]);
     setConfig(fresh);
+    setOps(freshOps);
     refreshAll();
   };
 
@@ -728,6 +1127,34 @@ export function ConfigPage() {
         <ParametrosEditor config={config} onSaved={(c) => setConfig(c)} onDelta={showDelta} />
       )}
 
+      {/* ── PLANEAMENTO SKU ───────────────────────────────────── */}
+      {section === "planeamento" && (
+        ops ? (
+          <SkuPlanningEditor
+            config={config}
+            ops={ops}
+            onReload={reload}
+            onDelta={showDelta}
+          />
+        ) : (
+          <div style={{ color: T.secondary, padding: 24 }}>A carregar SKUs...</div>
+        )
+      )}
+
+      {/* ── SUBCONTRATACOES ───────────────────────────────────── */}
+      {section === "subcontratacoes" && (
+        ops ? (
+          <SubcontractEditor
+            config={config}
+            ops={ops}
+            onReload={reload}
+            onDelta={showDelta}
+          />
+        ) : (
+          <div style={{ color: T.secondary, padding: 24 }}>A carregar SKUs...</div>
+        )
+      )}
+
       {/* ── OPERACOES (read-only) ──────────────────────────────── */}
       {section === "operacoes" && (
         <>
@@ -753,7 +1180,8 @@ export function ConfigPage() {
                   <th style={thStyle}>Alt</th>
                   <th style={thStyle}>Pcs/H</th>
                   <th style={thStyle}>Setup (h)</th>
-                  <th style={thStyle}>Eco Lot</th>
+                  <th style={thStyle}>Eco ISOP</th>
+                  <th style={thStyle}>Eco efetivo</th>
                   <th style={thStyle}>Stock</th>
                   <th style={thStyle}>OEE</th>
                 </tr>
@@ -768,7 +1196,10 @@ export function ConfigPage() {
                     <td style={tdStyle}>{op.alt_machine ?? "-"}</td>
                     <td style={tdStyle}>{op.pcs_hour}</td>
                     <td style={tdStyle}>{op.setup_hours}</td>
-                    <td style={tdStyle}>{op.eco_lot.toLocaleString()}</td>
+                    <td style={tdStyle}>{(op.eco_lot_isop ?? op.eco_lot).toLocaleString()}</td>
+                    <td style={{ ...tdStyle, color: (op.eco_lot_isop ?? op.eco_lot) !== (op.eco_lot_effective ?? op.eco_lot) ? T.orange : T.primary }}>
+                      {(op.eco_lot_effective ?? op.eco_lot).toLocaleString()}
+                    </td>
                     <td style={tdStyle}>{op.stock.toLocaleString()}</td>
                     <td style={tdStyle}>{op.oee}</td>
                   </tr>

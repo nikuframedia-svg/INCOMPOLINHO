@@ -21,10 +21,7 @@ TEMPLATES: dict[str, str] = {
         "Run {subject_id}: atribuído a {chosen} — carga urgente (EDD<={edd}) "
         "menor ({chosen_load:.0f}min vs {alt_load:.0f}min)."
     ),
-    "assign_no_alt": (
-        "Run {subject_id}: atribuído a {chosen} — sem máquina alternativa."
-    ),
-
+    "assign_no_alt": ("Run {subject_id}: atribuído a {chosen} — sem máquina alternativa."),
     # Sequence
     "sequence_campaign": (
         "Máquina {machine_id}: {n_moves} runs reagrupados por campanha "
@@ -34,10 +31,7 @@ TEMPLATES: dict[str, str] = {
         "Máquina {machine_id}: {n_moves} runs intercalados por urgência "
         "(deadline mais cedo → quebra campanha)."
     ),
-    "sequence_2opt": (
-        "Máquina {machine_id}: {n_moves} swaps 2-opt para reduzir setups."
-    ),
-
+    "sequence_2opt": ("Máquina {machine_id}: {n_moves} swaps 2-opt para reduzir setups."),
     # JIT gate
     "gate_jit": (
         "Run {subject_id}: JIT gate dia {gate_day:.0f} "
@@ -48,11 +42,8 @@ TEMPLATES: dict[str, str] = {
         "Run {subject_id}: JIT pullback -1 dia na {machine_id} "
         "(tardy detectado, tentativa {attempt})."
     ),
-
     # Split
-    "split_edd_gap": (
-        "Run {original_id} dividido — gap EDD > {max_gap}d entre lots."
-    ),
+    "split_edd_gap": ("Run {original_id} dividido — gap EDD > {max_gap}d entre lots."),
     "split_infeasible": (
         "Run {original_id} dividido em early ({early_lots} lots) + late ({late_lots} lots) "
         "— produção ({total_min:.0f}min) excede capacidade até EDD ({capacity:.0f}min)."

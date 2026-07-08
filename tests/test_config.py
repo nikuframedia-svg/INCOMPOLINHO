@@ -5,10 +5,9 @@ from __future__ import annotations
 import os
 import tempfile
 
-import pytest
 
 from backend.config.types import FactoryConfig, MachineConfig, ShiftConfig
-from backend.config.loader import load_config, validate_config
+from backend.config.loader import load_config, save_config, validate_config
 
 
 # ─── FactoryConfig defaults ────────────────────────────────────────────
@@ -34,17 +33,21 @@ class TestFactoryConfig:
         assert c.day_capacity_min == 510 + 510  # A=510, B=510
 
     def test_3_shifts_1440(self):
-        c = FactoryConfig(shifts=[
-            ShiftConfig("A", 360, 840),   # 480
-            ShiftConfig("B", 840, 1320),  # 480
-            ShiftConfig("C", 1320, 1800 % 1440),  # cross-midnight: 1440-1320+0 = 120... no
-        ])
+        FactoryConfig(
+            shifts=[
+                ShiftConfig("A", 360, 840),  # 480
+                ShiftConfig("B", 840, 1320),  # 480
+                ShiftConfig("C", 1320, 1800 % 1440),  # cross-midnight: 1440-1320+0 = 120... no
+            ]
+        )
         # ShiftConfig C: start=1320, end=360 → cross midnight → (1440-1320)+360 = 480
-        c2 = FactoryConfig(shifts=[
-            ShiftConfig("A", 360, 840),   # 480
-            ShiftConfig("B", 840, 1320),  # 480
-            ShiftConfig("C", 1320, 360),  # cross midnight: 480
-        ])
+        c2 = FactoryConfig(
+            shifts=[
+                ShiftConfig("A", 360, 840),  # 480
+                ShiftConfig("B", 840, 1320),  # 480
+                ShiftConfig("C", 1320, 360),  # cross midnight: 480
+            ]
+        )
         assert c2.day_capacity_min == 480 + 480 + 480
 
     def test_1_shift_510(self):
@@ -56,17 +59,21 @@ class TestFactoryConfig:
         assert s.duration_min == (1440 - 1320) + 360  # 480
 
     def test_machine_groups_property(self):
-        c = FactoryConfig(machines={
-            "PRM019": MachineConfig("PRM019", "Grandes"),
-            "PRM042": MachineConfig("PRM042", "Medias"),
-        })
+        c = FactoryConfig(
+            machines={
+                "PRM019": MachineConfig("PRM019", "Grandes"),
+                "PRM042": MachineConfig("PRM042", "Medias"),
+            }
+        )
         assert c.machine_groups == {"PRM019": "Grandes", "PRM042": "Medias"}
 
     def test_inactive_machine_excluded(self):
-        c = FactoryConfig(machines={
-            "PRM019": MachineConfig("PRM019", "Grandes", active=True),
-            "PRM020": MachineConfig("PRM020", "Grandes", active=False),
-        })
+        c = FactoryConfig(
+            machines={
+                "PRM019": MachineConfig("PRM019", "Grandes", active=True),
+                "PRM020": MachineConfig("PRM020", "Grandes", active=False),
+            }
+        )
         assert "PRM020" not in c.machine_groups
         assert "PRM019" in c.machine_groups
 
@@ -82,7 +89,10 @@ class TestLoadConfig:
 
     def test_load_factory_yaml(self):
         yaml_path = os.path.join(
-            os.path.dirname(__file__), "..", "config", "factory.yaml",
+            os.path.dirname(__file__),
+            "..",
+            "config",
+            "factory.yaml",
         )
         if os.path.exists(yaml_path):
             c = load_config(yaml_path)
@@ -98,6 +108,34 @@ class TestLoadConfig:
             # Defaults for everything else
             assert c.day_capacity_min == 1020
         os.unlink(f.name)
+
+    def test_scheduler_tunables_round_trip(self):
+        c = FactoryConfig(
+            auto_buffer=False,
+            vns_enabled=False,
+            vns_block_moves_enabled=True,
+            compact_enabled=True,
+            jit_max_retries=3,
+            max_edd_span=17,
+            edd_assign_threshold=4,
+            productivity_earliness_ceiling_days=8.5,
+        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            path = f.name
+        try:
+            save_config(c, path)
+            loaded = load_config(path)
+        finally:
+            os.unlink(path)
+
+        assert loaded.auto_buffer is False
+        assert loaded.vns_enabled is False
+        assert loaded.vns_block_moves_enabled is True
+        assert loaded.compact_enabled is True
+        assert loaded.jit_max_retries == 3
+        assert loaded.max_edd_span == 17
+        assert loaded.edd_assign_threshold == 4
+        assert loaded.productivity_earliness_ceiling_days == 8.5
 
 
 # ─── Validation ────────────────────────────────────────────────────────
@@ -123,6 +161,11 @@ class TestValidation:
         errors = validate_config(c)
         assert any("crew" in e.lower() for e in errors)
 
+    def test_setup_crews_above_one_is_not_supported_yet(self):
+        c = FactoryConfig(setup_crews=2)
+        errors = validate_config(c)
+        assert any("exatamente 1" in e.lower() for e in errors)
+
 
 # ─── Scheduler with config ────────────────────────────────────────────
 
@@ -130,10 +173,12 @@ class TestValidation:
 class TestSchedulerWithConfig:
     def _engine(self):
         from tests.test_learning import _engine
+
         return _engine()
 
     def test_default_config_same_as_no_config(self):
         from backend.scheduler.scheduler import schedule_all
+
         e = self._engine()
         r1 = schedule_all(e)
         r2 = schedule_all(e, config=FactoryConfig())
@@ -142,6 +187,7 @@ class TestSchedulerWithConfig:
     def test_config_backwards_compat(self):
         """All callers work without config (config=None default)."""
         from backend.scheduler.scheduler import schedule_all
+
         e = self._engine()
         r = schedule_all(e)
         assert r.score["otd"] == 100.0

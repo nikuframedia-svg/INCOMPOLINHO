@@ -6,20 +6,20 @@ POST /api/copilot/load  — Load ISOP and initialize state
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import yaml
-from fastapi import FastAPI
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.api.console import router as console_router
+from backend.api.data import router as data_router
 from backend.config.loader import load_config
-from backend.copilot.engine import WIDGET_TOOLS, execute_tool
+from backend.copilot.engine import execute_tool
 from backend.copilot.llm_provider import get_provider
 from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
@@ -30,8 +30,7 @@ from backend.transform.transform import transform
 
 logger = logging.getLogger(__name__)
 
-from backend.api.console import router as console_router
-from backend.api.data import router as data_router
+load_dotenv()
 
 app = FastAPI(title="PP1 Copilot", version="1.0.0")
 app.add_middleware(
@@ -69,51 +68,62 @@ async def copilot_chat(request: ChatRequest):
     widgets = []
     tools_used = 0
 
-    for iteration in range(5):  # max 5 tool-call rounds
-        response = await provider.chat_with_tools(messages, TOOLS, system_prompt)
+    try:
+        for _ in range(5):  # max 5 tool-call rounds
+            response = await provider.chat_with_tools(messages, TOOLS, system_prompt)
 
-        if response.tool_calls:
-            # Append assistant message with tool calls
-            messages.append({
-                "role": "assistant",
-                "content": response.content or "",
-                "tool_calls": [
+            if response.tool_calls:
+                # Append assistant message with tool calls
+                messages.append(
                     {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": tc.arguments},
+                        "role": "assistant",
+                        "content": response.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.name, "arguments": tc.arguments},
+                            }
+                            for tc in response.tool_calls
+                        ],
                     }
-                    for tc in response.tool_calls
-                ],
-            })
+                )
 
-            for tc in response.tool_calls:
-                result_json, is_widget = execute_tool(tc.name, tc.arguments)
-                tools_used += 1
+                for tc in response.tool_calls:
+                    result_json, is_widget = execute_tool(tc.name, tc.arguments)
+                    tools_used += 1
 
-                if is_widget:
-                    try:
-                        parsed = json.loads(result_json)
-                        if "error" not in parsed:
-                            widgets.append({"type": "dynamic_viz", "data": parsed})
-                    except json.JSONDecodeError:
-                        pass
+                    if is_widget:
+                        try:
+                            parsed = json.loads(result_json)
+                            if "error" not in parsed:
+                                widgets.append({"type": "dynamic_viz", "data": parsed})
+                        except json.JSONDecodeError:
+                            pass
 
-                # Append tool result for next LLM turn
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result_json,
-                })
+                    # Append tool result for next LLM turn
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result_json,
+                        }
+                    )
 
-            continue
+                continue
 
-        # No tool calls — final response
-        return {
-            "response": response.content or "",
-            "widgets": widgets,
-            "tools_used": tools_used,
-        }
+            # No tool calls — final response
+            return {
+                "response": response.content or "",
+                "widgets": widgets,
+                "tools_used": tools_used,
+            }
+    except Exception as exc:
+        logger.warning("Copilot unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Copilot indisponível. O planeamento e dashboards continuam disponíveis.",
+        ) from exc
 
     return {
         "response": "Limite de iterações atingido.",
@@ -139,6 +149,8 @@ async def load_isop(request: LoadRequest):
         config=config,
     )
 
+    state.clear_runtime_for_new_dataset()
+    state.default_config = copy.deepcopy(config)
     state.engine_data = engine_data
     state.config = config
     state.update_schedule(result)
@@ -166,6 +178,8 @@ async def load_isop(request: LoadRequest):
             "confidence": result.study.confidence,
             "improvement": result.study.improvement,
         }
+    state.learning_info = learning_info
+    dataset = state.set_dataset_info(request.isop_path, result, trust, len(engine_data.ops))
 
     return {
         "status": "ok",
@@ -176,6 +190,7 @@ async def load_isop(request: LoadRequest):
         "trust_index": {"score": trust.score, "gate": trust.gate},
         "journal_summary": journal_summary,
         "learning": learning_info,
+        "dataset": dataset,
     }
 
 
@@ -187,4 +202,5 @@ async def health():
         "status": "ok",
         "has_data": has_data,
         "n_segments": len(state.segments),
+        "dataset": state.dataset_info if has_data else None,
     }

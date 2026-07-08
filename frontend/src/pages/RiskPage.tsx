@@ -234,7 +234,7 @@ export function RiskPage() {
                   <th style={thStyle}>Conclusao</th>
                   <th style={thStyle}>Atraso (d)</th>
                   <th style={thStyle}>Causa</th>
-                  <th style={thStyle}>Sugestao</th>
+                  <th style={thStyle}>Explicacao</th>
                 </tr>
               </thead>
               <tbody>
@@ -246,7 +246,7 @@ export function RiskPage() {
                     <td style={tdStyle}>{a.completion_day}</td>
                     <td style={{ ...tdStyle, color: T.red }}>{a.delay_days}</td>
                     <td style={tdStyle}><Pill color={T.orange}>{causeLabel(a.root_cause)}</Pill></td>
-                    <td style={{ ...tdStyle, fontFamily: T.sans, fontSize: 11, color: T.secondary, maxWidth: 250 }}>{a.suggestion}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.sans, fontSize: 11, color: T.secondary, maxWidth: 250 }}>{a.explanation}</td>
                   </tr>
                 ))}
               </tbody>
@@ -333,7 +333,7 @@ export function RiskPage() {
                     <Pill color={T.orange}>{causeLabel(a.root_cause)}</Pill>
                     <span style={{ fontSize: 11, color: T.secondary }}>{a.machine_id} | +{a.delay_days}d</span>
                   </div>
-                  <div style={{ fontSize: 12, color: T.secondary, lineHeight: 1.5 }}>{a.suggestion}</div>
+                  <div style={{ fontSize: 12, color: T.secondary, lineHeight: 1.5 }}>{a.explanation}</div>
                 </Card>
               ))}
             </div>

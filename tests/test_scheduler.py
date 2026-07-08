@@ -10,6 +10,8 @@ Covers all 5 fixes + full pipeline:
 
 from __future__ import annotations
 
+from backend.config.planning import apply_effective_planning_config
+from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP, MIN_PROD_MIN
 from backend.scheduler.dispatch import (
     _campaign_sequence,
@@ -24,15 +26,19 @@ from backend.scheduler.lot_sizing import _apply_eco_lot, create_lots
 from backend.scheduler.scheduler import schedule_all
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
-from backend.scheduler.types import Lot, Segment, ToolRun
+from backend.scheduler.types import Lot, Segment, ToolRun, ToolTimeline
 from backend.types import EngineData, EOp, MachineInfo, TwinGroup
 
 
 # --- Fixtures ---
 
 WORKDAYS = [
-    "2026-03-05", "2026-03-06", "2026-03-07",
-    "2026-03-10", "2026-03-11", "2026-03-12",
+    "2026-03-05",
+    "2026-03-06",
+    "2026-03-07",
+    "2026-03-10",
+    "2026-03-11",
+    "2026-03-12",
 ]
 
 
@@ -212,13 +218,107 @@ class TestLotSizing:
         assert len(lots) == 1
         assert lots[0].prod_min >= MIN_PROD_MIN
 
+    def test_effective_eco_lot_override_changes_real_lots(self):
+        op = _make_eop(sku="8750711912", d=[0, 50], eco_lot=0)
+        data = _make_engine_data(ops=[op])
+        config = FactoryConfig(
+            sku_planning_rules={"8750711912": {"eco_lot": 1000}},
+        )
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+
+        assert data.ops[0].eco_lot_isop == 0
+        assert data.ops[0].eco_lot_effective == 1000
+        assert lots[0].qty == 1000
+        assert lots[0].eco_lot_isop == 0
+        assert lots[0].eco_lot_effective == 1000
+        assert lots[0].planning_source == "eco_lot_override"
+
+    def test_finish_buffer_changes_internal_deadline(self):
+        op = _make_eop(sku="SKU_BUF", d=[0, 0, 0, 100], eco_lot=0)
+        data = _make_engine_data(ops=[op], n_days=4)
+        config = FactoryConfig(
+            sku_planning_rules={"SKU_BUF": {"finish_buffer_days": 2}},
+        )
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+
+        assert lots[0].delivery_day == 3
+        assert lots[0].internal_deadline == 1
+        assert lots[0].edd == 1
+
+    def test_min_campaign_qty_groups_exact_shortfall(self):
+        op = _make_eop(sku="SKU_MICRO", d=[0, 50], eco_lot=0)
+        data = _make_engine_data(ops=[op])
+        config = FactoryConfig(
+            sku_planning_rules={"SKU_MICRO": {"min_campaign_qty": 500}},
+        )
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+
+        assert lots[0].qty == 500
+        assert lots[0].planning_source == "min_campaign_qty"
+        assert lots[0].economic_warning is None
+
+    def test_min_campaign_prod_min_sets_minimum_economic_runtime(self):
+        op = _make_eop(sku="SKU_TIME", d=[0, 50], eco_lot=0, pH=600, oee=1.0)
+        data = _make_engine_data(ops=[op])
+        config = FactoryConfig(
+            sku_planning_rules={"SKU_TIME": {"min_campaign_prod_min": 30}},
+        )
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+
+        assert lots[0].qty == 300
+        assert lots[0].prod_min == 30
+        assert lots[0].planning_source == "min_campaign_prod_min"
+
+    def test_max_group_gap_days_groups_near_future_demand(self):
+        op = _make_eop(sku="SKU_GAP", d=[0, 50, 75, 0, 100], eco_lot=0)
+        data = _make_engine_data(ops=[op], n_days=5)
+        config = FactoryConfig(
+            sku_planning_rules={"SKU_GAP": {"max_group_gap_days": 1}},
+        )
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+
+        assert lots[0].qty == 125
+        assert lots[0].planning_source == "campaign_window"
+        assert lots[1].qty == 100
+
+    def test_start_buffer_prioritizes_target_start_in_sequence(self):
+        op_a = _make_eop(sku="A", tool="TA", d=[0, 0, 0, 100], eco_lot=0)
+        op_b = _make_eop(sku="B", tool="TB", d=[0, 0, 0, 100], eco_lot=0)
+        data = _make_engine_data(ops=[op_a, op_b], n_days=4)
+        config = FactoryConfig(sku_planning_rules={"B": {"start_buffer_days": 2}})
+
+        apply_effective_planning_config(data, config)
+        lots = create_lots(data, config=config)
+        runs = create_tool_runs(lots, config=config)
+        machine_runs = assign_machines(runs, data, config=config)
+        sequenced = sequence_per_machine(machine_runs, config=config)
+
+        first_run = sequenced["PRM031"][0]
+        assert first_run.lots[0].op_id == op_b.id
+        assert first_run.target_start_day == 1
+
     def test_twin_lot_creation(self):
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000])
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 800])
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -236,9 +336,14 @@ class TestLotSizing:
         op_a = _make_eop(sku="A", tool="T1", machine="M1", pH=1000, d=[0, 5000])
         op_b = _make_eop(sku="B", tool="T1", machine="M1", pH=1000, d=[0, 3000])
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -299,6 +404,37 @@ class TestToolGrouping:
         runs = create_tool_runs(lots)
         assert runs[0].id == "run_T1_M1_0"
 
+    def test_forced_run_splits_create_lns_subruns(self):
+        """CPO/LNS can explicitly split an otherwise valid campaign."""
+        lots = [
+            _make_lot("L1", "O1", "T1", "M1", qty=500, prod_min=100, edd=5),
+            _make_lot("L2", "O2", "T1", "M1", qty=300, prod_min=80, edd=10),
+            _make_lot("L3", "O3", "T1", "M1", qty=200, prod_min=50, edd=15),
+        ]
+        config = FactoryConfig(forced_run_splits={"run_T1_M1_0": [2]})
+
+        runs = create_tool_runs(lots, config=config)
+
+        assert [run.id for run in runs] == ["run_T1_M1_0_lns0", "run_T1_M1_0_lns1"]
+        assert [[lot.id for lot in run.lots] for run in runs] == [["L1", "L2"], ["L3"]]
+        assert [run.edd for run in runs] == [5, 15]
+
+    def test_forced_run_splits_ignore_invalid_positions(self):
+        """Malformed internal LNS split specs are ignored safely."""
+        lots = [
+            _make_lot("L1", "O1", "T1", "M1", qty=500, prod_min=100, edd=5),
+            _make_lot("L2", "O2", "T1", "M1", qty=300, prod_min=80, edd=10),
+            _make_lot("L3", "O3", "T1", "M1", qty=200, prod_min=50, edd=15),
+        ]
+        config = FactoryConfig(
+            forced_run_splits={"run_T1_M1_0": ["bad", 0, 2, 2, 99]}  # type: ignore[list-item]
+        )
+
+        runs = create_tool_runs(lots, config=config)
+
+        assert [run.id for run in runs] == ["run_T1_M1_0_lns0", "run_T1_M1_0_lns1"]
+        assert [[lot.id for lot in run.lots] for run in runs] == [["L1", "L2"], ["L3"]]
+
 
 # ═══ CAMPAIGN SEQUENCING (Fix 3) ═══
 
@@ -340,7 +476,7 @@ class TestInterleaveUrgent:
         runs = [
             _make_run("R1", "T1", "M1", edd=4),
             _make_run("R2", "T1", "M1", edd=11),
-            _make_run("R3", "T2", "M1", edd=6),   # urgent, different tool
+            _make_run("R3", "T2", "M1", edd=6),  # urgent, different tool
         ]
         result = _interleave_urgent(runs)
         # R3 (edd=6) should be inserted between R1 (edd=4) and R2 (edd=11)
@@ -395,8 +531,7 @@ class TestAssignMachines:
         lot_heavy = _make_lot("L1", prod_min=900, machine_id="M1")
         lot_light = _make_lot("L2", prod_min=100, machine_id="M2", alt_machine_id="M1")
         run_heavy = _make_run("R1", "T1", "M1", lots=[lot_heavy])
-        run_light = _make_run("R2", "T2", "M2", alt_machine_id="M1",
-                              lots=[lot_light])
+        run_light = _make_run("R2", "T2", "M2", alt_machine_id="M1", lots=[lot_light])
         result = assign_machines([run_heavy, run_light], _make_engine_data())
         # run_light should go to M2 (less loaded)
         assert any(r.id == "R2" for r in result.get("M2", []))
@@ -448,10 +583,142 @@ class TestJITDispatch:
 
         # JIT should not worsen tardy
         final_segs, final_lots, warnings, _, _ = jit_dispatch(
-            runs, data, baseline_segs, baseline_lots, baseline_score,
+            runs,
+            data,
+            baseline_segs,
+            baseline_lots,
+            baseline_score,
         )
         final_score = compute_score(final_segs, final_lots, data)
         assert final_score["tardy_count"] <= baseline_score["tardy_count"]
+
+
+class TestDispatchSetupInvariants:
+    def test_dispatch_segment_start_is_setup_start(self):
+        lot = _make_lot("L1", "O1", "T1", "M1", prod_min=100, setup_min=60)
+        run = _make_run("R1", "T1", "M1", lots=[lot], setup_min=60)
+        data = _make_engine_data(
+            ops=[],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            n_days=2,
+        )
+
+        segments, _, _ = per_machine_dispatch({"M1": [run]}, data)
+
+        assert len(segments) == 1
+        assert segments[0].start_min == 420
+        assert segments[0].end_min == 580
+        assert segments[0].setup_min == 60
+        assert segments[0].prod_min == 100
+
+    def test_dispatch_no_machine_overlap_with_different_setup_lengths(self):
+        run_a = _make_run(
+            "R1",
+            "T1",
+            "M1",
+            lots=[_make_lot("L1", "O1", "T1", "M1", prod_min=100, setup_min=100)],
+            setup_min=100,
+        )
+        run_b = _make_run(
+            "R2",
+            "T2",
+            "M1",
+            lots=[_make_lot("L2", "O2", "T2", "M1", prod_min=100, setup_min=10)],
+            setup_min=10,
+        )
+        data = _make_engine_data(
+            ops=[],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            n_days=2,
+        )
+
+        segments, _, _ = per_machine_dispatch({"M1": [run_a, run_b]}, data)
+        ordered = sorted(segments, key=lambda s: (s.day_idx, s.start_min))
+
+        assert ordered[0].end_min <= ordered[1].start_min
+        assert ordered[0].start_min == 420
+        assert ordered[0].end_min == 620
+        assert ordered[1].start_min == 620
+        assert ordered[1].end_min == 730
+
+    def test_tool_timeline_checks_whole_interval_not_only_start(self):
+        tool_tl = ToolTimeline()
+        tool_tl.book("T1", 100, 200, "M2")
+        run = _make_run(
+            "R1",
+            "T1",
+            "M1",
+            lots=[_make_lot("L1", "O1", "T1", "M1", prod_min=300, setup_min=0)],
+            setup_min=0,
+        )
+        data = _make_engine_data(
+            ops=[],
+            machines=[
+                MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP),
+                MachineInfo(id="M2", group="Grandes", day_capacity=DAY_CAP),
+            ],
+            n_days=2,
+        )
+
+        segments, _, _ = per_machine_dispatch({"M1": [run]}, data, tool_tl=tool_tl)
+
+        assert segments[0].start_min == 620
+        assert segments[0].end_min == 920
+
+    def test_tool_booking_includes_setup_window(self):
+        tool_tl = ToolTimeline()
+        run = _make_run(
+            "R1",
+            "T1",
+            "M1",
+            lots=[_make_lot("L1", "O1", "T1", "M1", prod_min=100, setup_min=60)],
+            setup_min=60,
+        )
+        data = _make_engine_data(
+            ops=[],
+            machines=[MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP)],
+            n_days=2,
+        )
+
+        per_machine_dispatch({"M1": [run]}, data, tool_tl=tool_tl)
+
+        assert tool_tl.bookings["T1"] == [(0, 160, "M1")]
+
+    def test_crew_window_matches_segment_setup_window(self):
+        run_a = _make_run(
+            "R1",
+            "T1",
+            "M1",
+            lots=[_make_lot("L1", "O1", "T1", "M1", prod_min=100, setup_min=100)],
+            setup_min=100,
+        )
+        run_b = _make_run(
+            "R2",
+            "T2",
+            "M2",
+            lots=[_make_lot("L2", "O2", "T2", "M2", prod_min=100, setup_min=100)],
+            setup_min=100,
+        )
+        data = _make_engine_data(
+            ops=[],
+            machines=[
+                MachineInfo(id="M1", group="Grandes", day_capacity=DAY_CAP),
+                MachineInfo(id="M2", group="Grandes", day_capacity=DAY_CAP),
+            ],
+            n_days=2,
+        )
+
+        segments, _, _ = per_machine_dispatch({"M1": [run_a], "M2": [run_b]}, data)
+        setup_windows = sorted(
+            (
+                seg.day_idx * DAY_CAP + (seg.start_min - 420),
+                seg.day_idx * DAY_CAP + (seg.start_min - 420) + seg.setup_min,
+            )
+            for seg in segments
+            if seg.setup_min > 0
+        )
+
+        assert setup_windows == [(0, 100), (100, 200)]
 
 
 # ═══ SCORING ═══
@@ -462,10 +729,30 @@ class TestScoring:
         """All lots on time → OTD = 100%."""
         lots = [_make_lot("L1", edd=5), _make_lot("L2", edd=10)]
         segments = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=3, start_min=420, end_min=520, shift="A", qty=500, prod_min=100),
-            Segment(lot_id="L2", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=8, start_min=420, end_min=500, shift="A", qty=300, prod_min=80),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=3,
+                start_min=420,
+                end_min=520,
+                shift="A",
+                qty=500,
+                prod_min=100,
+            ),
+            Segment(
+                lot_id="L2",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=8,
+                start_min=420,
+                end_min=500,
+                shift="A",
+                qty=300,
+                prod_min=80,
+            ),
         ]
         data = _make_engine_data(n_days=12)
         score = compute_score(segments, lots, data)
@@ -476,8 +763,18 @@ class TestScoring:
         """Lot completed after EDD → tardy."""
         lots = [_make_lot("L1", edd=2)]
         segments = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=5, start_min=420, end_min=520, shift="A", qty=500, prod_min=100),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=5,
+                start_min=420,
+                end_min=520,
+                shift="A",
+                qty=500,
+                prod_min=100,
+            ),
         ]
         data = _make_engine_data(n_days=6)
         score = compute_score(segments, lots, data)
@@ -489,9 +786,19 @@ class TestScoring:
         """Earliness = average gap between last production day and EDD."""
         lots = [_make_lot("L1", edd=10)]
         segments = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=3, start_min=420, end_min=520, shift="A",
-                    qty=500, prod_min=100, edd=10),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=3,
+                start_min=420,
+                end_min=520,
+                shift="A",
+                qty=500,
+                prod_min=100,
+                edd=10,
+            ),
         ]
         data = _make_engine_data(n_days=12)
         score = compute_score(segments, lots, data)
@@ -499,16 +806,41 @@ class TestScoring:
 
     def test_setup_count(self):
         segments = [
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=0, start_min=420, end_min=480, shift="A",
-                    qty=0, prod_min=0, setup_min=60),
-            Segment(lot_id="L1", run_id="R1", machine_id="M1", tool_id="T1",
-                    day_idx=0, start_min=480, end_min=580, shift="A",
-                    qty=500, prod_min=100, setup_min=0),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=0,
+                start_min=420,
+                end_min=480,
+                shift="A",
+                qty=0,
+                prod_min=0,
+                setup_min=60,
+            ),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="M1",
+                tool_id="T1",
+                day_idx=0,
+                start_min=480,
+                end_min=580,
+                shift="A",
+                qty=500,
+                prod_min=100,
+                setup_min=0,
+            ),
         ]
         data = _make_engine_data(n_days=6)
         score = compute_score(segments, [_make_lot("L1")], data)
         assert score["setups"] == 1
+        assert score["setup_time_min"] == 60
+        assert score["prod_time_min"] == 100
+        assert score["work_time_min"] == 160
+        assert score["idle_capacity_min"] >= 0
+        assert score["bottleneck_machine"]
 
 
 # ═══ FULL PIPELINE ═══
@@ -550,9 +882,14 @@ class TestScheduleAll:
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000])
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 800])
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -565,13 +902,18 @@ class TestScheduleAll:
         assert result.score is not None
 
     def test_twin_joint_equal_qty(self):
-        """When both twins have demand, both produce max(eco_a, eco_b)."""
+        """When both twins have demand, each SKU keeps its own quantity."""
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000], eco_lot=0)
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 800], eco_lot=0)
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -582,19 +924,23 @@ class TestScheduleAll:
         assert len(lots) == 1
         to = lots[0].twin_outputs
         assert to is not None
-        # Both produce max(1000, 800) = 1000
         assert to[0][2] == 1000  # A = 1000
-        assert to[1][2] == 1000  # B = 1000 (equal qty)
+        assert to[1][2] == 800  # B = 800
         assert lots[0].qty == 1000
 
     def test_twin_joint_with_eco_lot(self):
-        """Max eco lot determines qty for both twins."""
+        """Each twin SKU applies its own eco lot independently."""
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 4500], eco_lot=5000)
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 2800], eco_lot=3000)
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=5000, eco_lot_2=3000,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=5000,
+            eco_lot_2=3000,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -606,9 +952,8 @@ class TestScheduleAll:
         to = lots[0].twin_outputs
         assert to is not None
         # eco_a = ceil(4500/5000)*5000 = 5000, eco_b = ceil(2800/3000)*3000 = 3000
-        # qty = max(5000, 3000) = 5000
         assert to[0][2] == 5000  # A
-        assert to[1][2] == 5000  # B (not 3000)
+        assert to[1][2] == 3000  # B
         assert lots[0].qty == 5000
 
     def test_twin_solo_only_a(self):
@@ -616,9 +961,14 @@ class TestScheduleAll:
         op_a = _make_eop(sku="A", tool="T1", machine="M1", d=[0, 1000])
         op_b = _make_eop(sku="B", tool="T1", machine="M1", d=[0, 0])
         twin = TwinGroup(
-            tool_id="T1", machine_id="M1",
-            op_id_1="T1_M1_A", op_id_2="T1_M1_B",
-            sku_1="A", sku_2="B", eco_lot_1=0, eco_lot_2=0,
+            tool_id="T1",
+            machine_id="M1",
+            op_id_1="T1_M1_A",
+            op_id_2="T1_M1_B",
+            sku_1="A",
+            sku_2="B",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -630,7 +980,7 @@ class TestScheduleAll:
         to = lots[0].twin_outputs
         assert to is not None
         assert to[0][2] == 1000  # A produces
-        assert to[1][2] == 0     # B does NOT produce
+        assert to[1][2] == 0  # B does NOT produce
 
     def test_twin_interleaved_demand_co_produces(self):
         """BUG 4: irregular twin demand (A/A/B/A/B/A) must co-produce.
@@ -642,14 +992,25 @@ class TestScheduleAll:
         lot with a nearby solo-A lot — no interleaved single-SKU blocks where
         co-production was possible, and a single ToolRun (one setup).
         """
-        op_a = _make_eop(sku="0081", tool="JD471512", machine="PRM042",
-                         pH=500.0, d=[0, 2000, 2000, 0, 2000, 0, 2000])
-        op_b = _make_eop(sku="0071", tool="JD471512", machine="PRM042",
-                         pH=500.0, d=[0, 0, 0, 1500, 0, 1500, 0])
+        op_a = _make_eop(
+            sku="0081",
+            tool="JD471512",
+            machine="PRM042",
+            pH=500.0,
+            d=[0, 2000, 2000, 0, 2000, 0, 2000],
+        )
+        op_b = _make_eop(
+            sku="0071", tool="JD471512", machine="PRM042", pH=500.0, d=[0, 0, 0, 1500, 0, 1500, 0]
+        )
         twin = TwinGroup(
-            tool_id="JD471512", machine_id="PRM042",
-            op_id_1="JD471512_PRM042_0081", op_id_2="JD471512_PRM042_0071",
-            sku_1="0081", sku_2="0071", eco_lot_1=0, eco_lot_2=0,
+            tool_id="JD471512",
+            machine_id="PRM042",
+            op_id_1="JD471512_PRM042_0081",
+            op_id_2="JD471512_PRM042_0071",
+            sku_1="0081",
+            sku_2="0071",
+            eco_lot_1=0,
+            eco_lot_2=0,
         )
         data = _make_engine_data(
             ops=[op_a, op_b],
@@ -677,8 +1038,7 @@ class TestScheduleAll:
             assert abs(lot.prod_min - max(time_a, time_b)) < 1.0
 
         # No 0071 demand left stranded as its own solo block.
-        solo_b = [lot for lot in lots
-                  if lot.twin_outputs[1][2] > 0 and lot.twin_outputs[0][2] == 0]
+        solo_b = [lot for lot in lots if lot.twin_outputs[1][2] > 0 and lot.twin_outputs[0][2] == 0]
         assert solo_b == []
 
         # Tool grouping → ONE run, ONE setup for the whole tool+machine.
@@ -696,8 +1056,9 @@ class TestScheduleAll:
     def test_setup_count_reduced(self):
         """Same tool on same machine should produce 1 setup, not N."""
         ops = [
-            _make_eop(sku=f"SKU_{i}", tool="T1", machine="PRM031",
-                       d=[0] * i + [500] + [0] * (5 - i))
+            _make_eop(
+                sku=f"SKU_{i}", tool="T1", machine="PRM031", d=[0] * i + [500] + [0] * (5 - i)
+            )
             for i in range(1, 4)
         ]
         data = _make_engine_data(ops=ops)
@@ -726,6 +1087,7 @@ class TestScheduleAll:
         result = schedule_all(data)
         # Group setups by machine
         from collections import defaultdict
+
         machine_setups: dict[str, list[tuple[int, int]]] = defaultdict(list)
         for s in result.segments:
             if s.setup_min > 0:
@@ -778,11 +1140,12 @@ class TestScheduleAll:
     def test_pipeline_timing(self):
         """Scheduler should complete under 100ms for moderate input."""
         ops = [
-            _make_eop(sku=f"SKU_{i}", tool=f"T{i % 5}",
-                       machine=f"M{i % 3}", d=[0, 500, 300, 200])
+            _make_eop(sku=f"SKU_{i}", tool=f"T{i % 5}", machine=f"M{i % 3}", d=[0, 500, 300, 200])
             for i in range(20)
         ]
-        machines = [MachineInfo(id=f"M{i}", group="Grandes", day_capacity=DAY_CAP) for i in range(3)]
+        machines = [
+            MachineInfo(id=f"M{i}", group="Grandes", day_capacity=DAY_CAP) for i in range(3)
+        ]
         data = _make_engine_data(ops=ops, machines=machines)
         result = schedule_all(data)
         assert result.time_ms < 500  # generous for CI
@@ -821,10 +1184,16 @@ class TestScheduleAll:
         machines_ids = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"]
         ops = []
         for i, mid in enumerate(machines_ids):
-            ops.append(_make_eop(
-                sku=f"SKU_{mid}", machine=mid, tool=f"T{i}",
-                d=[20000, 5000, 3000], pH=150.0, sH=0.5,
-            ))
+            ops.append(
+                _make_eop(
+                    sku=f"SKU_{mid}",
+                    machine=mid,
+                    tool=f"T{i}",
+                    d=[20000, 5000, 3000],
+                    pH=150.0,
+                    sH=0.5,
+                )
+            )
         machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machines_ids]
         data = _make_engine_data(ops=ops, machines=machines, n_days=10)
         result = schedule_all(data)
@@ -862,13 +1231,9 @@ class TestHolidayEnforcement:
 
         holiday_set = set(holidays)
         violations = [
-            (s.machine_id, s.day_idx, s.run_id)
-            for s in result.segments
-            if s.day_idx in holiday_set
+            (s.machine_id, s.day_idx, s.run_id) for s in result.segments if s.day_idx in holiday_set
         ]
-        assert violations == [], (
-            f"Segments scheduled on holidays: {violations}"
-        )
+        assert violations == [], f"Segments scheduled on holidays: {violations}"
 
     def test_utilisation_excludes_holidays(self):
         """Utilisation denominator should exclude holiday days."""
@@ -899,13 +1264,9 @@ class TestHolidayEnforcement:
 
         holiday_set = set(holidays)
         violations = [
-            (s.machine_id, s.day_idx)
-            for s in result.segments
-            if s.day_idx in holiday_set
+            (s.machine_id, s.day_idx) for s in result.segments if s.day_idx in holiday_set
         ]
-        assert violations == [], (
-            f"Segments on holidays under heavy load: {violations}"
-        )
+        assert violations == [], f"Segments on holidays under heavy load: {violations}"
 
 
 # --- Crew mutex enforcement ---
@@ -964,9 +1325,12 @@ def _tool_machine_overlaps(segments) -> list[tuple]:
     for tool_id, segs in by_tool.items():
         windows = sorted(
             (
-                (s.day_idx * DAY_CAP + (s.start_min - 420),
-                 s.day_idx * DAY_CAP + (s.end_min - 420),
-                 s.machine_id, s.day_idx)
+                (
+                    s.day_idx * DAY_CAP + (s.start_min - 420),
+                    s.day_idx * DAY_CAP + (s.end_min - 420),
+                    s.machine_id,
+                    s.day_idx,
+                )
                 for s in segs
             ),
             key=lambda w: w[0],
@@ -1000,24 +1364,29 @@ class TestToolContention:
         # alt machine set so the assigner is free to scatter the runs.
         ops = [
             _make_eop(
-                sku="SHARED", machine="PRM031", tool="T_SHARED", alt="PRM039",
+                sku="SHARED",
+                machine="PRM031",
+                tool="T_SHARED",
+                alt="PRM039",
                 d=[0, 9000, 0, 0, 0, 0, 0, 9000, 0, 0],
-                pH=150.0, sH=0.5,
+                pH=150.0,
+                sH=0.5,
             ),
             # Filler load so the assigner is tempted to balance onto PRM039.
             _make_eop(
-                sku="FILL", machine="PRM039", tool="T_FILL",
+                sku="FILL",
+                machine="PRM039",
+                tool="T_FILL",
                 d=[0, 6000, 0, 0, 0, 0, 0, 6000, 0, 0],
-                pH=150.0, sH=0.5,
+                pH=150.0,
+                sH=0.5,
             ),
         ]
         data = _make_engine_data(ops=ops, machines=machines, n_days=12)
         result = schedule_all(data)
 
         conflicts = _tool_machine_overlaps(result.segments)
-        assert conflicts == [], (
-            f"Tool on two machines simultaneously: {conflicts}"
-        )
+        assert conflicts == [], f"Tool on two machines simultaneously: {conflicts}"
         # OTD must remain 100%.
         assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
         assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
@@ -1025,25 +1394,42 @@ class TestToolContention:
     def test_full_factory_no_tool_on_two_machines(self):
         """Across a 5-machine factory, no tool overlaps on two machines."""
         machine_ids = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"]
-        machines = [
-            MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP)
-            for m in machine_ids
-        ]
+        machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machine_ids]
         ops = []
         # Two shared tools each usable on two machines with an alt.
-        ops.append(_make_eop(
-            sku="S1", machine="PRM019", tool="TX", alt="PRM031",
-            d=[0, 7000, 0, 0, 6000, 0, 0, 5000, 0, 0], pH=140.0, sH=0.5,
-        ))
-        ops.append(_make_eop(
-            sku="S2", machine="PRM039", tool="TY", alt="PRM043",
-            d=[0, 6000, 0, 0, 5000, 0, 0, 4000, 0, 0], pH=140.0, sH=0.5,
-        ))
+        ops.append(
+            _make_eop(
+                sku="S1",
+                machine="PRM019",
+                tool="TX",
+                alt="PRM031",
+                d=[0, 7000, 0, 0, 6000, 0, 0, 5000, 0, 0],
+                pH=140.0,
+                sH=0.5,
+            )
+        )
+        ops.append(
+            _make_eop(
+                sku="S2",
+                machine="PRM039",
+                tool="TY",
+                alt="PRM043",
+                d=[0, 6000, 0, 0, 5000, 0, 0, 4000, 0, 0],
+                pH=140.0,
+                sH=0.5,
+            )
+        )
         for i, mid in enumerate(machine_ids):
-            ops.append(_make_eop(
-                sku=f"F{i}", machine=mid, tool=f"TF{i}",
-                d=[0, 4000, 0, 0, 3000, 0, 0, 2000, 0, 0], pH=140.0, sH=0.5,
-            ))
+            ops.append(
+                _make_eop(
+                    sku=f"F{i}",
+                    machine=mid,
+                    tool=f"TF{i}",
+                    d=[0, 4000, 0, 0, 3000, 0, 0, 2000, 0, 0],
+                    pH=140.0,
+                    sH=0.5,
+                )
+            )
         data = _make_engine_data(ops=ops, machines=machines, n_days=12)
         result = schedule_all(data)
 
@@ -1058,29 +1444,37 @@ class TestToolContention:
         """assign_machines should not place overlapping runs of one tool apart."""
         # Two runs of the SAME tool, both with alt, overlapping EDD windows.
         run_a = _make_run(
-            run_id="RA", tool_id="T_DUP", machine_id="PRM031",
-            alt_machine_id="PRM039", edd=4,
-            lots=[_make_lot(lot_id="LA", tool_id="T_DUP", machine_id="PRM031",
-                            edd=4, prod_min=600.0)],
+            run_id="RA",
+            tool_id="T_DUP",
+            machine_id="PRM031",
+            alt_machine_id="PRM039",
+            edd=4,
+            lots=[
+                _make_lot(lot_id="LA", tool_id="T_DUP", machine_id="PRM031", edd=4, prod_min=600.0)
+            ],
         )
         run_b = _make_run(
-            run_id="RB", tool_id="T_DUP", machine_id="PRM031",
-            alt_machine_id="PRM039", edd=4,
-            lots=[_make_lot(lot_id="LB", tool_id="T_DUP", machine_id="PRM031",
-                            edd=4, prod_min=600.0)],
+            run_id="RB",
+            tool_id="T_DUP",
+            machine_id="PRM031",
+            alt_machine_id="PRM039",
+            edd=4,
+            lots=[
+                _make_lot(lot_id="LB", tool_id="T_DUP", machine_id="PRM031", edd=4, prod_min=600.0)
+            ],
         )
         machines = [
             MachineInfo(id="PRM031", group="Grandes", day_capacity=DAY_CAP),
             MachineInfo(id="PRM039", group="Grandes", day_capacity=DAY_CAP),
         ]
         data = _make_engine_data(
-            ops=[_make_eop(machine="PRM031")], machines=machines, n_days=8,
+            ops=[_make_eop(machine="PRM031")],
+            machines=machines,
+            n_days=8,
         )
         machine_runs = assign_machines([run_a, run_b], data)
         # Both runs of T_DUP must land on the SAME machine (overlapping window).
-        machine_of = {
-            r.id: m for m, runs in machine_runs.items() for r in runs
-        }
+        machine_of = {r.id: m for m, runs in machine_runs.items() for r in runs}
         assert machine_of["RA"] == machine_of["RB"], (
             f"Same-tool overlapping runs split across machines: {machine_of}"
         )
@@ -1118,16 +1512,29 @@ class TestCompaction:
 
         ops = [
             _make_eop(
-                sku="A1", machine="PRM031", tool="TA", alt="PRM039",
-                d=[0, 0, 0, 0, 0, 0, 0, 6000, 0, 0], pH=150.0, sH=0.5,
+                sku="A1",
+                machine="PRM031",
+                tool="TA",
+                alt="PRM039",
+                d=[0, 0, 0, 0, 0, 0, 0, 6000, 0, 0],
+                pH=150.0,
+                sH=0.5,
             ),
             _make_eop(
-                sku="B1", machine="PRM039", tool="TB",
-                d=[0, 0, 0, 0, 0, 0, 0, 5000, 0, 0], pH=150.0, sH=0.5,
+                sku="B1",
+                machine="PRM039",
+                tool="TB",
+                d=[0, 0, 0, 0, 0, 0, 0, 5000, 0, 0],
+                pH=150.0,
+                sH=0.5,
             ),
             _make_eop(
-                sku="C1", machine="PRM031", tool="TC",
-                d=[0, 0, 0, 0, 0, 0, 0, 0, 0, 4000], pH=150.0, sH=0.5,
+                sku="C1",
+                machine="PRM031",
+                tool="TC",
+                d=[0, 0, 0, 0, 0, 0, 0, 0, 0, 4000],
+                pH=150.0,
+                sH=0.5,
             ),
         ]
         data = _make_engine_data(ops=ops, n_days=10)
@@ -1140,11 +1547,10 @@ class TestCompaction:
 
         base = schedule_all(copy.deepcopy(data), config=FactoryConfig())
         explicit_off = schedule_all(
-            copy.deepcopy(data), config=FactoryConfig(compact_enabled=False),
+            copy.deepcopy(data),
+            config=FactoryConfig(compact_enabled=False),
         )
-        base_key = sorted(
-            (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in base.segments
-        )
+        base_key = sorted((s.lot_id, s.day_idx, s.start_min, s.end_min) for s in base.segments)
         off_key = sorted(
             (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in explicit_off.segments
         )
@@ -1160,12 +1566,8 @@ class TestCompaction:
 
         gap_off = _total_gap_min(off.segments)
         gap_on = _total_gap_min(on.segments)
-        assert gap_on <= gap_off, (
-            f"Compaction did not reduce gaps: on={gap_on} off={gap_off}"
-        )
-        assert gap_on < gap_off, (
-            f"Compaction left gaps unchanged: on={gap_on} off={gap_off}"
-        )
+        assert gap_on <= gap_off, f"Compaction did not reduce gaps: on={gap_on} off={gap_off}"
+        assert gap_on < gap_off, f"Compaction left gaps unchanged: on={gap_on} off={gap_off}"
 
     def test_compaction_preserves_otd_and_no_violations(self):
         """compact_enabled=True keeps OTD/OTD-D at 100%, 0 tardy, 0 tool overlap."""
@@ -1174,9 +1576,7 @@ class TestCompaction:
 
         assert result.score["otd"] == 100.0, f"OTD regressed: {result.score['otd']}"
         assert result.score["otd_d"] == 100.0, f"OTD-D regressed: {result.score['otd_d']}"
-        assert result.score["tardy_count"] == 0, (
-            f"Tardy appeared: {result.score['tardy_count']}"
-        )
+        assert result.score["tardy_count"] == 0, f"Tardy appeared: {result.score['tardy_count']}"
         conflicts = _tool_machine_overlaps(result.segments)
         assert conflicts == [], f"Tool overlaps after compaction: {conflicts[:5]}"
 
@@ -1187,6 +1587,4 @@ class TestCompaction:
         for s in result.segments:
             if s.end_min <= s.start_min:
                 continue
-            assert s.day_idx <= s.edd, (
-                f"Segment {s.lot_id} day {s.day_idx} > EDD {s.edd}"
-            )
+            assert s.day_idx <= s.edd, f"Segment {s.lot_id} day {s.day_idx} > EDD {s.edd}"

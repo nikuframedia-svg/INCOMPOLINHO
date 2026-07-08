@@ -16,21 +16,20 @@ interface SchedulerRule {
 
 function buildRules(config: FactoryConfig): SchedulerRule[] {
   return [
-    { id: "R01", categoria: "Lotes", descricao: "Modo eco lot — arredondamento ao lote economico", valor: String(config.eco_lot_mode), activo: true },
-    { id: "R02", categoria: "JIT", descricao: "Backward scheduling — produzir o mais tarde possivel", valor: config.jit_enabled ? "Activo" : "Inactivo", activo: config.jit_enabled },
-    { id: "R03", categoria: "JIT", descricao: "Buffer JIT — margem de seguranca", valor: `${(config.jit_buffer_pct * 100).toFixed(0)}%`, activo: config.jit_enabled },
-    { id: "R04", categoria: "JIT", descricao: "Threshold JIT — limite para activar", valor: `${config.jit_threshold}%`, activo: config.jit_enabled },
-    { id: "R05", categoria: "Dispatch", descricao: "Max dias consecutivos por run", valor: `${config.max_run_days} dias`, activo: true },
-    { id: "R06", categoria: "Dispatch", descricao: "Gap maximo entre EDDs no mesmo run", valor: `${config.max_edd_gap} dias`, activo: true },
-    { id: "R07", categoria: "Dispatch", descricao: "Tolerancia para swap de EDD", valor: `${config.edd_swap_tolerance} dias`, activo: true },
-    { id: "R08", categoria: "Dispatch", descricao: "Janela de campanha (agrupamento ferramentas)", valor: `${config.campaign_window} dias`, activo: true },
-    { id: "R09", categoria: "Dispatch", descricao: "Threshold de urgencia", valor: `${config.urgency_threshold} dias`, activo: true },
-    { id: "R10", categoria: "Dispatch", descricao: "Interleave de urgentes entre runs", valor: config.interleave_enabled ? "Activo" : "Inactivo", activo: config.interleave_enabled },
-    { id: "R11", categoria: "Scoring", descricao: "Peso earliness na funcao objectivo", valor: String(config.weight_earliness), activo: true },
-    { id: "R12", categoria: "Scoring", descricao: "Peso setups na funcao objectivo", valor: String(config.weight_setups), activo: true },
-    { id: "R13", categoria: "Scoring", descricao: "Peso balance na funcao objectivo", valor: String(config.weight_balance), activo: true },
-    { id: "R14", categoria: "Capacidade", descricao: "OEE default aplicado a todas as operacoes", valor: String(config.oee_default), activo: true },
-    { id: "R15", categoria: "Capacidade", descricao: "Capacidade diaria por maquina", valor: `${config.day_capacity_min} min`, activo: true },
+    { id: "F01", categoria: "Leis físicas", descricao: "Máquina não produz dois segmentos ao mesmo tempo", valor: "machine_overlaps = 0", activo: true },
+    { id: "F02", categoria: "Leis físicas", descricao: "Ferramenta não está em duas máquinas ao mesmo tempo", valor: "tool_conflicts = 0", activo: true },
+    { id: "F03", categoria: "Leis físicas", descricao: "Uma única equipa de setup não faz dois setups simultâneos", valor: `setup_crews = ${config.setup_crews}`, activo: config.setup_crews === 1 },
+    { id: "F04", categoria: "Leis físicas", descricao: "Máquina ou ferramenta bloqueada não produz", valor: "blocked = 0", activo: true },
+    { id: "F05", categoria: "Leis físicas", descricao: "Capacidade diária por máquina não é excedida", valor: `${config.day_capacity_min} min`, activo: true },
+    { id: "E01", categoria: "Entregas", descricao: "Cumprimento total por lote", valor: "OTD = 100%", activo: true },
+    { id: "E02", categoria: "Entregas", descricao: "Cumprimento acumulado por dia", valor: "OTD-D = 100%", activo: true },
+    { id: "E03", categoria: "Entregas", descricao: "Nenhum lote atrasado", valor: "Atrasos = 0", activo: true },
+    { id: "B01", categoria: "Negócio", descricao: "Eco lot hard", valor: String(config.eco_lot_mode), activo: true },
+    { id: "B02", categoria: "Negócio", descricao: "Gémeas produzem em simultâneo", valor: `${config.twins.length} regras`, activo: true },
+    { id: "B03", categoria: "Negócio", descricao: "PRM020 ignorada se inativa", valor: config.machines.PRM020?.active === false ? "Inativa" : "Verificar", activo: config.machines.PRM020?.active === false },
+    { id: "P01", categoria: "Preferências", descricao: "Produzir o mais tarde possível sem falhar entregas", valor: config.jit_enabled ? "Activo" : "Inactivo", activo: config.jit_enabled },
+    { id: "P02", categoria: "Preferências", descricao: "Reduzir setups em campanhas válidas", valor: `${config.campaign_window} dias`, activo: true },
+    { id: "P03", categoria: "Preferências", descricao: "Evitar antecipação excessiva", valor: `${config.jit_earliness_target ?? 5.5} dias`, activo: true },
   ];
 }
 

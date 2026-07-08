@@ -58,7 +58,4 @@ def _is_similar(ctx_dict: dict, ctx: ISContext) -> bool:
     dd_threshold = 0.3 * max(dd, ctx.demand_density, 0.01)
     n_threshold = 0.5 * max(n, ctx.n_ops, 1)
 
-    return (
-        abs(dd - ctx.demand_density) < dd_threshold
-        and abs(n - ctx.n_ops) < n_threshold
-    )
+    return abs(dd - ctx.demand_density) < dd_threshold and abs(n - ctx.n_ops) < n_threshold

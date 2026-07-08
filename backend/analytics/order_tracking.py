@@ -7,7 +7,7 @@ how much comes from surplus (eco lot), and generates a Portuguese explanation.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from backend.scheduler.types import Lot, Segment
 from backend.types import ClientDemandEntry, EngineData
@@ -48,6 +48,7 @@ class ClientOrders:
 
 
 # ── Lot metadata from segments ──
+
 
 @dataclass
 class _LotInfo:
@@ -123,7 +124,7 @@ def compute_order_tracking(
         else:
             lots_by_op[lot.op_id].append(lot)
     for op_id in lots_by_op:
-        lots_by_op[op_id].sort(key=lambda l: l.edd)
+        lots_by_op[op_id].sort(key=lambda lot: lot.edd)
 
     # SKU → op_id
     sku_to_op: dict[str, str] = {op.sku: op.id for op in engine_data.ops}
@@ -150,12 +151,14 @@ def compute_order_tracking(
     for client in sorted(all_trackings.keys()):
         orders = all_trackings[client]
         orders.sort(key=lambda o: (o.sku, o.delivery_day))
-        result.append(ClientOrders(
-            client=client,
-            total_orders=len(orders),
-            total_ready=sum(1 for o in orders if o.status == "ready"),
-            orders=orders,
-        ))
+        result.append(
+            ClientOrders(
+                client=client,
+                total_orders=len(orders),
+                total_ready=sum(1 for o in orders if o.status == "ready"),
+                orders=orders,
+            )
+        )
 
     return result
 

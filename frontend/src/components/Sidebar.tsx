@@ -22,6 +22,7 @@ export function Sidebar() {
   const page = useAppStore((s) => s.activePage);
   const setPage = useAppStore((s) => s.setPage);
   const trustScore = useAppStore((s) => s.trustScore);
+  const dataset = useAppStore((s) => s.dataset);
   const hasData = useAppStore((s) => s.hasData);
   const [trust, setTrust] = useState<TrustIndex | null>(null);
 
@@ -75,6 +76,35 @@ export function Sidebar() {
           );
         })}
       </div>
+
+      {hasData && dataset && (
+        <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+          <Label>ISOP ativo</Label>
+          <div
+            title={dataset.filename}
+            style={{
+              marginTop: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              color: T.primary,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {dataset.filename}
+          </div>
+          <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: T.secondary }}>{dataset.n_ops} ops</span>
+            <span style={{ fontSize: 11, color: T.secondary }}>
+              OTD {typeof dataset.otd === "number" ? `${dataset.otd.toFixed(1)}%` : "--"}
+            </span>
+            <span style={{ fontSize: 11, color: T.secondary }}>
+              {dataset.tardy_count ?? 0} atrasos
+            </span>
+          </div>
+        </div>
+      )}
 
       {trustScore !== null && (
         <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>

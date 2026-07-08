@@ -56,10 +56,16 @@ def compute_day_summary(
 
     # Buffer day label
     if day_idx < 0:
-        lines.append({
-            "text": f"Dia de buffer ({abs(day_idx)} dia{'s' if abs(day_idx) > 1 else ''} antes do horizonte). Produção antecipada para cumprir deadlines apertados.",
-            "color": "orange",
-        })
+        buffer_label = "dias" if abs(day_idx) > 1 else "dia"
+        lines.append(
+            {
+                "text": (
+                    f"Dia de buffer ({abs(day_idx)} {buffer_label} antes do horizonte). "
+                    "Produção antecipada para cumprir deadlines apertados."
+                ),
+                "color": "orange",
+            }
+        )
 
     # Date
     if 0 <= day_idx < len(engine_data.workdays):
@@ -81,7 +87,12 @@ def compute_day_summary(
                 if dt.weekday() >= 5:
                     lines.append({"text": "Fim-de-semana — sem produção.", "color": "default"})
                 else:
-                    lines.append({"text": "Sem produção planeada. Capacidade disponível.", "color": "default"})
+                    lines.append(
+                        {
+                            "text": "Sem produção planeada. Capacidade disponível.",
+                            "color": "default",
+                        }
+                    )
             except (ValueError, IndexError):
                 lines.append({"text": "Sem produção planeada.", "color": "default"})
         else:
@@ -93,10 +104,16 @@ def compute_day_summary(
     active_machines = sorted(set(s.machine_id for s in day_segs))
     total_setups = sum(1 for s in day_segs if s.setup_min > 0)
 
-    lines.append({
-        "text": f"Produção: {total_pcs:,} peças em {len(active_machines)} máquina{'s' if len(active_machines) > 1 else ''}. {total_setups} setup{'s' if total_setups != 1 else ''}.",
-        "color": "default",
-    })
+    lines.append(
+        {
+            "text": (
+                f"Produção: {total_pcs:,} peças em {len(active_machines)} "
+                f"máquina{'s' if len(active_machines) > 1 else ''}. "
+                f"{total_setups} setup{'s' if total_setups != 1 else ''}."
+            ),
+            "color": "default",
+        }
+    )
 
     # --- Per-machine detail with WHY ---
     for m_id in active_machines:
@@ -107,7 +124,9 @@ def compute_day_summary(
         m_pcs = sum(s.qty for s in m_segs)
         m_setups = sum(1 for s in m_segs if s.setup_min > 0)
         m_used = sum(s.prod_min + s.setup_min for s in m_segs)
-        m_util = round(m_used / config.day_capacity_min * 100, 1) if config.day_capacity_min > 0 else 0
+        m_util = (
+            round(m_used / config.day_capacity_min * 100, 1) if config.day_capacity_min > 0 else 0
+        )
 
         # Tool sequence with reasons
         tool_parts: list[str] = []
@@ -152,10 +171,18 @@ def compute_day_summary(
     deadline_segs = [s for s in day_segs if s.edd == day_idx]
     if deadline_segs:
         skus = sorted(set(s.sku for s in deadline_segs if s.sku))
-        lines.append({
-            "text": f"Deadlines hoje: {len(deadline_segs)} lote{'s' if len(deadline_segs) > 1 else ''} ({', '.join(skus[:5])}{'...' if len(skus) > 5 else ''}).",
-            "color": "default",
-        })
+        shown_skus = ", ".join(skus[:5])
+        if len(skus) > 5:
+            shown_skus += "..."
+        lines.append(
+            {
+                "text": (
+                    f"Deadlines hoje: {len(deadline_segs)} "
+                    f"lote{'s' if len(deadline_segs) > 1 else ''} ({shown_skus})."
+                ),
+                "color": "default",
+            }
+        )
 
     # --- Expedition (deliveries) ---
     clients = expedition_data.get("clients", [])
@@ -165,22 +192,34 @@ def compute_day_summary(
         not_ready = total_count - ready_count
         if total_count > 0:
             if not_ready == 0:
-                lines.append({
-                    "text": f"Expedição: {total_count} encomenda{'s' if total_count > 1 else ''}, todas prontas.",
-                    "color": "green",
-                })
+                lines.append(
+                    {
+                        "text": (
+                            f"Expedição: {total_count} "
+                            f"encomenda{'s' if total_count > 1 else ''}, todas prontas."
+                        ),
+                        "color": "green",
+                    }
+                )
             else:
-                lines.append({
-                    "text": f"Expedição: {not_ready} de {total_count} encomendas NÃO prontas.",
-                    "color": "red",
-                })
+                lines.append(
+                    {
+                        "text": f"Expedição: {not_ready} de {total_count} encomendas NÃO prontas.",
+                        "color": "red",
+                    }
+                )
                 for c in clients:
                     c_not_ready = c["total"] - c.get("ready", 0)
                     if c_not_ready > 0:
-                        lines.append({
-                            "text": f"  {c['client']}: {c_not_ready} encomenda{'s' if c_not_ready > 1 else ''} em falta.",
-                            "color": "red",
-                        })
+                        lines.append(
+                            {
+                                "text": (
+                                    f"  {c['client']}: {c_not_ready} "
+                                    f"encomenda{'s' if c_not_ready > 1 else ''} em falta."
+                                ),
+                                "color": "red",
+                            }
+                        )
 
     # --- Alerts (only from actions relevant to today) ---
     for a in actions:
@@ -195,9 +234,13 @@ def compute_day_summary(
     for m in machines_data.get("machines", []):
         util = m.get("util", 0) * 100
         if util > 95:
-            lines.append({
-                "text": f"RISCO: {m['id']} a {util:.0f}% utilização — capacidade quase esgotada.",
-                "color": "red",
-            })
+            lines.append(
+                {
+                    "text": (
+                        f"RISCO: {m['id']} a {util:.0f}% utilização — capacidade quase esgotada."
+                    ),
+                    "color": "red",
+                }
+            )
 
     return lines

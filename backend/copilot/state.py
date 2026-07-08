@@ -5,10 +5,13 @@ Singleton holding the current schedule, engine data, config, and rules.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from backend.audit.store import AuditStore
 from backend.config.types import FactoryConfig
@@ -22,9 +25,12 @@ _STATE_PATH = "data/copilot_state.json"
 def _compute_stress(segments, lots, engine_data):
     """Lazy import + call for stress map."""
     from backend.scheduler.stress import compute_stress_map
+
     return compute_stress_map(
-        segments, lots, engine_data.n_days,
-        n_holidays=len(getattr(engine_data, 'holidays', []) or []),
+        segments,
+        lots,
+        engine_data.n_days,
+        n_holidays=len(getattr(engine_data, "holidays", []) or []),
     )
 
 
@@ -45,6 +51,7 @@ class CopilotState:
     lots: list[Lot] = field(default_factory=list)
     score: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    gate_report: dict | None = None
 
     # Journal (Spec 12)
     journal_entries: list[dict] | None = None
@@ -69,29 +76,77 @@ class CopilotState:
     # Learning optimization info (persisted from smart_schedule)
     learning_info: dict | None = None
 
+    # Metadata for the currently loaded ISOP/dataset.
+    dataset_info: dict[str, object] | None = None
+
     # User rules
     rules: list[dict] = field(default_factory=list)
 
     # Simulation revert snapshot
     saved_schedule: ScheduleResult | None = None
+    saved_mutations: list[dict] | None = None
 
     # Active what-if mutations (simulate-apply / ctp-apply). Persisted so a
     # subsequent recalculation (e.g. applying a preset) keeps them applied.
     # Each entry: {"type": str, "params": dict}
     active_mutations: list[dict] = field(default_factory=list)
 
+    def clear_runtime_for_new_dataset(self) -> None:
+        """Clear transient state that must not leak between uploaded ISOPs."""
+        self.saved_schedule = None
+        self.saved_mutations = None
+        self.active_mutations = []
+        self.learning_info = None
+        self.trust_index = None
+        self.dataset_info = None
+        self.gate_report = None
+        self._clear_analytics()
+
+    def _clear_analytics(self) -> None:
+        """Clear derived analytics before computing them for a new schedule."""
+        self.stock_projections = None
+        self.expedition = None
+        self.risk_result = None
+        self.late_deliveries = None
+        self.coverage = None
+        self.order_tracking = None
+        self.stress_map = None
+
+    def set_dataset_info(
+        self,
+        filename: str,
+        result: ScheduleResult,
+        trust,
+        n_ops: int,
+    ) -> dict[str, object]:
+        """Record metadata for the active uploaded ISOP."""
+        self.dataset_info = {
+            "id": uuid4().hex,
+            "filename": Path(filename or "upload.xlsx").name,
+            "uploaded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            "n_ops": n_ops,
+            "n_segments": len(result.segments),
+            "trust_score": trust.score,
+            "trust_gate": trust.gate,
+            "otd": result.score.get("otd"),
+            "tardy_count": result.score.get("tardy_count"),
+        }
+        return self.dataset_info
+
     def save_current(self) -> None:
         """Save current schedule for revert after simulation apply."""
         self.saved_schedule = ScheduleResult(
-            segments=list(self.segments),
-            lots=list(self.lots),
-            score=dict(self.score),
-            warnings=list(self.warnings),
-            operator_alerts=list(self.operator_alerts or []),
+            segments=copy.deepcopy(self.segments),
+            lots=copy.deepcopy(self.lots),
+            score=copy.deepcopy(self.score),
+            warnings=copy.deepcopy(self.warnings),
+            operator_alerts=copy.deepcopy(self.operator_alerts or []),
             time_ms=0,
             audit_trail=None,
-            journal=self.journal_entries,
+            journal=copy.deepcopy(self.journal_entries),
+            gate_report=copy.deepcopy(self.gate_report),
         )
+        self.saved_mutations = copy.deepcopy(self.active_mutations)
 
     def update_schedule(self, result: ScheduleResult) -> None:
         """Update state from a ScheduleResult. Saves audit trail if present."""
@@ -101,12 +156,14 @@ class CopilotState:
         self.warnings = result.warnings
         self.journal_entries = result.journal
         self.operator_alerts = result.operator_alerts
+        self.gate_report = result.gate_report
 
         if result.audit_trail:
             if not self.audit_store:
                 self.audit_store = AuditStore()
             self.schedule_id = self.audit_store.save_trail(
-                result.audit_trail, result.score,
+                result.audit_trail,
+                result.score,
             )
 
         # Pre-compute all analytics
@@ -117,6 +174,7 @@ class CopilotState:
 
         Each analytics is isolated — a failure in one does not block the others.
         """
+        self._clear_analytics()
         if self.engine_data is None or not self.segments:
             return
 
@@ -129,16 +187,33 @@ class CopilotState:
 
         analytics = [
             ("expedition", lambda: compute_expedition(self.segments, self.lots, self.engine_data)),
-            ("stock_projections", lambda: compute_stock_projections(
-                self.segments, self.lots, self.engine_data,
-                buffer_days=self.score.get("buffer_days", 0),
-            )),
-            ("order_tracking", lambda: compute_order_tracking(self.segments, self.lots, self.engine_data)),
+            (
+                "stock_projections",
+                lambda: compute_stock_projections(
+                    self.segments,
+                    self.lots,
+                    self.engine_data,
+                    buffer_days=self.score.get("buffer_days", 0),
+                ),
+            ),
+            (
+                "order_tracking",
+                lambda: compute_order_tracking(self.segments, self.lots, self.engine_data),
+            ),
             ("risk_result", lambda: compute_risk(self.segments, self.lots, self.engine_data)),
-            ("late_deliveries", lambda: analyze_late_deliveries(
-                self.segments, self.lots, self.engine_data, self.config,
-            )),
-            ("coverage", lambda: compute_coverage_audit(self.segments, self.lots, self.engine_data)),
+            (
+                "late_deliveries",
+                lambda: analyze_late_deliveries(
+                    self.segments,
+                    self.lots,
+                    self.engine_data,
+                    self.config,
+                ),
+            ),
+            (
+                "coverage",
+                lambda: compute_coverage_audit(self.segments, self.lots, self.engine_data),
+            ),
             ("stress_map", lambda: _compute_stress(self.segments, self.lots, self.engine_data)),
         ]
 

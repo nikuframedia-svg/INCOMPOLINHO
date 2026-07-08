@@ -52,9 +52,7 @@ def compute_risk(
     critical_count = sum(1 for lr in lot_risks if lr.risk_level == "critical")
     top_risks = sorted(lot_risks, key=lambda lr: -lr.risk_score)[:5]
     bottleneck = (
-        max(machine_risks, key=lambda mr: mr.peak_utilization).machine_id
-        if machine_risks
-        else ""
+        max(machine_risks, key=lambda mr: mr.peak_utilization).machine_id if machine_risks else ""
     )
 
     # Tier 2: Surrogate (if trained)

@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import copy
 import math
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 # Distribution parameters for Incompol (metal stamping)
-OEE_ALPHA = 10.6          # Beta(10.6, 5.5) → mean ≈ 0.66
+OEE_ALPHA = 10.6  # Beta(10.6, 5.5) → mean ≈ 0.66
 OEE_BETA = 5.5
-SETUP_CV = 0.20           # Lognormal CV 20%
+SETUP_CV = 0.20  # Lognormal CV 20%
 
 
 def monte_carlo_risk(
@@ -44,13 +44,11 @@ def monte_carlo_risk(
     """
     try:
         import numpy as np
-        from scipy.stats import beta as beta_dist, lognorm
+        from scipy.stats import beta as beta_dist
+        from scipy.stats import lognorm
         from scipy.stats.qmc import LatinHypercube
     except ImportError as exc:
-        raise ImportError(
-            "Monte Carlo requer scipy e numpy: "
-            "pip install scipy numpy"
-        ) from exc
+        raise ImportError("Monte Carlo requer scipy e numpy: pip install scipy numpy") from exc
 
     tools = sorted({op.t for op in engine_data.ops})
     n_dims = 1 + len(tools)  # OEE global + setup per tool

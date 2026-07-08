@@ -60,12 +60,14 @@ def compute_heatmap(
             else:
                 level = "low"
 
-            cells.append(HeatmapCell(
-                machine_id=m.id,
-                day_idx=d,
-                utilization=round(util, 3),
-                min_slack_min=round(slack, 1),
-                risk_level=level,
-            ))
+            cells.append(
+                HeatmapCell(
+                    machine_id=m.id,
+                    day_idx=d,
+                    utilization=round(util, 3),
+                    min_slack_min=round(slack, 1),
+                    risk_level=level,
+                )
+            )
 
     return cells

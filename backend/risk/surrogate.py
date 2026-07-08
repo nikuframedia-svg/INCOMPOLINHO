@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import statistics
 from pathlib import Path
 
-from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 from .types import LotRisk, MachineRisk
@@ -95,7 +93,8 @@ def predict_risk(features: list[float]) -> tuple[float, str] | None:
     if len(weights) != len(features):
         logger.warning(
             "Feature mismatch: model expects %d, got %d",
-            len(weights), len(features),
+            len(weights),
+            len(features),
         )
         return None
 
@@ -125,9 +124,7 @@ def train_surrogate(
     try:
         import numpy as np
     except ImportError as exc:
-        raise ImportError(
-            "Training requires numpy: pip install numpy"
-        ) from exc
+        raise ImportError("Training requires numpy: pip install numpy") from exc
 
     save_path = path or _SURROGATE_PATH
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -176,4 +173,5 @@ def _safe_exp(x: float) -> float:
     if x < -500:
         return 0.0
     import math
+
     return math.exp(x)

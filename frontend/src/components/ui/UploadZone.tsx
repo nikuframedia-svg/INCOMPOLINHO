@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { T } from "../../theme/tokens";
 import { uploadISOP } from "../../api/endpoints";
-import { useAppStore } from "../../stores/useAppStore";
+import { ACTIVE_DATASET_KEY, useAppStore } from "../../stores/useAppStore";
 import { useDataStore } from "../../stores/useDataStore";
 
 export function UploadZone() {
@@ -11,15 +11,25 @@ export function UploadZone() {
   const setUploading = useAppStore((s) => s.setUploading);
   const setHasData = useAppStore((s) => s.setHasData);
   const setTrust = useAppStore((s) => s.setTrust);
+  const clearTrust = useAppStore((s) => s.clearTrust);
+  const setDataset = useAppStore((s) => s.setDataset);
   const isUploading = useAppStore((s) => s.isUploading);
   const refreshAll = useDataStore((s) => s.refreshAll);
+  const clearData = useDataStore((s) => s.clear);
 
   const doUpload = useCallback(async (file: File) => {
     setError(null);
     setUploading(true);
+    setHasData(false);
+    setDataset(null);
+    clearTrust();
+    clearData();
+    sessionStorage.removeItem(ACTIVE_DATASET_KEY);
     try {
       const res = await uploadISOP(file);
       setTrust(res.trust_index.score, res.trust_index.gate);
+      setDataset(res.dataset);
+      sessionStorage.setItem(ACTIVE_DATASET_KEY, res.dataset.id);
       await refreshAll();
       setHasData(true);
     } catch (e) {
@@ -27,7 +37,15 @@ export function UploadZone() {
     } finally {
       setUploading(false);
     }
-  }, [setUploading, setHasData, setTrust, refreshAll]);
+  }, [
+    clearData,
+    clearTrust,
+    refreshAll,
+    setDataset,
+    setHasData,
+    setTrust,
+    setUploading,
+  ]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

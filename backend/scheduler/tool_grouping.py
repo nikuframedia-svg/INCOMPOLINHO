@@ -46,20 +46,25 @@ def create_tool_runs(
             setup = sub_lots[0].setup_min
             total_prod = sum(lot.prod_min for lot in sub_lots)
 
-            runs.append(ToolRun(
-                id=f"run_{tool}_{machine}_{idx}",
-                tool_id=tool,
-                machine_id=machine,
-                alt_machine_id=sub_lots[0].alt_machine_id,
-                lots=sub_lots,
-                setup_min=setup,
-                total_prod_min=total_prod,
-                total_min=setup + total_prod,
-                edd=sub_lots[0].edd,
-            ))
+            runs.append(
+                ToolRun(
+                    id=f"run_{tool}_{machine}_{idx}",
+                    tool_id=tool,
+                    machine_id=machine,
+                    alt_machine_id=sub_lots[0].alt_machine_id,
+                    lots=sub_lots,
+                    setup_min=setup,
+                    total_prod_min=total_prod,
+                    total_min=setup + total_prod,
+                    edd=sub_lots[0].edd,
+                    target_start_day=_run_target_start(sub_lots),
+                )
+            )
 
     before_count = len(runs)
     runs = _split_infeasible_runs(runs, day_cap=day_cap)
+    if config and config.forced_run_splits:
+        runs = _split_forced_runs(runs, config.forced_run_splits)
 
     # Log infeasibility splits
     if audit_logger and len(runs) > before_count:
@@ -68,8 +73,10 @@ def create_tool_runs(
                 original_id = run.id.removesuffix("_early")
                 late = next((r for r in runs if r.id == f"{original_id}_late"), None)
                 audit_logger.log_split(
-                    original_id, "infeasible",
-                    len(run.lots), len(late.lots) if late else 0,
+                    original_id,
+                    "infeasible",
+                    len(run.lots),
+                    len(late.lots) if late else 0,
                     total_min=run.total_min + (late.total_min if late else 0),
                     capacity=(run.edd + 1) * day_cap,
                 )
@@ -77,9 +84,67 @@ def create_tool_runs(
     return runs
 
 
+def _split_forced_runs(
+    runs: list[ToolRun],
+    split_positions_by_run_id: dict[str, list[int]],
+) -> list[ToolRun]:
+    """Apply explicit CPO/LNS split positions to selected runs.
+
+    Positions are lot indexes in the run's EDD-sorted lot list. Invalid,
+    duplicate, or degenerate positions are ignored.
+    """
+
+    if not split_positions_by_run_id:
+        return runs
+
+    out: list[ToolRun] = []
+    for run in runs:
+        positions = _normalise_split_positions(
+            split_positions_by_run_id.get(run.id, []),
+            len(run.lots),
+        )
+        if not positions:
+            out.append(run)
+            continue
+
+        last = 0
+        for idx, pos in enumerate([*positions, len(run.lots)]):
+            sub_lots = run.lots[last:pos]
+            last = pos
+            if sub_lots:
+                out.append(_make_run(run, sub_lots, f"{run.id}_lns{idx}"))
+
+    return out
+
+
+def _normalise_split_positions(raw_positions: object, lot_count: int) -> list[int]:
+    if lot_count <= 1:
+        return []
+    if isinstance(raw_positions, str | bytes):
+        candidates = [raw_positions]
+    else:
+        try:
+            candidates = list(raw_positions)  # type: ignore[arg-type]
+        except TypeError:
+            candidates = [raw_positions]
+
+    positions: set[int] = set()
+    for raw in candidates:
+        try:
+            pos = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 < pos < lot_count:
+            positions.add(pos)
+    return sorted(positions)
+
+
 def _split_by_edd_gap(
-    lots: list[Lot], max_gap: int, max_run_days: int = MAX_RUN_DAYS,
-    day_cap: int = DAY_CAP, max_span: int = 20,
+    lots: list[Lot],
+    max_gap: int,
+    max_run_days: int = MAX_RUN_DAYS,
+    day_cap: int = DAY_CAP,
+    max_span: int = 20,
 ) -> list[list[Lot]]:
     """Split sorted lots by EDD gap, span, and max cumulative production time.
 
@@ -128,7 +193,13 @@ def _make_run(original: ToolRun, lots: list[Lot], run_id: str) -> ToolRun:
         total_prod_min=total_prod,
         total_min=setup + total_prod,
         edd=lots[0].edd,
+        target_start_day=_run_target_start(lots),
     )
+
+
+def _run_target_start(lots: list[Lot]) -> int | None:
+    targets = [lot.target_start_day for lot in lots if lot.target_start_day is not None]
+    return min(targets) if targets else None
 
 
 def _split_infeasible_runs(runs: list[ToolRun], day_cap: int = DAY_CAP) -> list[ToolRun]:

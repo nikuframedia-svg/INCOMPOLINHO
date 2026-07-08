@@ -11,10 +11,11 @@ import time
 from dataclasses import dataclass
 
 from backend.cpo import optimize
+from backend.scheduler.gates import build_gate_report
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
-from .mutations import apply_mutation, mutation_summary
+from .mutations import apply_mutation
 
 
 @dataclass(slots=True)
@@ -45,6 +46,7 @@ class SimulateResponse:
     delta: DeltaReport
     time_ms: float
     summary: list[str]
+    gate_report: dict
 
 
 def simulate(
@@ -73,23 +75,17 @@ def simulate(
         msg = apply_mutation(mutated, mut.type, mut.params, config=sim_config)
         summaries.append(msg)
 
-    # 3. Re-schedule with (possibly modified) config
-    try:
-        result = optimize(mutated, mode="quick", config=sim_config)
-    except Exception as exc:
-        elapsed = (time.perf_counter() - t0) * 1000
-        summaries.append(f"ERRO no scheduler: {exc}")
-        empty_delta = DeltaReport(
-            otd_before=baseline_score.get("otd", 0.0), otd_after=0.0,
-            otd_d_before=baseline_score.get("otd_d", 0.0), otd_d_after=0.0,
-            setups_before=baseline_score.get("setups", 0), setups_after=0,
-            earliness_before=baseline_score.get("earliness_avg_days", 0.0), earliness_after=0.0,
-            tardy_before=baseline_score.get("tardy_count", 0), tardy_after=0,
-        )
-        return SimulateResponse(
-            segments=[], lots=[], score={},
-            delta=empty_delta, time_ms=round(elapsed, 1), summary=summaries,
-        )
+    # 3. Re-schedule with (possibly modified) config. Simulations use the
+    # normal pipeline, not quick, because quick skips repair/optimization passes
+    # that are needed to keep physical tool usage valid.
+    result = optimize(mutated, mode="normal", config=sim_config)
+    gate_report = build_gate_report(
+        result.segments,
+        result.lots,
+        result.score,
+        mutated,
+        sim_config,
+    )
 
     # 4. Delta report
     delta = DeltaReport(
@@ -117,6 +113,7 @@ def simulate(
         delta=delta,
         time_ms=round(elapsed, 1),
         summary=summaries,
+        gate_report=gate_report,
     )
 
 
@@ -127,7 +124,10 @@ def _delta_summary(delta: DeltaReport) -> str:
     otd_diff = delta.otd_after - delta.otd_before
     if abs(otd_diff) > 0.05:
         direction = "subiu" if otd_diff > 0 else "desceu"
-        parts.append(f"OTD {direction} {abs(otd_diff):.1f}% ({delta.otd_before:.1f}% → {delta.otd_after:.1f}%)")
+        parts.append(
+            f"OTD {direction} {abs(otd_diff):.1f}% "
+            f"({delta.otd_before:.1f}% → {delta.otd_after:.1f}%)"
+        )
 
     otd_d_diff = delta.otd_d_after - delta.otd_d_before
     if abs(otd_d_diff) > 0.05:
@@ -137,12 +137,16 @@ def _delta_summary(delta: DeltaReport) -> str:
     setup_diff = delta.setups_after - delta.setups_before
     if setup_diff != 0:
         direction = "+" if setup_diff > 0 else ""
-        parts.append(f"Setups: {direction}{setup_diff} ({delta.setups_before} → {delta.setups_after})")
+        parts.append(
+            f"Setups: {direction}{setup_diff} ({delta.setups_before} → {delta.setups_after})"
+        )
 
     tardy_diff = delta.tardy_after - delta.tardy_before
     if tardy_diff != 0:
         direction = "+" if tardy_diff > 0 else ""
-        parts.append(f"Atrasos: {direction}{tardy_diff} ({delta.tardy_before} → {delta.tardy_after})")
+        parts.append(
+            f"Atrasos: {direction}{tardy_diff} ({delta.tardy_before} → {delta.tardy_after})"
+        )
 
     if not parts:
         return "Sem alterações significativas nos KPIs."

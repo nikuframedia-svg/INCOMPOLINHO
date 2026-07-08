@@ -9,9 +9,9 @@ import copy
 from collections import defaultdict
 
 from backend.config.types import FactoryConfig
+from backend.cpo import optimize
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.scoring import compute_score
-from backend.cpo import optimize
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -23,9 +23,9 @@ SLACK_HIGH = 1
 SLACK_MEDIUM = 3
 
 # Statistical parameters for risk estimation
-CV_PROCESSING = 0.10    # coefficient of variation for processing time
-CV_SETUP = 0.20         # coefficient of variation for setup time
-Z_95 = 1.645            # z-score for 95% confidence
+CV_PROCESSING = 0.10  # coefficient of variation for processing time
+CV_SETUP = 0.20  # coefficient of variation for setup time
+Z_95 = 1.645  # z-score for 95% confidence
 
 
 def compute_lot_risks(
@@ -87,18 +87,20 @@ def compute_lot_risks(
             parts = lot.op_id.split("_")
             sku = parts[-1] if len(parts) >= 3 else lot.op_id
 
-        risks.append(LotRisk(
-            lot_id=lot.id,
-            sku=sku,
-            machine_id=machine,
-            edd=lot.edd,
-            completion_day=comp,
-            slack_days=slack_days,
-            slack_min=slack_min,
-            risk_score=round(risk_score, 3),
-            risk_level=level,
-            binding_constraint=binding,
-        ))
+        risks.append(
+            LotRisk(
+                lot_id=lot.id,
+                sku=sku,
+                machine_id=machine,
+                edd=lot.edd,
+                completion_day=comp,
+                slack_days=slack_days,
+                slack_min=slack_min,
+                risk_score=round(risk_score, 3),
+                risk_level=level,
+                binding_constraint=binding,
+            )
+        )
 
     return risks
 
@@ -117,24 +119,22 @@ def compute_machine_risks(
     results: list[MachineRisk] = []
     for m in engine_data.machines:
         day_cap_val = config.day_capacity_min if config else DAY_CAP
-        daily_util = [
-            used.get((m.id, d), 0) / day_cap_val
-            for d in range(engine_data.n_days)
-        ]
+        daily_util = [used.get((m.id, d), 0) / day_cap_val for d in range(engine_data.n_days)]
         peak = max(daily_util) if daily_util else 0
         avg = sum(daily_util) / len(daily_util) if daily_util else 0
         critical = sum(
-            1 for lr in lot_risks
-            if lr.machine_id == m.id and lr.risk_level in ("critical", "high")
+            1 for lr in lot_risks if lr.machine_id == m.id and lr.risk_level in ("critical", "high")
         )
 
-        results.append(MachineRisk(
-            machine_id=m.id,
-            peak_utilization=round(peak, 3),
-            avg_utilization=round(avg, 3),
-            critical_lot_count=critical,
-            bottleneck_score=0.0,
-        ))
+        results.append(
+            MachineRisk(
+                machine_id=m.id,
+                peak_utilization=round(peak, 3),
+                avg_utilization=round(avg, 3),
+                critical_lot_count=critical,
+                bottleneck_score=0.0,
+            )
+        )
 
     return results
 
@@ -159,12 +159,7 @@ def compute_health_score(
     avg_slack = sum(lr.slack_days for lr in lot_risks) / n
     slack_norm = min(1.0, avg_slack / 10.0)
 
-    score = (
-        safe_pct * 40
-        + (1 - max_peak) * 20
-        + (1 - critical_pct) * 20
-        + slack_norm * 20
-    )
+    score = safe_pct * 40 + (1 - max_peak) * 20 + (1 - critical_pct) * 20 + slack_norm * 20
     return max(0, min(100, round(score)))
 
 

@@ -10,6 +10,7 @@ import type {
   EOp,
   ExpeditionKPIs,
   FactoryConfig,
+  HealthResponse,
   JournalEntry,
   LateDeliveryReport,
   LearningInfo,
@@ -20,10 +21,13 @@ import type {
   RiskResult,
   Score,
   Segment,
+  SkuPlanningResponse,
+  SkuPlanningRule,
   SimulateApplyResponse,
   SimulateResponse,
   StockProjection,
   StockSummary,
+  SubcontractsResponse,
   TrustIndex,
   WorkforceForecast,
 } from "./types";
@@ -38,6 +42,7 @@ export const getLots = () => get<Lot[]>("/api/data/lots");
 export const getTrust = () => get<TrustIndex>("/api/data/trust");
 export const getJournal = () => get<JournalEntry[]>("/api/data/journal");
 export const getLearning = () => get<LearningInfo | null>("/api/data/learning");
+export const getHealth = () => get<HealthResponse>("/api/copilot/health");
 
 // ── Analytics ────────────────────────────────────────────────
 
@@ -59,6 +64,17 @@ export const updateConfig = (updates: Record<string, unknown>) =>
   put<{ status: string; changed: string[]; score: Score }>("/api/data/config", updates);
 export const getOps = () => get<EOp[]>("/api/data/ops");
 export const getRules = () => get<{ id: string; tipo: string; descricao: string }[]>("/api/data/rules");
+export const previewSkuPlanning = (sku: string, rule: SkuPlanningRule) =>
+  post<SkuPlanningResponse>(`/api/data/skus/${encodeURIComponent(sku)}/planning/preview`, rule);
+export const updateSkuPlanning = (sku: string, rule: SkuPlanningRule) =>
+  put<SkuPlanningResponse>(`/api/data/skus/${encodeURIComponent(sku)}/planning`, rule);
+export const resetSkuPlanning = (sku: string) =>
+  del<SkuPlanningResponse>(`/api/data/skus/${encodeURIComponent(sku)}/planning`);
+export const getSubcontracts = () => get<SubcontractsResponse>("/api/data/subcontracts");
+export const previewSubcontracts = (body: SubcontractsResponse) =>
+  post<SubcontractsResponse>("/api/data/subcontracts/preview", body);
+export const updateSubcontracts = (body: SubcontractsResponse) =>
+  put<SubcontractsResponse>("/api/data/subcontracts", body);
 
 // ── Master Data Mutations ────────────────────────────────────
 

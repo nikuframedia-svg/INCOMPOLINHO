@@ -26,8 +26,9 @@ def _guard() -> str | None:
 
 # ─── 1. recalcular_plano ─────────────────────────────────────────────────
 
+
 def exec_recalcular_plano(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.cpo import optimize
@@ -40,8 +41,12 @@ def exec_recalcular_plano(args: dict) -> str:
     if modo == "smart":
         try:
             from backend.learning import smart_schedule
+
             result = smart_schedule(
-                state.engine_data, learn=True, config=state.config, audit=True,
+                state.engine_data,
+                learn=True,
+                config=state.config,
+                audit=True,
             )
         except ImportError:
             result = optimize(state.engine_data, mode="normal", audit=True, config=state.config)
@@ -55,6 +60,7 @@ def exec_recalcular_plano(args: dict) -> str:
     if old_segments:
         try:
             from backend.audit.diff import compute_diff
+
             diff = compute_diff(old_segments, result.segments, old_score, result.score)
             alteracoes = {
                 "lots_movidos": len(diff.moved),
@@ -65,21 +71,24 @@ def exec_recalcular_plano(args: dict) -> str:
         except Exception:
             pass
 
-    return _dumps({
-        "status": "ok",
-        "modo": modo,
-        "score": result.score,
-        "score_anterior": old_score,
-        "alteracoes": alteracoes,
-        "time_ms": result.time_ms,
-        "warnings": result.warnings[:10],
-    })
+    return _dumps(
+        {
+            "status": "ok",
+            "modo": modo,
+            "score": result.score,
+            "score_anterior": old_score,
+            "alteracoes": alteracoes,
+            "time_ms": result.time_ms,
+            "warnings": result.warnings[:10],
+        }
+    )
 
 
 # ─── 2. mover_referencia ─────────────────────────────────────────────────
 
+
 def exec_mover_referencia(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.cpo import optimize
@@ -105,32 +114,37 @@ def exec_mover_referencia(args: dict) -> str:
             op.alt = None
 
     # Re-schedule on mutated data
-    result = optimize(mutated, mode="quick", audit=True, config=state.config)
+    result = optimize(mutated, mode="normal", audit=True, config=state.config)
 
     # Reject if tardy_count worsens
     old_tardy = state.score.get("tardy_count", 0)
     new_tardy = result.score.get("tardy_count", 0)
     if new_tardy > old_tardy:
-        return _dumps({
-            "status": "rejeitado",
-            "razao": f"Tardiness pioraria: {old_tardy} → {new_tardy}",
-            "score_proposto": result.score,
-        })
+        return _dumps(
+            {
+                "status": "rejeitado",
+                "razao": f"Tardiness pioraria: {old_tardy} → {new_tardy}",
+                "score_proposto": result.score,
+            }
+        )
 
     # Accept: update state with mutated data
     state.engine_data = mutated
     state.update_schedule(result)
 
-    return _dumps({
-        "status": "aceite",
-        "sku": sku,
-        "maquina_anterior": ops_found[0].m,
-        "maquina_nova": dest,
-        "score": result.score,
-    })
+    return _dumps(
+        {
+            "status": "aceite",
+            "sku": sku,
+            "maquina_anterior": ops_found[0].m,
+            "maquina_nova": dest,
+            "score": result.score,
+        }
+    )
 
 
 # ─── 3. adicionar_regra ──────────────────────────────────────────────────
+
 
 def exec_adicionar_regra(args: dict) -> str:
     rule = {
@@ -142,6 +156,7 @@ def exec_adicionar_regra(args: dict) -> str:
 
 
 # ─── 4. remover_regra ────────────────────────────────────────────────────
+
 
 def exec_remover_regra(args: dict) -> str:
     rule_id = args.get("regra_id", "")
@@ -178,65 +193,75 @@ def exec_alterar_config(args: dict) -> str:
     valor = args.get("valor")
 
     if chave not in _ALLOWED_KEYS:
-        return _dumps({
-            "error": f"Chave '{chave}' não permitida.",
-            "chaves_validas": list(_ALLOWED_KEYS.keys()),
-        })
+        return _dumps(
+            {
+                "error": f"Chave '{chave}' não permitida.",
+                "chaves_validas": list(_ALLOWED_KEYS.keys()),
+            }
+        )
 
     expected_type = _ALLOWED_KEYS[chave]
     try:
         typed_value = expected_type(valor)
     except (TypeError, ValueError):
-        return _dumps({"error": f"Valor '{valor}' inválido para {chave} (esperado {expected_type.__name__})."})
+        return _dumps(
+            {"error": f"Valor '{valor}' inválido para {chave} (esperado {expected_type.__name__})."}
+        )
 
     old_value = getattr(state.config, chave)
     setattr(state.config, chave, typed_value)
 
-    return _dumps({
-        "status": "ok",
-        "chave": chave,
-        "valor_anterior": old_value,
-        "valor_novo": typed_value,
-        "nota": "Configuração alterada. Usa recalcular_plano para aplicar.",
-    })
+    return _dumps(
+        {
+            "status": "ok",
+            "chave": chave,
+            "valor_anterior": old_value,
+            "valor_novo": typed_value,
+            "nota": "Configuração alterada. Usa recalcular_plano para aplicar.",
+        }
+    )
 
 
 # ─── 6. simular_cenario ──────────────────────────────────────────────────
 
+
 def exec_simular_cenario(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.simulator.simulator import Mutation, simulate
 
     mutacoes_raw = args.get("mutacoes", [])
-    mutations = [
-        Mutation(type=m["type"], params=m.get("params", {}))
-        for m in mutacoes_raw
-    ]
+    mutations = [Mutation(type=m["type"], params=m.get("params", {})) for m in mutacoes_raw]
 
     result = simulate(
-        state.engine_data, state.score, mutations, config=state.config,
+        state.engine_data,
+        state.score,
+        mutations,
+        config=state.config,
     )
 
-    return _dumps({
-        "score_actual": state.score,
-        "score_cenario": result.score,
-        "delta": {
-            "otd": f"{result.delta.otd_before:.1f}% → {result.delta.otd_after:.1f}%",
-            "otd_d": f"{result.delta.otd_d_before:.1f}% → {result.delta.otd_d_after:.1f}%",
-            "setups": f"{result.delta.setups_before} → {result.delta.setups_after}",
-            "tardy": f"{result.delta.tardy_before} → {result.delta.tardy_after}",
-        },
-        "time_ms": result.time_ms,
-        "resumo": result.summary,
-    })
+    return _dumps(
+        {
+            "score_actual": state.score,
+            "score_cenario": result.score,
+            "delta": {
+                "otd": f"{result.delta.otd_before:.1f}% → {result.delta.otd_after:.1f}%",
+                "otd_d": f"{result.delta.otd_d_before:.1f}% → {result.delta.otd_d_after:.1f}%",
+                "setups": f"{result.delta.setups_before} → {result.delta.setups_after}",
+                "tardy": f"{result.delta.tardy_before} → {result.delta.tardy_after}",
+            },
+            "time_ms": result.time_ms,
+            "resumo": result.summary,
+        }
+    )
 
 
 # ─── 7. simular_overtime ─────────────────────────────────────────────────
 
+
 def exec_simular_overtime(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.simulator.simulator import Mutation, simulate
@@ -244,32 +269,43 @@ def exec_simular_overtime(args: dict) -> str:
     maquina = args.get("maquina", "")
     minutos = args.get("minutos_extra", 0)
 
-    mutations = [Mutation(type="overtime", params={
-        "machine_id": maquina,
-        "extra_min": minutos,
-    })]
+    mutations = [
+        Mutation(
+            type="overtime",
+            params={
+                "machine_id": maquina,
+                "extra_min": minutos,
+            },
+        )
+    ]
 
     result = simulate(
-        state.engine_data, state.score, mutations, config=state.config,
+        state.engine_data,
+        state.score,
+        mutations,
+        config=state.config,
     )
 
-    return _dumps({
-        "maquina": maquina,
-        "minutos_extra": minutos,
-        "score_actual": state.score,
-        "score_cenario": result.score,
-        "delta": {
-            "otd": f"{result.delta.otd_before:.1f}% → {result.delta.otd_after:.1f}%",
-            "tardy": f"{result.delta.tardy_before} → {result.delta.tardy_after}",
-        },
-        "resumo": result.summary,
-    })
+    return _dumps(
+        {
+            "maquina": maquina,
+            "minutos_extra": minutos,
+            "score_actual": state.score,
+            "score_cenario": result.score,
+            "delta": {
+                "otd": f"{result.delta.otd_before:.1f}% → {result.delta.otd_after:.1f}%",
+                "tardy": f"{result.delta.tardy_before} → {result.delta.tardy_after}",
+            },
+            "resumo": result.summary,
+        }
+    )
 
 
 # ─── 8. check_ctp ────────────────────────────────────────────────────────
 
+
 def exec_check_ctp(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.analytics.ctp import compute_ctp
@@ -279,26 +315,33 @@ def exec_check_ctp(args: dict) -> str:
     deadline = args.get("dia_deadline", 0)
 
     result = compute_ctp(
-        sku, qty, deadline,
-        state.segments, state.engine_data, config=state.config,
+        sku,
+        qty,
+        deadline,
+        state.segments,
+        state.engine_data,
+        config=state.config,
     )
 
-    return _dumps({
-        "sku": result.sku,
-        "qty_pedida": result.qty_requested,
-        "feasible": result.feasible,
-        "dia_mais_tarde": result.latest_day,
-        "maquina": result.machine,
-        "confianca": result.confidence,
-        "slack_min": result.slack_min,
-        "razao": result.reason,
-    })
+    return _dumps(
+        {
+            "sku": result.sku,
+            "qty_pedida": result.qty_requested,
+            "feasible": result.feasible,
+            "dia_mais_tarde": result.latest_day,
+            "maquina": result.machine,
+            "confianca": result.confidence,
+            "slack_min": result.slack_min,
+            "razao": result.reason,
+        }
+    )
 
 
 # ─── 9. simular_avaria ─────────────────────────────────────────────────
 
+
 def exec_simular_avaria(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     from backend.simulator.breakdown import simulate_breakdown
@@ -308,35 +351,39 @@ def exec_simular_avaria(args: dict) -> str:
     duration = args.get("duracao_dias", 1)
 
     report = simulate_breakdown(
-        state.engine_data, state.score,
+        state.engine_data,
+        state.score,
         machine_id=machine_id,
         start_day=start_day,
         end_day=start_day + duration - 1,
         config=state.config,
     )
 
-    return _dumps({
-        "impacto": report.impact_level,
-        "resumo": report.summary_pt,
-        "operacoes_afectadas": report.affected_ops[:10],
-        "delta": {
-            "otd": f"{report.delta.otd_before:.1f}% → {report.delta.otd_after:.1f}%",
-            "tardy": f"{report.delta.tardy_before} → {report.delta.tardy_after}",
-            "setups": f"{report.delta.setups_before} → {report.delta.setups_after}",
-        },
-        "time_ms": report.time_ms,
-    })
+    return _dumps(
+        {
+            "impacto": report.impact_level,
+            "resumo": report.summary_pt,
+            "operacoes_afectadas": report.affected_ops[:10],
+            "delta": {
+                "otd": f"{report.delta.otd_before:.1f}% → {report.delta.otd_after:.1f}%",
+                "tardy": f"{report.delta.tardy_before} → {report.delta.tardy_after}",
+                "setups": f"{report.delta.setups_before} → {report.delta.setups_after}",
+            },
+            "time_ms": report.time_ms,
+        }
+    )
 
 
 # ─── 10. monte_carlo ───────────────────────────────────────────────────
 
+
 def exec_monte_carlo(args: dict) -> str:
-    if (err := _guard()):
+    if err := _guard():
         return err
 
     try:
-        from backend.risk.monte_carlo import monte_carlo_risk
         from backend.cpo import optimize
+        from backend.risk.monte_carlo import monte_carlo_risk
 
         def schedule_fn(data):
             return optimize(data, mode="quick", config=state.config)

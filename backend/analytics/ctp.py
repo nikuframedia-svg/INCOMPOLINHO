@@ -21,16 +21,16 @@ class CTPResult:
     feasible: bool
     sku: str
     qty_requested: int
-    latest_day: int | None        # latest day to START production (JIT)
+    latest_day: int | None  # latest day to START production (JIT)
     earliest_end_day: int | None  # earliest day production can END
     machine: str | None
-    confidence: str               # "high" | "medium" | "low"
+    confidence: str  # "high" | "medium" | "low"
     slack_min: float
     reason: str | None
     date_start: str | None = None  # real date of latest_day
-    date_end: str | None = None    # real date of earliest_end_day
-    required_min: float = 0.0      # total minutes needed (setup + prod)
-    prod_days: int = 0             # number of production days needed
+    date_end: str | None = None  # real date of earliest_end_day
+    required_min: float = 0.0  # total minutes needed (setup + prod)
+    prod_days: int = 0  # number of production days needed
 
 
 def compute_ctp(
@@ -54,10 +54,15 @@ def compute_ctp(
 
     def _fail(reason: str, machine: str | None = None) -> CTPResult:
         return CTPResult(
-            feasible=False, sku=sku, qty_requested=qty,
-            latest_day=None, earliest_end_day=None,
-            machine=machine, confidence="low",
-            slack_min=0, reason=reason,
+            feasible=False,
+            sku=sku,
+            qty_requested=qty,
+            latest_day=None,
+            earliest_end_day=None,
+            machine=machine,
+            confidence="low",
+            slack_min=0,
+            reason=reason,
         )
 
     # Find op for SKU
@@ -143,15 +148,17 @@ def compute_ctp(
                 total_free += max(0, day_cap - used)
             slack = total_free - required_min
             confidence = (
-                "high" if slack > day_cap * 0.3
-                else "medium" if slack > day_cap * 0.1
-                else "low"
+                "high" if slack > day_cap * 0.3 else "medium" if slack > day_cap * 0.1 else "low"
             )
             return CTPResult(
-                feasible=True, sku=sku, qty_requested=qty,
-                latest_day=start_day, earliest_end_day=end_day,
+                feasible=True,
+                sku=sku,
+                qty_requested=qty,
+                latest_day=start_day,
+                earliest_end_day=end_day,
                 machine=machine,
-                confidence=confidence, slack_min=max(0, slack),
+                confidence=confidence,
+                slack_min=max(0, slack),
                 reason=None,
                 date_start=_day_to_date(start_day),
                 date_end=_day_to_date(end_day) if end_day is not None else None,

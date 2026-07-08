@@ -1,4 +1,4 @@
-"""Surrogate pre-screening for CPO v3.0.
+"""Offline surrogate pre-screening for CPO v4 tuning.
 
 Uses RandomForest to predict fitness of chromosomes before full evaluation.
 Only used in deep/max modes. Graceful fallback if sklearn unavailable.
@@ -30,6 +30,7 @@ class SurrogateModel:
             return self._sklearn_available
         try:
             from sklearn.ensemble import RandomForestRegressor  # noqa: F401
+
             self._sklearn_available = True
         except ImportError:
             logger.warning("scikit-learn not available; surrogate disabled")
@@ -96,6 +97,8 @@ class SurrogateModel:
             return True
         # Adaptive: relax threshold when few samples, tighten with more data
         n = len(self.X)
-        adaptive_threshold = threshold + max(0, (self.min_samples * 2 - n) / (self.min_samples * 2)) * 0.5
+        adaptive_threshold = (
+            threshold + max(0, (self.min_samples * 2 - n) / (self.min_samples * 2)) * 0.5
+        )
         predicted = self.predict(chrom)
         return predicted < best_cost * adaptive_threshold

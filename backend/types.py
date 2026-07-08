@@ -44,6 +44,16 @@ class EOp:
     d: list[int]  # demanda/dia: |NP neg|, 0 nos outros
     oee: float  # 0.66
     wip: int
+    eco_lot_isop: int | None = None
+    eco_lot_effective: int | None = None
+    start_buffer_days: int = 0
+    finish_buffer_days: int = 0
+    min_campaign_qty: int | None = None
+    min_campaign_prod_min: float | None = None
+    max_group_gap_days: int | None = None
+    subcontract_company_id: str | None = None
+    subcontract_lead_time_days: int = 0
+    subcontract_buffer_days: int = 0
 
 
 @dataclass(slots=True)

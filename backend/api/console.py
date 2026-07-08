@@ -5,8 +5,6 @@ GET /api/console?day_idx=0 — Full console data in one call.
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from fastapi import APIRouter, HTTPException
 
 from backend.console.action_items import compute_action_items
@@ -30,21 +28,39 @@ async def get_console(day_idx: int = 0):
         )
 
     actions = compute_action_items(
-        state.segments, state.lots, state.engine_data, state.config,
+        state.segments,
+        state.lots,
+        state.engine_data,
+        state.config,
     )
     machines = compute_machines_today(
-        state.segments, state.engine_data, state.config, day_idx,
+        state.segments,
+        state.engine_data,
+        state.config,
+        day_idx,
     )
     expedition = compute_expedition_today(
-        state.segments, state.lots, state.engine_data, day_idx,
+        state.segments,
+        state.lots,
+        state.engine_data,
+        day_idx,
     )
     tomorrow = compute_tomorrow_prep(
-        state.segments, state.lots, state.engine_data, state.config,
+        state.segments,
+        state.lots,
+        state.engine_data,
+        state.config,
         day_idx + 1,
     )
     summary = compute_day_summary(
-        state.segments, state.lots, state.engine_data, state.config,
-        day_idx, machines, expedition, actions,
+        state.segments,
+        state.lots,
+        state.engine_data,
+        state.config,
+        day_idx,
+        machines,
+        expedition,
+        actions,
     )
     color, phrase = compute_state_phrase(actions, expedition, machines)
 
@@ -81,12 +97,10 @@ async def get_console(day_idx: int = 0):
         {
             "client": c["client"],
             "ready": c["ready"],
-            "partial": sum(
-                1 for o in c.get("orders", []) if o.get("status") == "partial"
-            ),
-            "not_ready": c["total"] - c["ready"] - sum(
-                1 for o in c.get("orders", []) if o.get("status") == "partial"
-            ),
+            "partial": sum(1 for o in c.get("orders", []) if o.get("status") == "partial"),
+            "not_ready": c["total"]
+            - c["ready"]
+            - sum(1 for o in c.get("orders", []) if o.get("status") == "partial"),
             "total": c["total"],
         }
         for c in expedition.get("clients", [])

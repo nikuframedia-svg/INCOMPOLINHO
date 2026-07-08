@@ -24,8 +24,10 @@ class TardyAnalysis:
     edd: int
     completion_day: int
     delay_days: int
-    root_cause: str       # "capacity" | "setup_overhead" | "priority_conflict" | "lead_time" | "tool_contention"
-    explanation: str      # Portuguese
+    root_cause: (
+        str  # "capacity" | "setup_overhead" | "priority_conflict" | "lead_time" | "tool_contention"
+    )
+    explanation: str  # Portuguese
     capacity_gap_min: float
     competing_lots: list[str]
 
@@ -33,6 +35,7 @@ class TardyAnalysis:
 @dataclass(slots=True)
 class LateDeliveryReport:
     tardy_count: int
+    avg_delay: float
     by_cause: dict[str, int]
     analyses: list[TardyAnalysis]
     worst_machine: str | None
@@ -82,23 +85,31 @@ def analyze_late_deliveries(
         sku = segs[0].sku if segs[0].sku else lot.op_id
 
         cause, explanation, gap, competing = _classify(
-            lot, segs, completion_day, machine, day_cap,
-            machine_day_used, machine_day_lots, lot_map,
+            lot,
+            segs,
+            completion_day,
+            machine,
+            day_cap,
+            machine_day_used,
+            machine_day_lots,
+            lot_map,
         )
 
-        analyses.append(TardyAnalysis(
-            lot_id=lot.id,
-            op_id=lot.op_id,
-            sku=sku,
-            machine_id=machine,
-            edd=lot.edd,
-            completion_day=completion_day,
-            delay_days=delay,
-            root_cause=cause,
-            explanation=explanation,
-            capacity_gap_min=gap,
-            competing_lots=competing,
-        ))
+        analyses.append(
+            TardyAnalysis(
+                lot_id=lot.id,
+                op_id=lot.op_id,
+                sku=sku,
+                machine_id=machine,
+                edd=lot.edd,
+                completion_day=completion_day,
+                delay_days=delay,
+                root_cause=cause,
+                explanation=explanation,
+                capacity_gap_min=gap,
+                competing_lots=competing,
+            )
+        )
 
     # Aggregate
     by_cause: dict[str, int] = defaultdict(int)
@@ -108,6 +119,11 @@ def analyze_late_deliveries(
         machine_tardy[a.machine_id] += 1
 
     worst = max(machine_tardy, key=machine_tardy.get) if machine_tardy else None
+    avg_delay = (
+        round(sum(a.delay_days for a in analyses) / len(analyses), 2)
+        if analyses
+        else 0.0
+    )
 
     if not analyses:
         suggestion = "Sem atrasos. Plano cumpre todas as entregas."
@@ -122,6 +138,7 @@ def analyze_late_deliveries(
 
     return LateDeliveryReport(
         tardy_count=len(analyses),
+        avg_delay=avg_delay,
         by_cause=dict(by_cause),
         analyses=analyses,
         worst_machine=worst,
@@ -167,16 +184,10 @@ def _classify(
 
     # 3. Capacity: machine utilization near EDD > 95%
     edd_window = range(max(0, lot.edd - 2), lot.edd + 1)
-    window_util = [
-        machine_day_used.get((machine, d), 0) / day_cap
-        for d in edd_window
-    ]
+    window_util = [machine_day_used.get((machine, d), 0) / day_cap for d in edd_window]
     avg_util = sum(window_util) / max(len(window_util), 1)
     if avg_util > 0.95:
-        gap = sum(
-            max(0, machine_day_used.get((machine, d), 0) - day_cap)
-            for d in edd_window
-        )
+        gap = sum(max(0, machine_day_used.get((machine, d), 0) - day_cap) for d in edd_window)
         return (
             "capacity",
             f"Máquina {machine} a {avg_util * 100:.0f}% nos dias "
@@ -204,13 +215,7 @@ def _classify(
             competing[:5],
         )
 
-    # 5. Tool contention (fallback)
-    tool = segs[0].tool_id
-    other_machines = set()
-    for seg in segs:
-        for s2 in []:  # would need full segment scan — simplified
-            pass
-    # Simplified: check if tool used on another machine on same days
+    # 5. Tool contention fallback would need a full segment scan; keep capacity as default.
     return (
         "capacity",
         f"Capacidade insuficiente na {machine} para cumprir EDD {lot.edd}.",

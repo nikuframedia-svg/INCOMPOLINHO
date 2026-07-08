@@ -11,6 +11,7 @@ interface DataState {
 
   // Simulation state
   isSimulated: boolean;
+  activeMutations: MutationInput[];
   simulationSummary: string[];
   canRevert: boolean;
 
@@ -28,6 +29,7 @@ export const useDataStore = create<DataState>((set, get) => ({
   learning: null,
 
   isSimulated: false,
+  activeMutations: [],
   simulationSummary: [],
   canRevert: false,
 
@@ -45,6 +47,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     // Source of truth for "simulation active" is the backend's applied
     // mutations — survives a preset/recalculate that reschedules in place.
     const simActive = results[6].status === "fulfilled" ? results[6].value.active : false;
+    const activeMutations = results[6].status === "fulfilled" ? results[6].value.mutations : [];
     set({
       score: results[0].status === "fulfilled" ? results[0].value : null,
       segments: results[1].status === "fulfilled" ? results[1].value : null,
@@ -53,6 +56,7 @@ export const useDataStore = create<DataState>((set, get) => ({
       learning: results[4].status === "fulfilled" ? results[4].value : null,
       canRevert: canRevertVal,
       isSimulated: simActive,
+      activeMutations,
       // Clear stale summary when no simulation is active
       ...(simActive ? {} : { simulationSummary: [] }),
     });
@@ -61,18 +65,23 @@ export const useDataStore = create<DataState>((set, get) => ({
   applySimulation: async (mutations) => {
     const resp = await simulateApply(mutations);
     await get().refreshAll();
-    set({ isSimulated: true, simulationSummary: resp.summary, canRevert: resp.can_revert });
+    set({
+      isSimulated: true,
+      activeMutations: resp.mutations ?? mutations,
+      simulationSummary: resp.summary,
+      canRevert: resp.can_revert,
+    });
     return resp;
   },
 
   revert: async () => {
     await revertSimulation();
     await get().refreshAll();
-    set({ isSimulated: false, simulationSummary: [], canRevert: false });
+    set({ isSimulated: false, activeMutations: [], simulationSummary: [], canRevert: false });
   },
 
   clear: () => set({
     score: null, segments: null, lots: null, config: null, learning: null,
-    isSimulated: false, simulationSummary: [], canRevert: false,
+    isSimulated: false, activeMutations: [], simulationSummary: [], canRevert: false,
   }),
 }));

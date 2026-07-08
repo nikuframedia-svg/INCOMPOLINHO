@@ -23,9 +23,9 @@ class BreakdownReport:
     down_end: int
     delta: DeltaReport
     score: dict
-    impact_level: str          # "critical" | "warning" | "ok"
-    summary_pt: str            # Portuguese summary
-    affected_ops: list[str]    # ops that were on this machine
+    impact_level: str  # "critical" | "warning" | "ok"
+    summary_pt: str  # Portuguese summary
+    affected_ops: list[str]  # ops that were on this machine
     time_ms: float
 
 
@@ -51,18 +51,21 @@ def simulate_breakdown(
         BreakdownReport with impact assessment.
     """
     # Find ops assigned to this machine
-    affected_ops = [
-        op.id for op in engine_data.ops if op.m == machine_id
-    ]
+    affected_ops = [op.id for op in engine_data.ops if op.m == machine_id]
 
     # Run simulation with machine_down mutation
-    mutations = [Mutation(
-        type="machine_down",
-        params={"machine_id": machine_id, "start": start_day, "end": end_day},
-    )]
+    mutations = [
+        Mutation(
+            type="machine_down",
+            params={"machine_id": machine_id, "start": start_day, "end": end_day},
+        )
+    ]
 
     sim_result: SimulateResponse = simulate(
-        engine_data, baseline_score, mutations, config=config,
+        engine_data,
+        baseline_score,
+        mutations,
+        config=config,
     )
 
     # Assess impact level
@@ -84,13 +87,9 @@ def simulate_breakdown(
     parts.append(f"{len(affected_ops)} operação(ões) afectada(s).")
 
     if delta.tardy_after > delta.tardy_before:
-        parts.append(
-            f"ALERTA: atrasos aumentam de {delta.tardy_before} para {delta.tardy_after}."
-        )
+        parts.append(f"ALERTA: atrasos aumentam de {delta.tardy_before} para {delta.tardy_after}.")
     if abs(delta.otd_after - delta.otd_before) > 0.05:
-        parts.append(
-            f"OTD: {delta.otd_before:.1f}% → {delta.otd_after:.1f}%."
-        )
+        parts.append(f"OTD: {delta.otd_before:.1f}% → {delta.otd_after:.1f}%.")
     if delta.setups_after != delta.setups_before:
         diff = delta.setups_after - delta.setups_before
         parts.append(f"Setups: {'+' if diff > 0 else ''}{diff}.")

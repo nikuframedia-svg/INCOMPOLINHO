@@ -60,14 +60,16 @@ def compute_machines_today(
             }
             break  # only the first
 
-        result.append({
-            "id": m.id,
-            "util": round(util, 2),
-            "tools": tools,
-            "total_pcs": sum(s.qty for s in segs),
-            "setup_count": len(setup_segs),
-            "next_setup": next_setup,
-        })
+        result.append(
+            {
+                "id": m.id,
+                "util": round(util, 2),
+                "tools": tools,
+                "total_pcs": sum(s.qty for s in segs),
+                "setup_count": len(setup_segs),
+                "next_setup": next_setup,
+            }
+        )
 
     total_setups = sum(m["setup_count"] for m in result)
     next_global = min(

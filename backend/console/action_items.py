@@ -26,13 +26,13 @@ class Fix:
 
 @dataclass
 class ActionItem:
-    severity: str       # "critical" | "warning"
-    phrase: str         # 1 sentence for state bar
-    body: str           # 2-3 sentences with context
+    severity: str  # "critical" | "warning"
+    phrase: str  # 1 sentence for state bar
+    body: str  # 2-3 sentences with context
     actions: list[str]  # buttons
-    deadline: str       # date or "hoje"/"amanhã"
-    client: str         # for aggregation
-    category: str       # "delivery" | "stockout" | "operators" | "crew"
+    deadline: str  # date or "hoje"/"amanhã"
+    client: str  # for aggregation
+    category: str  # "delivery" | "stockout" | "operators" | "crew"
 
 
 # ─── Diagnostics ──────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ def _diagnose_why_short(
     if not op:
         return "Referência não está no plano."
 
-    lot_to_op = {l.id: l.op_id for l in lots}
+    lot_to_op = {lot.id: lot.op_id for lot in lots}
     op_segs = [s for s in segments if lot_to_op.get(s.lot_id) == op.id]
 
     # Also check twin segments
@@ -105,10 +105,7 @@ def _find_fix(
 
         if free >= needed_min:
             return Fix(
-                description=(
-                    f"{op.alt} tem capacidade. Setup {op.sH}h. "
-                    f"Peças prontas a tempo."
-                ),
+                description=(f"{op.alt} tem capacidade. Setup {op.sH}h. Peças prontas a tempo."),
                 buttons=[f"Mover para {op.alt}", "Ver impacto"],
             )
 
@@ -131,7 +128,7 @@ def _has_production_before(
     if proj.stockout_day is None:
         return True
 
-    lot_to_op = {l.id: l.op_id for l in lots}
+    lot_to_op = {lot.id: lot.op_id for lot in lots}
     for seg in segments:
         if seg.day_idx < proj.stockout_day:
             # Check regular lots
@@ -172,15 +169,17 @@ def _aggregate_and_cap(items: list[ActionItem]) -> list[ActionItem]:
                 phrase = f"{client}: {len(group)} entregas em risco esta semana."
             else:
                 phrase = group[0].phrase
-            result.append(ActionItem(
-                severity=worst,
-                phrase=phrase,
-                body="\n".join(g.body for g in group[:3]),
-                actions=group[0].actions,
-                deadline=group[0].deadline,
-                client=client if isinstance(client, str) else "",
-                category=cat,
-            ))
+            result.append(
+                ActionItem(
+                    severity=worst,
+                    phrase=phrase,
+                    body="\n".join(g.body for g in group[:3]),
+                    actions=group[0].actions,
+                    deadline=group[0].deadline,
+                    client=client if isinstance(client, str) else "",
+                    category=cat,
+                )
+            )
 
     result.sort(key=lambda a: (0 if a.severity == "critical" else 1, a.deadline))
     return result[:7]
@@ -219,15 +218,17 @@ def compute_action_items(
             if fix:
                 body_parts.append(fix.description)
 
-            raw.append(ActionItem(
-                severity="critical" if day.day_idx <= 1 else "warning",
-                phrase=f"Entrega {entry.client} em risco ({day.date}).",
-                body="\n".join(body_parts),
-                actions=fix.buttons if fix else ["Ver detalhes"],
-                deadline=day.date,
-                client=entry.client,
-                category="delivery",
-            ))
+            raw.append(
+                ActionItem(
+                    severity="critical" if day.day_idx <= 1 else "warning",
+                    phrase=f"Entrega {entry.client} em risco ({day.date}).",
+                    body="\n".join(body_parts),
+                    actions=fix.buttons if fix else ["Ver detalhes"],
+                    deadline=day.date,
+                    client=entry.client,
+                    category="delivery",
+                )
+            )
 
     # ── B. Stock exhaustion without coverage (stockout_day <= 5) ──
     projs = compute_stock_projections(segments, lots, engine_data)
@@ -237,27 +238,27 @@ def compute_action_items(
         if _has_production_before(proj, segments, lots):
             continue
 
-        demand_until = sum(
-            d.demand for d in proj.days[:proj.stockout_day]
-        ) if proj.days else 0
+        demand_until = sum(d.demand for d in proj.days[: proj.stockout_day]) if proj.days else 0
 
         stockout_date = ""
         if proj.stockout_day < len(engine_data.workdays):
             stockout_date = engine_data.workdays[proj.stockout_day]
 
-        raw.append(ActionItem(
-            severity="warning",
-            phrase=f"Stock de {proj.sku} esgota dia {proj.stockout_day}.",
-            body=(
-                f"Stock actual: {proj.initial_stock:,} pç. "
-                f"Procura até dia {proj.stockout_day}: {demand_until:,} pç.\n"
-                f"Sem produção planeada antes."
-            ),
-            actions=["Antecipar produção", "Ver stock"],
-            deadline=stockout_date,
-            client=proj.client,
-            category="stockout",
-        ))
+        raw.append(
+            ActionItem(
+                severity="warning",
+                phrase=f"Stock de {proj.sku} esgota dia {proj.stockout_day}.",
+                body=(
+                    f"Stock actual: {proj.initial_stock:,} pç. "
+                    f"Procura até dia {proj.stockout_day}: {demand_until:,} pç.\n"
+                    f"Sem produção planeada antes."
+                ),
+                actions=["Antecipar produção", "Ver stock"],
+                deadline=stockout_date,
+                client=proj.client,
+                category="stockout",
+            )
+        )
 
     # ── C. Operator shortages (day_idx <= 1) ──
     op_alerts = compute_operator_alerts(segments, engine_data, config)
@@ -269,38 +270,41 @@ def compute_action_items(
         ps = "es" if a.deficit > 1 else ""
         when = "Hoje" if a.day_idx == 0 else "Amanhã"
 
-        raw.append(ActionItem(
-            severity="warning",
-            phrase=(
-                f"{when} turno {a.shift}: "
-                f"falta{pl} {a.deficit} operador{ps} {a.machine_group}."
-            ),
-            body=(
-                f"Turno {a.shift} ({a.machine_group}): "
-                f"{a.required} operadores necessários, "
-                f"{a.available} disponíveis."
-            ),
-            actions=["Ver plano"],
-            deadline=a.date,
-            client="",
-            category="operators",
-        ))
+        raw.append(
+            ActionItem(
+                severity="warning",
+                phrase=(
+                    f"{when} turno {a.shift}: falta{pl} {a.deficit} operador{ps} {a.machine_group}."
+                ),
+                body=(
+                    f"Turno {a.shift} ({a.machine_group}): "
+                    f"{a.required} operadores necessários, "
+                    f"{a.available} disponíveis."
+                ),
+                actions=["Ver plano"],
+                deadline=a.date,
+                client="",
+                category="operators",
+            )
+        )
 
     # ── D. Crew bottleneck (tomorrow, day_idx == 1) ──
     crew = check_crew_bottleneck(segments, day_idx=1)
     for c in crew:
-        raw.append(ActionItem(
-            severity="warning",
-            phrase=f"Amanhã {c['time']}: {c['simultaneous']} setups simultâneos.",
-            body=(
-                f"Máquinas {', '.join(c['machines'])} precisam de setup "
-                f"ao mesmo tempo.\n"
-                f"Espera estimada: {c['wait_min']} min."
-            ),
-            actions=["Ver timeline", "Reordenar setups"],
-            deadline="amanhã",
-            client="",
-            category="crew",
-        ))
+        raw.append(
+            ActionItem(
+                severity="warning",
+                phrase=f"Amanhã {c['time']}: {c['simultaneous']} setups simultâneos.",
+                body=(
+                    f"Máquinas {', '.join(c['machines'])} precisam de setup "
+                    f"ao mesmo tempo.\n"
+                    f"Espera estimada: {c['wait_min']} min."
+                ),
+                actions=["Ver timeline", "Reordenar setups"],
+                deadline="amanhã",
+                client="",
+                category="crew",
+            )
+        )
 
     return _aggregate_and_cap(raw)

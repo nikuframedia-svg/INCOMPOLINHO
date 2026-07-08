@@ -6,8 +6,6 @@ Counts operators per (day, shift, machine_group), alerts if over capacity.
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import MACHINE_GROUP, OPERATOR_CAP
 from backend.scheduler.types import OperatorAlert, Segment
@@ -41,9 +39,7 @@ def compute_operator_alerts(
             machines_seen[key] = set()
         machines_seen[key].add(seg.machine_id)
 
-    counts: dict[tuple[int, str, str], int] = {
-        k: len(v) for k, v in machines_seen.items()
-    }
+    counts: dict[tuple[int, str, str], int] = {k: len(v) for k, v in machines_seen.items()}
 
     for (day_idx, group, shift), required in counts.items():
         cap = operator_cap.get((group, shift), 6)
@@ -51,14 +47,16 @@ def compute_operator_alerts(
             date = ""
             if day_idx < len(engine_data.workdays):
                 date = engine_data.workdays[day_idx]
-            alerts.append(OperatorAlert(
-                day_idx=day_idx,
-                date=date,
-                shift=shift,
-                machine_group=group,
-                required=required,
-                available=cap,
-                deficit=required - cap,
-            ))
+            alerts.append(
+                OperatorAlert(
+                    day_idx=day_idx,
+                    date=date,
+                    shift=shift,
+                    machine_group=group,
+                    required=required,
+                    available=cap,
+                    deficit=required - cap,
+                )
+            )
 
     return sorted(alerts, key=lambda a: (a.day_idx, a.machine_group, a.shift))

@@ -1,4 +1,4 @@
-"""CachedPipeline for CPO v3.0 — Delta evaluation wrapper.
+"""Offline CachedPipeline for CPO v4 tuning — Delta evaluation wrapper.
 
 Wraps the existing scheduler pipeline phases with caching:
   - Lots (Phase 1): gene-independent, cached once
@@ -14,9 +14,14 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
+
 from backend.config.types import FactoryConfig
+from backend.cpo.chromosome import Chromosome
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.dispatch import (
+    _campaign_sequence,
+    _interleave_urgent,
+    _two_opt,
     assign_machines,
     per_machine_dispatch,
     sequence_per_machine,
@@ -25,10 +30,9 @@ from backend.scheduler.jit import jit_dispatch
 from backend.scheduler.lot_sizing import create_lots
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
-from backend.scheduler.types import Lot, ScheduleResult, Segment, ToolRun
+from backend.scheduler.types import Lot, ScheduleResult, ToolRun
+from backend.scheduler.validation import validate_plan
 from backend.types import EngineData
-
-from backend.cpo.chromosome import Chromosome
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +85,23 @@ class CachedPipeline:
         machine_runs = self._sequence_with_chromosome(machine_runs, chrom)
 
         # Auto buffer detection
-        from backend.scheduler.scheduler import _detect_buffer_need, _apply_buffer, _shift_engine_data
+        from backend.scheduler.scheduler import (
+            _apply_buffer,
+            _detect_buffer_need,
+            _shift_engine_data,
+        )
+
         global_holidays = set(self.data.holidays) if self.data.holidays else set()
-        buffer_days = _detect_buffer_need(runs, config=self.config, machine_runs=machine_runs, holidays=global_holidays)
+        buffer_days = (
+            _detect_buffer_need(
+                runs,
+                config=self.config,
+                machine_runs=machine_runs,
+                holidays=global_holidays,
+            )
+            if self.config.auto_buffer
+            else 0
+        )
 
         data = self.data
         if buffer_days > 0:
@@ -106,7 +124,11 @@ class CachedPipeline:
             jit_cfg = copy.copy(self.config)
             jit_cfg.jit_buffer_pct = chrom.buffer_pct
             jit_segs, jit_lots, jit_warnings, jit_machine_runs, jit_gates = jit_dispatch(
-                runs, data, segments, lots, baseline_score,
+                runs,
+                data,
+                segments,
+                lots,
+                baseline_score,
                 config=jit_cfg,
             )
             segments = jit_segs
@@ -116,21 +138,29 @@ class CachedPipeline:
         # Phase 4b: VNS
         if self.config.vns_enabled and jit_machine_runs is not None and jit_gates is not None:
             from backend.scheduler.vns import vns_polish
+
             jit_score = compute_score(segments, lots, data, config=self.config)
             vns_segs, vns_lots, vns_score, vns_warnings = vns_polish(
-                jit_machine_runs, jit_gates, data, self.config,
-                segments, lots, jit_score,
+                jit_machine_runs,
+                jit_gates,
+                data,
+                self.config,
+                segments,
+                lots,
+                jit_score,
             )
-            if (vns_score["tardy_count"] <= jit_score["tardy_count"]
-                    and (vns_score["setups"] < jit_score["setups"]
-                         or vns_score["earliness_avg_days"] < jit_score["earliness_avg_days"])):
+            if vns_score["tardy_count"] <= jit_score["tardy_count"] and (
+                vns_score["setups"] < jit_score["setups"]
+                or vns_score["earliness_avg_days"] < jit_score["earliness_avg_days"]
+            ):
                 segments = vns_segs
                 lots = vns_lots
             warnings.extend(vns_warnings)
 
         # Unshift buffer
         if buffer_days > 0:
-            from backend.scheduler.scheduler import _unshift_segments, _unshift_lots
+            from backend.scheduler.scheduler import _unshift_lots, _unshift_segments
+
             segments = _unshift_segments(segments, buffer_days)
             lots = _unshift_lots(lots, buffer_days)
             data = _shift_engine_data(data, -buffer_days)
@@ -138,10 +168,11 @@ class CachedPipeline:
         # Post-processing
         from backend.scheduler.scheduler import (
             _fix_day_overlaps,
+            _sanitize_segments,
             _serialize_crew_safe,
             _serialize_crew_setups,
-            _sanitize_segments,
         )
+
         global_holidays = set(getattr(data, "holidays", []))
         segments = _fix_day_overlaps(segments, self.config, holidays=global_holidays)
 
@@ -150,12 +181,17 @@ class CachedPipeline:
         crew_segments = copy.deepcopy(segments)
         prev_hash = None
         for _ in range(10):  # max 10 passes (convergence typically in 2-3)
-            crew_segments = _serialize_crew_setups(crew_segments, self.config, holidays=global_holidays, crew_priority=chrom.crew_priority)
+            crew_segments = _serialize_crew_setups(
+                crew_segments,
+                self.config,
+                holidays=global_holidays,
+                crew_priority=chrom.crew_priority,
+            )
             crew_segments = _fix_day_overlaps(crew_segments, self.config, holidays=global_holidays)
             crew_segments = _sanitize_segments(crew_segments, self.config, holidays=global_holidays)
-            curr_hash = hash(tuple(
-                (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in crew_segments
-            ))
+            curr_hash = hash(
+                tuple((s.lot_id, s.day_idx, s.start_min, s.end_min) for s in crew_segments)
+            )
             if curr_hash == prev_hash:
                 break
             prev_hash = curr_hash
@@ -167,12 +203,21 @@ class CachedPipeline:
             safe_segments = copy.deepcopy(segments)
             prev_hash_s = None
             for _ in range(10):
-                safe_segments = _serialize_crew_safe(safe_segments, self.config, holidays=global_holidays, crew_priority=chrom.crew_priority)
-                safe_segments = _fix_day_overlaps(safe_segments, self.config, holidays=global_holidays)
-                safe_segments = _sanitize_segments(safe_segments, self.config, holidays=global_holidays)
-                curr_hash_s = hash(tuple(
-                    (s.lot_id, s.day_idx, s.start_min, s.end_min) for s in safe_segments
-                ))
+                safe_segments = _serialize_crew_safe(
+                    safe_segments,
+                    self.config,
+                    holidays=global_holidays,
+                    crew_priority=chrom.crew_priority,
+                )
+                safe_segments = _fix_day_overlaps(
+                    safe_segments, self.config, holidays=global_holidays
+                )
+                safe_segments = _sanitize_segments(
+                    safe_segments, self.config, holidays=global_holidays
+                )
+                curr_hash_s = hash(
+                    tuple((s.lot_id, s.day_idx, s.start_min, s.end_min) for s in safe_segments)
+                )
                 if curr_hash_s == prev_hash_s:
                     break
                 prev_hash_s = curr_hash_s
@@ -194,10 +239,9 @@ class CachedPipeline:
         for seg in segments:
             if seg.day_idx >= 0:
                 day_span[(seg.machine_id, seg.day_idx)] += seg.end_min - seg.start_min
-        day_cap_violations = sum(
-            1 for total in day_span.values() if total > day_cap + 1.0
-        )
+        day_cap_violations = sum(1 for total in day_span.values() if total > day_cap + 1.0)
         score["day_cap_violations"] = day_cap_violations
+        score["hard_violations"] = len(validate_plan(segments, data, self.config))
 
         # Weighted setup cost: setup_min × machine utilisation
         machine_total_used: dict[str, float] = {}
@@ -216,6 +260,7 @@ class CachedPipeline:
         score["weighted_setup_cost"] = weighted_setup_cost
 
         from backend.scheduler.operators import compute_operator_alerts
+
         op_alerts = compute_operator_alerts(segments, self.data, config=self.config)
 
         result = ScheduleResult(
@@ -225,6 +270,7 @@ class CachedPipeline:
             time_ms=0.0,
             warnings=warnings,
             operator_alerts=op_alerts,
+            machine_runs=copy.deepcopy(machine_runs),
         )
 
         self._fitness_cache[h] = (score, result)
@@ -259,16 +305,28 @@ class CachedPipeline:
         self, machine_runs: dict[str, list[ToolRun]], chrom: Chromosome
     ) -> dict[str, list[ToolRun]]:
         """Apply chromosome's G4 sequence keys, then use campaign sequencing with G6."""
-        # First apply G4 sort keys to reorder runs per machine
+        keyed_machines: set[str] = set()
+        seq_cfg = copy.copy(self.config)
+        seq_cfg.campaign_window = chrom.campaign_window
+
+        # First apply G4 sort keys to reorder runs per machine. For keyed
+        # machines, keep that order as the baseline and run campaign heuristics
+        # without the EDD pre-sort in sequence_per_machine().
         for m_id, m_runs in machine_runs.items():
             keys = chrom.sequence_keys.get(m_id)
             if keys and len(keys) == len(m_runs):
-                # Sort runs by their chromosome keys
                 paired = sorted(zip(keys, m_runs), key=lambda x: x[0])
-                machine_runs[m_id] = [run for _, run in paired]
+                ordered = [run for _, run in paired]
+                ordered = _campaign_sequence(ordered, config=seq_cfg)
+                if seq_cfg.interleave_enabled:
+                    ordered = _interleave_urgent(ordered)
+                machine_runs[m_id] = _two_opt(ordered, config=seq_cfg)
+                keyed_machines.add(m_id)
 
-        # Then apply campaign sequencing with G6 window
-        seq_cfg = copy.copy(self.config)
-        seq_cfg.campaign_window = chrom.campaign_window
-        machine_runs = sequence_per_machine(machine_runs, config=seq_cfg)
+        remaining = {
+            m_id: runs for m_id, runs in machine_runs.items() if m_id not in keyed_machines
+        }
+        if remaining:
+            sequenced = sequence_per_machine(remaining, config=seq_cfg)
+            machine_runs.update(sequenced)
         return machine_runs

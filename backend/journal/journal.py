@@ -7,13 +7,13 @@ Extends (never replaces) ScheduleResult.warnings.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(slots=True)
 class JournalEntry:
-    step: str         # "guardian" | "lot_sizing" | "tool_grouping" | "dispatch" | "jit" | "scoring"
-    severity: str     # "info" | "warn" | "error"
+    step: str  # "guardian" | "lot_sizing" | "tool_grouping" | "dispatch" | "jit" | "scoring"
+    severity: str  # "info" | "warn" | "error"
     message: str
     metadata: dict
     elapsed_ms: float
@@ -34,23 +34,27 @@ class Journal:
         """Mark end of a phase, recording elapsed time and metadata."""
         t0 = self._timers.pop(step, time.perf_counter())
         elapsed = (time.perf_counter() - t0) * 1000
-        self._entries.append(JournalEntry(
-            step=step,
-            severity="info",
-            message=message,
-            metadata=dict(metadata),
-            elapsed_ms=round(elapsed, 2),
-        ))
+        self._entries.append(
+            JournalEntry(
+                step=step,
+                severity="info",
+                message=message,
+                metadata=dict(metadata),
+                elapsed_ms=round(elapsed, 2),
+            )
+        )
 
     def log(self, step: str, severity: str, message: str, **metadata: object) -> None:
         """Log an arbitrary entry (warn/error during a phase)."""
-        self._entries.append(JournalEntry(
-            step=step,
-            severity=severity,
-            message=message,
-            metadata=dict(metadata),
-            elapsed_ms=0.0,
-        ))
+        self._entries.append(
+            JournalEntry(
+                step=step,
+                severity=severity,
+                message=message,
+                metadata=dict(metadata),
+                elapsed_ms=0.0,
+            )
+        )
 
     def to_entries(self) -> list[JournalEntry]:
         """Return all entries."""
@@ -58,11 +62,7 @@ class Journal:
 
     def to_warnings(self) -> list[str]:
         """Convert entries with severity >= warn to plain strings."""
-        return [
-            f"[{e.step}] {e.message}"
-            for e in self._entries
-            if e.severity in ("warn", "error")
-        ]
+        return [f"[{e.step}] {e.message}" for e in self._entries if e.severity in ("warn", "error")]
 
     def to_dicts(self) -> list[dict]:
         """Serialize entries for ScheduleResult.journal."""

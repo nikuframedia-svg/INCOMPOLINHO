@@ -112,9 +112,19 @@ class TestMerge:
     def test_merge_ph_min(self):
         """pH = min (conservative)."""
         op1 = _make_eop()
-        op1 = EOp(**{**{f.name: getattr(op1, f.name) for f in op1.__dataclass_fields__.values()}, "pH": 1000})
+        op1 = EOp(
+            **{
+                **{f.name: getattr(op1, f.name) for f in op1.__dataclass_fields__.values()},
+                "pH": 1000,
+            }
+        )
         op2 = _make_eop()
-        op2 = EOp(**{**{f.name: getattr(op2, f.name) for f in op2.__dataclass_fields__.values()}, "pH": 500})
+        op2 = EOp(
+            **{
+                **{f.name: getattr(op2, f.name) for f in op2.__dataclass_fields__.values()},
+                "pH": 500,
+            }
+        )
         merged = merge_multi_client([op1, op2])
         assert merged[0].pH == 500
 
@@ -300,4 +310,7 @@ class TestTransformPipeline:
         assert result.ops[0].alt == "PRM039"
         assert result.machines[0].group == "Grandes"
         assert result.machines[0].day_capacity == 1020
-        assert result.holidays == [1, 2]  # "2026-03-06" is holiday (index 1), "2026-03-07" is Saturday (index 2)
+        assert result.holidays == [
+            1,
+            2,
+        ]  # "2026-03-06" is holiday (index 1), "2026-03-07" is Saturday (index 2)

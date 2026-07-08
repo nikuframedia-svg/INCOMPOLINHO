@@ -23,15 +23,23 @@ logger = logging.getLogger(__name__)
 _HANDLERS: dict[str, callable] = {}
 
 
+def valid_mutation_types() -> set[str]:
+    """Return mutation names accepted by the simulator API."""
+    return set(_HANDLERS)
+
+
 def _register(name: str):
     def decorator(fn):
         _HANDLERS[name] = fn
         return fn
+
     return decorator
 
 
 def apply_mutation(
-    data: EngineData, mutation_type: str, params: dict,
+    data: EngineData,
+    mutation_type: str,
+    params: dict,
     config: FactoryConfig | None = None,
 ) -> str:
     """Apply a single mutation to EngineData (in-place). Returns summary string.
@@ -44,6 +52,7 @@ def apply_mutation(
         raise ValueError(f"Unknown mutation type: {mutation_type}")
     # Pass config to handlers that accept it
     import inspect
+
     sig = inspect.signature(handler)
     if "config" in sig.parameters:
         return handler(data, params, config=config)
@@ -53,21 +62,45 @@ def apply_mutation(
 def mutation_summary(mutation_type: str, params: dict) -> str:
     """Generate a Portuguese description of a mutation without applying it."""
     summaries = {
-        "machine_down": lambda p: f"Máquina {p.get('machine_id', '?')} parada dias {p.get('start', '?')}-{p.get('end', '?')}",
-        "tool_down": lambda p: f"Ferramenta {p.get('tool_id', '?')} indisponível dias {p.get('start', '?')}-{p.get('end', '?')}",
+        "machine_down": lambda p: (
+            f"Máquina {p.get('machine_id', '?')} parada dias "
+            f"{p.get('start', '?')}-{p.get('end', '?')}"
+        ),
+        "tool_down": lambda p: (
+            f"Ferramenta {p.get('tool_id', '?')} indisponível dias "
+            f"{p.get('start', '?')}-{p.get('end', '?')}"
+        ),
         "operator_shortage": lambda p: f"Falta de operadores (advisory): {p.get('note', '?')}",
-        "oee_change": lambda p: f"OEE alterado para {p.get('new_oee', '?')} em ferramenta {p.get('tool_id', '?')}",
-        "rush_order": lambda p: f"Encomenda urgente: {p.get('qty', '?')} pç SKU {p.get('sku', '?')} dia {p.get('deadline_day', '?')}",
-        "demand_change": lambda p: f"Procura alterada: factor {p.get('factor', '?')}x SKU {p.get('sku', '?')}",
-        "cancel_order": lambda p: f"Cancelar encomendas SKU {p.get('sku', '?')} dias {p.get('from_day', '?')}-{p.get('to_day', '?')}",
-        "third_shift": lambda p: f"3º turno activado (+420 min, todas as máquinas)",
+        "oee_change": lambda p: (
+            f"OEE alterado para {p.get('new_oee', '?')} em ferramenta {p.get('tool_id', '?')}"
+        ),
+        "rush_order": lambda p: (
+            f"Encomenda urgente: {p.get('qty', '?')} pç SKU {p.get('sku', '?')} "
+            f"dia {p.get('deadline_day', '?')}"
+        ),
+        "demand_change": lambda p: (
+            f"Procura alterada: factor {p.get('factor', '?')}x SKU {p.get('sku', '?')}"
+        ),
+        "cancel_order": lambda p: (
+            f"Cancelar encomendas SKU {p.get('sku', '?')} dias "
+            f"{p.get('from_day', '?')}-{p.get('to_day', '?')}"
+        ),
+        "third_shift": lambda p: "3º turno activado (+420 min, todas as máquinas)",
         "overtime": lambda p: f"Horas extra (+{p.get('extra_min', '?')} min, todas as máquinas)",
         "add_holiday": lambda p: f"Feriado adicionado dia {p.get('day_idx', '?')}",
         "remove_holiday": lambda p: f"Feriado removido dia {p.get('day_idx', '?')}",
-        "force_machine": lambda p: f"Forçar ferramenta {p.get('tool_id', '?')} para máquina {p.get('to_machine', '?')}",
-        "change_eco_lot": lambda p: f"Eco lot alterado para {p.get('new_eco_lot', '?')} em SKU {p.get('sku', '?')}",
-        "advance_edd": lambda p: f"EDD antecipada {p.get('days', '?')} dias para SKU {p.get('sku', '?')}",
-        "delay_edd": lambda p: f"EDD atrasada {p.get('days', '?')} dias para SKU {p.get('sku', '?')}",
+        "force_machine": lambda p: (
+            f"Forçar ferramenta {p.get('tool_id', '?')} para máquina {p.get('to_machine', '?')}"
+        ),
+        "change_eco_lot": lambda p: (
+            f"Eco lot alterado para {p.get('new_eco_lot', '?')} em SKU {p.get('sku', '?')}"
+        ),
+        "advance_edd": lambda p: (
+            f"EDD antecipada {p.get('days', '?')} dias para SKU {p.get('sku', '?')}"
+        ),
+        "delay_edd": lambda p: (
+            f"EDD atrasada {p.get('days', '?')} dias para SKU {p.get('sku', '?')}"
+        ),
     }
     fn = summaries.get(mutation_type)
     return fn(params) if fn else f"Mutação desconhecida: {mutation_type}"
@@ -186,7 +219,7 @@ def _third_shift(data: EngineData, params: dict, config: FactoryConfig | None = 
     if not any(m.id == machine_id for m in data.machines):
         return f"3º turno: máquina {machine_id} não encontrada"
     if config is None:
-        return f"3º turno: config não disponível (sem efeito)"
+        return "3º turno: config não disponível (sem efeito)"
     # Only add once
     if not any(s.id == "C" for s in config.shifts):
         config.shifts.append(ShiftConfig("C", 1440, 1860, "Noite"))
@@ -205,12 +238,14 @@ def _overtime(data: EngineData, params: dict, config: FactoryConfig | None = Non
     if not any(m.id == machine_id for m in data.machines):
         return f"Horas extra: máquina {machine_id} não encontrada"
     if config is None:
-        return f"Horas extra: config não disponível (sem efeito)"
+        return "Horas extra: config não disponível (sem efeito)"
     # Extend last shift's end_min
     last_shift = config.shifts[-1]
     last_shift.end_min += extra_min
     new_cap = config.day_capacity_min
-    return f"Horas extra: +{extra_min} min — capacidade global → {new_cap} min/dia (todas as máquinas)"
+    return (
+        f"Horas extra: +{extra_min} min — capacidade global → {new_cap} min/dia (todas as máquinas)"
+    )
 
 
 @_register("add_holiday")
@@ -238,7 +273,9 @@ def _force_machine(data: EngineData, params: dict) -> str:
     tool_id = params["tool_id"]
     to_machine = params["to_machine"]
     if not any(m.id == to_machine for m in data.machines):
-        raise ValueError(f"Máquina {to_machine} não existe. Válidas: {[m.id for m in data.machines]}")
+        raise ValueError(
+            f"Máquina {to_machine} não existe. Válidas: {[m.id for m in data.machines]}"
+        )
     count = 0
     for op in data.ops:
         if op.t == tool_id:
@@ -249,7 +286,11 @@ def _force_machine(data: EngineData, params: dict) -> str:
 
 
 @_register("change_eco_lot")
-def _change_eco_lot(data: EngineData, params: dict) -> str:
+def _change_eco_lot(
+    data: EngineData,
+    params: dict,
+    config: FactoryConfig | None = None,
+) -> str:
     """Change eco lot size for a SKU."""
     sku = params["sku"]
     new_eco_lot = int(params["new_eco_lot"])
@@ -258,7 +299,12 @@ def _change_eco_lot(data: EngineData, params: dict) -> str:
     for op in data.ops:
         if op.sku == sku:
             old = op.eco_lot
+            if config is not None:
+                rule = dict(config.sku_planning_rules.get(sku, {}))
+                rule["eco_lot"] = new_eco_lot
+                config.sku_planning_rules[sku] = rule
             op.eco_lot = new_eco_lot
+            op.eco_lot_effective = new_eco_lot
             return f"Eco lot {sku}: {old} → {new_eco_lot}"
     return f"Eco lot: SKU {sku} não encontrado"
 

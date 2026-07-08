@@ -3,22 +3,22 @@
 Runs AFTER JIT dispatch to polish the schedule by exploring local moves.
 Zero risk: if no improvement found, returns original schedule unchanged.
 
-Three neighborhoods:
+Neighborhoods:
   N1 — Swap adjacent runs on same machine (creates tool adjacency → -1 setup)
   N2 — Relocate run to different position on same machine (3-opt style)
-  N3 — Move run to alt machine (cross-machine rebalance)
+  N3 — Relocate a whole same-tool block on the same machine
+  N4 — Move run to alt machine (cross-machine rebalance)
 """
 
 from __future__ import annotations
 
-import copy
 import logging
 from collections import defaultdict
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.dispatch import per_machine_dispatch
-from backend.scheduler.jit import _backward_stack_gates, _max_gate
+from backend.scheduler.gates import HARD_GATE_KEYS
+from backend.scheduler.jit import _backward_stack_gates
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.types import EngineData
@@ -28,19 +28,50 @@ logger = logging.getLogger(__name__)
 
 def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
     """Check if new score is strictly better than old, respecting hard constraints."""
-    # HARD — never violate
-    if new["tardy_count"] > old["tardy_count"]:
+    # HARD — never accept physical or delivery regression for a VNS improvement.
+    if _hard_violation_count(new) > 0:
         return False
-    if new["otd_d"] < old["otd_d"]:
+    if _hard_violation_count(new) > _hard_violation_count(old):
         return False
+    if float(new.get("otd", 100.0) or 0.0) < float(old.get("otd", 100.0) or 0.0):
+        return False
+    if float(new.get("otd_d", 100.0) or 0.0) < float(old.get("otd_d", 100.0) or 0.0):
+        return False
+    if int(new.get("tardy_count", 0) or 0) > int(old.get("tardy_count", 0) or 0):
+        return False
+
+    # Fewer tardy lots is always better once hard gates and OTD-D are preserved.
+    if int(new.get("tardy_count", 0) or 0) < int(old.get("tardy_count", 0) or 0):
+        return True
+
+    if int(new.get("otd_d_failures", 0) or 0) > int(
+        old.get("otd_d_failures", 0) or 0
+    ):
+        return False
+    if float(new.get("total_tardiness", 0.0) or 0.0) > float(
+        old.get("total_tardiness", 0.0) or 0.0
+    ):
+        return False
+    if float(new.get("max_tardiness", 0.0) or 0.0) > float(
+        old.get("max_tardiness", 0.0) or 0.0
+    ):
+        return False
+
+    # Productivity guard: once delivery is preserved, local VNS moves must not
+    # buy earliness by spending extra setups. JIT timing repair handles pure
+    # earliness improvements later in the CPO loop.
+    if int(new.get("setups", 0) or 0) > int(old.get("setups", 0) or 0):
+        return False
+    if "setup_time_min" in new and "setup_time_min" in old:
+        if float(new.get("setup_time_min", 0.0) or 0.0) > float(
+            old.get("setup_time_min", 0.0) or 0.0
+        ):
+            return False
+
     target = config.jit_earliness_target if config else 5.5
     earliness_ceiling = max(old["earliness_avg_days"], target)
     if new["earliness_avg_days"] > earliness_ceiling:
         return False
-
-    # Fewer tardy is always better
-    if new["tardy_count"] < old["tardy_count"]:
-        return True
 
     # SOFT — weighted composite: tradeoff setups vs earliness
     w_setups = config.weight_setups if config else 0.30
@@ -50,6 +81,22 @@ def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
     if new_cost < old_cost - 0.01:  # small epsilon to avoid float noise
         return True
     return False
+
+
+def _hard_violation_count(score: dict) -> int:
+    # VNS scores are computed before the scheduler's final single-crew
+    # serialization pass. Setup-crew overlaps are therefore repairable
+    # intermediate conflicts here; all other physical gates are blocking.
+    repairable_pre_serialization = {"setup_crew_overlaps"}
+    explicit = sum(
+        int(score.get(key, 0) or 0)
+        for key in HARD_GATE_KEYS
+        if key not in repairable_pre_serialization
+    )
+    aggregate = int(score.get("hard_violations", 0) or 0) - int(
+        score.get("setup_crew_overlaps", 0) or 0
+    )
+    return max(aggregate, explicit)
 
 
 def _deep_copy_runs(machine_runs: dict[str, list[ToolRun]]) -> dict[str, list[ToolRun]]:
@@ -71,7 +118,10 @@ def _dispatch_and_score(
     all_lots: list[Lot] = []
     for m_id, m_runs in machine_runs.items():
         m_segs, m_lots, _ = per_machine_dispatch(
-            {m_id: m_runs}, engine_data, lst_gate=gates, config=config,
+            {m_id: m_runs},
+            engine_data,
+            lst_gate=gates,
+            config=config,
         )
         all_segs.extend(m_segs)
         all_lots.extend(m_lots)
@@ -94,7 +144,10 @@ def _recompute_machine_gates(
     affected_runs = {m_id: runs for m_id, runs in machine_runs.items() if m_id in affected_machines}
     if affected_runs:
         recomputed = _backward_stack_gates(
-            affected_runs, holiday_set, engine_data.n_days, config=config,
+            affected_runs,
+            holiday_set,
+            engine_data.n_days,
+            config=config,
         )
         new_gates.update(recomputed)
 
@@ -187,11 +240,63 @@ def _generate_n3_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryCo
             # Check if alt machine has a same-tool run within EDD tolerance
             alt_runs = machine_runs[alt]
             has_adjacency = any(
-                r.tool_id == run.tool_id and abs(r.edd - run.edd) <= tolerance
-                for r in alt_runs
+                r.tool_id == run.tool_id and abs(r.edd - run.edd) <= tolerance for r in alt_runs
             )
             if has_adjacency:
                 yield ("cross_machine", m_id, idx, alt)
+
+
+def _generate_n4_block_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryConfig):
+    """N4: Move a whole same-tool block next to an earlier same-tool block.
+
+    Single-run relocate can fail on patterns like A-X-A-A: moving only one A
+    leaves the later A stranded, so the setup count does not improve. A block
+    move keeps existing campaigns intact and lets the trust gates decide whether
+    the earlier placement is still executable.
+    """
+
+    tolerance = config.edd_swap_tolerance * 2
+    for m_id, runs in machine_runs.items():
+        blocks = _same_tool_blocks(runs)
+        if len(blocks) < 3:
+            continue
+
+        for anchor_idx, anchor in enumerate(blocks):
+            for src in blocks[anchor_idx + 2 :]:
+                if src["tool_id"] != anchor["tool_id"]:
+                    continue
+                if int(src["edd_min"]) - int(anchor["edd_max"]) > tolerance:
+                    continue
+                yield (
+                    "block_relocate",
+                    m_id,
+                    int(src["start"]),
+                    int(src["end"]),
+                    int(anchor["end"]),
+                )
+
+
+def _same_tool_blocks(runs: list[ToolRun]) -> list[dict[str, object]]:
+    blocks: list[dict[str, object]] = []
+    start = 0
+    while start < len(runs):
+        end = start + 1
+        tool_id = runs[start].tool_id
+        while end < len(runs) and runs[end].tool_id == tool_id:
+            end += 1
+
+        edds = [run.edd for run in runs[start:end]]
+        blocks.append(
+            {
+                "start": start,
+                "end": end,
+                "tool_id": tool_id,
+                "edd_min": min(edds),
+                "edd_max": max(edds),
+            }
+        )
+        start = end
+    return blocks
 
 
 def _generate_n4_split_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryConfig):
@@ -257,7 +362,8 @@ def _apply_move(
     elif move_type == "cross_machine":
         _, src_m, idx, dst_m = move
         run = new_runs[src_m].pop(idx)
-        # Insert in EDD order on destination machine
+        # Insert in EDD order on destination machine. Positional insertion next
+        # to a matching tool can degrade the post-crew-serialization frontier.
         dst_runs = new_runs[dst_m]
         insert_pos = len(dst_runs)
         for i, r in enumerate(dst_runs):
@@ -267,16 +373,31 @@ def _apply_move(
         dst_runs.insert(insert_pos, run)
         return new_runs, {src_m, dst_m}
 
+    elif move_type == "block_relocate":
+        _, m_id, src_start, src_end, dst = move
+        runs = new_runs[m_id]
+        if src_start < 0 or src_end > len(runs) or src_start >= src_end:
+            return machine_runs, set()
+        if dst >= src_start and dst <= src_end:
+            return machine_runs, set()
+        block = runs[src_start:src_end]
+        del runs[src_start:src_end]
+        if src_start < dst:
+            dst -= len(block)
+        dst = max(0, min(dst, len(runs)))
+        runs[dst:dst] = block
+        return new_runs, {m_id}
+
     elif move_type == "split":
         _, m_id, idx, mid_edd = move
         original = new_runs[m_id][idx]
-        early_lots = [l for l in original.lots if l.edd <= mid_edd]
-        late_lots = [l for l in original.lots if l.edd > mid_edd]
+        early_lots = [lot for lot in original.lots if lot.edd <= mid_edd]
+        late_lots = [lot for lot in original.lots if lot.edd > mid_edd]
         if not early_lots or not late_lots:
             return machine_runs, set()  # degenerate split, skip
         early_run = _make_split_run(original, early_lots, "e")
         late_run = _make_split_run(original, late_lots, "l")
-        new_runs[m_id][idx:idx + 1] = [early_run, late_run]
+        new_runs[m_id][idx : idx + 1] = [early_run, late_run]
         return new_runs, {m_id}
 
     return machine_runs, set()
@@ -299,8 +420,17 @@ def vns_polish(
     Returns (segments, lots, score, warnings).
     """
     max_iter = config.vns_max_iter if config else 50
-    generators = [_generate_n1_moves, _generate_n2_moves, _generate_n3_moves]
-    neighborhood_names = ["N1_swap", "N2_relocate", "N3_cross_machine"]
+    generators = [_generate_n1_moves, _generate_n2_moves]
+    neighborhood_names = ["N1_swap", "N2_relocate"]
+    if getattr(config, "vns_block_moves_enabled", False):
+        generators.append(_generate_n4_block_moves)
+        neighborhood_names.append("N3_block_relocate")
+    generators.append(_generate_n3_moves)
+    neighborhood_names.append(
+        "N4_cross_machine"
+        if getattr(config, "vns_block_moves_enabled", False)
+        else "N3_cross_machine"
+    )
 
     current_runs = _deep_copy_runs(machine_runs)
     current_gates = dict(gates)
@@ -321,10 +451,17 @@ def vns_polish(
 
             candidate_runs, affected = _apply_move(move, current_runs)
             candidate_gates = _recompute_machine_gates(
-                candidate_runs, current_gates, affected, engine_data, config,
+                candidate_runs,
+                current_gates,
+                affected,
+                engine_data,
+                config,
             )
             cand_segs, cand_lots, cand_score = _dispatch_and_score(
-                candidate_runs, candidate_gates, engine_data, config,
+                candidate_runs,
+                candidate_gates,
+                engine_data,
+                config,
             )
 
             if _is_better(cand_score, best_score, config):

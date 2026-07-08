@@ -9,7 +9,6 @@ Graceful fallback: if ortools is not installed, returns original schedule.
 
 from __future__ import annotations
 
-import copy
 import logging
 from collections import defaultdict
 
@@ -24,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from ortools.sat.python import cp_model
+
     _HAS_ORTOOLS = True
 except ImportError:
     _HAS_ORTOOLS = False
@@ -57,8 +57,6 @@ def identify_bottleneck_machines(
             if seg.day_idx > prev:
                 lot_completion[seg.lot_id] = seg.day_idx
 
-    # EDD per lot
-    lot_edd: dict[str, int] = {lot.id: lot.edd for lot in lots}
     lot_machine: dict[str, str] = {}
     for seg in segments:
         if seg.day_idx >= 0:
@@ -92,8 +90,10 @@ def identify_bottleneck_machines(
             key=lambda s: (s.day_idx, s.start_min),
         )
         for i in range(1, len(machine_segs)):
-            if (machine_segs[i].setup_min > 0
-                    and machine_segs[i].tool_id == machine_segs[i - 1].tool_id):
+            if (
+                machine_segs[i].setup_min > 0
+                and machine_segs[i].tool_id == machine_segs[i - 1].tool_id
+            ):
                 is_bottleneck = True
                 break
 
@@ -125,8 +125,7 @@ def _resequence_machine_cpsat(
     starts = [model.new_int_var(0, horizon, f"start_{i}") for i in range(n)]
     ends = [model.new_int_var(0, horizon, f"end_{i}") for i in range(n)]
     intervals = [
-        model.new_interval_var(starts[i], durations[i], ends[i], f"iv_{i}")
-        for i in range(n)
+        model.new_interval_var(starts[i], durations[i], ends[i], f"iv_{i}") for i in range(n)
     ]
 
     # NoOverlap constraint (replaces O(n²) big-M formulation)
@@ -170,9 +169,7 @@ def _resequence_machine_cpsat(
 
     # Objective: minimize tardiness (weight 1000) - setup savings (weight 1)
     setup_bonus = sum(same_tool_bonus) if same_tool_bonus else 0
-    model.minimize(
-        sum(t * 1000 for t in tardy_vars) - setup_bonus
-    )
+    model.minimize(sum(t * 1000 for t in tardy_vars) - setup_bonus)
 
     # Warm-start with current (EDD) order
     current_order = sorted(range(n), key=lambda i: runs[i].edd)
@@ -256,7 +253,9 @@ def cpsat_polish(
             continue
 
         new_order = _resequence_machine_cpsat(
-            m_runs, data.n_days, day_cap,
+            m_runs,
+            data.n_days,
+            day_cap,
             time_limit_s=time_limit_per_machine,
         )
 
@@ -279,12 +278,16 @@ def cpsat_polish(
         # Safety: never worsen tardy
         if new_score["tardy_count"] <= original_score["tardy_count"]:
             # Accept if setups or earliness improved
-            if (new_score["setups"] < original_score["setups"]
-                    or new_score["earliness_avg_days"] < original_score["earliness_avg_days"]):
+            if (
+                new_score["setups"] < original_score["setups"]
+                or new_score["earliness_avg_days"] < original_score["earliness_avg_days"]
+            ):
                 logger.info(
                     "CP-SAT polish accepted: setups %d→%d, earliness %.1f→%.1fd",
-                    original_score["setups"], new_score["setups"],
-                    original_score["earliness_avg_days"], new_score["earliness_avg_days"],
+                    original_score["setups"],
+                    new_score["setups"],
+                    original_score["earliness_avg_days"],
+                    new_score["earliness_avg_days"],
                 )
                 return new_segments, new_lots, new_score
             else:
@@ -292,7 +295,8 @@ def cpsat_polish(
         else:
             logger.warning(
                 "CP-SAT polish rejected: tardy %d → %d",
-                original_score["tardy_count"], new_score["tardy_count"],
+                original_score["tardy_count"],
+                new_score["tardy_count"],
             )
     except Exception as e:
         logger.warning("CP-SAT polish dispatch failed: %s", e)

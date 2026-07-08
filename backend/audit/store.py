@@ -11,9 +11,7 @@ import sqlite3
 
 from .types import AuditTrail
 
-DEFAULT_DB_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "audit.db"
-)
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "audit.db")
 
 
 class AuditStore:
@@ -64,19 +62,24 @@ class AuditStore:
         """Save an audit trail. Returns the schedule_id."""
         self._conn.execute(
             "INSERT OR REPLACE INTO schedules VALUES (?, datetime('now'), ?, ?, ?)",
-            (trail.schedule_id, json.dumps(score),
-             trail.total_decisions, label),
+            (trail.schedule_id, json.dumps(score), trail.total_decisions, label),
         )
         for d in trail.decisions:
-            alts_json = json.dumps([
-                {"value": a.value, "reason": a.reason}
-                for a in d.alternatives
-            ])
+            alts_json = json.dumps([{"value": a.value, "reason": a.reason} for a in d.alternatives])
             self._conn.execute(
                 "INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (d.id, trail.schedule_id, d.phase, d.subject_id,
-                 d.action, d.chosen, d.rule, d.binding_constraint,
-                 alts_json, d.explanation_pt),
+                (
+                    d.id,
+                    trail.schedule_id,
+                    d.phase,
+                    d.subject_id,
+                    d.action,
+                    d.chosen,
+                    d.rule,
+                    d.binding_constraint,
+                    alts_json,
+                    d.explanation_pt,
+                ),
             )
         self._conn.commit()
         return trail.schedule_id
@@ -99,9 +102,16 @@ class AuditStore:
             ).fetchall()
 
         cols = [
-            "id", "schedule_id", "phase", "subject_id", "action",
-            "chosen", "rule", "binding_constraint",
-            "alternatives_json", "explanation_pt",
+            "id",
+            "schedule_id",
+            "phase",
+            "subject_id",
+            "action",
+            "chosen",
+            "rule",
+            "binding_constraint",
+            "alternatives_json",
+            "explanation_pt",
         ]
         return [dict(zip(cols, r)) for r in rows]
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 
+from backend.config.planning import effective_internal_deadline_for_op
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DEFAULT_OEE, MIN_PROD_MIN
 from backend.scheduler.types import Lot
@@ -55,7 +56,9 @@ def create_lots(data: EngineData, config: FactoryConfig | None = None) -> list[L
     return lots
 
 
-def _create_solo_lots(op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float = MIN_PROD_MIN) -> list[Lot]:
+def _create_solo_lots(
+    op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float = MIN_PROD_MIN
+) -> list[Lot]:
     """Create lots for a solo (non-twin) operation.
 
     Eco lot HARD: each lot qty = max(demand, eco_lot), rounded up.
@@ -74,7 +77,8 @@ def _create_solo_lots(op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float
             continue
 
         deficit = demand - surplus
-        qty = _apply_eco_lot(deficit, op.eco_lot)
+        requested_qty, campaign_source = _requested_qty_with_campaign(op, day_idx, deficit, oee)
+        qty = _apply_eco_lot(requested_qty, op.eco_lot)
         surplus = qty - deficit
 
         if op.pH > 0 and oee > 0:
@@ -82,28 +86,62 @@ def _create_solo_lots(op: EOp, oee_default: float = DEFAULT_OEE, min_prod: float
         else:
             prod_min = min_prod
         setup_min = op.sH * 60.0
+        internal_deadline = _internal_deadline(op, day_idx)
+        planning_source = _planning_source(op, deficit, requested_qty, qty, campaign_source)
 
-        lots.append(Lot(
-            id=f"LOT_{op.t}_{op.m}_{op.sku}_{day_idx}",
-            op_id=op.id,
-            tool_id=op.t,
-            machine_id=op.m,
-            alt_machine_id=op.alt,
-            qty=qty,
-            prod_min=prod_min,
-            setup_min=setup_min,
-            edd=day_idx,
-            is_twin=False,
-        ))
+        lots.append(
+            Lot(
+                id=f"LOT_{op.t}_{op.m}_{op.sku}_{day_idx}",
+                op_id=op.id,
+                tool_id=op.t,
+                machine_id=op.m,
+                alt_machine_id=op.alt,
+                qty=qty,
+                prod_min=prod_min,
+                setup_min=setup_min,
+                edd=internal_deadline,
+                is_twin=False,
+                original_edd=day_idx,
+                internal_deadline=internal_deadline,
+                delivery_day=day_idx,
+                eco_lot_isop=op.eco_lot_isop,
+                eco_lot_effective=op.eco_lot_effective
+                if op.eco_lot_effective is not None
+                else op.eco_lot,
+                start_buffer_days=op.start_buffer_days,
+                finish_buffer_days=op.finish_buffer_days,
+                target_start_day=_target_start_day(op, day_idx),
+                min_campaign_qty=op.min_campaign_qty,
+                min_campaign_prod_min=op.min_campaign_prod_min,
+                max_group_gap_days=op.max_group_gap_days,
+                planning_source=planning_source,
+                economic_warning=_economic_warning(
+                    deficit,
+                    qty,
+                    prod_min,
+                    setup_min,
+                    planning_source,
+                ),
+                subcontract_company_id=op.subcontract_company_id,
+                subcontract_lead_time_days=op.subcontract_lead_time_days,
+                subcontract_buffer_days=op.subcontract_buffer_days,
+            )
+        )
 
     return lots
 
 
-def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = DEFAULT_OEE, min_prod: float = MIN_PROD_MIN) -> list[Lot]:
+def _create_twin_lots(
+    op_a: EOp,
+    op_b: EOp,
+    tg: TwinGroup,
+    oee_default: float = DEFAULT_OEE,
+    min_prod: float = MIN_PROD_MIN,
+) -> list[Lot]:
     """Create twin super-op lots.
 
     Factory rules for twin (peças gémeas) production:
-    - Both have demand → SAME qty for both (max eco lot). Smaller demand gets surplus.
+    - Both have demand → each SKU uses its own eco lot independently.
     - Only one has demand → only that one produces, other gets 0.
     - Time = ONE run for max(time_a, time_b).
     """
@@ -137,9 +175,8 @@ def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = 
         eco_b = _apply_eco_lot(need_b, op_b.eco_lot) if need_b > 0 else 0
 
         if eco_a > 0 and eco_b > 0:
-            # BOTH need production → max eco lot for BOTH (same qty)
-            qty = max(eco_a, eco_b)
-            qty_a, qty_b = qty, qty
+            # BOTH need production → independent eco lots per SKU.
+            qty_a, qty_b = eco_a, eco_b
         elif eco_a > 0:
             # Only A needs → solo A production
             qty_a, qty_b = eco_a, 0
@@ -163,26 +200,58 @@ def _create_twin_lots(op_a: EOp, op_b: EOp, tg: TwinGroup, oee_default: float = 
             (op_b.id, op_b.sku, qty_b),
         ]
 
-        lots.append(Lot(
-            id=f"LOT_TWIN_{tg.tool_id}_{day_idx}",
-            op_id=primary_op.id,
-            tool_id=tg.tool_id,
-            machine_id=tg.machine_id,
-            alt_machine_id=op_a.alt,
-            qty=primary_qty,
-            prod_min=prod_min,
-            setup_min=setup_min,
-            edd=day_idx,
-            is_twin=True,
-            twin_outputs=twin_outputs,
-        ))
+        internal_deadline = min(
+            _internal_deadline(op_a, day_idx) if qty_a > 0 else day_idx,
+            _internal_deadline(op_b, day_idx) if qty_b > 0 else day_idx,
+        )
+        target_start_day = min(
+            _target_start_day(op_a, day_idx) if qty_a > 0 else day_idx,
+            _target_start_day(op_b, day_idx) if qty_b > 0 else day_idx,
+        )
+
+        lots.append(
+            Lot(
+                id=f"LOT_TWIN_{tg.tool_id}_{day_idx}",
+                op_id=primary_op.id,
+                tool_id=tg.tool_id,
+                machine_id=tg.machine_id,
+                alt_machine_id=op_a.alt,
+                qty=primary_qty,
+                prod_min=prod_min,
+                setup_min=setup_min,
+                edd=internal_deadline,
+                is_twin=True,
+                twin_outputs=twin_outputs,
+                original_edd=day_idx,
+                internal_deadline=internal_deadline,
+                delivery_day=day_idx,
+                eco_lot_isop=primary_op.eco_lot_isop,
+                eco_lot_effective=primary_op.eco_lot_effective
+                if primary_op.eco_lot_effective is not None
+                else primary_op.eco_lot,
+                start_buffer_days=max(op_a.start_buffer_days, op_b.start_buffer_days),
+                finish_buffer_days=max(op_a.finish_buffer_days, op_b.finish_buffer_days),
+                target_start_day=target_start_day,
+                min_campaign_qty=primary_op.min_campaign_qty,
+                min_campaign_prod_min=primary_op.min_campaign_prod_min,
+                max_group_gap_days=primary_op.max_group_gap_days,
+                planning_source="twin",
+                subcontract_company_id=primary_op.subcontract_company_id,
+                subcontract_lead_time_days=primary_op.subcontract_lead_time_days,
+                subcontract_buffer_days=primary_op.subcontract_buffer_days,
+            )
+        )
 
     lots = _merge_complementary_twin_lots(lots, op_a, op_b, oee)
     return lots
 
 
 def _merge_complementary_twin_lots(
-    lots: list[Lot], op_a: EOp, op_b: EOp, oee: float, max_gap: int = 5,
+    lots: list[Lot],
+    op_a: EOp,
+    op_b: EOp,
+    oee: float,
+    max_gap: int = 5,
 ) -> list[Lot]:
     """Merge complementary twin lots into single co-produced runs.
 
@@ -258,22 +327,54 @@ def _merge_complementary_twin_lots(
             primary_op = op_a if qty_a >= qty_b else op_b
             edd = min(lot_a.edd, lot_b.edd)
 
-            merged.append(Lot(
-                id=f"{lot_a.id}_m",
-                op_id=primary_op.id,
-                tool_id=lot_a.tool_id,
-                machine_id=lot_a.machine_id,
-                alt_machine_id=lot_a.alt_machine_id,
-                qty=qty,
-                prod_min=prod_min,
-                setup_min=lot_a.setup_min,
-                edd=edd,
-                is_twin=True,
-                twin_outputs=[
-                    (op_a.id, op_a.sku, qty_a),
-                    (op_b.id, op_b.sku, qty_b),
-                ],
-            ))
+            merged.append(
+                Lot(
+                    id=f"{lot_a.id}_m",
+                    op_id=primary_op.id,
+                    tool_id=lot_a.tool_id,
+                    machine_id=lot_a.machine_id,
+                    alt_machine_id=lot_a.alt_machine_id,
+                    qty=qty,
+                    prod_min=prod_min,
+                    setup_min=lot_a.setup_min,
+                    edd=edd,
+                    is_twin=True,
+                    twin_outputs=[
+                        (op_a.id, op_a.sku, qty_a),
+                        (op_b.id, op_b.sku, qty_b),
+                    ],
+                    original_edd=min(
+                        lot_a.original_edd if lot_a.original_edd is not None else lot_a.edd,
+                        lot_b.original_edd if lot_b.original_edd is not None else lot_b.edd,
+                    ),
+                    internal_deadline=edd,
+                    delivery_day=min(
+                        lot_a.delivery_day if lot_a.delivery_day is not None else lot_a.edd,
+                        lot_b.delivery_day if lot_b.delivery_day is not None else lot_b.edd,
+                    ),
+                    eco_lot_isop=primary_op.eco_lot_isop,
+                    eco_lot_effective=primary_op.eco_lot_effective
+                    if primary_op.eco_lot_effective is not None
+                    else primary_op.eco_lot,
+                    start_buffer_days=max(lot_a.start_buffer_days, lot_b.start_buffer_days),
+                    finish_buffer_days=max(lot_a.finish_buffer_days, lot_b.finish_buffer_days),
+                    target_start_day=min(
+                        lot_a.target_start_day
+                        if lot_a.target_start_day is not None
+                        else lot_a.edd,
+                        lot_b.target_start_day
+                        if lot_b.target_start_day is not None
+                        else lot_b.edd,
+                    ),
+                    min_campaign_qty=primary_op.min_campaign_qty,
+                    min_campaign_prod_min=primary_op.min_campaign_prod_min,
+                    max_group_gap_days=primary_op.max_group_gap_days,
+                    planning_source="twin_merged",
+                    subcontract_company_id=primary_op.subcontract_company_id,
+                    subcontract_lead_time_days=primary_op.subcontract_lead_time_days,
+                    subcontract_buffer_days=primary_op.subcontract_buffer_days,
+                )
+            )
         else:
             merged.append(lot)
 
@@ -286,3 +387,87 @@ def _apply_eco_lot(demand: int, eco_lot: int) -> int:
     if eco_lot <= 0 or demand <= 0:
         return demand
     return math.ceil(demand / eco_lot) * eco_lot
+
+
+def _internal_deadline(op: EOp, delivery_day: int) -> int:
+    """Deadline used by the scheduler after buffers and subcontract lead time."""
+    return effective_internal_deadline_for_op(op, delivery_day)
+
+
+def _target_start_day(op: EOp, delivery_day: int) -> int:
+    """Target start day used for scoring/advisory windows."""
+    return max(0, delivery_day - op.start_buffer_days)
+
+
+def _requested_qty_with_campaign(
+    op: EOp,
+    day_idx: int,
+    deficit: int,
+    oee: float,
+) -> tuple[int, str | None]:
+    """Apply per-SKU campaign minima before eco-lot rounding."""
+    requested = deficit
+    source = None
+
+    if op.max_group_gap_days is not None and op.max_group_gap_days > 0:
+        grouped = deficit
+        end_day = min(len(op.d), day_idx + op.max_group_gap_days + 1)
+        for future_day in range(day_idx + 1, end_day):
+            grouped += max(0, op.d[future_day])
+        if grouped > requested:
+            requested = grouped
+            source = "campaign_window"
+
+    if op.min_campaign_qty is not None and op.min_campaign_qty > requested:
+        requested = op.min_campaign_qty
+        source = "min_campaign_qty"
+
+    if (
+        op.min_campaign_prod_min is not None
+        and op.min_campaign_prod_min > 0
+        and op.pH > 0
+        and oee > 0
+    ):
+        min_qty_for_time = math.ceil((op.min_campaign_prod_min / 60.0) * op.pH * oee)
+        if min_qty_for_time > requested:
+            requested = min_qty_for_time
+            source = "min_campaign_prod_min"
+
+    return requested, source
+
+
+def _planning_source(
+    op: EOp,
+    deficit: int,
+    requested_qty: int,
+    final_qty: int,
+    campaign_source: str | None,
+) -> str:
+    if op.subcontract_company_id:
+        return "subcontract"
+    if campaign_source is not None and requested_qty > deficit:
+        return campaign_source
+    if final_qty > requested_qty:
+        if op.eco_lot_isop != op.eco_lot_effective:
+            return "eco_lot_override"
+        return "eco_lot"
+    if final_qty == deficit:
+        return "exact_shortfall"
+    return "planning_rule"
+
+
+def _economic_warning(
+    deficit: int,
+    qty: int,
+    prod_min: float,
+    setup_min: float,
+    planning_source: str,
+) -> str | None:
+    if planning_source != "exact_shortfall":
+        return None
+    if qty <= max(deficit, 0) and setup_min >= 15 and prod_min < 10 and setup_min >= prod_min * 3:
+        return (
+            "Micro-produção por falta exacta: cobre procura pendente, "
+            "mas o setup é alto face ao tempo produtivo."
+        )
+    return None

@@ -12,9 +12,7 @@ import sqlite3
 
 from .types import ISContext, SchedulerParams, StudyResult
 
-DEFAULT_DB_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "learning.db"
-)
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "learning.db")
 
 
 class LearnStore:
@@ -93,8 +91,7 @@ class LearnStore:
     def load_best_params(self) -> SchedulerParams | None:
         """Load best params from history (highest reward)."""
         row = self._conn.execute(
-            "SELECT best_params_json FROM studies "
-            "ORDER BY reward DESC LIMIT 1"
+            "SELECT best_params_json FROM studies ORDER BY reward DESC LIMIT 1"
         ).fetchone()
         if row and row[0]:
             return SchedulerParams.from_dict(json.loads(row[0]))

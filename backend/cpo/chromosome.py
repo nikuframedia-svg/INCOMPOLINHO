@@ -1,4 +1,4 @@
-"""Chromosome encoding for CPO v3.0.
+"""Offline chromosome encoding for CPO v4 tuning helpers.
 
 Gene groups:
   G1: edd_gap (int [5..30])        — tool_grouping split threshold
@@ -11,12 +11,12 @@ Gene groups:
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import pickle
 import random
 from dataclasses import dataclass, field
 
+from backend.config.types import FactoryConfig
 
 # Gene bounds
 G1_RANGE = (5, 30)
@@ -70,6 +70,7 @@ class Chromosome:
     def from_baseline(
         runs: list,
         machine_runs: dict[str, list],
+        config: FactoryConfig | None = None,
     ) -> Chromosome:
         """Create chromosome encoding the baseline (greedy) schedule.
 
@@ -95,17 +96,19 @@ class Chromosome:
 
         # G7: crew_priority — order machines by utilisation (heaviest first)
         machine_ids = sorted(machine_runs.keys())
-        crew_priority = sorted(machine_ids, key=lambda m: sum(
-            r.total_min for r in machine_runs.get(m, [])
-        ), reverse=True)
+        crew_priority = sorted(
+            machine_ids,
+            key=lambda m: sum(r.total_min for r in machine_runs.get(m, [])),
+            reverse=True,
+        )
 
         return Chromosome(
-            edd_gap=10,
-            max_edd_span=30,
+            edd_gap=config.max_edd_gap if config else 10,
+            max_edd_span=config.max_edd_span if config else 30,
             machine_choice=machine_choice,
             sequence_keys=sequence_keys,
-            buffer_pct=0.05,
-            campaign_window=15,
+            buffer_pct=config.jit_buffer_pct if config else 0.05,
+            campaign_window=config.campaign_window if config else 15,
             crew_priority=crew_priority,
         )
 
@@ -182,9 +185,7 @@ def mutate_crew_priority(chrom: Chromosome, rng: random.Random) -> Chromosome:
     if len(c.crew_priority) < 2:
         return c
     i = rng.randint(0, len(c.crew_priority) - 2)
-    c.crew_priority[i], c.crew_priority[i + 1] = (
-        c.crew_priority[i + 1], c.crew_priority[i]
-    )
+    c.crew_priority[i], c.crew_priority[i + 1] = (c.crew_priority[i + 1], c.crew_priority[i])
     return c
 
 
@@ -192,9 +193,15 @@ def mutate_strong(chrom: Chromosome, rng: random.Random) -> Chromosome:
     """Strong shake: randomize 3-5 genes."""
     c = chrom.clone()
     n = rng.randint(3, 5)
-    ops = [mutate_edd_gap, mutate_edd_span, mutate_machine,
-           mutate_sequence_swap, mutate_buffer, mutate_campaign,
-           mutate_crew_priority]
+    ops = [
+        mutate_edd_gap,
+        mutate_edd_span,
+        mutate_machine,
+        mutate_sequence_swap,
+        mutate_buffer,
+        mutate_campaign,
+        mutate_crew_priority,
+    ]
     for op in rng.sample(ops, min(n, len(ops))):
         c = op(c, rng)
     return c

@@ -41,6 +41,8 @@ class StockProjection:
     coverage_days: float
     total_demand: int
     total_produced: int
+    subcontract_company_id: str | None = None
+    internal_deadline_min: int | None = None
 
 
 def build_production_by_op(
@@ -150,7 +152,9 @@ def compute_stock_projections(
             days.append(
                 StockDay(
                     day_idx=day_idx,
-                    date=engine_data.workdays[day_idx] if day_idx < len(engine_data.workdays) else "",
+                    date=engine_data.workdays[day_idx]
+                    if day_idx < len(engine_data.workdays)
+                    else "",
                     demand=demand,
                     produced=produced,
                     cum_demand=cum_demand,
@@ -173,6 +177,8 @@ def compute_stock_projections(
                 coverage_days=coverage,
                 total_demand=cum_demand,
                 total_produced=cum_produced,
+                subcontract_company_id=op.subcontract_company_id,
+                internal_deadline_min=_first_internal_deadline(op),
             )
         )
 
@@ -189,3 +195,16 @@ def _calc_coverage(days: list[StockDay]) -> float:
         if d.stock < 0:
             return float(d.day_idx)
     return float(n_regular)
+
+
+def _first_internal_deadline(op) -> int | None:
+    """Earliest effective deadline for this SKU after planning/subcontract buffers."""
+    buffer_days = (
+        getattr(op, "finish_buffer_days", 0)
+        + getattr(op, "subcontract_lead_time_days", 0)
+        + getattr(op, "subcontract_buffer_days", 0)
+    )
+    for day_idx, demand in enumerate(op.d):
+        if demand > 0:
+            return max(0, day_idx - buffer_days)
+    return None

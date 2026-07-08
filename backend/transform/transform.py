@@ -124,9 +124,7 @@ def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
     )
 
 
-def _resolve_holidays(
-    workdays: list[str], master_data: dict[str, Any] | None
-) -> list[int]:
+def _resolve_holidays(workdays: list[str], master_data: dict[str, Any] | None) -> list[int]:
     """Convert holiday date strings from YAML to workday indices.
 
     Also auto-detects weekends (Saturday=5, Sunday=6) as holidays.
@@ -155,9 +153,7 @@ def _resolve_holidays(
     return sorted(indices_set)
 
 
-def _build_machines(
-    ops: list[EOp], master_data: dict[str, Any] | None
-) -> list[MachineInfo]:
+def _build_machines(ops: list[EOp], master_data: dict[str, Any] | None) -> list[MachineInfo]:
     """Build machine list from ops + YAML machine config."""
     machine_config: dict[str, dict[str, Any]] = {}
     if master_data:
@@ -172,8 +168,6 @@ def _build_machines(
             cfg = machine_config.get(op.m, {})
             group = cfg.get("group", _DEFAULT_GROUP)
             capacity = cfg.get("day_capacity_min", _DEFAULT_DAY_CAPACITY)
-            machines.append(
-                MachineInfo(id=op.m, group=group, day_capacity=capacity)
-            )
+            machines.append(MachineInfo(id=op.m, group=group, day_capacity=capacity))
 
     return machines

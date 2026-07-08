@@ -32,21 +32,25 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({
       mutations: [...mutations, { type: "", params: {}, _key: nextKey }],
       nextKey: nextKey + 1,
+      result: null,
     });
   },
 
   removeMutation: (key) => set((s) => ({
     mutations: s.mutations.filter((m) => m._key !== key),
+    result: null,
   })),
 
   updateMutationType: (key, type) => set((s) => ({
     mutations: s.mutations.map((m) => m._key === key ? { ...m, type, params: {} } : m),
+    result: null,
   })),
 
   updateMutationParam: (key, paramKey, value) => set((s) => ({
     mutations: s.mutations.map((m) =>
       m._key === key ? { ...m, params: { ...m.params, [paramKey]: value } } : m,
     ),
+    result: null,
   })),
 
   clear: () => set({ mutations: [], result: null, ctpResult: null, nextKey: 0 }),

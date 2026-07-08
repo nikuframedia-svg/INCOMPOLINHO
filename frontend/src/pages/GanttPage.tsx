@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { T, toolColor } from "../theme/tokens";
 import { useDataStore } from "../stores/useDataStore";
 import { getWorkdays } from "../api/endpoints";
-import type { Segment, Score } from "../api/types";
+import type { FactoryConfig, Lot, MutationInput, Score, Segment } from "../api/types";
 import { Card } from "../components/ui/Card";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Modal } from "../components/ui/Modal";
 import { Pill } from "../components/ui/Pill";
 import { Dot } from "../components/ui/Dot";
+import { LateDeliveriesModal } from "../components/LateDeliveriesModal";
 
 const DEFAULT_DAY_W = 110;
 const LANE_H = 60;
@@ -17,6 +18,14 @@ const DAY_CAP = 1020;
 const FALLBACK_MACHINES = ["PRM019", "PRM031", "PRM039", "PRM042", "PRM043"];
 const SINGLE_BAR_H = 52;
 const SINGLE_BAR_PAD = 8;
+
+type GanttOverlay = {
+  kind: "machine_down" | "tool_down";
+  machine_id: string;
+  tool_id?: string;
+  day_idx: number;
+  label: string;
+};
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -72,8 +81,66 @@ function buildDayLogic(segs: Segment[], dayIdx: number): string {
   return parts.join(". ") + ".";
 }
 
+function numericParam(params: Record<string, unknown>, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const raw = params[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function toolMachines(config: FactoryConfig | null, toolId: string, fallback: string[]): string[] {
+  const tool = config?.tools?.[toolId];
+  const machines = [tool?.primary, tool?.alt].filter((m): m is string => Boolean(m));
+  return machines.length > 0 ? [...new Set(machines)] : fallback;
+}
+
+function buildOverlays(
+  mutations: MutationInput[],
+  machines: string[],
+  config: FactoryConfig | null,
+): GanttOverlay[] {
+  const overlays: GanttOverlay[] = [];
+  for (const mutation of mutations) {
+    const start = numericParam(mutation.params, "start", "from_day", "day_idx");
+    const end = numericParam(mutation.params, "end", "to_day", "day_idx");
+    if (start === null || end === null) continue;
+    if (mutation.type === "machine_down") {
+      const machineId = String(mutation.params.machine_id ?? mutation.params.machine ?? "");
+      if (!machineId) continue;
+      for (let day = start; day <= end; day += 1) {
+        overlays.push({
+          kind: "machine_down",
+          machine_id: machineId,
+          day_idx: day,
+          label: `${machineId} parada`,
+        });
+      }
+    }
+    if (mutation.type === "tool_down") {
+      const toolId = String(mutation.params.tool_id ?? mutation.params.tool ?? "");
+      if (!toolId) continue;
+      for (const machineId of toolMachines(config, toolId, machines)) {
+        for (let day = start; day <= end; day += 1) {
+          overlays.push({
+            kind: "tool_down",
+            machine_id: machineId,
+            tool_id: toolId,
+            day_idx: day,
+            label: `${toolId} indisponível`,
+          });
+        }
+      }
+    }
+  }
+  return overlays;
+}
+
 function exportGantt(
   segs: Segment[],
+  lots: Lot[] | null,
   score: Score,
   workdays: string[],
   dayRange: [number, number] | null,
@@ -86,17 +153,19 @@ function exportGantt(
   // Section 1: Segments
   lines.push("--- SEGMENTOS ---");
   lines.push(
-    "Máquina,Dia,Data,Turno,Ferramenta,SKU,Quantidade,Setup(min),Produção(min),Início(min),Fim(min),EDD,Continuação,Gémeos,Twin_SKU_1,Twin_Qty_1,Twin_SKU_2,Twin_Qty_2",
+    "Máquina,Dia,Data,Turno,Ferramenta,SKU,Segment_Qty,Lot_Qty,Setup(min),Produção(min),Início(min),Fim(min),EDD,Continuação,Gémeos,Twin_SKU_1,Twin_Qty_1,Twin_SKU_2,Twin_Qty_2",
   );
+  const lotMap = new Map((lots ?? []).map((lot) => [lot.id, lot.qty]));
   const sorted = [...rangeSegs].sort(
     (a, b) => a.day_idx - b.day_idx || a.machine_id.localeCompare(b.machine_id) || a.start_min - b.start_min,
   );
   for (const s of sorted) {
     const date = workdays[s.day_idx] ?? "";
+    const lotQty = lotMap.get(s.lot_id) ?? s.qty;
     lines.push(
       [
         s.machine_id, s.day_idx, date, s.shift, s.tool_id,
-        `"${s.sku}"`, s.qty, s.setup_min.toFixed(1), s.prod_min.toFixed(1),
+        `"${s.sku}"`, s.qty, lotQty, s.setup_min.toFixed(1), s.prod_min.toFixed(1),
         s.start_min, s.end_min, s.edd,
         s.is_continuation ? "Sim" : "Não",
         s.twin_outputs ? "Sim" : "Não",
@@ -191,9 +260,11 @@ const btnStyle = (active: boolean): React.CSSProperties => ({
 
 export function GanttPage() {
   const segments = useDataStore((s) => s.segments);
+  const lots = useDataStore((s) => s.lots);
   const score = useDataStore((s) => s.score);
   const config = useDataStore((s) => s.config);
   const learning = useDataStore((s) => s.learning);
+  const activeMutations = useDataStore((s) => s.activeMutations);
 
   const machines = useMemo(() => {
     if (!config?.machines) return FALLBACK_MACHINES;
@@ -202,6 +273,13 @@ export function GanttPage() {
       .map(([id]) => id)
       .sort();
   }, [config]);
+
+  const overlays = useMemo(
+    () => buildOverlays(activeMutations, machines, config),
+    [activeMutations, machines, config],
+  );
+
+  const lotById = useMemo(() => new Map((lots ?? []).map((lot) => [lot.id, lot])), [lots]);
 
   const [view, setView] = useState<"gantt" | "tabela">("gantt");
   const [sel, setSel] = useState<Segment | null>(null);
@@ -213,6 +291,7 @@ export function GanttPage() {
   const [rangeTo, setRangeTo] = useState("");
   const [currentDay, setCurrentDay] = useState(0);
   const [currentDayInitialized, setCurrentDayInitialized] = useState(false);
+  const [showLate, setShowLate] = useState(false);
 
   const isSingleDay = dayRange !== null && dayRange[0] === dayRange[1];
 
@@ -225,9 +304,11 @@ export function GanttPage() {
   }, []);
 
   const minDay = useMemo(() => {
-    if (!segments?.length) return 0;
-    return Math.min(...segments.map((s) => s.day_idx));
-  }, [segments]);
+    const segmentDays = segments?.map((s) => s.day_idx) ?? [];
+    const overlayDays = overlays.map((o) => o.day_idx);
+    if (!segmentDays.length && !overlayDays.length) return 0;
+    return Math.min(...segmentDays, ...overlayDays);
+  }, [segments, overlays]);
 
   // Initialize currentDay to minDay on first load
   useEffect(() => {
@@ -238,9 +319,11 @@ export function GanttPage() {
   }, [minDay, segments, currentDayInitialized]);
 
   const nDays = useMemo(() => {
-    if (!segments?.length) return 14;
-    return Math.max(...segments.map((s) => s.day_idx)) + 1;
-  }, [segments]);
+    const segmentDays = segments?.map((s) => s.day_idx) ?? [];
+    const overlayDays = overlays.map((o) => o.day_idx);
+    if (!segmentDays.length && !overlayDays.length) return 14;
+    return Math.max(...segmentDays, ...overlayDays) + 1;
+  }, [segments, overlays]);
 
   const filtered = useMemo(() => {
     if (!segments) return [];
@@ -259,6 +342,11 @@ export function GanttPage() {
     if (!dayRange) return filtered;
     return filtered.filter((s) => s.day_idx >= dayRange[0] && s.day_idx <= dayRange[1]);
   }, [filtered, dayRange]);
+
+  const visibleOverlays = useMemo(() => {
+    if (!dayRange) return overlays;
+    return overlays.filter((o) => o.day_idx >= dayRange[0] && o.day_idx <= dayRange[1]);
+  }, [overlays, dayRange]);
 
   const rangeOffset = dayRange?.[0] ?? minDay;
 
@@ -349,27 +437,42 @@ export function GanttPage() {
               { l: "Atrasos", v: score.tardy_count, c: score.tardy_count > 0 ? T.red : T.green },
               { l: "Setups", v: score.setups },
               { l: "Antecipação", v: `${score.earliness_avg_days?.toFixed(1)}d` },
-            ].map((k, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                <span style={{ fontSize: 12, color: T.tertiary }}>{k.l}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: k.c || T.primary, fontFamily: T.mono }}>
-                  {k.v}
-                </span>
-              </div>
-            ))}
+            ].map((k, i) => {
+              const clickable = k.l === "Atrasos";
+              return (
+                <div
+                  key={i}
+                  onClick={clickable ? () => setShowLate(true) : undefined}
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 6,
+                    cursor: clickable ? "pointer" : "default",
+                  }}
+                >
+                  <span style={{ fontSize: 12, color: T.tertiary }}>{k.l}</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: k.c || T.primary, fontFamily: T.mono }}>
+                    {k.v}
+                  </span>
+                </div>
+              );
+            })}
           {learning?.optimized && (() => {
             const badgeColor =
               learning.confidence === "high" ? T.green :
               learning.confidence === "medium" ? T.orange : T.secondary;
             const label =
               learning.confidence === "high" ? "alta" :
-              learning.confidence === "medium" ? "média" : "baixa";
+              learning.confidence === "medium" ? "média" : null;
             const imp = learning.improvement;
             return (
               <Pill color={badgeColor}>
                 <Dot color={badgeColor} size={5} />
                 <span style={{ marginLeft: 4 }}>
-                  Optimizado ({label} confiança) — {learning.n_trials} trials
+                  Optimizado
+                  {label && ` (${label} confiança)`}
+                  {learning.mode && ` — ${learning.mode}`}
+                  {learning.n_trials != null && ` — ${learning.n_trials} trials`}
                   {imp?.earliness_delta != null && imp.earliness_delta !== 0 && `, earliness ${imp.earliness_delta > 0 ? "+" : ""}${imp.earliness_delta}d`}
                   {imp?.setups_delta != null && imp.setups_delta !== 0 && `, setups ${imp.setups_delta > 0 ? "+" : ""}${imp.setups_delta}`}
                 </span>
@@ -485,7 +588,7 @@ export function GanttPage() {
 
         {/* Export button */}
         <button
-          onClick={() => score && exportGantt(segments, score, workdays, dayRange)}
+          onClick={() => score && exportGantt(segments, lots, score, workdays, dayRange)}
           style={{
             ...inputStyle,
             cursor: "pointer",
@@ -692,6 +795,7 @@ export function GanttPage() {
 
             return machines.map((m) => {
               const machineSegs = visibleSegs.filter((s) => s.machine_id === m);
+              const machineOverlays = visibleOverlays.filter((o) => o.machine_id === m);
               const laneH = isSingleDay
                 ? SINGLE_BAR_PAD + SINGLE_BAR_H + SINGLE_BAR_PAD
                 : LANE_H;
@@ -766,8 +870,35 @@ export function GanttPage() {
                         ))}
                       </>
                     )}
+                    {/* Availability overlays */}
+                    {machineOverlays.map((overlay) => {
+                      const left = isSingleDay ? 0 : (overlay.day_idx - rangeOffset) * dayW;
+                      const width = isSingleDay ? totalW : dayW;
+                      const color = overlay.kind === "machine_down" ? T.red : T.orange;
+                      return (
+                        <div
+                          key={`${overlay.kind}-${overlay.machine_id}-${overlay.tool_id ?? ""}-${overlay.day_idx}`}
+                          title={`${overlay.label} · dia ${overlay.day_idx}`}
+                          style={{
+                            position: "absolute",
+                            left,
+                            top: 0,
+                            width,
+                            bottom: 0,
+                            zIndex: 0,
+                            pointerEvents: "none",
+                            background: `${color}12`,
+                            backgroundImage: `repeating-linear-gradient(-45deg, transparent, transparent 6px, ${color}1f 6px, ${color}1f 12px)`,
+                            borderLeft: `1px solid ${color}55`,
+                            borderRight: `1px solid ${color}22`,
+                          }}
+                        />
+                      );
+                    })}
                     {/* Segments */}
                     {machineSegs.map((s) => {
+                      const lot = lotById.get(s.lot_id);
+                      const lotQty = s.lot_qty || lot?.qty || s.qty;
                       const left = isSingleDay
                         ? ((s.start_min - DAY_START) / DAY_CAP) * totalW
                         : (s.day_idx - rangeOffset) * dayW + ((s.start_min - DAY_START) / DAY_CAP) * dayW;
@@ -780,7 +911,7 @@ export function GanttPage() {
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}
-                          title={`${s.tool_id} | ${s.sku} | ${s.qty.toLocaleString()} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | EDD d${s.edd}${s.twin_outputs ? " | Twin" : ""}`}
+                          title={`${s.tool_id} | ${s.sku} | Segmento: ${s.qty.toLocaleString()} pç | Lote: ${lotQty.toLocaleString()} pç | Eco: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString()} | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | Fim obrigatório d${s.internal_deadline ?? s.edd}${s.twin_outputs ? " | Twin" : ""}`}
                           onClick={() => setSel(s)}
                           style={{
                             position: "absolute",
@@ -789,6 +920,7 @@ export function GanttPage() {
                             width,
                             height: barH,
                             background: `${col}18`,
+                            zIndex: 2,
                             borderRadius: 5,
                             cursor: "pointer",
                             border: `1px solid ${col}55`,
@@ -842,12 +974,12 @@ export function GanttPage() {
                                 }}>
                                   {s.twin_outputs
                                     ? s.twin_outputs.map(([, sku, qty]: [string, string, number]) => `${sku}: ${qty.toLocaleString()}`).join(" + ")
-                                    : `${s.sku} · ${s.qty.toLocaleString()} pç`}
+                                    : `Segmento ${s.qty.toLocaleString()} · Lote ${lotQty.toLocaleString()} pç`}
                                 </span>
                               )}
                               {width > 100 && (
                                 <span style={{ fontSize: 8, color: T.tertiary, lineHeight: 1.3 }}>
-                                  {s.prod_min.toFixed(0)}m prod · {s.shift}
+                                  {s.prod_min.toFixed(0)}m prod · {s.planning_source ?? "isop"}
                                 </span>
                               )}
                             </div>
@@ -938,7 +1070,7 @@ export function GanttPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ position: "sticky", top: 0, background: T.card }}>
-                {["Máq", "Dia", "Data", "Turno", "Tool", "SKU", "Qty", "Setup", "Prod", "EDD"].map((h) => (
+                {["Máq", "Dia", "Data", "Turno", "Tool", "SKU", "Segmento", "Lote", "Setup", "Prod", "EDD"].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -958,6 +1090,7 @@ export function GanttPage() {
             <tbody>
               {visibleSegs.slice(0, 200).map((s, i) => {
                 const dt = workdays[s.day_idx] ? fmtDate(workdays[s.day_idx]) : null;
+                const lotQty = s.lot_qty || lotById.get(s.lot_id)?.qty || s.qty;
                 return (
                   <tr
                     key={i}
@@ -971,6 +1104,7 @@ export function GanttPage() {
                     <td style={{ padding: "8px 14px", fontSize: 12, color: toolColor(s.tool_id), fontWeight: 500 }}>{s.tool_id}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary, fontFamily: T.mono }}>{s.sku}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.qty}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{lotQty}</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: s.setup_min > 0 ? T.orange : T.tertiary }}>{s.setup_min.toFixed(0)}m</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.prod_min.toFixed(0)}m</td>
                     <td style={{ padding: "8px 14px", fontSize: 12, color: T.secondary }}>{s.edd}</td>
@@ -1040,31 +1174,34 @@ export function GanttPage() {
                           ? " (sem setup — continuação)"
                           : ""}
                     </div>
-                    {toolSegs.map((s, si) => (
-                      <div key={si} style={{ fontSize: 11, color: T.secondary, marginLeft: 8, lineHeight: 1.6 }}>
-                        → {s.qty.toLocaleString()} pç ({s.sku})
-                        {s.twin_outputs && (
-                          <span style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: T.blue,
-                            background: `${T.blue}15`,
-                            borderRadius: 3,
-                            padding: "0 3px",
-                            marginLeft: 4,
-                          }}>
-                            T
-                          </span>
-                        )}
-                        {s.twin_outputs && (
-                          <div style={{ marginLeft: 12, fontSize: 10, color: T.tertiary }}>
-                            {s.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => (
-                              <div key={i}>↳ {sku}: {qty.toLocaleString()} pç{qty === 0 ? " (sem produção)" : ""}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                    {toolSegs.map((s, si) => {
+                      const lotQty = s.lot_qty || lotById.get(s.lot_id)?.qty || s.qty;
+                      return (
+                        <div key={si} style={{ fontSize: 11, color: T.secondary, marginLeft: 8, lineHeight: 1.6 }}>
+                          → Segmento {s.qty.toLocaleString()} pç · Lote {lotQty.toLocaleString()} pç ({s.sku})
+                          {s.twin_outputs && (
+                            <span style={{
+                              fontSize: 9,
+                              fontWeight: 700,
+                              color: T.blue,
+                              background: `${T.blue}15`,
+                              borderRadius: 3,
+                              padding: "0 3px",
+                              marginLeft: 4,
+                            }}>
+                              T
+                            </span>
+                          )}
+                          {s.twin_outputs && (
+                            <div style={{ marginLeft: 12, fontSize: 10, color: T.tertiary }}>
+                              {s.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => (
+                                <div key={i}>↳ {sku}: {qty.toLocaleString()} pç{qty === 0 ? " (sem produção)" : ""}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -1088,43 +1225,62 @@ export function GanttPage() {
       {/* Segment detail modal */}
       {sel && (
         <Modal title="Segmento" onClose={() => setSel(null)}>
-          {[
-            ["Máquina", sel.machine_id],
-            ["Dia", `${sel.day_idx}${workdays[sel.day_idx] ? ` (${fmtDate(workdays[sel.day_idx]).short})` : ""}`],
-            ["Turno", sel.shift],
-            ["Ferramenta", sel.tool_id],
-            ["SKU", sel.sku],
-            ["Quantidade", sel.qty],
-            ["Setup", `${sel.setup_min.toFixed(1)} min`],
-            ["Produção", `${sel.prod_min.toFixed(1)} min`],
-            ["Início", fmtMin(sel.start_min)],
-            ["Fim", fmtMin(sel.end_min)],
-            ["EDD", `Dia ${sel.edd}${workdays[sel.edd] ? ` (${fmtDate(workdays[sel.edd]).short})` : ""}`],
-            ["Lot", sel.lot_id],
-            ["Continuação", sel.is_continuation ? "Sim" : "Não"],
-            ["Gémeos", sel.twin_outputs ? "Sim" : "Não"],
-            ...(sel.twin_outputs
-              ? sel.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => [
-                  `  Twin ${i + 1}`,
-                  `${qty.toLocaleString()} pç (${sku})`,
-                ])
-              : []),
-          ].map(([k, v]) => (
-            <div
-              key={String(k)}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                padding: "10px 0",
-                borderBottom: `1px solid ${T.border}`,
-              }}
-            >
-              <span style={{ fontSize: 13, color: T.secondary }}>{k}</span>
-              <span style={{ fontSize: 13, color: T.primary, fontWeight: 500, fontFamily: T.mono }}>{String(v)}</span>
-            </div>
-          ))}
+          {(() => {
+            const selectedLot = lotById.get(sel.lot_id);
+            const selectedLotQty = sel.lot_qty || selectedLot?.qty || sel.qty;
+            const fmtDay = (day: number | null | undefined) =>
+              day == null ? "-" : `Dia ${day}${workdays[day] ? ` (${fmtDate(workdays[day]).short})` : ""}`;
+            return [
+              ["Máquina", sel.machine_id],
+              ["Dia", `${sel.day_idx}${workdays[sel.day_idx] ? ` (${fmtDate(workdays[sel.day_idx]).short})` : ""}`],
+              ["Turno", sel.shift],
+              ["Ferramenta", sel.tool_id],
+              ["SKU", sel.sku],
+              ["Quantidade segmento", sel.qty],
+              ["Quantidade lote", selectedLotQty],
+              ["Quantidade campanha", sel.run_qty ? `${sel.run_qty.toLocaleString()} pç` : "-"],
+              ["Lotes na campanha", sel.run_lot_count || 1],
+              ["Setup segmento", `${sel.setup_min.toFixed(1)} min`],
+              ["Setup campanha/run", `${(sel.run_setup_min ?? sel.setup_min).toFixed(1)} min`],
+              ["Produção", `${sel.prod_min.toFixed(1)} min`],
+              ["Início", fmtMin(sel.start_min)],
+              ["Fim", fmtMin(sel.end_min)],
+              ["Entrega ISOP", fmtDay(sel.delivery_day ?? sel.original_edd ?? sel.edd)],
+              ["Fim obrigatório", fmtDay(sel.internal_deadline ?? sel.edd)],
+              ["Janela começo", fmtDay(sel.target_start_day)],
+              ["Eco lot ISOP", sel.eco_lot_isop ?? selectedLot?.eco_lot_isop ?? "-"],
+              ["Eco lot efetivo", sel.eco_lot_effective ?? selectedLot?.eco_lot_effective ?? "-"],
+              ["Origem planeamento", sel.planning_source ?? selectedLot?.planning_source ?? "isop"],
+              ["Regra campanha", sel.min_campaign_qty || sel.min_campaign_prod_min ? `${sel.min_campaign_qty ?? "-"} pç / ${sel.min_campaign_prod_min ?? "-"} min / ${sel.max_group_gap_days ?? 0} dias` : "-"],
+              ["Subcontratação", sel.subcontract_company_id ? `${sel.subcontract_company_id} · lead ${sel.subcontract_lead_time_days ?? 0}d · buffer ${sel.subcontract_buffer_days ?? 0}d` : "-"],
+              ["Aviso económico", sel.economic_warning ?? selectedLot?.economic_warning ?? "-"],
+              ["Lot", sel.lot_id],
+              ["Continuação", sel.is_continuation ? "Sim" : "Não"],
+              ["Gémeos", sel.twin_outputs ? "Sim" : "Não"],
+              ...(sel.twin_outputs
+                ? sel.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => [
+                    `  Twin ${i + 1}`,
+                    `${qty.toLocaleString()} pç (${sku})`,
+                  ])
+                : []),
+            ].map(([k, v]) => (
+              <div
+                key={String(k)}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  padding: "10px 0",
+                  borderBottom: `1px solid ${T.border}`,
+                }}
+              >
+                <span style={{ fontSize: 13, color: T.secondary }}>{k}</span>
+                <span style={{ fontSize: 13, color: T.primary, fontWeight: 500, fontFamily: T.mono }}>{String(v)}</span>
+              </div>
+            ));
+          })()}
         </Modal>
       )}
+      {showLate && <LateDeliveriesModal onClose={() => setShowLate(false)} />}
     </div>
   );
 }

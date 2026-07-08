@@ -191,7 +191,9 @@ def jit_dispatch(
     baseline_score: dict,
     audit_logger: object | None = None,
     config: FactoryConfig | None = None,
-) -> tuple[list[Segment], list[Lot], list[str], dict[str, list[ToolRun]] | None, dict[str, float] | None]:
+) -> tuple[
+    list[Segment], list[Lot], list[str], dict[str, list[ToolRun]] | None, dict[str, float] | None
+]:
     """JIT v3: backward scheduling with EDD-strict ordering + per-machine dispatch.
 
     1. Assign machines (same load balancing as baseline).
@@ -215,12 +217,15 @@ def jit_dispatch(
         jit_machine_runs[m_id].sort(key=lambda r: r.edd)
 
     # Phase 3: Backward-stack gates (on EDD-sorted order for correct cascading)
-    current_gate = _backward_stack_gates(jit_machine_runs, holiday_set, engine_data.n_days, config=config)
+    current_gate = _backward_stack_gates(
+        jit_machine_runs, holiday_set, engine_data.n_days, config=config
+    )
 
     gated_count = sum(1 for g in current_gate.values() if g > 0)
     logger.info(
         "JIT v3: %d/%d runs gated via backward stacking",
-        gated_count, len(runs),
+        gated_count,
+        len(runs),
     )
 
     # Log gate decisions
@@ -240,7 +245,10 @@ def jit_dispatch(
     jit_warns: list[str] = []
     for m_id, m_runs in jit_machine_runs.items():
         m_segs, m_lots, m_warns = per_machine_dispatch(
-            {m_id: m_runs}, engine_data, lst_gate=current_gate, config=config,
+            {m_id: m_runs},
+            engine_data,
+            lst_gate=current_gate,
+            config=config,
         )
         jit_segs.extend(m_segs)
         jit_lots.extend(m_lots)
@@ -285,7 +293,10 @@ def jit_dispatch(
         jit_warns = []
         for m_id, m_runs in jit_machine_runs.items():
             m_segs, m_lots, m_warns = per_machine_dispatch(
-                {m_id: m_runs}, engine_data, lst_gate=current_gate, config=config,
+                {m_id: m_runs},
+                engine_data,
+                lst_gate=current_gate,
+                config=config,
             )
             jit_segs.extend(m_segs)
             jit_lots.extend(m_lots)
@@ -296,11 +307,17 @@ def jit_dispatch(
     if jit_score["tardy_count"] > target_tardy:
         logger.warning(
             "JIT binary search: still tardy %d > %d after %d retries, reverting",
-            jit_score["tardy_count"], target_tardy, max_retries,
+            jit_score["tardy_count"],
+            target_tardy,
+            max_retries,
         )
-        return baseline_segments, baseline_lots, [
-            f"JIT safety net: tardy {jit_score['tardy_count']} > {target_tardy}"
-        ], None, None
+        return (
+            baseline_segments,
+            baseline_lots,
+            [f"JIT safety net: tardy {jit_score['tardy_count']} > {target_tardy}"],
+            None,
+            None,
+        )
 
     logger.info(
         "JIT v3: earliness %.1f → %.1f days",

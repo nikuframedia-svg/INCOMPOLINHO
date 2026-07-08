@@ -6,6 +6,11 @@ from pathlib import Path
 
 import yaml
 
+from .planning import (
+    clean_sku_planning_config,
+    clean_sku_subcontracts,
+    normalize_subcontract_company,
+)
 from .types import FactoryConfig, MachineConfig, ShiftConfig
 
 DEFAULT_CONFIG_PATH = "config/factory.yaml"
@@ -63,7 +68,8 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
     default_tool = tools_raw.get("_default", {})
     if isinstance(default_tool, dict):
         config.default_setup_hours = default_tool.get(
-            "setup_hours", config.default_setup_hours,
+            "setup_hours",
+            config.default_setup_hours,
         )
     for tid, tdata in tools_raw.items():
         if tid == "_default" or not isinstance(tdata, dict):
@@ -100,24 +106,52 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
         config.oee_default = prod.get("oee_default", config.oee_default)
         config.min_prod_min = prod.get("min_prod_min", config.min_prod_min)
         config.eco_lot_mode = prod.get("eco_lot_mode", config.eco_lot_mode)
+        config.subcontract_skus = list(prod.get("subcontract_skus", config.subcontract_skus))
+        config.sku_planning_rules = clean_sku_planning_config(
+            prod.get("sku_planning_rules", config.sku_planning_rules)
+        )
+        companies_raw = prod.get("subcontract_companies", config.subcontract_companies)
+        config.subcontract_companies = [
+            normalize_subcontract_company(c) for c in companies_raw if isinstance(c, dict)
+        ]
+        config.sku_subcontracts = clean_sku_subcontracts(
+            prod.get("sku_subcontracts", config.sku_subcontracts)
+        )
 
     # Scheduler
     sched = raw.get("scheduler", {})
     if sched:
         config.max_run_days = sched.get("max_run_days", config.max_run_days)
         config.max_edd_gap = sched.get("max_edd_gap", config.max_edd_gap)
+        config.max_edd_span = sched.get("max_edd_span", config.max_edd_span)
         config.edd_swap_tolerance = sched.get("edd_swap_tolerance", config.edd_swap_tolerance)
+        config.edd_assign_threshold = sched.get(
+            "edd_assign_threshold",
+            config.edd_assign_threshold,
+        )
         config.lst_safety_buffer = sched.get("lst_safety_buffer", config.lst_safety_buffer)
         config.campaign_window = sched.get("campaign_window", config.campaign_window)
         config.urgency_threshold = sched.get("urgency_threshold", config.urgency_threshold)
         config.interleave_enabled = sched.get("interleave_enabled", config.interleave_enabled)
         config.auto_buffer = sched.get("auto_buffer", config.auto_buffer)
+        config.vns_enabled = sched.get("vns_enabled", config.vns_enabled)
+        config.vns_block_moves_enabled = sched.get(
+            "vns_block_moves_enabled",
+            config.vns_block_moves_enabled,
+        )
+        config.vns_max_iter = sched.get("vns_max_iter", config.vns_max_iter)
+        config.compact_enabled = sched.get("compact_enabled", config.compact_enabled)
+        config.productivity_earliness_ceiling_days = sched.get(
+            "productivity_earliness_ceiling_days",
+            config.productivity_earliness_ceiling_days,
+        )
 
         jit = sched.get("jit", {})
         if jit:
             config.jit_enabled = jit.get("enabled", config.jit_enabled)
             config.jit_buffer_pct = jit.get("buffer_pct", config.jit_buffer_pct)
             config.jit_threshold = jit.get("threshold", config.jit_threshold)
+            config.jit_max_retries = jit.get("max_retries", config.jit_max_retries)
             config.jit_earliness_target = jit.get("earliness_target", config.jit_earliness_target)
 
     # Scoring
@@ -154,17 +188,19 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
     data = {
         "factory": {"name": config.name, "site": config.site, "timezone": config.timezone},
         "shifts": [
-            {"id": s.id, "start": _min_to_time(s.start_min),
-             "end": _min_to_time(s.end_min), "label": s.label}
+            {
+                "id": s.id,
+                "start": _min_to_time(s.start_min),
+                "end": _min_to_time(s.end_min),
+                "label": s.label,
+            }
             for s in config.shifts
         ],
         "machines": {
-            mid: {"group": m.group, "active": m.active,
-                  "day_capacity_min": m.day_capacity_min}
+            mid: {"group": m.group, "active": m.active, "day_capacity_min": m.day_capacity_min}
             for mid, m in config.machines.items()
         },
-        "tools": {"_default": {"setup_hours": config.default_setup_hours},
-                  **config.tools},
+        "tools": {"_default": {"setup_hours": config.default_setup_hours}, **config.tools},
         "twins": config.twins,
         "operators": {
             group: {shift: count for (g, shift), count in config.operators.items() if g == group}
@@ -176,20 +212,32 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
             "oee_default": config.oee_default,
             "eco_lot_mode": config.eco_lot_mode,
             "min_prod_min": config.min_prod_min,
+            "subcontract_skus": config.subcontract_skus,
+            "sku_planning_rules": config.sku_planning_rules,
+            "subcontract_companies": config.subcontract_companies,
+            "sku_subcontracts": config.sku_subcontracts,
         },
         "scheduler": {
             "max_run_days": config.max_run_days,
             "max_edd_gap": config.max_edd_gap,
+            "max_edd_span": config.max_edd_span,
             "edd_swap_tolerance": config.edd_swap_tolerance,
+            "edd_assign_threshold": config.edd_assign_threshold,
             "lst_safety_buffer": config.lst_safety_buffer,
             "campaign_window": config.campaign_window,
             "urgency_threshold": config.urgency_threshold,
             "interleave_enabled": config.interleave_enabled,
             "auto_buffer": config.auto_buffer,
+            "vns_enabled": config.vns_enabled,
+            "vns_block_moves_enabled": config.vns_block_moves_enabled,
+            "vns_max_iter": config.vns_max_iter,
+            "compact_enabled": config.compact_enabled,
+            "productivity_earliness_ceiling_days": config.productivity_earliness_ceiling_days,
             "jit": {
                 "enabled": config.jit_enabled,
                 "buffer_pct": config.jit_buffer_pct,
                 "threshold": config.jit_threshold,
+                "max_retries": config.jit_max_retries,
                 "earliness_target": config.jit_earliness_target,
             },
         },
@@ -229,6 +277,8 @@ def validate_config(config: FactoryConfig) -> list[str]:
         active = [m for m in config.machines.values() if m.active]
         if not active:
             errors.append("Nenhuma máquina activa")
+    if config.productivity_earliness_ceiling_days < 0:
+        errors.append("productivity_earliness_ceiling_days deve ser >= 0")
 
     # Tools: primary machine must exist
     if config.machines and config.tools:
@@ -254,8 +304,20 @@ def validate_config(config: FactoryConfig) -> list[str]:
     if not 0.1 <= config.oee_default <= 1.0:
         errors.append(f"OEE default {config.oee_default} fora do range 0.1-1.0")
 
+    # Planning rules
+    try:
+        clean_sku_planning_config(config.sku_planning_rules)
+        clean_sku_subcontracts(config.sku_subcontracts)
+        for company in config.subcontract_companies:
+            if isinstance(company, dict):
+                normalize_subcontract_company(company)
+    except ValueError as exc:
+        errors.append(str(exc))
+
     # Setup crews
-    if config.setup_crews < 1:
-        errors.append(f"Setup crews = {config.setup_crews} (mínimo 1)")
+    if config.setup_crews != 1:
+        errors.append(
+            f"Setup crews = {config.setup_crews}; a Incompol tem exatamente 1 equipa de setup"
+        )
 
     return errors

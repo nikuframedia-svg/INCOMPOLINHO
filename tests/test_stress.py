@@ -1,23 +1,48 @@
 """Tests for backend/scheduler/stress.py — stress map + summary."""
 
-from backend.scheduler.stress import compute_stress_map, stress_summary, SegmentStress
+from backend.scheduler.stress import compute_stress_map, stress_summary
 from backend.scheduler.types import Lot, Segment
 
 
-def _seg(lot_id="LOT_1", machine_id="PRM019", day_idx=5, start_min=420, end_min=600,
-         prod_min=150.0, setup_min=30.0, tool_id="T001", qty=100):
+def _seg(
+    lot_id="LOT_1",
+    machine_id="PRM019",
+    day_idx=5,
+    start_min=420,
+    end_min=600,
+    prod_min=150.0,
+    setup_min=30.0,
+    tool_id="T001",
+    qty=100,
+):
     return Segment(
-        lot_id=lot_id, run_id="RUN_1", machine_id=machine_id, tool_id=tool_id,
-        day_idx=day_idx, start_min=start_min, end_min=end_min, shift="A",
-        qty=qty, prod_min=prod_min, setup_min=setup_min, edd=10,
+        lot_id=lot_id,
+        run_id="RUN_1",
+        machine_id=machine_id,
+        tool_id=tool_id,
+        day_idx=day_idx,
+        start_min=start_min,
+        end_min=end_min,
+        shift="A",
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
+        edd=10,
     )
 
 
 def _lot(id="LOT_1", edd=10):
     return Lot(
-        id=id, op_id="OP_1", tool_id="T001", machine_id="PRM019",
-        alt_machine_id=None, qty=100, prod_min=150.0, setup_min=30.0,
-        edd=edd, is_twin=False,
+        id=id,
+        op_id="OP_1",
+        tool_id="T001",
+        machine_id="PRM019",
+        alt_machine_id=None,
+        qty=100,
+        prod_min=150.0,
+        setup_min=30.0,
+        edd=edd,
+        is_twin=False,
     )
 
 
@@ -35,8 +60,7 @@ def test_basic_stress_values():
 def test_high_utilisation_high_stress():
     """Machine at ~100% utilisation with tight EDD → high stress."""
     # Fill machine near capacity: 20 days × 1020 min ≈ 20400 min
-    segs = [_seg(lot_id=f"LOT_{i}", day_idx=i, prod_min=900.0, setup_min=100.0)
-            for i in range(20)]
+    segs = [_seg(lot_id=f"LOT_{i}", day_idx=i, prod_min=900.0, setup_min=100.0) for i in range(20)]
     lots = [_lot(id=f"LOT_{i}", edd=i) for i in range(20)]  # EDD = completion day → 0 slack
     result = compute_stress_map(segs, lots, n_days=20)
     # At least some segments should be critical or warning
@@ -92,7 +116,7 @@ def test_summary_empty():
 def test_skips_buffer_and_setup_only():
     """Segments with day_idx < 0 or prod_min <= 0 are skipped."""
     segs = [
-        _seg(day_idx=-1, prod_min=100.0),   # buffer day
+        _seg(day_idx=-1, prod_min=100.0),  # buffer day
         _seg(lot_id="LOT_S", day_idx=5, prod_min=0.0, setup_min=30.0),  # setup-only
         _seg(lot_id="LOT_OK", day_idx=5, prod_min=100.0),  # valid
     ]

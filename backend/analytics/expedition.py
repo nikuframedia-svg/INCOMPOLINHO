@@ -110,7 +110,9 @@ def compute_expedition(
             else:
                 status = "not_planned"
 
-            coverage = min(100.0, entry_covered / entry.order_qty * 100) if entry.order_qty > 0 else 100.0
+            coverage = (
+                min(100.0, entry_covered / entry.order_qty * 100) if entry.order_qty > 0 else 100.0
+            )
 
             days_map[entry.day_idx].append(
                 ExpeditionEntry(
@@ -145,8 +147,7 @@ def compute_expedition(
     total = sum(d.total_orders for d in expedition_days)
     ready = sum(d.total_ready for d in expedition_days)
     at_risk = sum(
-        1 for d in expedition_days if d.day_idx < 5
-        for e in d.entries if e.status != "ready"
+        1 for d in expedition_days if d.day_idx < 5 for e in d.entries if e.status != "ready"
     )
 
     return ExpeditionKPIs(

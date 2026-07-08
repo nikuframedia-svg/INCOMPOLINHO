@@ -10,7 +10,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import MACHINE_GROUP, OPERATOR_CAP
 from backend.scheduler.types import Segment
 from backend.types import EngineData
 
@@ -34,7 +33,7 @@ class WorkforceForecast:
     peak_required: int
     avg_required: float
     deficit_days: int
-    trend: str    # "increasing" | "stable" | "decreasing"
+    trend: str  # "increasing" | "stable" | "decreasing"
     summary: str  # Portuguese
 
 
@@ -71,15 +70,17 @@ def forecast_workforce(
             for shift in shifts or ["A", "B"]:
                 required = counts.get((day_idx, group, shift), 0)
                 available = operator_cap.get((group, shift), 6)
-                daily.append(DayForecast(
-                    day_idx=day_idx,
-                    date=date,
-                    shift=shift,
-                    machine_group=group,
-                    required=required,
-                    available=available,
-                    surplus_or_deficit=available - required,
-                ))
+                daily.append(
+                    DayForecast(
+                        day_idx=day_idx,
+                        date=date,
+                        shift=shift,
+                        machine_group=group,
+                        required=required,
+                        available=available,
+                        surplus_or_deficit=available - required,
+                    )
+                )
                 day_totals[day_idx] += required
 
     # Peak detection
@@ -92,10 +93,6 @@ def forecast_workforce(
         peak_required = 0
         avg_required = 0.0
 
-    # Deficit days
-    deficit_days = sum(
-        1 for f in daily if f.surplus_or_deficit < 0
-    )
     deficit_unique_days = len({f.day_idx for f in daily if f.surplus_or_deficit < 0})
 
     # Trend detection: avg first half vs second half
@@ -122,8 +119,9 @@ def forecast_workforce(
     if deficit_unique_days == 0:
         summary = f"Próximos {actual_days} dias: sem défice de operadores."
     else:
+        deficit_label = "dias" if deficit_unique_days > 1 else "dia"
         summary = (
-            f"Próximos {actual_days} dias: {deficit_unique_days} dia{'s' if deficit_unique_days > 1 else ''} "
+            f"Próximos {actual_days} dias: {deficit_unique_days} {deficit_label} "
             f"com défice. Pico dia {peak_day} ({peak_required} operadores). "
             f"Tendência {trend}."
         )

@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.dispatch import per_machine_dispatch
-from backend.scheduler.jit import _backward_stack_gates
-from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, ToolRun
 from backend.scheduler.vns import (
     _apply_move,
-    _deep_copy_runs,
     _dispatch_and_score,
     _generate_n1_moves,
     _generate_n2_moves,
     _generate_n3_moves,
+    _generate_n4_block_moves,
     _is_better,
     vns_polish,
 )
@@ -24,8 +21,13 @@ from backend.types import EngineData, EOp, MachineInfo
 
 
 def _make_lot(
-    op_id: str, tool: str, machine: str, edd: int,
-    qty: int = 1000, prod_min: float = 100.0, setup_min: float = 30.0,
+    op_id: str,
+    tool: str,
+    machine: str,
+    edd: int,
+    qty: int = 1000,
+    prod_min: float = 100.0,
+    setup_min: float = 30.0,
     alt: str | None = None,
 ) -> Lot:
     return Lot(
@@ -43,10 +45,13 @@ def _make_lot(
 
 
 def _make_run(
-    tool: str, machine: str, lots: list[Lot], run_idx: int = 0,
+    tool: str,
+    machine: str,
+    lots: list[Lot],
+    run_idx: int = 0,
 ) -> ToolRun:
     setup = lots[0].setup_min
-    total_prod = sum(l.prod_min for l in lots)
+    total_prod = sum(lot.prod_min for lot in lots)
     return ToolRun(
         id=f"run_{tool}_{machine}_{run_idx}",
         tool_id=tool,
@@ -93,16 +98,155 @@ class TestIsBetter:
         new = {"tardy_count": 1, "otd_d": 100.0, "earliness_avg_days": 4.0, "setups": 80}
         assert _is_better(new, old, config) is False
 
+    def test_fewer_tardy_has_priority_over_tardiness_shape(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 98.0,
+            "otd_d": 99.0,
+            "tardy_count": 4,
+            "otd_d_failures": 1,
+            "total_tardiness": 4.0,
+            "max_tardiness": 1.0,
+            "earliness_avg_days": 5.0,
+            "setups": 100,
+        }
+        new = {
+            "otd": 99.0,
+            "otd_d": 99.0,
+            "tardy_count": 2,
+            "otd_d_failures": 1,
+            "total_tardiness": 6.0,
+            "max_tardiness": 3.0,
+            "earliness_avg_days": 6.0,
+            "setups": 110,
+        }
+        assert _is_better(new, old, config) is True
+
     def test_worse_otd_d_rejected(self):
         config = FactoryConfig()
         old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
         new = {"tardy_count": 0, "otd_d": 99.0, "earliness_avg_days": 4.0, "setups": 80}
         assert _is_better(new, old, config) is False
 
+    def test_worse_otd_rejected(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "tardy_count": 0,
+            "earliness_avg_days": 5.0,
+            "setups": 100,
+        }
+        new = {
+            "otd": 99.5,
+            "otd_d": 100.0,
+            "tardy_count": 0,
+            "earliness_avg_days": 4.0,
+            "setups": 80,
+        }
+        assert _is_better(new, old, config) is False
+
+    def test_otd_d_failures_regression_rejected(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "otd_d_failures": 0,
+            "tardy_count": 0,
+            "earliness_avg_days": 5.0,
+            "setups": 100,
+        }
+        new = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "otd_d_failures": 1,
+            "tardy_count": 0,
+            "earliness_avg_days": 4.0,
+            "setups": 80,
+        }
+        assert _is_better(new, old, config) is False
+
+    def test_hard_violation_rejected(self):
+        config = FactoryConfig()
+        old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
+        new = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 4.0,
+            "setups": 80,
+            "hard_violations": 1,
+        }
+        assert _is_better(new, old, config) is False
+
+    def test_tool_conflict_rejected(self):
+        config = FactoryConfig()
+        old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
+        new = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 4.0,
+            "setups": 80,
+            "tool_conflicts": 1,
+        }
+        assert _is_better(new, old, config) is False
+
+    def test_setup_crew_overlap_can_be_repaired_after_vns(self):
+        config = FactoryConfig()
+        old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
+        new = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 4.0,
+            "setups": 80,
+            "setup_crew_overlaps": 1,
+        }
+        assert _is_better(new, old, config) is True
+
     def test_earliness_exceeds_target_rejected(self):
         config = FactoryConfig()
         old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
         new = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 7.0, "setups": 80}
+        assert _is_better(new, old, config) is False
+
+    def test_more_setups_rejected_even_with_less_earliness(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "tardy_count": 0,
+            "otd_d_failures": 0,
+            "total_tardiness": 0.0,
+            "max_tardiness": 0.0,
+            "earliness_avg_days": 6.0,
+            "setups": 100,
+        }
+        new = {
+            **old,
+            "earliness_avg_days": 4.0,
+            "setups": 101,
+        }
+
+        assert _is_better(new, old, config) is False
+
+    def test_more_setup_minutes_rejected_even_with_same_setup_count(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "tardy_count": 0,
+            "otd_d_failures": 0,
+            "total_tardiness": 0.0,
+            "max_tardiness": 0.0,
+            "earliness_avg_days": 6.0,
+            "setups": 100,
+            "setup_time_min": 3000.0,
+        }
+        new = {
+            **old,
+            "earliness_avg_days": 4.0,
+            "setup_time_min": 3030.0,
+        }
+
         assert _is_better(new, old, config) is False
 
     def test_same_setups_less_earliness_is_better(self):
@@ -207,6 +351,23 @@ class TestN3Moves:
         assert len(moves) == 0
 
 
+class TestN4BlockMoves:
+    """Test same-tool block relocation."""
+
+    def test_generates_block_move_for_split_campaign(self):
+        config = FactoryConfig(edd_swap_tolerance=1)
+        runs = [
+            _make_run("T1", "M1", [_make_lot("op1", "T1", "M1", edd=10)], 0),
+            _make_run("T2", "M1", [_make_lot("op2", "T2", "M1", edd=50)], 1),
+            _make_run("T1", "M1", [_make_lot("op3", "T1", "M1", edd=11)], 2),
+            _make_run("T1", "M1", [_make_lot("op4", "T1", "M1", edd=12)], 3),
+        ]
+
+        moves = list(_generate_n4_block_moves({"M1": runs}, config))
+
+        assert ("block_relocate", "M1", 2, 4, 1) in moves
+
+
 class TestApplyMove:
     """Test move application."""
 
@@ -256,6 +417,21 @@ class TestApplyMove:
         assert len(new_runs["M2"]) == 2
         assert affected == {"M1", "M2"}
 
+    def test_block_relocate_move_keeps_campaign_intact(self):
+        runs = [
+            _make_run("T1", "M1", [_make_lot("op1", "T1", "M1", edd=10)], 0),
+            _make_run("T2", "M1", [_make_lot("op2", "T2", "M1", edd=12)], 1),
+            _make_run("T1", "M1", [_make_lot("op3", "T1", "M1", edd=14)], 2),
+            _make_run("T1", "M1", [_make_lot("op4", "T1", "M1", edd=15)], 3),
+        ]
+        machine_runs = {"M1": runs}
+
+        new_runs, affected = _apply_move(("block_relocate", "M1", 2, 4, 1), machine_runs)
+
+        assert [run.tool_id for run in new_runs["M1"]] == ["T1", "T1", "T1", "T2"]
+        assert affected == {"M1"}
+        assert [run.tool_id for run in machine_runs["M1"]] == ["T1", "T2", "T1", "T1"]
+
 
 class TestVNSPolish:
     """Test the main VNS function."""
@@ -280,7 +456,13 @@ class TestVNSPolish:
         segs, all_lots, score = _dispatch_and_score(machine_runs, gates, data, config)
 
         result_segs, result_lots, result_score, warnings = vns_polish(
-            machine_runs, gates, data, config, segs, all_lots, score,
+            machine_runs,
+            gates,
+            data,
+            config,
+            segs,
+            all_lots,
+            score,
         )
 
         # Should not increase tardy
@@ -311,11 +493,71 @@ class TestVNSPolish:
         initial_setups = score["setups"]
 
         result_segs, result_lots, result_score, warnings = vns_polish(
-            machine_runs, gates, data, config, segs, all_lots, score,
+            machine_runs,
+            gates,
+            data,
+            config,
+            segs,
+            all_lots,
+            score,
         )
 
         # Should find the swap and reduce setups by 1
         assert result_score["setups"] <= initial_setups
+
+    def test_finds_block_relocate_improvement(self):
+        """VNS should move whole same-tool blocks when single-run moves do not help."""
+        config = FactoryConfig(
+            vns_max_iter=30,
+            edd_swap_tolerance=1,
+            vns_block_moves_enabled=True,
+        )
+        data = _make_engine_data(n_days=60)
+
+        runs = [
+            _make_run("T1", "M1", [_make_lot("op1", "T1", "M1", edd=10)], 0),
+            _make_run("T2", "M1", [_make_lot("op2", "T2", "M1", edd=50)], 1),
+            _make_run("T1", "M1", [_make_lot("op3", "T1", "M1", edd=11)], 2),
+            _make_run("T1", "M1", [_make_lot("op4", "T1", "M1", edd=12)], 3),
+        ]
+        machine_runs = {"M1": runs}
+        gates = {run.id: 0.0 for run in runs}
+
+        segs, all_lots, score = _dispatch_and_score(machine_runs, gates, data, config)
+        for move in [
+            *list(_generate_n1_moves(machine_runs, config)),
+            *list(_generate_n2_moves(machine_runs, config)),
+        ]:
+            moved_runs, _affected = _apply_move(move, machine_runs)
+            _segs, _lots, moved_score = _dispatch_and_score(
+                moved_runs,
+                gates,
+                data,
+                config,
+            )
+            assert moved_score["setups"] >= score["setups"]
+
+        block_moves = list(_generate_n4_block_moves(machine_runs, config))
+        assert block_moves
+        block_runs, _affected = _apply_move(block_moves[0], machine_runs)
+        _segs, _lots, block_score = _dispatch_and_score(block_runs, gates, data, config)
+        assert block_score["setups"] < score["setups"]
+
+        result_segs, result_lots, result_score, warnings = vns_polish(
+            machine_runs,
+            gates,
+            data,
+            config,
+            segs,
+            all_lots,
+            score,
+        )
+
+        assert result_score["otd"] == 100.0
+        assert result_score["otd_d"] == 100.0
+        assert result_score["tardy_count"] == 0
+        assert result_score["setups"] < score["setups"]
+        assert warnings
 
     def test_fallback_on_no_improvement(self):
         """When no improvement possible, returns original."""
@@ -331,7 +573,13 @@ class TestVNSPolish:
         segs, all_lots, score = _dispatch_and_score(machine_runs, gates, data, config)
 
         result_segs, result_lots, result_score, warnings = vns_polish(
-            machine_runs, gates, data, config, segs, all_lots, score,
+            machine_runs,
+            gates,
+            data,
+            config,
+            segs,
+            all_lots,
+            score,
         )
 
         assert result_score["setups"] == score["setups"]

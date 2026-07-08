@@ -15,9 +15,9 @@ _DEFAULT = FactoryConfig()
 DAY_CAP = _DEFAULT.day_capacity_min
 
 # Shift boundaries (real clock minutes from midnight)
-SHIFT_A_START = _DEFAULT.shift_a_start    # 07:00 = 420
-SHIFT_A_END = _DEFAULT.shift_a_end        # 15:30 = 930
-SHIFT_B_END = _DEFAULT.shift_b_end        # 00:00 = 1440
+SHIFT_A_START = _DEFAULT.shift_a_start  # 07:00 = 420
+SHIFT_A_END = _DEFAULT.shift_a_end  # 15:30 = 930
+SHIFT_B_END = _DEFAULT.shift_b_end  # 00:00 = 1440
 
 # Default OEE
 DEFAULT_OEE = _DEFAULT.oee_default

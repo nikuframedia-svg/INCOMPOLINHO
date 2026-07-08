@@ -19,7 +19,7 @@ def compute_reward(score: dict) -> float:
     earliness = score.get("earliness_avg_days", 15)
     setups = score.get("setups", 200)
 
-    earliness_score = max(0.0, 1.0 - earliness / 15.0)   # 0d→1.0, 15d→0.0
-    setup_score = max(0.0, 1.0 - setups / 200.0)          # 0→1.0, 200→0.0
+    earliness_score = max(0.0, 1.0 - earliness / 15.0)  # 0d→1.0, 15d→0.0
+    setup_score = max(0.0, 1.0 - setups / 200.0)  # 0→1.0, 200→0.0
 
     return round(0.5 * earliness_score + 0.5 * setup_score, 4)
