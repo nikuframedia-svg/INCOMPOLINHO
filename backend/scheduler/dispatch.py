@@ -24,6 +24,7 @@ from backend.scheduler.constants import (
     SHIFT_A_START,
     SHIFT_B_END,
 )
+from backend.scheduler.resources import rebind_runs_to_machines
 from backend.scheduler.types import (
     CrewState,
     Lot,
@@ -156,6 +157,10 @@ def assign_machines(
                 audit_logger.decisions[-1].state_snapshot["edd"] = run.edd
 
         _record(run, chosen)
+
+    # Re-resolve machine-dependent setup/OEE against the chosen machines
+    # (no-op unless setup_overrides or per-machine OEE are configured).
+    rebind_runs_to_machines(machine_runs, engine_data, config)
 
     return dict(machine_runs)
 

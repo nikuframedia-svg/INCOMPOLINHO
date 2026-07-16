@@ -28,6 +28,7 @@ from backend.scheduler.dispatch import (
 )
 from backend.scheduler.jit import jit_dispatch
 from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler.resources import rebind_runs_to_machines
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
 from backend.scheduler.types import Lot, ScheduleResult, ToolRun
@@ -299,6 +300,7 @@ class CachedPipeline:
                 else:
                     machine_runs[run.machine_id].append(run)
 
+        rebind_runs_to_machines(machine_runs, self.data, self.config)
         return dict(machine_runs)
 
     def _sequence_with_chromosome(

@@ -154,6 +154,7 @@ def _oee_change(data: EngineData, params: dict) -> str:
     for op in data.ops:
         if op.t == tool_id:
             op.oee = new_oee
+            op.oee_source = "whatif"  # takes precedence over per-machine OEE
             count += 1
     return f"OEE alterado para {new_oee} em {count} ops (ferramenta {tool_id})"
 

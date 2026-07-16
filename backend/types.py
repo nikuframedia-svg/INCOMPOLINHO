@@ -44,6 +44,9 @@ class EOp:
     d: list[int]  # demanda/dia: |NP neg|, 0 nos outros
     oee: float  # 0.66
     wip: int
+    # "default" = master/global value; "whatif" = set by an oee_change
+    # mutation and takes precedence over per-machine OEE (resources.py).
+    oee_source: str = "default"
     eco_lot_isop: int | None = None
     eco_lot_effective: int | None = None
     start_buffer_days: int = 0

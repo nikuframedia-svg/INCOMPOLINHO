@@ -19,6 +19,7 @@ from backend.config.types import FactoryConfig
 from backend.scheduler.dispatch import per_machine_dispatch
 from backend.scheduler.gates import HARD_GATE_KEYS
 from backend.scheduler.jit import _backward_stack_gates
+from backend.scheduler.resources import clone_run_for_machine
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.types import EngineData
@@ -339,6 +340,8 @@ def _make_split_run(original: ToolRun, lots: list[Lot], suffix: str) -> ToolRun:
 def _apply_move(
     move: tuple,
     machine_runs: dict[str, list[ToolRun]],
+    engine_data: EngineData | None = None,
+    config: FactoryConfig | None = None,
 ) -> tuple[dict[str, list[ToolRun]], set[str]]:
     """Apply a VNS move, returning new machine_runs and set of affected machine IDs."""
     new_runs = _deep_copy_runs(machine_runs)
@@ -362,6 +365,11 @@ def _apply_move(
     elif move_type == "cross_machine":
         _, src_m, idx, dst_m = move
         run = new_runs[src_m].pop(idx)
+        if engine_data is not None:
+            # Run objects are shared across candidates (shallow copies) — a
+            # cross-machine move must clone before rebinding setup/OEE to the
+            # destination machine, never mutate the shared original.
+            run = clone_run_for_machine(run, dst_m, engine_data, config)
         # Insert in EDD order on destination machine. Positional insertion next
         # to a matching tool can degrade the post-crew-serialization frontier.
         dst_runs = new_runs[dst_m]
@@ -449,7 +457,7 @@ def vns_polish(
             if total_evals >= max_iter:
                 break
 
-            candidate_runs, affected = _apply_move(move, current_runs)
+            candidate_runs, affected = _apply_move(move, current_runs, engine_data, config)
             candidate_gates = _recompute_machine_gates(
                 candidate_runs,
                 current_gates,
