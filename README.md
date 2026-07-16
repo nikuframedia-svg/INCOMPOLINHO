@@ -35,4 +35,4 @@ python -m pytest tests/ -v
 - `frontend/` — React 19 + TypeScript + Vite console UI
 - `config/` — Factory master data (`incompol.yaml`) + scheduler config (`factory.yaml`)
 - `docker/` — Nginx + Supervisor configs; `Dockerfile` + `docker-compose.yml` at root
-- `tests/` — 420+ tests
+- `tests/` — 528 tests

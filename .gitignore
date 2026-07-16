@@ -23,3 +23,6 @@ ISOP*.xlsx
 
 # Pip artifacts
 =*
+
+# Run logs locais (uvicorn/vite/cloudflared)
+.run-logs/

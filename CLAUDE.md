@@ -10,7 +10,7 @@ Empresa: NIKUFRA.AI (Portugal).
 - `frontend/` — React 19 + TypeScript + Vite + Zustand (UI: Console, Gantt, Stock, Risk, Expedition, Simulator, Config, Journal, Rules)
 - `config/incompol.yaml` — Master data (máquinas, setups, twins, holidays)
 - `docker/` + `Dockerfile` + `docker-compose.yml` — Orquestração multi-stage (Node build → Python slim + Nginx + Supervisor)
-- `tests/` — 414 testes (backend Python)
+- `tests/` — 528 testes (backend Python)
 
 ## Comandos
 ```bash
@@ -122,5 +122,5 @@ Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamen
 ## ═══ RESULTADOS VALIDADOS ═══
 ISOP 27/02: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.4d, 125 setups
 ISOP 17/03: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.9d, 136 setups
-414 testes passam. Pipeline determinístico. <500ms para ~60 ops.
+528 testes passam. Pipeline determinístico. <500ms para ~60 ops.
 0 violações de capacidade. 0 ghost segments. 0 orphan continuations.
