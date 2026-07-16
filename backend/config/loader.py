@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -21,6 +22,48 @@ def _parse_time(t: str) -> int:
     h, m = t.split(":")
     mins = int(h) * 60 + int(m)
     return mins if mins > 0 else 1440
+
+
+def _normalize_setup_overrides(raw) -> list[dict]:
+    """Normalize production.setup_overrides entries to {sku, machine, hours}."""
+    result: list[dict] = []
+    for entry in raw or []:
+        if not isinstance(entry, dict):
+            continue
+        sku = str(entry.get("sku", "")).strip()
+        machine = str(entry.get("machine", "")).strip()
+        hours = entry.get("hours")
+        if not sku or not machine or hours is None:
+            continue
+        result.append({"sku": sku, "machine": machine, "hours": float(hours)})
+    return result
+
+
+def _normalize_unavailability(raw, operators: bool = False) -> list[dict]:
+    """Normalize unavailability entries.
+
+    machines/tools: {id, resource, from, to, reason}
+    operators:      {id, group, shift, from, to, count, reason}
+    Date strings stay as-is (validated in validate_config).
+    """
+    result: list[dict] = []
+    for idx, entry in enumerate(raw or []):
+        if not isinstance(entry, dict):
+            continue
+        base = {
+            "id": str(entry.get("id") or f"u{idx + 1}"),
+            "from": str(entry.get("from", "")),
+            "to": str(entry.get("to", entry.get("from", ""))),
+            "reason": str(entry.get("reason", "")),
+        }
+        if operators:
+            base["group"] = str(entry.get("group", ""))
+            base["shift"] = str(entry.get("shift", ""))
+            base["count"] = int(entry.get("count", 1))
+        else:
+            base["resource"] = str(entry.get("resource", ""))
+        result.append(base)
+    return result
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
@@ -61,6 +104,7 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
                 group=mdata.get("group", "Grandes"),
                 active=mdata.get("active", True),
                 day_capacity_min=mdata.get("day_capacity_min"),
+                oee=mdata.get("oee"),
             )
 
     # Tools (merge alt_machines + setup_hours format)
@@ -100,6 +144,17 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
     if holidays_raw:
         config.holidays = holidays_raw
 
+    # Extra workdays (force-open specific weekend dates)
+    config.extra_workdays = [str(d) for d in raw.get("extra_workdays", []) or []]
+
+    # Unavailability calendars
+    unavail = raw.get("unavailability", {}) or {}
+    config.machine_unavailability = _normalize_unavailability(unavail.get("machines"))
+    config.tool_unavailability = _normalize_unavailability(unavail.get("tools"))
+    config.operator_unavailability = _normalize_unavailability(
+        unavail.get("operators"), operators=True
+    )
+
     # Production
     prod = raw.get("production", {})
     if prod:
@@ -117,10 +172,18 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
         config.sku_subcontracts = clean_sku_subcontracts(
             prod.get("sku_subcontracts", config.sku_subcontracts)
         )
+        config.setup_overrides = _normalize_setup_overrides(prod.get("setup_overrides"))
 
     # Scheduler
     sched = raw.get("scheduler", {})
     if sched:
+        config.earliness_policy = sched.get("earliness_policy", config.earliness_policy)
+        config.material_release_days = sched.get(
+            "material_release_days", config.material_release_days
+        )
+        config.early_window_enforcement = sched.get(
+            "early_window_enforcement", config.early_window_enforcement
+        )
         config.max_run_days = sched.get("max_run_days", config.max_run_days)
         config.max_edd_gap = sched.get("max_edd_gap", config.max_edd_gap)
         config.max_edd_span = sched.get("max_edd_span", config.max_edd_span)
@@ -197,7 +260,12 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
             for s in config.shifts
         ],
         "machines": {
-            mid: {"group": m.group, "active": m.active, "day_capacity_min": m.day_capacity_min}
+            mid: {
+                "group": m.group,
+                "active": m.active,
+                "day_capacity_min": m.day_capacity_min,
+                "oee": m.oee,
+            }
             for mid, m in config.machines.items()
         },
         "tools": {"_default": {"setup_hours": config.default_setup_hours}, **config.tools},
@@ -208,6 +276,12 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
         },
         "setup_crews": config.setup_crews,
         "holidays": config.holidays,
+        "extra_workdays": config.extra_workdays,
+        "unavailability": {
+            "machines": config.machine_unavailability,
+            "tools": config.tool_unavailability,
+            "operators": config.operator_unavailability,
+        },
         "production": {
             "oee_default": config.oee_default,
             "eco_lot_mode": config.eco_lot_mode,
@@ -216,8 +290,12 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
             "sku_planning_rules": config.sku_planning_rules,
             "subcontract_companies": config.subcontract_companies,
             "sku_subcontracts": config.sku_subcontracts,
+            "setup_overrides": config.setup_overrides,
         },
         "scheduler": {
+            "earliness_policy": config.earliness_policy,
+            "material_release_days": config.material_release_days,
+            "early_window_enforcement": config.early_window_enforcement,
             "max_run_days": config.max_run_days,
             "max_edd_gap": config.max_edd_gap,
             "max_edd_span": config.max_edd_span,
@@ -260,6 +338,14 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
     }
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def _valid_iso_date(value: str) -> date | None:
+    """Parse an ISO date string; None if invalid."""
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def validate_config(config: FactoryConfig) -> list[str]:
@@ -319,5 +405,54 @@ def validate_config(config: FactoryConfig) -> list[str]:
         errors.append(
             f"Setup crews = {config.setup_crews}; a Incompol tem exatamente 1 equipa de setup"
         )
+
+    # Earliness policy / material window
+    if config.earliness_policy not in {"jit", "window"}:
+        errors.append(f"earliness_policy '{config.earliness_policy}' inválida (jit|window)")
+    if config.early_window_enforcement not in {"off", "soft", "hard"}:
+        errors.append(
+            f"early_window_enforcement '{config.early_window_enforcement}' "
+            "inválido (off|soft|hard)"
+        )
+    if not isinstance(config.material_release_days, int) or config.material_release_days < 0:
+        errors.append("material_release_days deve ser um inteiro >= 0")
+
+    # Setup overrides
+    for ov in config.setup_overrides:
+        sku, machine, hours = ov.get("sku"), ov.get("machine"), ov.get("hours", 0)
+        if config.machines and machine not in config.machines:
+            errors.append(f"Setup override {sku}: máquina {machine} não existe")
+        if not 0 < float(hours) <= 8:
+            errors.append(f"Setup override {sku}@{machine}: horas {hours} fora do range (0, 8]")
+
+    # Per-machine OEE
+    for mid, m in config.machines.items():
+        if m.oee is not None and not 0.1 <= m.oee <= 1.0:
+            errors.append(f"Máquina {mid}: OEE {m.oee} fora do range 0.1-1.0")
+
+    # Calendar entries (dates + ranges)
+    for label, entries in (
+        ("unavailability.machines", config.machine_unavailability),
+        ("unavailability.tools", config.tool_unavailability),
+        ("unavailability.operators", config.operator_unavailability),
+    ):
+        for entry in entries:
+            d_from = _valid_iso_date(entry.get("from", ""))
+            d_to = _valid_iso_date(entry.get("to", ""))
+            if d_from is None or d_to is None:
+                errors.append(f"{label} {entry.get('id')}: datas inválidas")
+                continue
+            if d_from > d_to:
+                errors.append(f"{label} {entry.get('id')}: 'from' posterior a 'to'")
+            if label == "unavailability.machines":
+                res = entry.get("resource", "")
+                if config.machines and res not in config.machines:
+                    errors.append(f"{label} {entry.get('id')}: máquina {res} não existe")
+            if label == "unavailability.operators" and int(entry.get("count", 0)) < 1:
+                errors.append(f"{label} {entry.get('id')}: count deve ser >= 1")
+
+    for d in config.extra_workdays:
+        if _valid_iso_date(str(d)) is None:
+            errors.append(f"extra_workdays: data inválida '{d}'")
 
     return errors

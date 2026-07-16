@@ -137,6 +137,77 @@ class TestLoadConfig:
         assert loaded.edd_assign_threshold == 4
         assert loaded.productivity_earliness_ceiling_days == 8.5
 
+    def test_new_sections_round_trip(self):
+        """Fase 1.1: earliness window, setup overrides, calendars, per-machine OEE."""
+        from backend.config.types import MachineConfig
+
+        c = FactoryConfig(
+            earliness_policy="window",
+            material_release_days=4,
+            early_window_enforcement="hard",
+            setup_overrides=[{"sku": "SKU1", "machine": "PRM039", "hours": 1.5}],
+            extra_workdays=["2026-08-08"],
+            machine_unavailability=[
+                {
+                    "id": "u1",
+                    "resource": "PRM039",
+                    "from": "2026-03-10",
+                    "to": "2026-03-12",
+                    "reason": "Manutenção",
+                }
+            ],
+            tool_unavailability=[
+                {"id": "u2", "resource": "BFP079", "from": "2026-03-16", "to": "2026-03-16", "reason": ""}
+            ],
+            operator_unavailability=[
+                {
+                    "id": "u3",
+                    "group": "Grandes",
+                    "shift": "A",
+                    "from": "2026-04-01",
+                    "to": "2026-04-03",
+                    "count": 2,
+                    "reason": "Férias",
+                }
+            ],
+        )
+        c.machines["PRM039"] = MachineConfig(id="PRM039", group="Grandes", oee=0.72)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            path = f.name
+        try:
+            save_config(c, path)
+            loaded = load_config(path)
+        finally:
+            os.unlink(path)
+
+        assert loaded.earliness_policy == "window"
+        assert loaded.material_release_days == 4
+        assert loaded.early_window_enforcement == "hard"
+        assert loaded.setup_overrides == [{"sku": "SKU1", "machine": "PRM039", "hours": 1.5}]
+        assert loaded.extra_workdays == ["2026-08-08"]
+        assert loaded.machine_unavailability[0]["resource"] == "PRM039"
+        assert loaded.machine_unavailability[0]["to"] == "2026-03-12"
+        assert loaded.tool_unavailability[0]["resource"] == "BFP079"
+        assert loaded.operator_unavailability[0]["count"] == 2
+        assert loaded.machines["PRM039"].oee == 0.72
+        assert validate_config(loaded) == []
+
+    def test_yaml_without_new_sections_loads_defaults(self):
+        """Old factory.yaml files (pre-Fase 1.1) load with safe defaults."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("factory:\n  name: Velho\nscheduler:\n  max_run_days: 5\n")
+            f.flush()
+            c = load_config(f.name)
+        os.unlink(f.name)
+        assert c.earliness_policy == "jit"
+        assert c.material_release_days == 5
+        assert c.early_window_enforcement == "soft"
+        assert c.setup_overrides == []
+        assert c.machine_unavailability == []
+        assert c.tool_unavailability == []
+        assert c.operator_unavailability == []
+        assert c.extra_workdays == []
+
 
 # ─── Validation ────────────────────────────────────────────────────────
 
@@ -165,6 +236,65 @@ class TestValidation:
         c = FactoryConfig(setup_crews=2)
         errors = validate_config(c)
         assert any("exatamente 1" in e.lower() for e in errors)
+
+    def test_invalid_earliness_policy(self):
+        c = FactoryConfig(earliness_policy="asap")
+        errors = validate_config(c)
+        assert any("earliness_policy" in e for e in errors)
+
+    def test_invalid_enforcement_mode(self):
+        c = FactoryConfig(early_window_enforcement="strict")
+        errors = validate_config(c)
+        assert any("early_window_enforcement" in e for e in errors)
+
+    def test_negative_material_release_days(self):
+        c = FactoryConfig(material_release_days=-1)
+        errors = validate_config(c)
+        assert any("material_release_days" in e for e in errors)
+
+    def test_setup_override_unknown_machine(self):
+        from backend.config.types import MachineConfig
+
+        c = FactoryConfig(setup_overrides=[{"sku": "S1", "machine": "PRM999", "hours": 1.0}])
+        c.machines["PRM019"] = MachineConfig(id="PRM019", group="Grandes")
+        errors = validate_config(c)
+        assert any("PRM999" in e for e in errors)
+
+    def test_setup_override_hours_out_of_range(self):
+        c = FactoryConfig(setup_overrides=[{"sku": "S1", "machine": "PRM019", "hours": 0}])
+        errors = validate_config(c)
+        assert any("horas" in e for e in errors)
+
+    def test_machine_oee_out_of_range(self):
+        from backend.config.types import MachineConfig
+
+        c = FactoryConfig()
+        c.machines["PRM019"] = MachineConfig(id="PRM019", group="Grandes", oee=1.5)
+        errors = validate_config(c)
+        assert any("PRM019" in e and "OEE" in e for e in errors)
+
+    def test_unavailability_bad_dates(self):
+        c = FactoryConfig(
+            machine_unavailability=[
+                {"id": "u1", "resource": "PRM019", "from": "not-a-date", "to": "2026-03-12"}
+            ]
+        )
+        errors = validate_config(c)
+        assert any("datas inválidas" in e for e in errors)
+
+    def test_unavailability_from_after_to(self):
+        c = FactoryConfig(
+            tool_unavailability=[
+                {"id": "u1", "resource": "BFP079", "from": "2026-03-15", "to": "2026-03-10"}
+            ]
+        )
+        errors = validate_config(c)
+        assert any("posterior" in e for e in errors)
+
+    def test_extra_workday_bad_date(self):
+        c = FactoryConfig(extra_workdays=["08/08/2026"])
+        errors = validate_config(c)
+        assert any("extra_workdays" in e for e in errors)
 
 
 # ─── Scheduler with config ────────────────────────────────────────────

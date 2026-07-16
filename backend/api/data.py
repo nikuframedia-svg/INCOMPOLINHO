@@ -70,6 +70,12 @@ def _coerce_tunable_value(key: str, current_value, new_value):
         raise ValueError(f"{key}: valor inválido {new_value!r}") from exc
     if key == "eco_lot_mode" and coerced not in {"hard", "soft"}:
         raise ValueError("eco_lot_mode deve ser 'hard' ou 'soft'")
+    if key == "earliness_policy" and coerced not in {"jit", "window"}:
+        raise ValueError("earliness_policy deve ser 'jit' ou 'window'")
+    if key == "early_window_enforcement" and coerced not in {"off", "soft", "hard"}:
+        raise ValueError("early_window_enforcement deve ser 'off', 'soft' ou 'hard'")
+    if key == "material_release_days" and coerced < 0:
+        raise ValueError("material_release_days deve ser >= 0")
     return coerced
 
 
@@ -612,7 +618,15 @@ async def get_config():
             for s in c.shifts
         ],
         "day_capacity_min": c.day_capacity_min,
-        "machines": {mid: {"group": m.group, "active": m.active} for mid, m in c.machines.items()},
+        "machines": {
+            mid: {
+                "group": m.group,
+                "active": m.active,
+                "day_capacity_min": m.day_capacity_min,
+                "oee": m.oee,
+            }
+            for mid, m in c.machines.items()
+        },
         "tools": {
             tid: (
                 {
@@ -634,7 +648,17 @@ async def get_config():
             f"{k[0]} {k[1]}" if isinstance(k, tuple) else str(k): v for k, v in c.operators.items()
         },
         "holidays": [str(h) for h in c.holidays],
+        "extra_workdays": [str(d) for d in c.extra_workdays],
+        "unavailability": {
+            "machines": c.machine_unavailability,
+            "tools": c.tool_unavailability,
+            "operators": c.operator_unavailability,
+        },
+        "setup_overrides": c.setup_overrides,
         # Tunables
+        "earliness_policy": c.earliness_policy,
+        "material_release_days": c.material_release_days,
+        "early_window_enforcement": c.early_window_enforcement,
         "oee_default": c.oee_default,
         "subcontract_skus": c.subcontract_skus,
         "sku_planning_rules": c.sku_planning_rules,
@@ -951,6 +975,9 @@ async def update_config(updates: dict):
 
     tunables = [
         "oee_default",
+        "earliness_policy",
+        "material_release_days",
+        "early_window_enforcement",
         "jit_enabled",
         "jit_buffer_pct",
         "jit_threshold",
@@ -1529,6 +1556,16 @@ async def apply_preset_endpoint(name: str):
         new_config.subcontract_companies = copy.deepcopy(state.config.subcontract_companies)
     if hasattr(state.config, "sku_subcontracts"):
         new_config.sku_subcontracts = copy.deepcopy(state.config.sku_subcontracts)
+    # Runtime master-data sections presets must never wipe
+    for attr in (
+        "setup_overrides",
+        "machine_unavailability",
+        "tool_unavailability",
+        "operator_unavailability",
+        "extra_workdays",
+    ):
+        if hasattr(state.config, attr):
+            setattr(new_config, attr, copy.deepcopy(getattr(state.config, attr)))
 
     old_score = dict(state.score) if state.score else {}
     try:

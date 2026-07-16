@@ -16,26 +16,32 @@ machines:
     group: Grandes
     active: true
     day_capacity_min: 1020
+    oee: null
   PRM031:
     group: Grandes
     active: true
     day_capacity_min: 1020
+    oee: null
   PRM039:
     group: Grandes
     active: true
     day_capacity_min: 1020
+    oee: null
   PRM042:
     group: Medias
     active: true
     day_capacity_min: 1020
+    oee: null
   PRM043:
     group: Grandes
     active: true
     day_capacity_min: 1020
+    oee: null
   PRM020:
     group: Grandes
     active: false
     day_capacity_min: null
+    oee: null
 tools:
   _default:
     setup_hours: 0.5
@@ -272,6 +278,11 @@ holidays:
 - '2026-08-12'
 - '2026-08-13'
 - '2026-08-14'
+extra_workdays: []
+unavailability:
+  machines: []
+  tools: []
+  operators: []
 production:
   oee_default: 0.66
   eco_lot_mode: hard
@@ -319,24 +330,30 @@ production:
       company_id: SUBCONTRATO
       lead_time_days: 7
       buffer_days: 0
+  setup_overrides: []
 scheduler:
+  earliness_policy: jit
+  material_release_days: 5
+  early_window_enforcement: soft
   max_run_days: 5
   max_edd_gap: 10
   max_edd_span: 30
   edd_swap_tolerance: 5
   edd_assign_threshold: 5
-  lst_safety_buffer: 3
+  lst_safety_buffer: 2
   campaign_window: 15
-  urgency_threshold: 3
+  urgency_threshold: 5
   interleave_enabled: true
   auto_buffer: true
   vns_enabled: true
+  vns_block_moves_enabled: false
   vns_max_iter: 150
   compact_enabled: false
+  productivity_earliness_ceiling_days: 6.5
   jit:
     enabled: true
     buffer_pct: 0.05
-    threshold: 80.0
+    threshold: 95.0
     max_retries: 15
     earliness_target: 5.5
 scoring:

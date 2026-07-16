@@ -30,6 +30,7 @@ class MachineConfig:
     group: str
     active: bool = True
     day_capacity_min: int | None = None  # per-machine override
+    oee: float | None = None  # per-machine override; None → oee_default
 
 
 @dataclass
@@ -105,6 +106,17 @@ class FactoryConfig:
     # Holidays (ISO date strings)
     holidays: list[str] = field(default_factory=list)
 
+    # Extra workdays: ISO dates that override the automatic weekend detection
+    # (e.g. open a specific Saturday). Never overrides explicit holidays.
+    extra_workdays: list[str] = field(default_factory=list)
+
+    # Persistent unavailability calendars (date ranges, ISO strings).
+    # machines/tools: {id, resource, from, to, reason} — hard-blocking.
+    # operators: {id, group, shift, from, to, count, reason} — advisory only.
+    machine_unavailability: list[dict] = field(default_factory=list)
+    tool_unavailability: list[dict] = field(default_factory=list)
+    operator_unavailability: list[dict] = field(default_factory=list)
+
     # Production
     oee_default: float = 0.66
     min_prod_min: float = 1.0
@@ -113,6 +125,16 @@ class FactoryConfig:
     sku_planning_rules: dict[str, dict] = field(default_factory=dict)
     subcontract_companies: list[dict] = field(default_factory=list)
     sku_subcontracts: dict[str, dict] = field(default_factory=dict)
+    # Per-(sku, machine) setup-hour overrides; fallback chain is
+    # (sku, machine) → per-tool op.sH → default_setup_hours.
+    setup_overrides: list[dict] = field(default_factory=list)  # {sku, machine, hours}
+
+    # Earliness policy: "jit" = as late as possible (backward stacking);
+    # "window" = as early as possible inside [edd − material_release_days, edd].
+    # material_release_days is the raw-material availability proxy (workdays).
+    earliness_policy: str = "jit"
+    material_release_days: int = 5
+    early_window_enforcement: str = "soft"  # off | soft | hard
 
     # Scheduler tunables (base values — SchedulerParams can override)
     max_run_days: int = 5
