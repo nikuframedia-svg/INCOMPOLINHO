@@ -2658,6 +2658,37 @@ class TestConvergence:
         assert unique >= 1
 
 
+def _hermetic_benchmark_config():
+    """Hermetic engine baseline for the real-ISOP benchmark.
+
+    The benchmark measures the ENGINE under fixed jit-policy tunables and
+    without business deadline offsets. factory.yaml is rewritten at runtime by
+    the app (presets, subcontracts, calendars) and must never shift this
+    baseline — e.g. the 6 subcontract SKUs (lead 7d) compress early-day setups
+    and legitimately turn ISOP 17/03 infeasible_current_conditions.
+    """
+    from backend.config.loader import load_config
+
+    config = load_config()
+    config.sku_subcontracts = {}
+    config.subcontract_skus = []
+    config.subcontract_companies = []
+    config.sku_planning_rules = {}
+    config.lst_safety_buffer = 2
+    config.urgency_threshold = 5
+    config.jit_threshold = 95.0
+    config.earliness_policy = "jit"
+    config.early_window_enforcement = "soft"
+    config.material_release_days = 5
+    config.max_run_days = 5
+    config.setup_overrides = []
+    config.machine_unavailability = []
+    config.tool_unavailability = []
+    config.operator_unavailability = []
+    config.extra_workdays = []
+    return config
+
+
 def test_real_isop_17_3_trust_loop_benchmark():
     isop_path = Path(
         os.environ.get(
@@ -2668,10 +2699,9 @@ def test_real_isop_17_3_trust_loop_benchmark():
     if not isop_path.exists():
         pytest.skip(f"real ISOP benchmark file not found: {isop_path}")
 
-    from backend.config.loader import load_config
     from scripts.validate_isop_constraints import load_isop
 
-    config = load_config()
+    config = _hermetic_benchmark_config()
     data = load_isop(str(isop_path), config=config)
     result = optimize(data, mode="normal", config=config, seed=42)
     score = result.score
@@ -2874,7 +2904,7 @@ def test_real_isop_17_3_trust_loop_benchmark():
         assert metrics.get(key, 0) == 0, f"{key}={metrics.get(key)}"
 
     for option in approval_options:
-        approved_config = load_config()
+        approved_config = _hermetic_benchmark_config()
         approved_config.productivity_earliness_ceiling_days = float(
             option["required_earliness_ceiling_days"]
         )
