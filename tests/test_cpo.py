@@ -2677,6 +2677,7 @@ def _hermetic_benchmark_config():
     config.lst_safety_buffer = 2
     config.urgency_threshold = 5
     config.jit_threshold = 95.0
+    config.productivity_earliness_ceiling_days = PRODUCTIVITY_EARLINESS_CEILING_DAYS
     config.earliness_policy = "jit"
     config.early_window_enforcement = "soft"
     config.material_release_days = 5

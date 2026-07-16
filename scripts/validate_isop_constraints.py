@@ -46,7 +46,7 @@ def load_isop(path: str, master_path: str = "config/incompol.yaml", config=None)
 # ─── Constraint checks ────────────────────────────────────────────────
 
 
-def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
+def validate_all(result: ScheduleResult, data: EngineData, label: str, config=None) -> dict:
     """Run ALL constraints. Returns dict of {name: (passed, detail)}."""
     segs = result.segments
     lots = result.lots
@@ -139,9 +139,16 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
 
     # ═══ SOFT CONSTRAINTS ═══
 
-    # 12. Earliness ≤ 6.5d
+    # 12. Earliness ≤ tecto de produtividade (policy-aware: janela de
+    # materiais mede-se em dias úteis, esta métrica em índices de dia)
+    from backend.scheduler.window import effective_earliness_target
+
+    ceiling = effective_earliness_target(config) if config is not None else 6.5
     earliness = score["earliness_avg_days"]
-    results["Earliness <= 6.5d"] = (earliness <= 6.5, f"earliness={earliness:.1f}d")
+    results["Earliness <= tecto"] = (
+        earliness <= ceiling,
+        f"earliness={earliness:.1f}d (tecto {ceiling:.1f}d)",
+    )
 
     # 13. Setups — não regride (referência: 134 para 17/03, 125 para 27/02)
     setups = score["setups"]
@@ -387,7 +394,7 @@ def main():
         print(f"  {'CONSTRAINT':40s} {'STATUS':8s} DETAIL")
         print(f"  {'─' * 66}")
 
-        checks = validate_all(result, data, isop_file)
+        checks = validate_all(result, data, isop_file, config=config)
 
         n_pass = 0
         n_fail = 0
@@ -414,7 +421,7 @@ def main():
             (
                 "SOFT",
                 [
-                    "Earliness <= 6.5d",
+                    "Earliness <= tecto",
                     "Setups razoáveis",
                     "0 overlaps intra-máquina",
                 ],

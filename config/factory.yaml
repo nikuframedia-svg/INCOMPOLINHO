@@ -332,7 +332,7 @@ production:
       buffer_days: 0
   setup_overrides: []
 scheduler:
-  earliness_policy: jit
+  earliness_policy: window
   material_release_days: 5
   early_window_enforcement: soft
   max_run_days: 5
@@ -349,7 +349,7 @@ scheduler:
   vns_block_moves_enabled: false
   vns_max_iter: 150
   compact_enabled: false
-  productivity_earliness_ceiling_days: 6.5
+  productivity_earliness_ceiling_days: 8.5
   jit:
     enabled: true
     buffer_pct: 0.05
