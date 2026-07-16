@@ -276,30 +276,67 @@ production:
   oee_default: 0.66
   eco_lot_mode: hard
   min_prod_min: 1.0
-  subcontract_skus: []
+  subcontract_skus:
+  - 2100373X120.10
+  - 2185094X110.10
+  - '3778765060.10'
+  - '3778766060.10'
+  - 6800017267C.30
+  - CF589MMA1A02.20
   sku_planning_rules: {}
-  subcontract_companies: []
-  sku_subcontracts: {}
+  subcontract_companies:
+  - id: SUBCONTRATO
+    name: Subcontrato
+    lead_time_days: 7
+  sku_subcontracts:
+    2100373X120.10:
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
+    2185094X110.10:
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
+    '3778765060.10':
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
+    '3778766060.10':
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
+    6800017267C.30:
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
+    CF589MMA1A02.20:
+      enabled: true
+      company_id: SUBCONTRATO
+      lead_time_days: 7
+      buffer_days: 0
 scheduler:
   max_run_days: 5
   max_edd_gap: 10
   max_edd_span: 30
   edd_swap_tolerance: 5
   edd_assign_threshold: 5
-  lst_safety_buffer: 2
+  lst_safety_buffer: 3
   campaign_window: 15
-  urgency_threshold: 5
+  urgency_threshold: 3
   interleave_enabled: true
   auto_buffer: true
   vns_enabled: true
-  vns_block_moves_enabled: false
   vns_max_iter: 150
   compact_enabled: false
-  productivity_earliness_ceiling_days: 6.5
   jit:
     enabled: true
     buffer_pct: 0.05
-    threshold: 95.0
+    threshold: 80.0
     max_retries: 15
     earliness_target: 5.5
 scoring:
