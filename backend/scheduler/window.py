@@ -24,7 +24,11 @@ import math
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.dispatch import assign_machines, per_machine_dispatch
-from backend.scheduler.jit import _compute_run_timing, _subtract_workdays
+from backend.scheduler.jit import (
+    _backward_stack_gates,
+    _compute_run_timing,
+    _subtract_workdays,
+)
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.types import EngineData
@@ -49,31 +53,51 @@ def compute_window_gates(
     machine_runs: dict[str, list[ToolRun]],
     holiday_set: set[int],
     config: FactoryConfig,
+    n_days: int | None = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Per-run floor gates + per-lot floors, in absolute minutes.
 
-    Run gate = floor of its first (EDD-earliest) lot. Each lot floor is
-    statically OTD-guarded: never later than the lot's own feasible latest
-    start, so the window yields when the lot needs more time than the window
-    holds.
+    Run gate = min(material floor of the first lot, JIT backward-stacked gate).
+    The backward-stacked gate is the latest start that keeps the WHOLE machine
+    queue on time (cascading, horizon- and capacity-aware) — starting at or
+    before it is always delivery-safe. Taking the min means: start at the
+    window floor when there is slack, and yield (start earlier than the
+    window) by exactly the amount congestion requires. When a run must yield,
+    its per-lot floors are dropped too — the run produces compactly.
     """
     day_cap = config.day_capacity_min
     release_days = config.material_release_days
+    horizon = n_days if n_days is not None else max(
+        (r.edd for m in machine_runs.values() for r in m), default=0
+    ) + 1
+
+    backward_gates = _backward_stack_gates(machine_runs, holiday_set, horizon, config=config)
 
     run_gates: dict[str, float] = {}
     lot_floors: dict[str, float] = {}
     for m_runs in machine_runs.values():
         for run in m_runs:
             first_floor: int | None = None
+            run_lot_floors: dict[str, float] = {}
             for i, lot in enumerate(run.lots):
                 floor = compute_lot_floor(lot, holiday_set, release_days)
                 extra = run.setup_min if i == 0 else 0.0
                 latest = _lot_latest_start(lot, extra, holiday_set, day_cap)
                 floor = max(0, min(floor, latest))
-                lot_floors[lot.id] = float(floor * day_cap)
+                run_lot_floors[lot.id] = float(floor * day_cap)
                 if first_floor is None:
                     first_floor = floor
-            run_gates[run.id] = float((first_floor or 0) * day_cap)
+
+            floor_abs = float((first_floor or 0) * day_cap)
+            backward_abs = backward_gates.get(run.id, 0.0)
+            if floor_abs <= backward_abs:
+                # Slack: start at the window floor, honour per-lot floors
+                run_gates[run.id] = floor_abs
+                lot_floors.update(run_lot_floors)
+            else:
+                # Congestion: the queue needs this run earlier than its
+                # window — yield minimally and produce compactly
+                run_gates[run.id] = backward_abs
 
     return run_gates, lot_floors
 
@@ -108,7 +132,9 @@ def window_dispatch(
         machine_runs[m_id].sort(key=lambda r: r.edd)
 
     # Phase 3: floor gates (earliest allowed starts)
-    current_gate, lot_floors = compute_window_gates(machine_runs, holiday_set, config)
+    current_gate, lot_floors = compute_window_gates(
+        machine_runs, holiday_set, config, n_days=engine_data.n_days
+    )
     gated_count = sum(1 for g in current_gate.values() if g > 0)
     logger.info("Window: %d/%d runs floor-gated (release=%dd)",
                 gated_count, len(runs), config.material_release_days)
@@ -141,9 +167,11 @@ def window_dispatch(
     win_segs, win_lots, win_warns = _dispatch_all()
     win_score = compute_score(win_segs, win_lots, engine_data, config=config)
 
-    # Phase 5: binary-search safety net — relax floors of tardy runs toward 0.
-    # OTD always wins over the material window.
+    # Phase 5: binary-search safety net — identical mechanics to jit_dispatch
+    # (targeted: only tardy runs, gate halved toward 0/baseline). Relaxing a
+    # run's gate also drops its per-lot floors. OTD always wins.
     relaxed_runs: set[str] = set()
+    gate_lo: dict[str, float] = {r.id: 0.0 for r in runs}
     max_retries = config.jit_max_retries
     for _attempt in range(max_retries):
         if win_score["tardy_count"] <= target_tardy:
@@ -156,11 +184,13 @@ def window_dispatch(
             run = run_by_id.get(rid)
             if run is None or end_day <= run.edd:
                 continue
+            lo = gate_lo.get(rid, 0.0)
             hi = current_gate.get(rid, 0.0)
-            if hi <= 0.0:
-                continue
-            mid = hi / 2.0
-            current_gate[rid] = mid if mid > day_cap * 0.5 else 0.0
+            mid = (lo + hi) / 2.0
+            if abs(hi - mid) > day_cap * 0.5:
+                current_gate[rid] = mid
+            else:
+                current_gate[rid] = lo
             for lot in run.lots:
                 lot_floors.pop(lot.id, None)
             relaxed_runs.add(rid)
@@ -222,7 +252,11 @@ def effective_earliness_target(config: FactoryConfig | None) -> float:
         return 6.0
     target = config.jit_earliness_target
     if window_policy_active(config):
-        return max(target, config.material_release_days * 1.5)
+        return max(
+            target,
+            config.productivity_earliness_ceiling_days,
+            config.material_release_days * 1.5,
+        )
     return target
 
 
