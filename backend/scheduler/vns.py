@@ -69,7 +69,15 @@ def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
         ):
             return False
 
-    target = config.jit_earliness_target if config else 5.5
+    # Materials-window guard: a VNS move must never worsen window compliance.
+    if int(new.get("early_window_violations", 0) or 0) > int(
+        old.get("early_window_violations", 0) or 0
+    ):
+        return False
+
+    from backend.scheduler.window import effective_earliness_target
+
+    target = effective_earliness_target(config) if config else 5.5
     earliness_ceiling = max(old["earliness_avg_days"], target)
     if new["earliness_avg_days"] > earliness_ceiling:
         return False
@@ -144,12 +152,17 @@ def _recompute_machine_gates(
     # Only recompute affected machines
     affected_runs = {m_id: runs for m_id, runs in machine_runs.items() if m_id in affected_machines}
     if affected_runs:
-        recomputed = _backward_stack_gates(
-            affected_runs,
-            holiday_set,
-            engine_data.n_days,
-            config=config,
-        )
+        if config is not None and getattr(config, "earliness_policy", "jit") == "window":
+            from backend.scheduler.window import compute_window_gates
+
+            recomputed, _ = compute_window_gates(affected_runs, holiday_set, config)
+        else:
+            recomputed = _backward_stack_gates(
+                affected_runs,
+                holiday_set,
+                engine_data.n_days,
+                config=config,
+            )
         new_gates.update(recomputed)
 
     return new_gates

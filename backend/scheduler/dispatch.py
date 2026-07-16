@@ -323,6 +323,7 @@ def per_machine_dispatch(
     audit_logger: object | None = None,
     config: FactoryConfig | None = None,
     tool_tl: ToolTimeline | None = None,
+    lot_floors: dict[str, float] | None = None,
 ) -> tuple[list[Segment], list[Lot], list[str]]:
     """Dispatch runs across machines. Parallel per-machine with crew mutex.
 
@@ -400,6 +401,7 @@ def per_machine_dispatch(
                 engine_data,
                 run_holidays,
                 config=config,
+                lot_floors=lot_floors,
             )
             all_segments.extend(segments)
 
@@ -432,6 +434,7 @@ def _allocate_run(
     engine_data: EngineData,
     holidays: set[int],
     config: FactoryConfig | None = None,
+    lot_floors: dict[str, float] | None = None,
 ) -> list[Segment]:
     """Allocate a ToolRun on a machine. Returns segments."""
     max_attempts = max(10, len(tool_tl.bookings.get(run.tool_id, [])) + 5)
@@ -449,6 +452,7 @@ def _allocate_run(
             holidays,
             candidate_start,
             config=config,
+            lot_floors=lot_floors,
         )
         last_segments = segments
         if not segments:
@@ -485,6 +489,7 @@ def _allocate_run_candidate(
     holidays: set[int],
     candidate_start: float,
     config: FactoryConfig | None = None,
+    lot_floors: dict[str, float] | None = None,
 ) -> tuple[list[Segment], float, float, dict[int, float]]:
     """Build a run allocation without mutating shared machine/crew/tool state."""
     day_cap = config.day_capacity_min if config else DAY_CAP
@@ -523,6 +528,14 @@ def _allocate_run_candidate(
         remaining_min = lot.prod_min
         remaining_qty = lot.qty
         is_first_seg = True
+
+        # Materials-window floor (earliness_policy="window"): never start a
+        # lot before its release floor. Floors are OTD-guarded upstream
+        # (window.compute_window_gates) so this cannot force tardiness alone.
+        if lot_floors:
+            floor_abs = lot_floors.get(lot.id)
+            if floor_abs is not None and start_abs < floor_abs:
+                start_abs = floor_abs
 
         # Fix 5: ensure at least 1 segment even for micro-lots
         while remaining_min > 0.01 or (remaining_qty > 0 and is_first_seg):

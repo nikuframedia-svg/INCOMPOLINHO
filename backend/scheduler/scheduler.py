@@ -1391,13 +1391,18 @@ def schedule_all(
         baseline_score["total_lots"],
     )
 
-    # Phase 4: JIT (LST-gated re-dispatch)
+    # Phase 4: timing policy re-dispatch — JIT (as late as possible) or
+    # materials window (as early as possible within [edd − N workdays, edd])
     journal.phase_start("jit")
     jit_thresh = config.jit_threshold
     jit_machine_runs = None
     jit_gates = None
+    if config.earliness_policy == "window":
+        from backend.scheduler.window import window_dispatch as _phase4_dispatch
+    else:
+        _phase4_dispatch = jit_dispatch
     if config.jit_enabled and baseline_score["otd"] >= jit_thresh:
-        final_segments, final_lots, jit_warnings, jit_machine_runs, jit_gates = jit_dispatch(
+        final_segments, final_lots, jit_warnings, jit_machine_runs, jit_gates = _phase4_dispatch(
             runs,
             data,
             baseline_segments,
@@ -1610,8 +1615,11 @@ def schedule_all(
         score["earliness_avg_days"],
     )
 
-    # Earliness hard constraint check
-    earliness_target = config.jit_earliness_target if config else 6.0
+    # Earliness hard constraint check (recalibrated under the window policy —
+    # the window is in workdays, this metric in day indices)
+    from backend.scheduler.window import effective_earliness_target
+
+    earliness_target = effective_earliness_target(config)
     if score["earliness_avg_days"] > earliness_target:
         warnings.append(
             f"HARD: earliness {score['earliness_avg_days']:.1f}d > target {earliness_target:.1f}d"

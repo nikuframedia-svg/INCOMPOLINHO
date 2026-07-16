@@ -119,10 +119,27 @@ def compute_score(
 
     violations, physical_metrics = validate_plan_metrics(segments, engine_data, config)
 
+    # Materials-window compliance (earliness_policy="window")
+    early_window_violations = 0
+    early_window_violation_days = 0
+    if config is not None and getattr(config, "earliness_policy", "jit") == "window":
+        holiday_set = set(getattr(engine_data, "holidays", []))
+        release_days = config.material_release_days
+        for lot in lots:
+            start_day = lot_start.get(lot.id)
+            if start_day is None:
+                continue
+            floor_day = _floor_day(lot.edd, release_days, holiday_set)
+            if start_day < floor_day:
+                early_window_violations += 1
+                early_window_violation_days += floor_day - start_day
+
     return {
         "otd": otd,
         "otd_d": otd_d,
         "otd_d_failures": otd_d_failures,
+        "early_window_violations": early_window_violations,
+        "early_window_violation_days": early_window_violation_days,
         "earliness_avg_days": earliness_avg,
         "setups": setups,
         "setup_time_min": setup_time_min,
@@ -147,6 +164,21 @@ def compute_score(
         "hard_violations": len(violations),
         **physical_metrics,
     }
+
+
+def _floor_day(edd: int, release_days: int, holiday_set: set[int]) -> int:
+    """Earliest allowed day: edd − N workdays, skipping holidays.
+
+    Local copy of window._subtract_workdays — scoring cannot import jit/window
+    (both import compute_score; would be circular).
+    """
+    current = edd
+    remaining = release_days
+    while remaining > 0 and current > 0:
+        current -= 1
+        if current not in holiday_set:
+            remaining -= 1
+    return max(0, current)
 
 
 def _compute_otd_d(

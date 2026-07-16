@@ -118,13 +118,17 @@ class CachedPipeline:
         # Baseline score
         baseline_score = compute_score(segments, lots, data, config=self.config)
 
-        # Phase 4: JIT
+        # Phase 4: timing policy (JIT or materials window)
         jit_machine_runs = None
         jit_gates = None
         if self.config.jit_enabled and baseline_score["otd"] >= self.config.jit_threshold:
             jit_cfg = copy.copy(self.config)
             jit_cfg.jit_buffer_pct = chrom.buffer_pct
-            jit_segs, jit_lots, jit_warnings, jit_machine_runs, jit_gates = jit_dispatch(
+            if self.config.earliness_policy == "window":
+                from backend.scheduler.window import window_dispatch as _phase4_dispatch
+            else:
+                _phase4_dispatch = jit_dispatch
+            jit_segs, jit_lots, jit_warnings, jit_machine_runs, jit_gates = _phase4_dispatch(
                 runs,
                 data,
                 segments,

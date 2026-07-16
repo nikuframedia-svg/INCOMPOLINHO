@@ -40,7 +40,11 @@ def build_gate_report(
         "tardy_count": int(score.get("tardy_count", 0) or 0),
         "otd_d_failures": int(score.get("otd_d_failures", 0) or 0),
     }
-    metrics = {**physical_metrics, **delivery_metrics}
+    window_metrics = {
+        "early_window_violations": int(score.get("early_window_violations", 0) or 0),
+        "early_window_violation_days": int(score.get("early_window_violation_days", 0) or 0),
+    }
+    metrics = {**physical_metrics, **delivery_metrics, **window_metrics}
 
     hard_gate_passed = all(physical_metrics[key] == 0 for key in HARD_GATE_KEYS)
     delivery_gate_passed = (
@@ -49,8 +53,17 @@ def build_gate_report(
         and delivery_metrics["tardy_count"] == 0
         and delivery_metrics["otd_d_failures"] == 0
     )
+    # Materials-window gate: only gating in "hard" enforcement. A violation
+    # means production needs material earlier than the release proxy allows —
+    # a planner condition (infeasible_current_conditions), never bad physics.
+    material_gate_passed = not (
+        config is not None
+        and getattr(config, "earliness_policy", "jit") == "window"
+        and getattr(config, "early_window_enforcement", "soft") == "hard"
+        and window_metrics["early_window_violations"] > 0
+    )
 
-    if hard_gate_passed and delivery_gate_passed:
+    if hard_gate_passed and delivery_gate_passed and material_gate_passed:
         status = "applicable"
     elif hard_gate_passed:
         status = "infeasible_current_conditions"
@@ -66,6 +79,7 @@ def build_gate_report(
         "status": status,
         "hard_gate_passed": hard_gate_passed,
         "delivery_gate_passed": delivery_gate_passed,
+        "material_gate_passed": material_gate_passed,
         "metrics": metrics,
         "violations": violations,
         "late_detail": late_detail,
