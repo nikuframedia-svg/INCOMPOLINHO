@@ -1,0 +1,1035 @@
+{
+  "base": "https://inside-arranged-county-wing.trycloudflare.com",
+  "cases": [
+    {
+      "name": "risk_network",
+      "width": 1440,
+      "attempts": [
+        {
+          "at": 1790931394915,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931394916,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931395121,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931395122,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-1440-risk_network.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "config_proxy",
+      "width": 1440,
+      "attempts": [
+        {
+          "at": 1790931399218,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931399220,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931399424,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931399425,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-1440-config_proxy.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "today_network",
+      "width": 1440,
+      "attempts": [
+        {
+          "at": 1790931404357,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931404559,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931404961,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/console?day_idx=15",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/console?day_idx=15",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-1440-today_network.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "exhausted",
+      "width": 1440,
+      "attempts": [
+        {
+          "at": 1790931410133,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931410134,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931410336,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931410337,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931410738,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931410739,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 6,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/plan-view",
+          "error": {
+            "errorText": "net::ERR_NETWORK_CHANGED"
+          },
+          "injected": false
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/plan-view",
+          "error": {
+            "errorText": "net::ERR_NETWORK_CHANGED"
+          },
+          "injected": false
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-1440-exhausted.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "unmounted",
+      "width": 1440,
+      "attempts": [
+        {
+          "at": 1790931414677,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931414678,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931415050,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931415050,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931415800,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931415800,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "edit",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-1440-unmounted.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "risk_network",
+      "width": 390,
+      "attempts": [
+        {
+          "at": 1790931420183,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931420183,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931420386,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931420387,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-390-risk_network.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "config_proxy",
+      "width": 390,
+      "attempts": [
+        {
+          "at": 1790931424458,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931424459,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931424663,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931424664,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-390-config_proxy.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "today_network",
+      "width": 390,
+      "attempts": [
+        {
+          "at": 1790931429781,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931429984,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931430386,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/console?day_idx=15",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/console?day_idx=15",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-390-today_network.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "exhausted",
+      "width": 390,
+      "attempts": [
+        {
+          "at": 1790931434981,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931434982,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931435185,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931435185,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931435587,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931435588,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 6,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/plan-view",
+          "error": {
+            "errorText": "net::ERR_NETWORK_CHANGED"
+          },
+          "injected": false
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-390-exhausted.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    },
+    {
+      "name": "unmounted",
+      "width": 390,
+      "attempts": [
+        {
+          "at": 1790931440193,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931440194,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931440568,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931440569,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931441311,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        },
+        {
+          "at": 1790931441312,
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "referer": "https://inside-arranged-county-wing.trycloudflare.com/",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+            "x-access-mode": "view",
+            "x-dataset-id": "6d55d4d1d9094833aebdf62d89297d52",
+            "x-plan-revision": "89",
+            "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\""
+          }
+        }
+      ],
+      "injectedFailures": 2,
+      "networkFailures": [
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        },
+        {
+          "url": "https://inside-arranged-county-wing.trycloudflare.com/api/data/risk",
+          "error": {
+            "errorText": "net::ERR_INTERNET_DISCONNECTED"
+          },
+          "injected": true
+        }
+      ],
+      "screenshot": "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/recovery-390-unmounted.png",
+      "identity": {
+        "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+        "revision": 89
+      },
+      "status": "passed"
+    }
+  ],
+  "errors": [],
+  "blockedWrites": [],
+  "status": "passed"
+}

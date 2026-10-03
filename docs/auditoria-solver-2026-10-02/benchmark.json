@@ -1,0 +1,423 @@
+{
+  "revision": 90,
+  "freeze_day": 15,
+  "runs": [
+    {
+      "attempt": 0,
+      "seconds": 5.281,
+      "rss_mib": 121.98,
+      "fingerprint": "c1f48b0dea2a704d0f69f138ffd05105aa47ae6ee4f612e211b4b6259ceec337",
+      "calls": {
+        "normalization": 1
+      },
+      "timings_ms": {
+        "normalization": 442.65807420015335
+      },
+      "improvement": {
+        "contract_version": 1,
+        "status": "partial",
+        "stop_reason": "search_limit",
+        "scopes": [
+          "earliest_legal",
+          "priority_inversions",
+          "campaign_tail",
+          "shift_exchange",
+          "tool_transfers",
+          "alternative_machine"
+        ],
+        "candidates_evaluated": 8,
+        "moves_accepted": 0,
+        "accepted_by_scope": {},
+        "duplicates_skipped": 5,
+        "evaluations_by_scope": {
+          "tool_transfers": 8
+        },
+        "skipped_by_scope": {
+          "tool_transfers": 28
+        },
+        "limited_by_scope": {
+          "tool_transfers": 1
+        },
+        "rejections": {
+          "tool_transfers:contract": 8
+        },
+        "proposal_log": {
+          "BFP186:LOT_TWIN_BFP186_33:PRM039->PRM043": {
+            "scope": "tool_transfers",
+            "outcome": "rejected",
+            "reason": "contract",
+            "details": [
+              "encomenda 6800016767A.10/ACURION dia 41: quantidade no prazo diminui",
+              "encomenda 6800016767A.10/ACURION dia 41: atraso aumenta",
+              "encomenda 6800016767A.10/ACURION dia 41: cobertura de fabrica diminui"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP204:LOT_BFP204_PRM043_4398644050_36,LOT_BFP204_PRM043_4398644050_50,LOT_BFP204_PRM043_4398644050_57:PRM039->PRM043|first_run:run_BFP204_PRM043_1": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP204:LOT_BFP204_PRM043_4398644050_36,LOT_BFP204_PRM043_4398644050_50,LOT_BFP204_PRM043_4398644050_57:PRM039->PRM043": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP204:LOT_BFP204_PRM043_4398644050_68:PRM043->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "would_add_setups",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP080:LOT_BFP080_PRM019_1065170X100_68,LOT_BFP080_PRM019_1065170X100_71:PRM039->PRM019|first_run:run_BFP080_PRM019_5": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP080:LOT_BFP080_PRM019_1065170X100_68,LOT_BFP080_PRM019_1065170X100_71:PRM039->PRM019": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "VUL127:LOT_VUL127_PRM039_8750302197.20_76,LOT_VUL127_PRM039_8750302200.20_57:PRM039->PRM043|first_run:run_VUL127_PRM039_1__replanned_1": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "VUL127:LOT_VUL127_PRM039_8750302197.20_76,LOT_VUL127_PRM039_8750302200.20_57:PRM039->PRM043": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP186:LOT_TWIN_BFP186_47,LOT_TWIN_BFP186_61,LOT_TWIN_BFP186_71:PRM043->PRM039|first_run:run_BFP186_PRM039_1": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP186:LOT_TWIN_BFP186_47,LOT_TWIN_BFP186_61,LOT_TWIN_BFP186_71:PRM043->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP162:LOT_TWIN_BFP162_68:PRM031->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "would_add_setups",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP171:LOT_TWIN_BFP171_40,LOT_TWIN_BFP171_61:PRM031->PRM039|first_run:run_BFP171_PRM031_0__replanned_1": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP171:LOT_TWIN_BFP171_40,LOT_TWIN_BFP171_61:PRM031->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [
+              "beam_width"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP184:LOT_BFP184_PRM031_1661546X070_33,LOT_BFP184_PRM031_1661546X070_47,LOT_BFP184_PRM031_1661546X070_68:PRM031->PRM039|first_run:run_BFP184_PRM031_0__replanned_1": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "no_admissible_setup_saving",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP184:LOT_BFP184_PRM031_1661546X070_33,LOT_BFP184_PRM031_1661546X070_47,LOT_BFP184_PRM031_1661546X070_68:PRM031->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "scope_limited",
+            "details": [],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP079:LOT_TWIN_BFP079_12,LOT_TWIN_BFP079_8:PRM031->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "VUL127:LOT_VUL127_PRM039_8750302200.20_8:PRM043->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP186:LOT_TWIN_BFP186_12:PRM043->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP112:LOT_BFP112_PRM039_1197914X050_8:PRM039->PRM019": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP204:LOT_BFP204_PRM043_4398644050_12,LOT_BFP204_PRM043_4398644050_22,LOT_BFP204_PRM043_4398644050_4:PRM043->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP080:LOT_BFP080_PRM019_1065170X100_19,LOT_BFP080_PRM019_1065170X100_29,LOT_BFP080_PRM019_1065170X100_43,LOT_BFP080_PRM019_1065170X100_54,LOT_BFP080_PRM019_1065170X100_61,LOT_BFP080_PRM019_1065170X100_8:PRM019->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP112:LOT_BFP112_PRM039_1197914X050_22,LOT_BFP112_PRM039_1197914X050_33,LOT_BFP112_PRM039_1197914X050_43,LOT_BFP112_PRM039_1197914X050_54,LOT_BFP112_PRM039_1197914X050_64,LOT_BFP112_PRM039_1197914X050_71,LOT_BFP112_PRM039_1197914X050_78:PRM019->PRM039": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP188:LOT_BFP188_PRM043_3610295060_8:PRM031->PRM043": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP162:LOT_TWIN_BFP162_14:PRM039->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP171:LOT_TWIN_BFP171_14:PRM039->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP184:LOT_BFP184_PRM031_1661546X070_12:PRM039->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP079:LOT_TWIN_BFP079_4:PRM039->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP188:LOT_BFP188_PRM043_3610295060_22,LOT_BFP188_PRM043_3610295060_33,LOT_BFP188_PRM043_3610295060_50,LOT_BFP188_PRM043_3610295060_61,LOT_BFP188_PRM043_3610295060_68:PRM043->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          },
+          "BFP079:LOT_TWIN_BFP079_22,LOT_TWIN_BFP079_29,LOT_TWIN_BFP079_33,LOT_TWIN_BFP079_43,LOT_TWIN_BFP079_47,LOT_TWIN_BFP079_54,LOT_TWIN_BFP079_61,LOT_TWIN_BFP079_64,LOT_TWIN_BFP079_68,LOT_TWIN_BFP079_71:PRM039->PRM031": {
+            "scope": "tool_transfers",
+            "outcome": "skipped",
+            "reason": "protected",
+            "details": [
+              "envolve lote iniciado ou ancorado"
+            ],
+            "on_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+          }
+        },
+        "tradeoffs": {
+          "count": 8,
+          "items": [
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 6800016767A.10/ACURION dia 41: quantidade no prazo diminui",
+                "encomenda 6800016767A.10/ACURION dia 41: atraso aumenta",
+                "encomenda 6800016767A.10/ACURION dia 41: cobertura de fabrica diminui",
+                "encomenda 6800016767A.10/ACURION dia 41: atraso de fabrica aumenta",
+                "encomenda 6800016767A.10/ACURION dia 48: quantidade no prazo diminui"
+              ],
+              "reason_count": 16
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 6800016767A.10/ACURION dia 41: quantidade no prazo diminui",
+                "encomenda 6800016767A.10/ACURION dia 41: atraso aumenta",
+                "encomenda 6800016767A.10/ACURION dia 41: cobertura de fabrica diminui",
+                "encomenda 6800016767A.10/ACURION dia 41: atraso de fabrica aumenta",
+                "encomenda 6800016767A.10/ACURION dia 48: quantidade no prazo diminui"
+              ],
+              "reason_count": 16
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 4398644050/FAURECIA dia 57: quantidade no prazo diminui",
+                "encomenda 4398644050/FAURECIA dia 57: atraso aumenta",
+                "encomenda 4398644050/FAURECIA dia 57: cobertura de fabrica diminui",
+                "encomenda 4398644050/FAURECIA dia 57: atraso de fabrica aumenta"
+              ],
+              "reason_count": 4
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 4398644050/FAURECIA dia 57: quantidade no prazo diminui",
+                "encomenda 4398644050/FAURECIA dia 57: atraso aumenta",
+                "encomenda 4398644050/FAURECIA dia 57: cobertura de fabrica diminui",
+                "encomenda 4398644050/FAURECIA dia 57: atraso de fabrica aumenta"
+              ],
+              "reason_count": 4
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 1092262X100/FAURECIA dia 71: quantidade no prazo diminui",
+                "encomenda 1092262X100/FAURECIA dia 71: atraso aumenta",
+                "encomenda 1092262X100/FAURECIA dia 71: cobertura de fabrica diminui",
+                "encomenda 1092262X100/FAURECIA dia 71: atraso de fabrica aumenta"
+              ],
+              "reason_count": 4
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda CF589MMA1A02.20/HANON dia 64: quantidade no prazo diminui",
+                "encomenda CF589MMA1A02.20/HANON dia 64: atraso aumenta",
+                "encomenda CF589MMA1A02.20/HANON dia 64: cobertura de fabrica diminui",
+                "encomenda CF589MMA1A02.20/HANON dia 64: atraso de fabrica aumenta",
+                "expedicao para subcontratacao do lote LOT_HAN002_PRM043_CF589MMA1A02.20_64 atrasa"
+              ],
+              "reason_count": 5
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda CF589MMA1A02.20/HANON dia 64: quantidade no prazo diminui",
+                "encomenda CF589MMA1A02.20/HANON dia 64: atraso aumenta",
+                "encomenda CF589MMA1A02.20/HANON dia 64: cobertura de fabrica diminui",
+                "encomenda CF589MMA1A02.20/HANON dia 64: atraso de fabrica aumenta",
+                "expedicao para subcontratacao do lote LOT_HAN002_PRM043_CF589MMA1A02.20_64 atrasa"
+              ],
+              "reason_count": 5
+            },
+            {
+              "kind": "tool_transfers",
+              "applied": false,
+              "reasons": [
+                "encomenda 1064169X100/FAUREC. CZ dia 29: quantidade no prazo diminui",
+                "encomenda 1064169X100/FAUREC. CZ dia 29: atraso aumenta",
+                "encomenda 1064169X100/FAUREC. CZ dia 29: cobertura de fabrica diminui",
+                "encomenda 1064169X100/FAUREC. CZ dia 29: atraso de fabrica aumenta",
+                "encomenda 1064169X100/FAURECIA dia 29: quantidade no prazo diminui"
+              ],
+              "reason_count": 32
+            }
+          ]
+        },
+        "duration_ms": 4946.9,
+        "reference": {
+          "otd": 96.5,
+          "otd_d": 99.1,
+          "tardy_count": 7,
+          "total_tardiness": 37,
+          "setups": 195,
+          "setup_time_min": 9075.0,
+          "production_time_cost": 5580162240.942,
+          "left_shift_opportunities": 0,
+          "physical_setups": 195,
+          "physical_setup_minutes": 9075.0,
+          "tool_transfers": 13
+        },
+        "final": {
+          "otd": 96.5,
+          "otd_d": 99.1,
+          "tardy_count": 7,
+          "total_tardiness": 37,
+          "setups": 195,
+          "setup_time_min": 9075.0,
+          "production_time_cost": 5580162240.942,
+          "left_shift_opportunities": 0,
+          "physical_setups": 195,
+          "physical_setup_minutes": 9075.0,
+          "tool_transfers": 13
+        },
+        "final_signature": "f3aeddf99aa52ea5c4a430512f22856a7f6e3315e3aedeb8c309e7e305cec665"
+      },
+      "physical_errors": [],
+      "no_loss": true
+    }
+  ],
+  "summary": {
+    "sample_count": 1,
+    "single_run_seconds": 5.281,
+    "peak_rss_mib": 121.98,
+    "statistical_percentiles_established": false,
+    "cpu_affinity": [
+      0
+    ]
+  }
+}

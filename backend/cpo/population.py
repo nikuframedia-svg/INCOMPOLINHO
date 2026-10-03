@@ -120,7 +120,10 @@ class MAPElitesArchive:
 
     def try_insert(self, chrom: Chromosome, score: dict, cost: float) -> bool:
         # Only feasible solutions
-        if score.get("tardy_count", 1) > 0:
+        if (
+            score.get("tardy_count", 1) > 0
+            or score.get("subcontract_dispatch_misses", 0) > 0
+        ):
             return False
 
         setups = score.get("setups", 100)

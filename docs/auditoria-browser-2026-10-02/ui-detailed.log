@@ -1,0 +1,74 @@
+PASS Hoje: mudar a data e voltar ao dia atual
+PASS Hoje: abrir recurso no plano
+PASS Plano: pesquisa e filtro de máquina
+PASS Plano: pesquisa sem resultados
+PASS Plano: ordenar a tabela
+PASS Plano: abrir detalhe de segmento
+PASS Plano: exportar CSV
+PASS Plano: dias, turnos e zoom
+PASS Plano: consultar versões guardadas
+PASS Plano: explicação de transferências e propostas
+FAIL Capacidade: alternar dia e semana: The expression evaluated to a falsy value:
+
+  assert((await content.innerText()).includes('W'))
+
+PASS Entregas: apenas ruturas e referências com procura
+PASS Entregas: filtros cliente e máquina
+PASS Entregas: vista por encomenda
+PASS Risco: Visão geral
+PASS Risco: Atrasos
+PASS Risco: Equipa
+PASS Configuração 1440: Máquinas
+PASS Configuração 1440: Turnos
+PASS Configuração 1440: Operadores
+PASS Configuração 1440: Ferramentas
+PASS Configuração 1440: Exceções de setup
+PASS Configuração 1440: Gémeas
+PASS Configuração 1440: Subcontratações
+PASS Configuração 1440: Feriados & dias extra
+PASS Configuração 1440: Indisponibilidades
+PASS Configuração 1440: Qualidade de dados
+PASS Configuração 1440: Ver dados ISOP
+PASS Configuração 1440: Correções de planeamento
+PASS Configuração 1440: Parâmetros
+PASS Configuração 390: Máquinas
+PASS Configuração 390: Turnos
+PASS Configuração 390: Operadores
+PASS Configuração 390: Ferramentas
+PASS Configuração 390: Exceções de setup
+PASS Configuração 390: Gémeas
+PASS Configuração 390: Subcontratações
+PASS Configuração 390: Feriados & dias extra
+PASS Configuração 390: Indisponibilidades
+PASS Configuração 390: Qualidade de dados
+PASS Configuração 390: Ver dados ISOP
+PASS Configuração 390: Correções de planeamento
+PASS Configuração 390: Parâmetros
+PASS Configuração: pesquisar e ordenar dados ISOP
+PASS Administração: Ver regras
+PASS Administração: Diagnóstico
+FAIL Consulta: bloqueio de comandos de escrita: The expression evaluated to a falsy value:
+
+  assert(await page.getByRole('button',{name:'Recalcular plano',exact:true}).isDisabled())
+
+PASS Copilot: disponibilidade comunicada
+PASS Visual 320: Hoje
+PASS Visual 320: Plano
+PASS Visual 320: Carga e capacidade
+PASS Visual 320: Entregas
+PASS Visual 320: Risco
+PASS Visual 320: Configuração
+PASS Visual 768: Hoje
+PASS Visual 768: Plano
+PASS Visual 768: Carga e capacidade
+PASS Visual 768: Entregas
+PASS Visual 768: Risco
+PASS Visual 768: Configuração
+PASS Visual 1920: Hoje
+PASS Visual 1920: Plano
+PASS Visual 1920: Carga e capacidade
+PASS Visual 1920: Entregas
+PASS Visual 1920: Risco
+PASS Visual 1920: Configuração
+PASS Plano ativo preservado durante os testes públicos
+{"status":"findings","passed":65,"failed":[{"name":"Capacidade: alternar dia e semana","error":"AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert((await content.innerText()).includes('W'))\n"},{"name":"Consulta: bloqueio de comandos de escrita","error":"AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(await page.getByRole('button',{name:'Recalcular plano',exact:true}).isDisabled())\n"}],"errors":[],"blockedWrites":[],"apiFailures":[]}

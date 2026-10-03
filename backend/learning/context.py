@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP, DEFAULT_OEE
+from backend.calendar import available_machine_capacity
+from backend.config.types import PLANNING_POLICY_VERSION, FactoryConfig
+from backend.scheduler.constants import DEFAULT_OEE
 from backend.types import EngineData
 
 from .types import ISContext
@@ -11,7 +12,6 @@ from .types import ISContext
 
 def extract_context(data: EngineData, config: FactoryConfig | None = None) -> ISContext:
     """Extract feature vector from an ISOP for transfer learning."""
-    day_cap = config.day_capacity_min if config else DAY_CAP
     oee_default = config.oee_default if config else DEFAULT_OEE
 
     n_ops = len(data.ops)
@@ -53,7 +53,11 @@ def extract_context(data: EngineData, config: FactoryConfig | None = None) -> IS
         op_demand = sum(max(0, d) for d in op.d)
         total_load_min += (op_demand / ph / oee) * 60.0
 
-    total_capacity = n_machines * n_days * day_cap
+    total_capacity = sum(
+        available_machine_capacity(machine.id, day_idx, data, config)
+        for machine in data.machines
+        for day_idx in range(n_days)
+    )
     demand_density = total_load_min / total_capacity if total_capacity > 0 else 0.0
 
     return ISContext(
@@ -66,4 +70,5 @@ def extract_context(data: EngineData, config: FactoryConfig | None = None) -> IS
         alt_pct=round(alt_pct, 3),
         avg_edd=round(avg_edd, 1),
         demand_density=round(demand_density, 4),
+        planning_policy_version=PLANNING_POLICY_VERSION,
     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.analytics import (
     build_production_by_op,
     compute_ctp,
@@ -9,6 +11,7 @@ from backend.analytics import (
     compute_order_tracking,
     compute_stock_projections,
 )
+from backend.config.types import FactoryConfig, MachineConfig
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Lot, Segment
 from backend.types import ClientDemandEntry, EngineData, EOp, MachineInfo
@@ -66,7 +69,7 @@ def _engine(
 ) -> EngineData:
     if ops is None:
         ops = [_eop()]
-    machine_ids = list({op.m for op in ops})
+    machine_ids = list({machine for op in ops for machine in (op.m, op.alt) if machine})
     machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machine_ids]
     return EngineData(
         ops=ops,
@@ -300,7 +303,10 @@ class TestCTP:
         """Primary full, alt has capacity."""
         engine = _engine(ops=[_eop(alt="M2")], n_days=5)
         # Fill primary completely
-        segs = [_seg(machine="M1", day=d, prod_min=DAY_CAP, setup_min=0) for d in range(5)]
+        segs = [
+            _seg(machine="M1", tool="T2", day=d, prod_min=DAY_CAP, setup_min=0)
+            for d in range(5)
+        ]
         result = compute_ctp("SKU1", 500, 4, segs, engine)
         assert result.feasible is True
         assert result.machine == "M2"
@@ -334,6 +340,123 @@ class TestCTP:
         # Days 3,4 are holidays → no free capacity anywhere
         result = compute_ctp("SKU1", 500, 4, segs, engine)
         assert result.feasible is False
+
+    def test_full_machine_block_is_not_promised(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        engine.machine_blocked_days = {"M1": {0}}
+
+        result = compute_ctp("SKU1", 100, 0, [], engine)
+
+        assert result.feasible is False
+
+    def test_full_tool_block_is_not_promised(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        engine.tool_blocked_days = {"T1": {0}}
+
+        result = compute_ctp("SKU1", 100, 0, [], engine)
+
+        assert result.feasible is False
+
+    def test_machine_and_tool_capacity_must_overlap_in_time(self):
+        engine = _engine(ops=[_eop(pH=100, sH=0.5, oee=1)], n_days=1)
+        engine.machine_blocked_intervals = {
+            "M1": [
+                {
+                    "start_day": 0,
+                    "start_min": 420,
+                    "end_day": 0,
+                    "end_min": 930,
+                }
+            ]
+        }
+        engine.tool_blocked_intervals = {
+            "T1": [
+                {
+                    "start_day": 0,
+                    "start_min": 930,
+                    "end_day": 0,
+                    "end_min": 1440,
+                }
+            ]
+        }
+
+        result = compute_ctp("SKU1", 100, 0, [], engine, FactoryConfig())
+
+        assert result.feasible is False
+
+    def test_inactive_machine_is_not_promised(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        config = FactoryConfig(
+            machines={"M1": MachineConfig("M1", "Grandes", active=False)}
+        )
+
+        result = compute_ctp("SKU1", 100, 0, [], engine, config)
+
+        assert result.feasible is False
+
+    def test_operator_absence_is_not_promised(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        engine.operator_blocked_intervals = [
+            {
+                "group": "Grandes",
+                "shift": "A",
+                "start_day": 0,
+                "start_min": 420,
+                "end_min": 930,
+                "count": 6,
+            },
+            {
+                "group": "Grandes",
+                "shift": "B",
+                "start_day": 0,
+                "start_min": 930,
+                "end_min": 1440,
+                "count": 5,
+            },
+        ]
+
+        result = compute_ctp("SKU1", 100, 0, [], engine, FactoryConfig())
+
+        assert result.feasible is False
+
+    def test_setup_crew_exhaustion_is_not_promised(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        engine.machines.append(MachineInfo("M2", "Grandes", DAY_CAP))
+        setup_on_other_resources = _seg(
+            machine="M2", tool="T2", day=0, prod_min=0, setup_min=DAY_CAP
+        )
+
+        result = compute_ctp(
+            "SKU1", 100, 0, [setup_on_other_resources], engine, FactoryConfig()
+        )
+
+        assert result.feasible is False
+
+    def test_machine_oee_and_setup_override_change_required_minutes(self):
+        engine = _engine(ops=[_eop(pH=100, sH=0.5, oee=0.9)], n_days=1)
+        config = FactoryConfig(
+            machines={"M1": MachineConfig("M1", "Grandes", oee=0.5)},
+            setup_overrides=[{"sku": "SKU1", "machine": "M1", "hours": 2}],
+        )
+
+        result = compute_ctp("SKU1", 100, 0, [], engine, config)
+
+        assert result.feasible is True
+        assert result.required_min == 240.0
+
+    def test_duplicate_sku_is_rejected_as_ambiguous(self):
+        engine = _engine(
+            ops=[
+                _eop(op_id="op1", sku="SKU1", machine="M1", tool="T1"),
+                _eop(op_id="op2", sku="SKU1", machine="M2", tool="T2"),
+            ],
+            n_days=1,
+        )
+
+        result = compute_ctp("SKU1", 100, 0, [], engine)
+
+        assert result.feasible is False
+        assert "ambíguo" in (result.reason or "")
 
 
 # ═══ EXPEDITION ═══
@@ -385,6 +508,43 @@ class TestExpedition:
         exp = compute_expedition(segs, lots, engine)
         assert exp.days[0].entries[0].status == "partial"
         assert exp.days[0].entries[0].shortfall == 300
+
+    @pytest.mark.parametrize("reverse_ops", [False, True])
+    def test_legacy_duplicate_sku_aggregates_every_route(self, reverse_ops):
+        ops = [
+            _eop(op_id="op1", sku="SKU1", machine="M1", tool="T1"),
+            _eop(op_id="op2", sku="SKU1", machine="M2", tool="T2"),
+        ]
+        if reverse_ops:
+            ops.reverse()
+        lots = [
+            _lot(lot_id="L1", op_id="op1", machine_id="M1", tool_id="T1", qty=300),
+            _lot(lot_id="L2", op_id="op2", machine_id="M2", tool_id="T2", qty=300),
+        ]
+        segs = [
+            _seg(lot_id="L1", run_id="R1", machine="M1", tool="T1", qty=300),
+            _seg(lot_id="L2", run_id="R2", machine="M2", tool="T2", qty=300),
+        ]
+        engine = _engine(
+            ops=ops,
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    )
+                ]
+            },
+        )
+
+        entry = compute_expedition(segs, lots, engine).days[0].entries[0]
+
+        assert entry.produced_qty == 600
+        assert entry.status == "ready"
 
     def test_multi_client(self):
         """Two clients for same SKU → separate entries."""
@@ -529,6 +689,123 @@ class TestOrderTracking:
         assert orders[1].source == "surplus"
         assert orders[1].surplus_used == 300
 
+    def test_demand_uses_every_contributing_lot_and_latest_ready_day(self):
+        """A demand spanning several lots is ready only when the last lot is ready."""
+        lots = [
+            _lot(lot_id=f"L{i}", qty=14_000, edd=34)
+            for i in range(1, 6)
+        ]
+        segs = [
+            _seg(
+                lot_id=lot.id,
+                run_id=f"R{i}",
+                day=day,
+                qty=14_000,
+            )
+            for i, (lot, day) in enumerate(
+                zip(lots, [30, 31, 32, 33, 40], strict=True),
+                start=1,
+            )
+        ]
+        engine = _engine(
+            ops=[_eop(d=[0] * 5)],
+            n_days=5,
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=34,
+                        date="2026-10-12",
+                        order_qty=70_000,
+                        np_value=-70_000,
+                    )
+                ]
+            },
+        )
+
+        client_orders = compute_order_tracking(segs, lots, engine)[0]
+        order = client_orders.orders[0]
+
+        assert order.allocated_qty == 70_000
+        assert order.shortfall_qty == 0
+        assert order.lot_ids == ["L1", "L2", "L3", "L4", "L5"]
+        assert order.production_run_ids == ["R1", "R2", "R3", "R4", "R5"]
+        assert order.production_qty == 70_000
+        assert order.factory_ready_day == 40
+        assert order.customer_ready_day == 40
+        assert order.status == "planned"
+        assert client_orders.total_ready == 0
+
+    def test_partial_multi_lot_coverage_is_not_ready(self):
+        lots = [
+            _lot(lot_id="L1", qty=14_000, edd=34),
+            _lot(lot_id="L2", qty=14_000, edd=34),
+        ]
+        segs = [
+            _seg(lot_id="L1", run_id="R1", day=30, qty=14_000),
+            _seg(lot_id="L2", run_id="R2", day=31, qty=14_000),
+        ]
+        engine = _engine(
+            ops=[_eop(d=[0] * 5)],
+            n_days=5,
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=34,
+                        date="2026-10-12",
+                        order_qty=70_000,
+                        np_value=-70_000,
+                    )
+                ]
+            },
+        )
+
+        client_orders = compute_order_tracking(segs, lots, engine)[0]
+        order = client_orders.orders[0]
+
+        assert order.allocated_qty == 28_000
+        assert order.shortfall_qty == 42_000
+        assert order.status == "partial"
+        assert order.ready_day is None
+        assert client_orders.total_ready == 0
+
+    def test_surplus_is_not_counted_twice_across_demands(self):
+        lots = [_lot(qty=1_000, edd=1)]
+        segs = [_seg(day=0, qty=1_000)]
+        demands = [
+            ClientDemandEntry(
+                client="C1",
+                sku="SKU1",
+                day_idx=1,
+                date="2026-03-06",
+                order_qty=500,
+                np_value=-500,
+            ),
+            ClientDemandEntry(
+                client="C1",
+                sku="SKU1",
+                day_idx=2,
+                date="2026-03-07",
+                order_qty=800,
+                np_value=-800,
+            ),
+        ]
+        engine = _engine(
+            ops=[_eop(d=[0, 500, 800, 0, 0])],
+            client_demands={"SKU1": demands},
+        )
+
+        orders = compute_order_tracking(segs, lots, engine)[0].orders
+
+        assert orders[0].allocated_qty == 500
+        assert orders[1].allocated_qty == 500
+        assert orders[1].shortfall_qty == 300
+        assert orders[1].source == "surplus"
+        assert orders[1].status == "partial"
+
     def test_not_planned(self):
         """Demand with no lot → source='not_planned'."""
         engine = _engine(
@@ -549,6 +826,52 @@ class TestOrderTracking:
         result = compute_order_tracking([], [], engine)
         assert result[0].orders[0].source == "not_planned"
         assert result[0].orders[0].status == "not_planned"
+
+    def test_legacy_duplicate_sku_finds_lots_from_every_route(self):
+        ops = [
+            _eop(op_id="op2", sku="SKU1", machine="M2", tool="T2"),
+            _eop(op_id="op1", sku="SKU1", machine="M1", tool="T1"),
+        ]
+        lots = [
+            _lot(
+                lot_id="L2",
+                op_id="op2",
+                machine_id="M2",
+                tool_id="T2",
+                qty=500,
+                edd=1,
+            )
+        ]
+        segs = [
+            _seg(
+                lot_id="L2",
+                run_id="R2",
+                machine="M2",
+                tool="T2",
+                qty=500,
+            )
+        ]
+        engine = _engine(
+            ops=ops,
+            client_demands={
+                "SKU1": [
+                    ClientDemandEntry(
+                        client="C1",
+                        sku="SKU1",
+                        day_idx=1,
+                        date="2026-03-06",
+                        order_qty=500,
+                        np_value=-500,
+                    )
+                ]
+            },
+        )
+
+        order = compute_order_tracking(segs, lots, engine)[0].orders[0]
+
+        assert order.source == "production"
+        assert order.lot_id == "L2"
+        assert order.production_machine == "M2"
 
     def test_reason_not_empty(self):
         """All orders have non-empty reason."""

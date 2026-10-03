@@ -85,7 +85,8 @@ class TestResolvers:
         c.setup_overrides = [{"sku": "SKU1", "machine": "M2", "hours": 1.5}]
         assert resolve_setup_hours("SKU1", "M2", 0.5, c) == 1.5
         assert resolve_setup_hours("SKU1", "M1", 0.5, c) == 0.5  # per-tool fallback
-        assert resolve_setup_hours("SKU9", "M2", 0.0, c) == c.default_setup_hours
+        assert resolve_setup_hours("SKU9", "M2", 0.0, c) == 0.0
+        assert resolve_setup_hours("SKU9", "M2", None, c) == c.default_setup_hours
 
     def test_effective_oee_chain(self):
         c = _config_with_machines("M1", "M2")
@@ -196,6 +197,25 @@ class TestRebind:
         assert abs(lot.prod_min - expected) < 0.01
         assert run.setup_min == lot.setup_min
 
+    def test_setup_family_run_uses_max_setup_after_rebind(self):
+        op_a = _eop(op_id="T1_M1_SKA", sku="SKA", sH=0.5)
+        op_b = _eop(op_id="T1_M1_SKB", sku="SKB", sH=1.5)
+        engine = _engine([op_a, op_b])
+        config = _config_with_machines("M1")
+        config.setup_families = {"T1": [["SKA", "SKB"]]}
+        config.setup_overrides = [
+            {"sku": "SKA", "machine": "M1", "hours": 0.5},
+            {"sku": "SKB", "machine": "M1", "hours": 1.5},
+        ]
+        runs = _runs_for(engine, config)
+
+        rebind_runs_to_machines({"M1": runs}, engine, config)
+
+        assert len(runs) == 1
+        assert {lot.setup_min for lot in runs[0].lots} == {30.0, 90.0}
+        assert runs[0].setup_min == 90.0
+        assert runs[0].total_min == runs[0].total_prod_min + 90.0
+
     def test_clone_does_not_mutate_original(self):
         engine = _engine([_eop(alt="M2")])
         config = _config_with_machines("M1", "M2")
@@ -208,6 +228,7 @@ class TestRebind:
         orig_lot_setup = original.lots[0].setup_min
 
         clone = clone_run_for_machine(original, "M2", engine, config)
+        assert clone.machine_id == "M2"
         assert clone.setup_min == 120.0
         assert clone.lots[0].setup_min == 120.0
         assert original.setup_min == orig_setup

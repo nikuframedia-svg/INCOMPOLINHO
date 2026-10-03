@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from backend.calendar import available_machine_capacity
 from backend.config.types import FactoryConfig
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
@@ -102,7 +103,7 @@ def compute_day_summary(
     # --- Production summary ---
     total_pcs = sum(s.qty for s in day_segs)
     active_machines = sorted(set(s.machine_id for s in day_segs))
-    total_setups = sum(1 for s in day_segs if s.setup_min > 0)
+    total_setups = len({s.run_id for s in day_segs if s.setup_min > 0})
 
     lines.append(
         {
@@ -122,11 +123,10 @@ def compute_day_summary(
             key=lambda s: s.start_min,
         )
         m_pcs = sum(s.qty for s in m_segs)
-        m_setups = sum(1 for s in m_segs if s.setup_min > 0)
+        m_setups = len({s.run_id for s in m_segs if s.setup_min > 0})
         m_used = sum(s.prod_min + s.setup_min for s in m_segs)
-        m_util = (
-            round(m_used / config.day_capacity_min * 100, 1) if config.day_capacity_min > 0 else 0
-        )
+        m_capacity = available_machine_capacity(m_id, day_idx, engine_data, config)
+        m_util = round(m_used / m_capacity * 100, 1) if m_capacity > 0 else 0
 
         # Tool sequence with reasons
         tool_parts: list[str] = []
@@ -149,9 +149,9 @@ def compute_day_summary(
             if primary:
                 reasons.append(f"redir. de {primary}")
 
-            # EDD
+            # Operational production due date
             if s.edd >= 0:
-                reasons.append(f"EDD d{s.edd}")
+                reasons.append(f"prazo produção d{s.edd}")
 
             if reasons:
                 label += f" ({', '.join(reasons)})"
@@ -184,7 +184,7 @@ def compute_day_summary(
             }
         )
 
-    # --- Expedition (deliveries) ---
+    # --- Expedições (deliveries) ---
     clients = expedition_data.get("clients", [])
     if clients:
         ready_count = sum(c.get("ready", 0) for c in clients)
@@ -195,7 +195,7 @@ def compute_day_summary(
                 lines.append(
                     {
                         "text": (
-                            f"Expedição: {total_count} "
+                            f"Expedições: {total_count} "
                             f"encomenda{'s' if total_count > 1 else ''}, todas prontas."
                         ),
                         "color": "green",
@@ -204,7 +204,7 @@ def compute_day_summary(
             else:
                 lines.append(
                     {
-                        "text": f"Expedição: {not_ready} de {total_count} encomendas NÃO prontas.",
+                        "text": f"Expedições: {not_ready} de {total_count} encomendas NÃO prontas.",
                         "color": "red",
                     }
                 )
@@ -244,3 +244,49 @@ def compute_day_summary(
             )
 
     return lines
+
+
+def compute_day_overview(
+    current_date: str | None,
+    operational_summary: dict,
+    tomorrow: dict | None,
+) -> dict:
+    """Structured overview for the Hoje screen.
+
+    This is additive to the legacy console payload: clients that still read
+    summary/operational_summary/tomorrow can ignore it.
+    """
+    unavailable = operational_summary.get("unavailable", {})
+    unavailable_count = sum(
+        len(unavailable.get(kind, []) or [])
+        for kind in ("machines", "tools", "operators")
+    )
+    tomorrow_setups = (tomorrow or {}).get("setups", []) or []
+    tomorrow_operators = (tomorrow or {}).get("operators", []) or []
+    tomorrow_problems = (tomorrow or {}).get("problems", []) or []
+    tomorrow_operator_deficit = sum(
+        max(0, int(item.get("deficit", 0) or 0))
+        for item in tomorrow_operators
+    )
+
+    return {
+        "today": {
+            "date": current_date,
+            "production_by_group": operational_summary.get("production_by_group", []),
+            "setups_by_group_shift": operational_summary.get("setups_by_group_shift", []),
+            "average_utilization_pct": operational_summary.get("average_utilization_pct", 0),
+            "unavailable_count": unavailable_count,
+            "trial_count": len(operational_summary.get("trials", []) or []),
+            "expedition": operational_summary.get(
+                "expedition",
+                {"ready": 0, "partial": 0, "not_ready": 0},
+            ),
+        },
+        "tomorrow": {
+            "date": (tomorrow or {}).get("date"),
+            "setups_count": len(tomorrow_setups),
+            "operator_deficit": tomorrow_operator_deficit,
+            "problems_count": len(tomorrow_problems),
+            "expeditions_summary": (tomorrow or {}).get("expeditions_summary") or "",
+        },
+    }

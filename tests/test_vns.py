@@ -41,6 +41,7 @@ def _make_lot(
         setup_min=setup_min,
         edd=edd,
         is_twin=False,
+        sku=tool,
     )
 
 
@@ -98,6 +99,54 @@ class TestIsBetter:
         new = {"tardy_count": 1, "otd_d": 100.0, "earliness_avg_days": 4.0, "setups": 80}
         assert _is_better(new, old, config) is False
 
+    def test_explicit_customer_priority_survives_post_processing(self):
+        config = FactoryConfig()
+        priority_late = {
+            "otd": 99.0,
+            "otd_d": 99.0,
+            "priority_tardy_count": 1,
+            "priority_tardy_weight": 100,
+            "priority_tardiness_weighted": 100,
+            "tardy_count": 1,
+            "setups": 10,
+        }
+        priority_on_time = {
+            "otd": 98.0,
+            "otd_d": 98.0,
+            "priority_tardy_count": 0,
+            "priority_tardy_weight": 0,
+            "priority_tardiness_weighted": 0,
+            "tardy_count": 2,
+            "setups": 10,
+        }
+
+        assert _is_better(priority_on_time, priority_late, config) is True
+        assert _is_better(priority_late, priority_on_time, config) is False
+
+    def test_dispatch_recovery_cannot_buy_a_worse_customer_delivery(self):
+        config = FactoryConfig()
+        customer_on_time = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "tardy_count": 0,
+            "otd_d_failures": 0,
+            "subcontract_dispatch_misses": 1,
+            "subcontract_dispatch_late_workdays": 1,
+            "setups": 10,
+        }
+        customer_late = {
+            **customer_on_time,
+            "otd": 99.0,
+            "otd_d": 99.0,
+            "tardy_count": 1,
+            "otd_d_failures": 1,
+            "subcontract_dispatch_misses": 0,
+            "subcontract_dispatch_late_workdays": 0,
+        }
+
+        assert _is_better(customer_late, customer_on_time, config) is False
+        assert _is_better(customer_on_time, customer_late, config) is True
+
     def test_fewer_tardy_has_priority_over_tardiness_shape(self):
         config = FactoryConfig()
         old = {
@@ -121,6 +170,62 @@ class TestIsBetter:
             "setups": 110,
         }
         assert _is_better(new, old, config) is True
+
+    def test_infeasible_candidates_prioritize_otd_before_missing_quantity(self):
+        config = FactoryConfig()
+        old = {
+            "otd": 99.0,
+            "otd_d": 99.0,
+            "otd_d_cumulative_shortfall_qty": 1000,
+            "otd_d_final_shortfall_qty": 1000,
+            "tardy_count": 1,
+            "otd_d_failures": 1,
+            "total_tardiness": 1.0,
+            "max_tardiness": 1.0,
+            "earliness_avg_days": 5.0,
+            "setups": 10,
+        }
+        new = {
+            **old,
+            "otd": 98.0,
+            "otd_d_cumulative_shortfall_qty": 200,
+            "otd_d_final_shortfall_qty": 200,
+            "tardy_count": 2,
+            "otd_d_failures": 2,
+            "total_tardiness": 2.0,
+            "max_tardiness": 1.0,
+            "setups": 11,
+        }
+
+        assert _is_better(new, old, config) is False
+
+    def test_complete_delivery_never_loses_to_quantity_first_best_effort(self):
+        config = FactoryConfig()
+        complete = {
+            "otd": 100.0,
+            "otd_d": 100.0,
+            "otd_d_cumulative_shortfall_qty": 0,
+            "otd_d_final_shortfall_qty": 0,
+            "tardy_count": 0,
+            "otd_d_failures": 0,
+            "total_tardiness": 0.0,
+            "max_tardiness": 0.0,
+            "earliness_avg_days": 5.0,
+            "setups": 10,
+        }
+        best_effort = {
+            **complete,
+            "otd": 99.0,
+            "otd_d": 99.0,
+            "otd_d_cumulative_shortfall_qty": 1,
+            "otd_d_final_shortfall_qty": 1,
+            "tardy_count": 1,
+            "otd_d_failures": 1,
+            "earliness_avg_days": 1.0,
+            "setups": 1,
+        }
+
+        assert _is_better(best_effort, complete, config) is False
 
     def test_worse_otd_d_rejected(self):
         config = FactoryConfig()
@@ -202,11 +307,23 @@ class TestIsBetter:
         }
         assert _is_better(new, old, config) is True
 
-    def test_earliness_exceeds_target_rejected(self):
+    def test_earlier_legal_work_is_accepted_regardless_of_legacy_earliness_metric(self):
         config = FactoryConfig()
-        old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
-        new = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 7.0, "setups": 80}
-        assert _is_better(new, old, config) is False
+        old = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 5.0,
+            "latest_start_gap_avg_min": 60,
+            "setups": 100,
+        }
+        new = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 7.0,
+            "latest_start_gap_avg_min": 480,
+            "setups": 80,
+        }
+        assert _is_better(new, old, config) is True
 
     def test_more_setups_rejected_even_with_less_earliness(self):
         config = FactoryConfig()
@@ -249,10 +366,22 @@ class TestIsBetter:
 
         assert _is_better(new, old, config) is False
 
-    def test_same_setups_less_earliness_is_better(self):
+    def test_same_setups_earlier_legal_start_is_better(self):
         config = FactoryConfig()
-        old = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.5, "setups": 100}
-        new = {"tardy_count": 0, "otd_d": 100.0, "earliness_avg_days": 5.0, "setups": 100}
+        old = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 5.5,
+            "latest_start_gap_avg_min": 60,
+            "setups": 100,
+        }
+        new = {
+            "tardy_count": 0,
+            "otd_d": 100.0,
+            "earliness_avg_days": 7.0,
+            "latest_start_gap_avg_min": 480,
+            "setups": 100,
+        }
         assert _is_better(new, old, config) is True
 
     def test_same_score_not_better(self):

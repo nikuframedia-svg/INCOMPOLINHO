@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from backend.analytics.expedition import ExpeditionEntry, compute_expedition
+from backend.analytics.order_tracking import readiness_for_entry
 from backend.analytics.stock_projection import compute_stock_projections
 from backend.config.types import FactoryConfig
 from backend.console.tomorrow_prep import check_crew_bottleneck
@@ -49,28 +50,23 @@ def _diagnose_why_short(
     if not op:
         return "Referência não está no plano."
 
-    lot_to_op = {lot.id: lot.op_id for lot in lots}
-    op_segs = [s for s in segments if lot_to_op.get(s.lot_id) == op.id]
-
-    # Also check twin segments
-    for s in segments:
-        if s.twin_outputs:
-            for op_id, _, _ in s.twin_outputs:
-                if op_id == op.id and s not in op_segs:
-                    op_segs.append(s)
-
-    if not op_segs:
-        return "Sem produção planeada para esta referência."
-
-    last_seg = max(op_segs, key=lambda s: s.day_idx * 10000 + s.end_min)
-    if last_seg.day_idx > entry.day_idx:
-        late = last_seg.day_idx - entry.day_idx
+    allocation = readiness_for_entry(entry, segments, lots, engine_data)
+    ready_day = getattr(entry, "ready_day", None)
+    if ready_day is None and allocation is not None:
+        ready_day = allocation.ready_day
+    if ready_day is not None and ready_day > entry.day_idx:
+        late = ready_day - entry.day_idx
         return (
-            f"Produção na {last_seg.machine_id} termina "
+            "Produção desta encomenda fica disponível "
             f"{late} dia{'s' if late > 1 else ''} depois da entrega."
         )
-
-    total = sum(s.qty for s in op_segs if s.day_idx <= entry.day_idx)
+    total = (
+        allocation.covered_qty
+        if allocation is not None
+        else max(0, entry.order_qty - entry.shortfall)
+    )
+    if ready_day is None and total == 0 and not segments:
+        return "Sem produção planeada para esta referência."
     if total < entry.order_qty:
         return (
             f"Produzidas {total:,} de {entry.order_qty:,} até à data. "
@@ -105,14 +101,19 @@ def _find_fix(
 
         if free >= needed_min:
             return Fix(
-                description=(f"{op.alt} tem capacidade. Setup {op.sH}h. Peças prontas a tempo."),
+                description=(
+                    f"Hipótese: testar {op.alt}, com setup de {op.sH}h. Viabilidade por verificar."
+                ),
                 buttons=[f"Mover para {op.alt}", "Ver impacto"],
             )
 
     # Option B: night shift (7h = 420 min)
     if needed_min <= 420:
         return Fix(
-            description=f"Turno noite na {op.m} resolveria ({needed_min:.0f} min).",
+            description=(
+                f"Hipótese: testar turno noite na {op.m} ({needed_min:.0f} min estimados). "
+                "Viabilidade por verificar."
+            ),
             buttons=["Simular turno noite", "Ver impacto"],
         )
 
@@ -193,6 +194,7 @@ def compute_action_items(
     lots: list[Lot],
     engine_data: EngineData,
     config: FactoryConfig,
+    day_idx: int = 0,
 ) -> list[ActionItem]:
     """Compute actionable alerts. Max 7 items, aggregated by client."""
     raw: list[ActionItem] = []
@@ -200,11 +202,13 @@ def compute_action_items(
     # ── A. Deliveries at risk (expedition, day_idx <= 5) ──
     exp = compute_expedition(segments, lots, engine_data)
     for day in exp.days:
-        if day.day_idx > 5:
+        if day.day_idx >= day_idx + 6:
             continue
 
         for entry in day.entries:
             if entry.coverage_pct >= 100:
+                continue
+            if day.day_idx < day_idx and entry.ready_day is not None and entry.ready_day < day_idx:
                 continue
 
             cause = _diagnose_why_short(entry, segments, lots, engine_data)
@@ -220,7 +224,7 @@ def compute_action_items(
 
             raw.append(
                 ActionItem(
-                    severity="critical" if day.day_idx <= 1 else "warning",
+                    severity="critical" if day.day_idx <= day_idx + 1 else "warning",
                     phrase=f"Entrega {entry.client} em risco ({day.date}).",
                     body="\n".join(body_parts),
                     actions=fix.buttons if fix else ["Ver detalhes"],
@@ -233,12 +237,15 @@ def compute_action_items(
     # ── B. Stock exhaustion without coverage (stockout_day <= 5) ──
     projs = compute_stock_projections(segments, lots, engine_data)
     for proj in projs:
-        if proj.stockout_day is None or proj.stockout_day > 5:
+        if proj.stockout_day is None or proj.stockout_day >= day_idx + 6:
+            continue
+        current = next((day for day in proj.days if day.day_idx == day_idx), None)
+        if proj.stockout_day < day_idx and current is not None and current.stock >= 0:
             continue
         if _has_production_before(proj, segments, lots):
             continue
 
-        demand_until = sum(d.demand for d in proj.days[: proj.stockout_day]) if proj.days else 0
+        demand_until = sum(d.demand for d in proj.days if d.day_idx <= proj.stockout_day)
 
         stockout_date = ""
         if proj.stockout_day < len(engine_data.workdays):
@@ -263,12 +270,12 @@ def compute_action_items(
     # ── C. Operator shortages (day_idx <= 1) ──
     op_alerts = compute_operator_alerts(segments, engine_data, config)
     for a in op_alerts:
-        if a.day_idx > 1 or a.deficit <= 0:
+        if not day_idx <= a.day_idx <= day_idx + 1 or a.deficit <= 0:
             continue
 
         pl = "m" if a.deficit > 1 else ""
         ps = "es" if a.deficit > 1 else ""
-        when = "Hoje" if a.day_idx == 0 else "Amanhã"
+        when = "Hoje" if a.day_idx == day_idx else "Amanhã"
 
         raw.append(
             ActionItem(
@@ -289,7 +296,7 @@ def compute_action_items(
         )
 
     # ── D. Crew bottleneck (tomorrow, day_idx == 1) ──
-    crew = check_crew_bottleneck(segments, day_idx=1)
+    crew = check_crew_bottleneck(segments, day_idx=day_idx + 1, config=config)
     for c in crew:
         raw.append(
             ActionItem(

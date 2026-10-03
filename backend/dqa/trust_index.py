@@ -216,6 +216,8 @@ def compute_trust_index(
     validity = _score_validity(data)
     consistency = _score_consistency(data)
     richness = _score_richness(data)
+    consistency.details.extend(warning for warning in data.input_warnings
+                               if warning not in consistency.details)
 
     # Weighted score
     weighted = (

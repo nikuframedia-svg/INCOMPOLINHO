@@ -9,37 +9,32 @@ shifts:
   label: Manhã
 - id: B
   start: '15:30'
-  end: 00:00
+  end: '23:50'
   label: Tarde
 machines:
   PRM019:
     group: Grandes
     active: true
-    day_capacity_min: 1020
+    day_capacity_min: null
     oee: null
   PRM031:
     group: Grandes
     active: true
-    day_capacity_min: 1020
-    oee: null
+    day_capacity_min: null
+    oee: 0.44
   PRM039:
     group: Grandes
     active: true
-    day_capacity_min: 1020
-    oee: null
+    day_capacity_min: null
+    oee: 0.66
   PRM042:
     group: Medias
     active: true
-    day_capacity_min: 1020
+    day_capacity_min: null
     oee: null
   PRM043:
     group: Grandes
     active: true
-    day_capacity_min: 1020
-    oee: null
-  PRM020:
-    group: Grandes
-    active: false
     day_capacity_min: null
     oee: null
 tools:
@@ -198,9 +193,6 @@ twins:
   BFP110:
   - 1177295X150
   - 1177297X150
-  BFP114:
-  - 1172769X030
-  - 1694825X040
   BFP125:
   - 1403150X050
   - 1413147X070
@@ -234,15 +226,6 @@ twins:
   BFP186:
   - '3778765060.10'
   - '3778766060.10'
-  BFP197:
-  - '3822924050'
-  - '3822925050.10'
-  VUL127:
-  - '8750302197.20'
-  - '8750302200.20'
-  VUL115:
-  - '8718696125'
-  - '8716774145'
   JTE004:
   - JJB14-000760D.10
   - JJB14-000761A.10
@@ -253,7 +236,9 @@ operators:
   Medias:
     A: 9
     B: 4
-setup_crews: 1
+setup_crews_by_group:
+  Grandes: 1
+  Medias: 1
 holidays:
 - '2026-01-01'
 - '2026-04-03'
@@ -262,22 +247,24 @@ holidays:
 - '2026-05-01'
 - '2026-06-04'
 - '2026-06-10'
+- '2026-08-03'
+- '2026-08-04'
+- '2026-08-05'
+- '2026-08-06'
+- '2026-08-07'
+- '2026-08-08'
+- '2026-08-09'
+- '2026-08-10'
+- '2026-08-11'
+- '2026-08-12'
+- '2026-08-13'
+- '2026-08-14'
 - '2026-08-15'
 - '2026-10-05'
 - '2026-11-01'
 - '2026-12-01'
 - '2026-12-08'
 - '2026-12-25'
-- '2026-08-03'
-- '2026-08-04'
-- '2026-08-05'
-- '2026-08-06'
-- '2026-08-07'
-- '2026-08-10'
-- '2026-08-11'
-- '2026-08-12'
-- '2026-08-13'
-- '2026-08-14'
 extra_workdays: []
 unavailability:
   machines: []
@@ -294,48 +281,69 @@ production:
   - '3778766060.10'
   - 6800017267C.30
   - CF589MMA1A02.20
-  sku_planning_rules: {}
+  sku_planning_rules:
+    TP042173-0040-2:
+      planning_priority: 100
+    2513974X100:
+      eco_lot: 6400
+    2785359X050:
+      eco_lot: 6400
+    JJB14-000760D.10:
+      eco_lot: 624
+    JJB14-000761A.10:
+      eco_lot: 624
   subcontract_companies:
   - id: SUBCONTRATO
     name: Subcontrato
+    lead_time_workdays: 5
     lead_time_days: 7
   sku_subcontracts:
     2100373X120.10:
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
     2185094X110.10:
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
     '3778765060.10':
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
     '3778766060.10':
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
     6800017267C.30:
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
     CF589MMA1A02.20:
       enabled: true
       company_id: SUBCONTRATO
+      lead_time_workdays: 5
       lead_time_days: 7
       buffer_days: 0
   setup_overrides: []
+  setup_families:
+    JDE002:
+    - - TP042173-0040-1
+      - TP042173-0060-2
 scheduler:
-  earliness_policy: window
+  earliness_policy: jit
   material_release_days: 5
-  early_window_enforcement: soft
-  max_run_days: 5
+  early_window_enforcement: hard
+  max_run_days: 4
   max_edd_gap: 10
   max_edd_span: 30
   edd_swap_tolerance: 5
@@ -344,11 +352,13 @@ scheduler:
   campaign_window: 15
   urgency_threshold: 5
   interleave_enabled: true
-  auto_buffer: true
+  auto_buffer: false
+  global_jit_enabled: true
+  global_jit_time_limit_s: 1.0
   vns_enabled: true
   vns_block_moves_enabled: false
   vns_max_iter: 150
-  compact_enabled: false
+  compact_enabled: true
   productivity_earliness_ceiling_days: 8.5
   jit:
     enabled: true

@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { getLateDeliveries } from "../api/endpoints";
-import type { LateDeliveryReport } from "../api/types";
+import { usePlanQuery } from "../hooks/usePlanQuery";
 import { T } from "../theme/tokens";
 import { Label } from "./ui/Label";
 import { Modal } from "./ui/Modal";
@@ -37,14 +36,7 @@ const tdStyle: React.CSSProperties = {
 };
 
 export function LateDeliveriesModal({ onClose }: { onClose: () => void }) {
-  const [late, setLate] = useState<LateDeliveryReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getLateDeliveries()
-      .then(setLate)
-      .catch((e) => setError(String(e)));
-  }, []);
+  const { data: late, error } = usePlanQuery("late-deliveries", getLateDeliveries);
 
   return (
     <Modal title="Detalhe dos atrasos" onClose={onClose} width={860}>
@@ -71,13 +63,14 @@ export function LateDeliveriesModal({ onClose }: { onClose: () => void }) {
           <div style={{ fontSize: 12, color: T.secondary, lineHeight: 1.5 }}>{late.suggestion}</div>
 
           <div style={{ overflow: "auto", border: `1px solid ${T.border}`, borderRadius: 8 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
               <thead>
                 <tr>
                   <th style={thStyle}>SKU</th>
                   <th style={thStyle}>Máquina</th>
-                  <th style={thStyle}>EDD</th>
-                  <th style={thStyle}>Conclusão</th>
+                  <th style={thStyle}>Entrega cliente</th>
+                  <th style={thStyle}>Saída fábrica</th>
+                  <th style={thStyle}>Pronto cliente</th>
                   <th style={thStyle}>Atraso</th>
                   <th style={thStyle}>Causa</th>
                   <th style={thStyle}>Explicação</th>
@@ -90,6 +83,7 @@ export function LateDeliveriesModal({ onClose }: { onClose: () => void }) {
                     <td style={tdStyle}>{a.machine_id}</td>
                     <td style={tdStyle}>D{a.edd}</td>
                     <td style={tdStyle}>D{a.completion_day}</td>
+                    <td style={tdStyle}>D{a.customer_ready_day ?? a.completion_day}</td>
                     <td style={{ ...tdStyle, color: T.red, fontWeight: 700 }}>+{a.delay_days}d</td>
                     <td style={tdStyle}><Pill color={T.orange}>{causeLabel(a.root_cause)}</Pill></td>
                     <td style={{ ...tdStyle, fontFamily: T.sans, color: T.secondary, minWidth: 260 }}>
@@ -99,7 +93,7 @@ export function LateDeliveriesModal({ onClose }: { onClose: () => void }) {
                 ))}
                 {late.analyses.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ ...tdStyle, fontFamily: T.sans, color: T.secondary }}>
+                    <td colSpan={8} style={{ ...tdStyle, fontFamily: T.sans, color: T.secondary }}>
                       Sem lotes em atraso.
                     </td>
                   </tr>

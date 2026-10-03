@@ -10,7 +10,7 @@ class SchedulerParams:
     """Tunable scheduler parameters. Defaults match current constants."""
 
     max_edd_gap: int = 10
-    max_run_days: int = 5
+    max_run_days: int = 4
     edd_swap_tolerance: int = 5
     edd_assign_threshold: int = 5
     campaign_window: int = 15  # EDD_SWAP_TOLERANCE + 10
@@ -40,6 +40,7 @@ class ISContext:
     alt_pct: float  # fraction of ops with alt machines
     avg_edd: float
     demand_density: float  # total_load_min / total_capacity_min
+    planning_policy_version: str = "twin-shared-material-v2"
 
 
 @dataclass(slots=True)

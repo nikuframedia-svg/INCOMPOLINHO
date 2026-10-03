@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Fixed prototype material-release rule. Five working days simulate material
+# availability before customer delivery for normal output and before planned
+# supplier dispatch for subcontracted output.
+JIT_MAX_ANTICIPATION_WORKDAYS = 5
+JIT_EARLINESS_POLICY = "jit"
+JIT_WINDOW_ENFORCEMENT = "hard"
+PLANNING_POLICY_VERSION = "setup-families-v1"
+ROBUSTNESS_MIN_SUCCESS_PCT = 95.0
+OUT_OF_SCOPE_MACHINES = frozenset({"PRM020"})
+
 
 @dataclass
 class ShiftConfig:
-    """Single shift definition."""
+    """Single same-calendar-day shift definition."""
 
     id: str
     start_min: int  # minutes from midnight (07:00 = 420)
@@ -16,10 +26,7 @@ class ShiftConfig:
 
     @property
     def duration_min(self) -> int:
-        if self.end_min > self.start_min:
-            return self.end_min - self.start_min
-        # Cross-midnight shift (e.g. 22:00-06:00)
-        return (1440 - self.start_min) + self.end_min
+        return max(0, self.end_min - self.start_min)
 
 
 @dataclass
@@ -57,15 +64,16 @@ class FactoryConfig:
 
     @property
     def shift_a_start(self) -> int:
-        return self.shifts[0].start_min if self.shifts else 420
+        return min((shift.start_min for shift in self.shifts), default=420)
 
     @property
     def shift_a_end(self) -> int:
-        return self.shifts[0].end_min if self.shifts else 930
+        first = min(self.shifts, key=lambda shift: (shift.start_min, shift.id), default=None)
+        return first.end_min if first is not None else 930
 
     @property
     def shift_b_end(self) -> int:
-        return self.shifts[-1].end_min if len(self.shifts) > 1 else 1440
+        return max((shift.end_min for shift in self.shifts), default=1440)
 
     # Machines
     machines: dict[str, MachineConfig] = field(default_factory=dict)
@@ -100,8 +108,13 @@ class FactoryConfig:
         }
     )
 
-    # Setup crews
+    # Setup crews.  ``setup_crews`` is retained as a read/write compatibility
+    # field for old snapshots and API clients.  New scheduling code uses the
+    # capacity of the machine group.
     setup_crews: int = 1
+    setup_crews_by_group: dict[str, int] = field(
+        default_factory=lambda: {"Grandes": 1, "Medias": 1}
+    )
 
     # Holidays (ISO date strings)
     holidays: list[str] = field(default_factory=list)
@@ -110,9 +123,9 @@ class FactoryConfig:
     # (e.g. open a specific Saturday). Never overrides explicit holidays.
     extra_workdays: list[str] = field(default_factory=list)
 
-    # Persistent unavailability calendars (date ranges, ISO strings).
-    # machines/tools: {id, resource, from, to, reason} — hard-blocking.
-    # operators: {id, group, shift, from, to, count, reason} — advisory only.
+    # Persistent unavailability calendars.
+    # New entries use {start_at, end_at, category, reason}; the loader migrates
+    # legacy {from, to} date ranges to full-day Europe/Lisbon intervals.
     machine_unavailability: list[dict] = field(default_factory=list)
     tool_unavailability: list[dict] = field(default_factory=list)
     operator_unavailability: list[dict] = field(default_factory=list)
@@ -128,16 +141,18 @@ class FactoryConfig:
     # Per-(sku, machine) setup-hour overrides; fallback chain is
     # (sku, machine) → per-tool op.sH → default_setup_hours.
     setup_overrides: list[dict] = field(default_factory=list)  # {sku, machine, hours}
+    # References listed in one family retain the same physical adjustment.
+    # Shape: {tool_id: [[sku_a, sku_b, ...], ...]}.
+    setup_families: dict[str, list[list[str]]] = field(default_factory=dict)
 
-    # Earliness policy: "jit" = as late as possible (backward stacking);
-    # "window" = as early as possible inside [edd − material_release_days, edd].
-    # material_release_days is the raw-material availability proxy (workdays).
-    earliness_policy: str = "jit"
-    material_release_days: int = 5
-    early_window_enforcement: str = "soft"  # off | soft | hard
+    # Retained in the serialized contract for compatibility, but fixed by the
+    # industrial JIT invariant above.
+    earliness_policy: str = JIT_EARLINESS_POLICY
+    material_release_days: int = JIT_MAX_ANTICIPATION_WORKDAYS
+    early_window_enforcement: str = JIT_WINDOW_ENFORCEMENT
 
     # Scheduler tunables (base values — SchedulerParams can override)
-    max_run_days: int = 5
+    max_run_days: int = 4
     max_edd_gap: int = 10
     max_edd_span: int = 30
     edd_swap_tolerance: int = 5
@@ -151,7 +166,11 @@ class FactoryConfig:
     jit_threshold: float = 95.0
     jit_max_retries: int = 15
     jit_earliness_target: float = 5.5
-    auto_buffer: bool = True
+    auto_buffer: bool = False
+    global_jit_enabled: bool = True
+    # Keep the base scheduler responsive. Operational CPO modes raise this
+    # budget when they need a complete diagnostic candidate.
+    global_jit_time_limit_s: float = 0.4
 
     # VNS post-processing
     vns_enabled: bool = True
@@ -163,8 +182,10 @@ class FactoryConfig:
 
     # Internal CPO/LNS neighborhood controls. Empty by default; not user-tunable.
     forced_run_splits: dict[str, list[int]] = field(default_factory=dict)
+    robustness_reserve_workdays: int = 0
 
-    # Compaction post-processing (opt-in — default OFF preserves validated results)
+    # Controls aggressive reordering only. Filling basic legal capacity is an
+    # unconditional final invariant, even when this compatibility flag is off.
     compact_enabled: bool = False
 
     # Scoring weights

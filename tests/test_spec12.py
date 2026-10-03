@@ -459,7 +459,7 @@ class TestPresets:
 
         config = FactoryConfig()
         result = apply_preset(config, "urgente")
-        assert result.jit_enabled is False
+        assert result.jit_enabled is True
         assert result.urgency_threshold == 2
         # Original unchanged
         assert config.jit_enabled is True

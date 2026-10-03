@@ -32,10 +32,10 @@ ScheduleResult { segments, lots, score, warnings, operator_alerts }
 ## ═══ CPO v3.0 — Cascading Pipeline Optimizer ═══
 
 Entry point: `from backend.cpo import optimize`
-Modos: quick (greedy passthrough), normal (GA 20×30 + CP-SAT), deep (GA 40×100 + surrogate), max (GA 60×300)
+Modos: quick (greedy passthrough), normal/deep/max (pesquisa de candidatos + CP-SAT local + ciclo de melhoria sem perdas; diferem no orçamento). O GA não é operacional: vive em `backend/cpo/offline_ga.py` só para experiências offline.
 
 - `optimize(data, mode="quick")` — mesmo que schedule_all(), <500ms
-- `optimize(data, mode="normal")` — GA optimiza 7 genes sobre o greedy, ~5-15s
+- `optimize(data, mode="normal")` — melhoria limitada e validada sobre o greedy (critério canónico em `backend/scheduler/policy.py`, ver `AGENTS.md`)
 - `schedule_all()` — pipeline greedy interno (5 fases), chamado pelo CPO internamente
 
 Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
@@ -75,7 +75,7 @@ Surplus carry-forward independente por SKU.
 ## ═══ MÁQUINAS ═══
 PRM019(Grandes,21SKUs) PRM031(Grandes,20,Faurecia) PRM039(Grandes,28,+variedade)
 PRM042(Médias,11,SEM ALTERNATIVA) PRM043(Grandes,14)
-PRM020 — FORA DE USO. IGNORAR.
+PRM020 — fora do âmbito da análise; não importar procura nem criar capacidade nesta máquina.
 
 ## ═══ TURNOS ═══
 Turno A: 07:00-15:30 (510 min) | Turno B: 15:30-00:00 (510 min)
@@ -86,7 +86,7 @@ DAY_CAP = 1020 min. Noite: SÓ EMERGÊNCIA.
 1. **Lot Sizing** (lot_sizing.py): EOps → Lots. Eco lot HARD + carry-forward + twins.
 2. **Tool Grouping** (tool_grouping.py): Lots → ToolRuns. Split por EDD gap e infeasibilidade.
 3. **Dispatch** (dispatch.py): Assign machines (EDD-aware) + Sequence (campaign + interleave urgent + 2-opt) + Allocate segments.
-4. **JIT** (jit.py): Backward scheduling. Produzir o mais tarde possível (2-5 dias antes EDD). Safety net: fallback se tardy piora.
+4. **JIT** (jit.py): Histórico. O objetivo atual é o oposto: produzir o mais cedo possível após a libertação de material (5 dias úteis); ver `AGENTS.md`, que prevalece sobre este ficheiro. Setups extra desempatam, não vetam (decisão 02/10/2026).
 5. **Scoring** (scoring.py): OTD, OTD-D, earliness, setups, utilisation.
 
 ## ═══ CONSTANTES ═══

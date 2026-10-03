@@ -8,10 +8,23 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from functools import wraps
 
 from backend.copilot.state import state
+from backend.validation import strict_bool, strict_int
 
 logger = logging.getLogger(__name__)
+
+
+def _production_action(fn):
+    @wraps(fn)
+    def wrapped(args):
+        from backend.plans.transactions import run_sync_mutation
+
+        mode = args.get("modo", "quick") if fn.__name__ == "exec_recalcular_plano" else "normal"
+        return run_sync_mutation(state, lambda: fn(args), planning_mode=mode)
+
+    return wrapped
 
 
 def _dumps(obj: object) -> str:
@@ -24,36 +37,93 @@ def _guard() -> str | None:
     return None
 
 
+def _require_revision(args: dict) -> str | None:
+    if "expected_revision" not in args:
+        return _dumps({"error": "expected_revision é obrigatório."})
+    try:
+        expected = strict_int(args["expected_revision"], "expected_revision")
+    except (TypeError, ValueError):
+        return _dumps({"error": "expected_revision deve ser um inteiro."})
+    if expected != int(state.plan_revision):
+        return _dumps(
+            {
+                "error": "Revisão obsoleta: o plano mudou entretanto.",
+                "current_revision": state.plan_revision,
+            }
+        )
+    return None
+
+
+def _authorize(result, args: dict, action: str) -> dict | None:
+    from backend.scheduler.gates import authorize_application
+
+    approval = authorize_application(
+        result.gate_report,
+        approve_exceptions=strict_bool(
+            args.get(
+                "approve_exceptions",
+                args.get("confirm_delivery_risk", False),
+            )
+        ),
+        approval_reason=str(args.get("approval_reason", args.get("reason", ""))),
+        approval_author=str(args.get("approval_author", args.get("author", ""))),
+    )
+    return {**approval, "action": action} if approval is not None else None
+
+
 # ─── 1. recalcular_plano ─────────────────────────────────────────────────
 
 
+@_production_action
 def exec_recalcular_plano(args: dict) -> str:
     if err := _guard():
         return err
+    if err := _require_revision(args):
+        return err
 
-    from backend.cpo import optimize
+    from backend.api.data import _schedule_result_from_state
+    from backend.plans.frozen import optimize_preserving_started_lots
+    from backend.simulator.mutations import reapply_calendar_mutations
+    from backend.transform.calendars import apply_calendars
 
     modo = args.get("modo", "quick")
     old_segments = list(state.segments)
     old_score = dict(state.score) if state.score else {}
 
-    # Smart mode: use Bayesian optimization (Optuna) if available
+    apply_calendars(state.engine_data, state.config)
+    reapply_calendar_mutations(state.engine_data, state.active_mutations, state.config)
+    optimizer = None
     if modo == "smart":
         try:
             from backend.learning import smart_schedule
 
-            result = smart_schedule(
-                state.engine_data,
-                learn=True,
-                config=state.config,
-                audit=True,
-            )
+            def optimizer(data, **options):
+                return smart_schedule(data, learn=True, config=options["config"], audit=True)
         except ImportError:
-            result = optimize(state.engine_data, mode="normal", audit=True, config=state.config)
-    else:
-        result = optimize(state.engine_data, mode=modo, audit=True, config=state.config)
+            pass
+    result = optimize_preserving_started_lots(
+        state.engine_data,
+        state.config,
+        _schedule_result_from_state(),
+        mode="normal" if modo == "smart" else modo,
+        audit=True,
+        optimizer=optimizer,
+    )
 
-    state.update_schedule(result)
+    try:
+        approval = _authorize(result, args, "recalculate")
+    except ValueError as exc:
+        return _dumps(
+            {
+                "error": str(exc),
+                "gate_report": result.gate_report,
+                "current_revision": state.plan_revision,
+            }
+        )
+    if approval is not None:
+        state.approvals.append(approval)
+    state.manual_edits = []
+    state.update_schedule(result, plan_source="auto", plan_note=f"Recalcular ({modo})")
 
     # Compute lot-level diff
     alteracoes = None
@@ -80,6 +150,7 @@ def exec_recalcular_plano(args: dict) -> str:
             "alteracoes": alteracoes,
             "time_ms": result.time_ms,
             "warnings": result.warnings[:10],
+            "plan_revision": state.plan_revision,
         }
     )
 
@@ -87,11 +158,17 @@ def exec_recalcular_plano(args: dict) -> str:
 # ─── 2. mover_referencia ─────────────────────────────────────────────────
 
 
+@_production_action
 def exec_mover_referencia(args: dict) -> str:
     if err := _guard():
         return err
+    if err := _require_revision(args):
+        return err
 
-    from backend.cpo import optimize
+    from backend.api.data import _schedule_result_from_state
+    from backend.plans.frozen import optimize_preserving_started_lots
+    from backend.simulator.mutations import apply_mutation, reapply_calendar_mutations
+    from backend.transform.calendars import apply_calendars
 
     sku = args.get("sku", "")
     dest = args.get("maquina_destino", "")
@@ -108,29 +185,51 @@ def exec_mover_referencia(args: dict) -> str:
 
     # Deep copy and mutate
     mutated = copy.deepcopy(state.engine_data)
-    for op in mutated.ops:
-        if op.sku == sku:
-            op.m = dest
-            op.alt = None
+    candidate_config = copy.deepcopy(state.config)
+    from backend.plans.frozen import _current_planning_day, _frozen_started_lots
+
+    baseline = _schedule_result_from_state()
+    _, frozen_lots = _frozen_started_lots(
+        baseline,
+        _current_planning_day(mutated, candidate_config),
+    )
+    tools = {op.t for op in ops_found}
+    if any(lot.tool_id in tools for lot in frozen_lots):
+        return _dumps({"error": "Nao e permitido mover lotes ja iniciados."})
+    for tool_id in tools:
+        apply_mutation(
+            mutated, "force_machine", {"tool_id": tool_id, "to_machine": dest}, candidate_config
+        )
+    apply_calendars(mutated, candidate_config)
+    reapply_calendar_mutations(mutated, state.active_mutations, candidate_config)
 
     # Re-schedule on mutated data
-    result = optimize(mutated, mode="normal", audit=True, config=state.config)
+    result = optimize_preserving_started_lots(
+        mutated,
+        candidate_config,
+        _schedule_result_from_state(),
+        audit=True,
+    )
 
-    # Reject if tardy_count worsens
-    old_tardy = state.score.get("tardy_count", 0)
-    new_tardy = result.score.get("tardy_count", 0)
-    if new_tardy > old_tardy:
+    try:
+        approval = _authorize(result, args, "move_reference")
+    except ValueError as exc:
         return _dumps(
             {
-                "status": "rejeitado",
-                "razao": f"Tardiness pioraria: {old_tardy} → {new_tardy}",
+                "error": str(exc),
                 "score_proposto": result.score,
+                "gate_report": result.gate_report,
+                "current_revision": state.plan_revision,
             }
         )
 
     # Accept: update state with mutated data
+    if approval is not None:
+        state.approvals.append(approval)
     state.engine_data = mutated
-    state.update_schedule(result)
+    state.config = candidate_config
+    state.manual_edits = []
+    state.update_schedule(result, plan_source="auto", plan_note=f"Mover {sku} para {dest}")
 
     return _dumps(
         {
@@ -139,6 +238,7 @@ def exec_mover_referencia(args: dict) -> str:
             "maquina_anterior": ops_found[0].m,
             "maquina_nova": dest,
             "score": result.score,
+            "plan_revision": state.plan_revision,
         }
     )
 
@@ -147,22 +247,51 @@ def exec_mover_referencia(args: dict) -> str:
 
 
 def exec_adicionar_regra(args: dict) -> str:
+    from backend.plans.context import is_staging
+    from backend.plans.transactions import run_sync_mutation
+
+    if not is_staging():
+        return run_sync_mutation(state, lambda: exec_adicionar_regra(args))
+    if err := _require_revision(args):
+        return err
     rule = {
         "descricao": args.get("descricao", ""),
         "tipo": args.get("tipo", "preferencia"),
     }
     rule_id = state.add_rule(rule)
-    return _dumps({"status": "ok", "regra_id": rule_id, "regra": rule})
+    state.plan_revision += 1
+    return _dumps(
+        {
+            "status": "ok",
+            "regra_id": rule_id,
+            "regra": rule,
+            "plan_revision": state.plan_revision,
+        }
+    )
 
 
 # ─── 4. remover_regra ────────────────────────────────────────────────────
 
 
 def exec_remover_regra(args: dict) -> str:
+    from backend.plans.context import is_staging
+    from backend.plans.transactions import run_sync_mutation
+
+    if not is_staging():
+        return run_sync_mutation(state, lambda: exec_remover_regra(args))
+    if err := _require_revision(args):
+        return err
     rule_id = args.get("regra_id", "")
     removed = state.remove_rule(rule_id)
     if removed:
-        return _dumps({"status": "ok", "regra_id": rule_id})
+        state.plan_revision += 1
+        return _dumps(
+            {
+                "status": "ok",
+                "regra_id": rule_id,
+                "plan_revision": state.plan_revision,
+            }
+        )
     return _dumps({"error": f"Regra {rule_id} não encontrada."})
 
 
@@ -170,7 +299,6 @@ def exec_remover_regra(args: dict) -> str:
 
 _ALLOWED_KEYS = {
     "oee_default": float,
-    "jit_enabled": bool,
     "jit_buffer_pct": float,
     "jit_threshold": float,
     "max_run_days": int,
@@ -185,9 +313,33 @@ _ALLOWED_KEYS = {
 }
 
 
+def _coerce_config_value(key: str, expected_type: type, value):
+    if expected_type is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "sim"}:
+                return True
+            if normalized in {"false", "0", "no", "não", "nao"}:
+                return False
+        raise ValueError(f"Valor '{value}' inválido para {key} (esperado booleano).")
+    try:
+        return expected_type(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Valor '{value}' inválido para {key} (esperado {expected_type.__name__})."
+        ) from exc
+
+
+@_production_action
 def exec_alterar_config(args: dict) -> str:
     if state.config is None:
         return _dumps({"error": "Configuração não carregada."})
+    if err := _guard():
+        return err
+    if err := _require_revision(args):
+        return err
 
     chave = args.get("chave", "")
     valor = args.get("valor")
@@ -202,14 +354,62 @@ def exec_alterar_config(args: dict) -> str:
 
     expected_type = _ALLOWED_KEYS[chave]
     try:
-        typed_value = expected_type(valor)
-    except (TypeError, ValueError):
+        typed_value = _coerce_config_value(chave, expected_type, valor)
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+
+    candidate_config = copy.deepcopy(state.config)
+    candidate_data = copy.deepcopy(state.engine_data)
+    old_value = getattr(candidate_config, chave)
+    setattr(candidate_config, chave, typed_value)
+
+    from backend.api.data import _schedule_result_from_state
+    from backend.config.loader import save_config, validate_config
+    from backend.plans.frozen import optimize_preserving_started_lots
+    from backend.simulator.mutations import reapply_calendar_mutations
+    from backend.transform.calendars import apply_calendars
+
+    config_errors = validate_config(candidate_config, candidate_data)
+    if config_errors:
         return _dumps(
-            {"error": f"Valor '{valor}' inválido para {chave} (esperado {expected_type.__name__})."}
+            {
+                "error": "Configuração inválida.",
+                "details": config_errors,
+            }
         )
 
-    old_value = getattr(state.config, chave)
-    setattr(state.config, chave, typed_value)
+    apply_calendars(candidate_data, candidate_config)
+    reapply_calendar_mutations(candidate_data, state.active_mutations, candidate_config)
+    result = optimize_preserving_started_lots(
+        candidate_data,
+        candidate_config,
+        _schedule_result_from_state(),
+        audit=True,
+    )
+    try:
+        approval = _authorize(result, args, "config_change")
+    except ValueError as exc:
+        return _dumps(
+            {
+                "error": str(exc),
+                "gate_report": result.gate_report,
+                "current_revision": state.plan_revision,
+            }
+        )
+
+    # Persist and commit only after the candidate has passed the physical
+    # gates and, where required, received an explicit approval.
+    save_config(candidate_config)
+    if approval is not None:
+        state.approvals.append(approval)
+    state.config = candidate_config
+    state.engine_data = candidate_data
+    state.manual_edits = []
+    state.update_schedule(
+        result,
+        plan_source="auto",
+        plan_note=f"Configuração: {chave}",
+    )
 
     return _dumps(
         {
@@ -217,7 +417,9 @@ def exec_alterar_config(args: dict) -> str:
             "chave": chave,
             "valor_anterior": old_value,
             "valor_novo": typed_value,
-            "nota": "Configuração alterada. Usa recalcular_plano para aplicar.",
+            "score": result.score,
+            "gate_report": result.gate_report,
+            "plan_revision": state.plan_revision,
         }
     )
 
@@ -308,19 +510,21 @@ def exec_check_ctp(args: dict) -> str:
     if err := _guard():
         return err
 
-    from backend.analytics.ctp import compute_ctp
+    from backend.analytics.ctp import verify_ctp
+    from backend.api.data import _schedule_result_from_state
 
     sku = args.get("sku", "")
     qty = args.get("quantidade", 0)
     deadline = args.get("dia_deadline", 0)
 
-    result = compute_ctp(
+    result, _candidate = verify_ctp(
         sku,
         qty,
         deadline,
-        state.segments,
+        _schedule_result_from_state(),
         state.engine_data,
         config=state.config,
+        active_mutations=state.active_mutations,
     )
 
     return _dumps(
@@ -333,6 +537,14 @@ def exec_check_ctp(args: dict) -> str:
             "confianca": result.confidence,
             "slack_min": result.slack_min,
             "razao": result.reason,
+            "entrega_cliente_dia": result.customer_delivery_day,
+            "ultimo_envio_subcontratado_dia": (result.latest_subcontract_dispatch_day),
+            "prazo_producao_dia": result.production_due_day,
+            "envio_subcontratado_dia": result.subcontract_dispatch_day,
+            "alvo_interno_dia": result.internal_target_day,
+            "referencia_material_dia": result.material_reference_day,
+            "tipo_referencia_material": result.material_reference_kind,
+            "libertacao_material_dia": result.material_release_day,
         }
     )
 

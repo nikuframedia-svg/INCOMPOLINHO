@@ -22,6 +22,8 @@ from backend.parser.isop_reader import read_isop
 from backend.scheduler.constants import DAY_CAP
 from backend.cpo import optimize
 from backend.scheduler.types import ScheduleResult
+from backend.scheduler.gates import build_gate_report
+from backend.transform.calendars import apply_calendars
 from backend.transform.transform import transform
 from backend.analytics.expedition import compute_expedition
 from backend.types import EngineData
@@ -40,6 +42,7 @@ def load_isop(path: str, master_path: str = "config/incompol.yaml", config=None)
     data = transform(raw_rows, workdays, has_twin_col, master_data)
     if config is not None:
         apply_effective_planning_config(data, config)
+        apply_calendars(data, config)
     return data
 
 
@@ -54,6 +57,13 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str, config=No
     holidays = set(data.holidays) if data.holidays else set()
 
     results = {}
+    gate_report = result.gate_report or build_gate_report(
+        segs,
+        lots,
+        score,
+        data,
+        config,
+    )
 
     # ═══ HARD CONSTRAINTS ═══
 
@@ -95,9 +105,15 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str, config=No
         + (f": {holiday_violations[:3]}" if holiday_violations else ""),
     )
 
-    # 6. PRM020 inactivo
+    # 6. PRM020 is outside the analysis scope.
     prm020_segs = [seg for seg in segs if seg.machine_id == "PRM020"]
-    results["PRM020 inactivo"] = (len(prm020_segs) == 0, f"{len(prm020_segs)} segments on PRM020")
+    prm020_ops = [op for op in data.ops if op.m == "PRM020" or op.alt == "PRM020"]
+    prm020_machines = [machine for machine in data.machines if machine.id == "PRM020"]
+    prm020_ok = not (prm020_ops or prm020_segs or prm020_machines)
+    results["PRM020 excluída"] = (
+        prm020_ok,
+        f"operations={len(prm020_ops)}, machines={len(prm020_machines)}, segments={len(prm020_segs)}",
+    )
 
     # 7. Tool contention — mesma ferramenta nunca em 2 máquinas ao mesmo tempo
     tool_contention_violations = _check_tool_contention(segs)
@@ -108,7 +124,11 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str, config=No
     )
 
     # 8. Crew mutex — nenhum setup simultâneo entre máquinas
-    crew_violations = _check_crew_mutex(segs)
+    crew_violations = [
+        item.get("message", "setup overlap")
+        for item in gate_report.get("violations", [])
+        if item.get("kind") == "setup_crew_overlap"
+    ]
     results["Crew mutex"] = (
         len(crew_violations) == 0,
         f"{len(crew_violations)} violations"
@@ -129,12 +149,42 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str, config=No
         f"{len(eco_violations)} violations" + (f": {eco_violations[:3]}" if eco_violations else ""),
     )
 
-    # 11. Demand conservation — sum(produced) ≥ sum(demanded) por operação
-    demand_violations = _check_demand_conservation(segs, lots, data)
+    # 11. Quantity conservation is taken from the same lot-level coverage gate
+    # used by runtime. This correctly accounts for committed in-progress supply.
+    coverage_missing = int(gate_report.get("metrics", {}).get("missing_qty", 0))
+    coverage_extra = int(gate_report.get("metrics", {}).get("overproduced_qty", 0))
     results["Demand conservation"] = (
-        len(demand_violations) == 0,
-        f"{len(demand_violations)} violations"
-        + (f": {demand_violations[:3]}" if demand_violations else ""),
+        bool(gate_report.get("coverage_gate_passed")),
+        f"missing_qty={coverage_missing}, overproduced_qty={coverage_extra}",
+    )
+
+    # 12. Reuse the exact runtime gates and approval contract.
+    window_violations = int(score.get("early_window_violations", 0) or 0)
+    results["Janela de materiais"] = (
+        bool(gate_report.get("jit_window_gate_passed")),
+        (
+            f"{window_violations} violations; "
+            f"apply_decision={gate_report.get('apply_decision')}"
+        ),
+    )
+    results["Gates físicos do runtime"] = (
+        bool(gate_report.get("physical_gate_passed"))
+        and bool(gate_report.get("coverage_gate_passed")),
+        f"apply_decision={gate_report.get('apply_decision')}",
+    )
+    results["Contrato de aplicação runtime"] = (
+        gate_report.get("apply_decision") != "blocked",
+        (
+            f"apply_decision={gate_report.get('apply_decision')}; "
+            f"approval_reasons={gate_report.get('approval_reasons', [])}"
+        ),
+    )
+    results["Robustez >= 95%"] = (
+        gate_report.get("robustness_gate_passed") is True,
+        (
+            f"evaluated={score.get('robustness_evaluated_samples', 0)}, "
+            f"success={score.get('robustness_success_probability_pct', 0)}%"
+        ),
     )
 
     # ═══ SOFT CONSTRAINTS ═══
@@ -404,17 +454,26 @@ def main():
             (
                 "HARD",
                 [
-                    "OTD = 100%",
-                    "OTD-D = 100%",
-                    "Tardy = 0",
                     "Shift bounds [420,1440]",
                     "Feriados respeitados",
-                    "PRM020 inactivo",
+                    "PRM020 excluída",
                     "Tool contention",
                     "Crew mutex",
                     "Day capacity <= 1020",
                     "Eco lot",
                     "Demand conservation",
+                    "Gates físicos do runtime",
+                    "Contrato de aplicação runtime",
+                ],
+            ),
+            (
+                "APPROVAL",
+                [
+                    "OTD = 100%",
+                    "OTD-D = 100%",
+                    "Tardy = 0",
+                    "Janela de materiais",
+                    "Robustez >= 95%",
                     "Encomendas individuais cobertas",
                 ],
             ),
@@ -456,7 +515,7 @@ def main():
             print("  *** HARD CONSTRAINT FAILURE ***")
             all_passed = False
         elif n_fail > 0:
-            print(f"  (all HARD pass, {n_fail} soft/structural fail)")
+            print(f"  (all HARD pass, {n_fail} approval/soft/structural checks need attention)")
         else:
             print("  ALL CONSTRAINTS PASS")
 

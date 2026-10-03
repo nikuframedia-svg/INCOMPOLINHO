@@ -8,7 +8,9 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from backend.calendar import total_machine_capacity
 from backend.config.types import FactoryConfig
+from backend.scheduler.jit_policy import production_due_day
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -63,7 +65,13 @@ def generate_proposals(
     for seg in segments:
         total_used[seg.machine_id] += seg.prod_min + seg.setup_min
     for m in engine_data.machines:
-        machine_util[m.id] = total_used.get(m.id, 0) / max(engine_data.n_days * day_cap, 1)
+        total_capacity = total_machine_capacity(
+            m.id,
+            range(engine_data.n_days),
+            engine_data,
+            config,
+        )
+        machine_util[m.id] = total_used.get(m.id, 0) / max(total_capacity, 1)
 
     # ── A. Move to alt machine ──
     tardy_lots = []
@@ -72,7 +80,8 @@ def generate_proposals(
         if not segs:
             continue
         completion = max(s.day_idx for s in segs)
-        if completion > lot.edd:
+        due_day = production_due_day(lot)
+        if completion > due_day:
             tardy_lots.append((lot, completion))
 
     for lot, completion in tardy_lots:
@@ -82,9 +91,10 @@ def generate_proposals(
 
         # Check free capacity on alt machine around EDD
         needed_min = lot.prod_min + lot.setup_min
+        due_day = production_due_day(lot)
         free = sum(
             max(0, day_cap - machine_day_used.get((op.alt, d), 0))
-            for d in range(max(0, lot.edd - 2), lot.edd + 1)
+            for d in range(max(0, due_day - 2), due_day + 1)
         )
 
         if free >= needed_min:
@@ -95,9 +105,9 @@ def generate_proposals(
                     type="move_to_alt",
                     description=(
                         f"Mover {lot.op_id} de {op.m} para {op.alt}. "
-                        f"Alt tem {free:.0f} min livres nos dias {lot.edd - 2}-{lot.edd}."
+                        f"Alt tem {free:.0f} min livres nos dias {due_day - 2}-{due_day}."
                     ),
-                    estimated_impact=f"Resolve atraso de {completion - lot.edd} dia(s)",
+                    estimated_impact=f"Resolve atraso de {completion - due_day} dia(s)",
                     affected_lots=[lot.id],
                     machine_from=op.m,
                     machine_to=op.alt,

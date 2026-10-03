@@ -104,7 +104,7 @@ def _make_segments_and_lots(data: EngineData) -> tuple[list[Segment], list[Lot],
 
 
 def test_identify_bottleneck_redundant_setup():
-    """Machine with redundant setups (same tool interrupted) is flagged."""
+    """Machine with repeated setup for the same adjustment is flagged."""
     data = _make_data(n_days=30, n_ops=3)
     segments = [
         Segment(
@@ -135,8 +135,9 @@ def test_identify_bottleneck_redundant_setup():
             prod_min=70.0,
             setup_min=30.0,
             edd=12,
+            sku="SKU2",
         ),
-        # Same tool as first → redundant setup
+        # Same mounted adjustment as the preceding lot: this setup is redundant.
         Segment(
             lot_id="L3",
             run_id="R3",
@@ -150,6 +151,7 @@ def test_identify_bottleneck_redundant_setup():
             prod_min=70.0,
             setup_min=30.0,
             edd=14,
+            sku="SKU2",
         ),
     ]
     lots = [
@@ -176,6 +178,7 @@ def test_identify_bottleneck_redundant_setup():
             setup_min=30.0,
             edd=12,
             is_twin=False,
+            sku="SKU2",
         ),
         Lot(
             id="L3",
@@ -188,6 +191,7 @@ def test_identify_bottleneck_redundant_setup():
             setup_min=30.0,
             edd=14,
             is_twin=False,
+            sku="SKU2",
         ),
     ]
     config = FactoryConfig()

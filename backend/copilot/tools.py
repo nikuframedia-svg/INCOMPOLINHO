@@ -233,7 +233,6 @@ ACTION_TOOLS = [
                     "description": "Nome do parâmetro.",
                     "enum": [
                         "oee_default",
-                        "jit_enabled",
                         "jit_buffer_pct",
                         "jit_threshold",
                         "max_run_days",
@@ -587,6 +586,40 @@ VIZ_TOOLS = [
         },
     ),
 ]
+
+_MUTATING_TOOLS = {
+    "recalcular_plano",
+    "mover_referencia",
+    "adicionar_regra",
+    "remover_regra",
+    "alterar_config",
+    *(tool["function"]["name"] for tool in MASTER_TOOLS),
+}
+_MUTATION_CONTROL_PROPERTIES = {
+    "expected_revision": {
+        "type": "integer",
+        "description": "Revisão actual do plano, obtida em ver_score.",
+    },
+    "approve_exceptions": {
+        "type": "boolean",
+        "description": "Confirmar explicitamente excepções não físicas.",
+    },
+    "approval_reason": {
+        "type": "string",
+        "description": "Motivo da aprovação, obrigatório quando há excepções.",
+    },
+    "approval_author": {
+        "type": "string",
+        "description": "Autor da aprovação, obrigatório quando há excepções.",
+    },
+}
+for _tool in ACTION_TOOLS + MASTER_TOOLS:
+    if _tool["function"]["name"] not in _MUTATING_TOOLS:
+        continue
+    _parameters = _tool["function"]["parameters"]
+    _parameters["properties"].update(_MUTATION_CONTROL_PROPERTIES)
+    if "expected_revision" not in _parameters["required"]:
+        _parameters["required"].append("expected_revision")
 
 # All tools combined
 TOOLS = QUERY_TOOLS + ACTION_TOOLS + MASTER_TOOLS + VIZ_TOOLS

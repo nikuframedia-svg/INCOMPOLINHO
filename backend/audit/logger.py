@@ -112,7 +112,7 @@ class AuditLogger:
         attempt: int = 0,
         config=None,
     ) -> None:
-        """Record JIT gate placement."""
+        """Record material-release gate placement."""
         if config:
             day_cap = config.day_capacity_min
         else:

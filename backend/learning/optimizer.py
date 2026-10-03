@@ -12,6 +12,7 @@ import time
 import optuna
 
 from backend.config.types import FactoryConfig
+from backend.scheduler.priority import delivery_not_worse
 
 from .reward import compute_reward
 from .types import SchedulerParams, StudyResult
@@ -59,7 +60,7 @@ class OptunaTuner:
         def config_with_params(params: SchedulerParams) -> FactoryConfig:
             cfg = copy.deepcopy(self._config) if self._config is not None else FactoryConfig()
             for key, value in params.to_dict().items():
-                if hasattr(cfg, key):
+                if key != "jit_threshold" and hasattr(cfg, key):
                     setattr(cfg, key, value)
             return cfg
 
@@ -97,6 +98,17 @@ class OptunaTuner:
             config=config_with_params(best_params),
         )
         best_reward = compute_reward(best_result.score)
+        if (
+            not delivery_not_worse(best_result.score, baseline_result.score)
+            or best_reward < baseline_reward
+        ):
+            # A trial is ranked in quick mode and is then revalidated in normal
+            # mode. The second pass may expose a worse physical or delivery
+            # sequence; the tuner must never publish that regression as its
+            # best result.
+            best_params = SchedulerParams()
+            best_result = baseline_result
+            best_reward = baseline_reward
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 

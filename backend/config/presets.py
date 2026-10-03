@@ -11,7 +11,6 @@ from backend.config.types import FactoryConfig
 
 PRESETS: dict[str, dict] = {
     "urgente": {
-        "jit_enabled": False,
         "urgency_threshold": 2,
         "interleave_enabled": True,
         "lst_safety_buffer": 0,
@@ -44,10 +43,19 @@ def get_preset(name: str) -> dict:
     return PRESETS[name].copy()
 
 
-def apply_preset(config: FactoryConfig, name: str) -> FactoryConfig:
-    """Return a copy of config with preset overrides applied."""
+def apply_preset(
+    config: FactoryConfig,
+    name: str,
+    *,
+    baseline: FactoryConfig | None = None,
+) -> FactoryConfig:
+    """Return a copy with only preset-owned tunables reset and applied."""
     overrides = get_preset(name)
     result = copy.deepcopy(config)
+    if baseline is not None:
+        managed_keys = {key for preset in PRESETS.values() for key in preset}
+        for key in managed_keys:
+            setattr(result, key, copy.deepcopy(getattr(baseline, key)))
     for key, value in overrides.items():
         if not hasattr(result, key):
             raise KeyError(f"FactoryConfig não tem atributo {key!r}")

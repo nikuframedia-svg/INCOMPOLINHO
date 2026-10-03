@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from threading import RLock
 
 from .types import AuditTrail
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "audit.db")
+DEFAULT_DB_PATH = os.path.join(
+    os.environ.get("PP1_DATA_DIR", os.path.dirname(DEFAULT_DB_PATH)), "audit.db"
+)
 
 
 class AuditStore:
@@ -21,37 +25,42 @@ class AuditStore:
         self._path = db_path or DEFAULT_DB_PATH
         if self._path != ":memory:":
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
-        self._conn = sqlite3.connect(self._path)
+        self._lock = RLock()
+        # FastAPI executes synchronous endpoints in worker threads.  The
+        # singleton CopilotState therefore shares this store across threads.
+        # Access is serialized below so the single connection remains safe.
+        self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS schedules (
-                id TEXT PRIMARY KEY,
-                created_at TEXT DEFAULT (datetime('now')),
-                score_json TEXT,
-                n_decisions INTEGER,
-                label TEXT
-            );
-            CREATE TABLE IF NOT EXISTS decisions (
-                id TEXT,
-                schedule_id TEXT,
-                phase TEXT,
-                subject_id TEXT,
-                action TEXT,
-                chosen TEXT,
-                rule TEXT,
-                binding_constraint TEXT,
-                alternatives_json TEXT,
-                explanation_pt TEXT,
-                FOREIGN KEY (schedule_id) REFERENCES schedules(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_decisions_schedule
-                ON decisions(schedule_id);
-            CREATE INDEX IF NOT EXISTS idx_decisions_subject
-                ON decisions(subject_id);
-        """)
-        self._conn.commit()
+        with self._lock:
+            self._conn.executescript("""
+                CREATE TABLE IF NOT EXISTS schedules (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    score_json TEXT,
+                    n_decisions INTEGER,
+                    label TEXT
+                );
+                CREATE TABLE IF NOT EXISTS decisions (
+                    id TEXT,
+                    schedule_id TEXT,
+                    phase TEXT,
+                    subject_id TEXT,
+                    action TEXT,
+                    chosen TEXT,
+                    rule TEXT,
+                    binding_constraint TEXT,
+                    alternatives_json TEXT,
+                    explanation_pt TEXT,
+                    FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_decisions_schedule
+                    ON decisions(schedule_id);
+                CREATE INDEX IF NOT EXISTS idx_decisions_subject
+                    ON decisions(subject_id);
+            """)
+            self._conn.commit()
 
     def save_trail(
         self,
@@ -60,28 +69,36 @@ class AuditStore:
         label: str = "",
     ) -> str:
         """Save an audit trail. Returns the schedule_id."""
-        self._conn.execute(
-            "INSERT OR REPLACE INTO schedules VALUES (?, datetime('now'), ?, ?, ?)",
-            (trail.schedule_id, json.dumps(score), trail.total_decisions, label),
-        )
-        for d in trail.decisions:
-            alts_json = json.dumps([{"value": a.value, "reason": a.reason} for a in d.alternatives])
+        with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    d.id,
-                    trail.schedule_id,
-                    d.phase,
-                    d.subject_id,
-                    d.action,
-                    d.chosen,
-                    d.rule,
-                    d.binding_constraint,
-                    alts_json,
-                    d.explanation_pt,
-                ),
+                "INSERT OR REPLACE INTO schedules VALUES (?, datetime('now'), ?, ?, ?)",
+                (trail.schedule_id, json.dumps(score), trail.total_decisions, label),
             )
-        self._conn.commit()
+            # A schedule id identifies one exact trail. Re-saving it must
+            # replace, rather than append to, its decisions.
+            self._conn.execute(
+                "DELETE FROM decisions WHERE schedule_id=?",
+                (trail.schedule_id,),
+            )
+            for d in trail.decisions:
+                alts_json = json.dumps(
+                    [{"value": a.value, "reason": a.reason} for a in d.alternatives]
+                )
+                self._conn.execute(
+                    "INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        d.id,
+                        trail.schedule_id,
+                        d.phase,
+                        d.subject_id,
+                        d.action,
+                        d.chosen,
+                        d.rule,
+                        d.binding_constraint,
+                        alts_json,
+                        d.explanation_pt,
+                    ),
+                )
         return trail.schedule_id
 
     def load_decisions(
@@ -90,16 +107,17 @@ class AuditStore:
         subject_id: str | None = None,
     ) -> list[dict]:
         """Load decisions for a schedule, optionally filtered by subject."""
-        if subject_id:
-            rows = self._conn.execute(
-                "SELECT * FROM decisions WHERE schedule_id=? AND subject_id=?",
-                (schedule_id, subject_id),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM decisions WHERE schedule_id=?",
-                (schedule_id,),
-            ).fetchall()
+        with self._lock:
+            if subject_id:
+                rows = self._conn.execute(
+                    "SELECT * FROM decisions WHERE schedule_id=? AND subject_id=?",
+                    (schedule_id, subject_id),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM decisions WHERE schedule_id=?",
+                    (schedule_id,),
+                ).fetchall()
 
         cols = [
             "id",
@@ -117,11 +135,12 @@ class AuditStore:
 
     def list_schedules(self, limit: int = 20) -> list[dict]:
         """List recent schedules."""
-        rows = self._conn.execute(
-            "SELECT id, created_at, score_json, n_decisions, label "
-            "FROM schedules ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, created_at, score_json, n_decisions, label "
+                "FROM schedules ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [
             {
                 "id": r[0],
@@ -134,4 +153,5 @@ class AuditStore:
         ]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

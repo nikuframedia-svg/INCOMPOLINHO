@@ -6,47 +6,55 @@ Modes:
   deep   (minutes): same operational loop with a larger CP-SAT local budget
   max    (minutes): same operational loop with the largest CP-SAT local budget
 
-GA/MAP-Elites helpers remain in this module for offline tuning experiments, but
-the operational optimizer does not call them. Production applies proposals only
-after physical and delivery gates pass.
+The offline GA/MAP-Elites tuning experiment lives in ``backend.cpo.offline_ga``;
+the operational optimizer never runs it. The former late-production ("JIT
+delay") repairs were removed: the contract is earliest legal production
+(AGENTS.md). Production applies proposals only after physical and delivery
+gates pass.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
-import random
 import time
 from collections import defaultdict
 from contextlib import contextmanager
 
-from backend.config.types import FactoryConfig
-from backend.cpo.cached_pipeline import CachedPipeline
-from backend.cpo.chromosome import (
-    OPERATORS,
-    Chromosome,
-    crossover_uniform,
+from backend.config.types import ROBUSTNESS_MIN_SUCCESS_PCT, FactoryConfig
+from backend.planning_control import (
+    CancellationEvent,
+    PlanningStopped,
+    PlanningTimeout,
+    closing_reserve,
+    improvement_reserve,
+    improvement_time_budget,
+    planning_checkpoint,
+    planning_scope,
+    remaining_time,
 )
-from backend.cpo.population import (
-    FRRMAB,
-    MAPElitesArchive,
-    OneFifthRule,
-    tournament_select,
-)
-from backend.cpo.surrogate import SurrogateModel
 from backend.scheduler.dispatch import assign_machines
 from backend.scheduler.gates import HARD_GATE_KEYS, build_gate_report
+from backend.scheduler.jit_policy import calendar_holidays
 from backend.scheduler.lot_sizing import create_lots
-from backend.scheduler.scheduler import schedule_all
+from backend.scheduler.operators import compute_operator_alerts
+from backend.scheduler.policy import anticipation_key
+from backend.scheduler.priority import (
+    DELIVERY_PRIORITY_KEYS,
+    delivery_is_complete,
+    delivery_priority_key,
+)
+from backend.scheduler.scheduler import normalize_earliest_legal_plan, schedule_all
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
-from backend.scheduler.types import ScheduleResult, Segment, ToolRun
+from backend.scheduler.types import ScheduleResult, Segment
 from backend.scheduler.validation import (
     PlanValidationError,
     assert_plan_valid,
     segment_abs,
     validate_plan,
 )
+from backend.telemetry import measured, phase
 from backend.types import EngineData
 
 logger = logging.getLogger(__name__)
@@ -55,20 +63,30 @@ logger = logging.getLogger(__name__)
 # ─── Mode configurations ──────────────────────────────────────────────
 
 MODE_CONFIG = {
-    "quick": {"cp_sat": False, "cp_sat_time_per_machine": 0.0, "candidate_budget": 0},
+    "quick": {
+        "cp_sat": False,
+        "cp_sat_time_per_machine": 0.0,
+        "candidate_budget": 0,
+        "time_budget_s": 60.0,
+        "global_jit_time_limit_s": 1.0,
+    },
     "normal": {
         "cp_sat": True,
-        "cp_sat_time_per_machine": 2.0,
+        "cp_sat_time_per_machine": 1.0,
         "candidate_search": True,
-        "candidate_budget": 48,
+        "candidate_budget": 12,
         "final_timing_polish_max_segments": 180,
+        "time_budget_s": 60.0,
+        "global_jit_time_limit_s": 12.0,
     },
     "deep": {
         "cp_sat": True,
-        "cp_sat_time_per_machine": 10.0,
+        "cp_sat_time_per_machine": 5.0,
         "candidate_search": True,
         "candidate_budget": 48,
         "final_timing_polish_max_segments": 320,
+        "time_budget_s": 300.0,
+        "global_jit_time_limit_s": 60.0,
     },
     "max": {
         "cp_sat": True,
@@ -76,15 +94,12 @@ MODE_CONFIG = {
         "candidate_search": True,
         "candidate_budget": 80,
         "final_timing_polish_max_segments": 0,
+        "time_budget_s": 600.0,
+        "global_jit_time_limit_s": 180.0,
     },
 }
 
-TRUST_DELIVERY_KEYS = (
-    "tardy_count",
-    "otd_d_failures",
-    "total_tardiness",
-    "max_tardiness",
-)
+TRUST_DELIVERY_KEYS = DELIVERY_PRIORITY_KEYS
 PRODUCTIVITY_EARLINESS_CEILING_DAYS = 6.5
 DELIVERY_REPAIR_MAX_TARDY_COUNT = 4
 DELIVERY_REPAIR_MAX_OTD_D_FAILURES = 4
@@ -95,10 +110,19 @@ DELIVERY_REPAIR_MAX_TARDINESS = 3
 SCORE_SNAPSHOT_KEYS = (
     "otd",
     "otd_d",
+    "otd_d_cumulative_shortfall_qty",
+    "otd_d_final_shortfall_qty",
     "tardy_count",
     "otd_d_failures",
     "total_tardiness",
     "max_tardiness",
+    "production_due_misses",
+    "production_due_late_workdays",
+    "subcontract_dispatch_total",
+    "subcontract_dispatch_misses",
+    "subcontract_dispatch_late_workdays",
+    "subcontract_dispatch_max_late_workdays",
+    "subcontract_dispatch_otd",
     "hard_violations",
     "setup_crew_overlaps",
     "machine_overlaps",
@@ -107,6 +131,22 @@ SCORE_SNAPSHOT_KEYS = (
     "blocked_machine_segments",
     "blocked_tool_segments",
     "ghost_segments",
+    "early_window_violations",
+    "early_window_violation_workdays",
+    "start_anticipation_avg_workdays",
+    "start_anticipation_max_workdays",
+    "latest_start_gap_avg_min",
+    "latest_start_gap_max_min",
+    "robustness_model_version",
+    "robustness_evaluated_samples",
+    "robustness_baseline_tardy_count",
+    "robustness_success_probability_pct",
+    "robustness_threshold_pct",
+    "robustness_gate_passed",
+    "robustness_otd_p95",
+    "robustness_tardy_p95",
+    "robustness_additional_tardy_mean",
+    "robustness_additional_tardy_p95",
     "setups",
     "setup_time_min",
     "earliness_avg_days",
@@ -120,15 +160,27 @@ SCORE_SNAPSHOT_KEYS = (
 DELTA_SCORE_KEYS = (
     "otd",
     "otd_d",
+    "otd_d_cumulative_shortfall_qty",
+    "otd_d_final_shortfall_qty",
     "tardy_count",
     "otd_d_failures",
     "total_tardiness",
     "max_tardiness",
+    "production_due_misses",
+    "production_due_late_workdays",
+    "subcontract_dispatch_misses",
+    "subcontract_dispatch_late_workdays",
     "hard_violations",
     "setup_crew_overlaps",
     "machine_overlaps",
     "tool_conflicts",
     "day_cap_violations",
+    "early_window_violations",
+    "early_window_violation_workdays",
+    "start_anticipation_avg_workdays",
+    "start_anticipation_max_workdays",
+    "latest_start_gap_avg_min",
+    "latest_start_gap_max_min",
     "setups",
     "setup_time_min",
     "earliness_avg_days",
@@ -136,12 +188,280 @@ DELTA_SCORE_KEYS = (
 )
 
 
+@measured("construction")
+def _schedule_all_bounded(
+    engine_data: EngineData,
+    *,
+    config: FactoryConfig | None = None,
+    audit: bool = False,
+    crew_priority: list[str] | None = None,
+) -> ScheduleResult:
+    """Run one candidate with only the time left from the parent deadline."""
+
+    candidate_config = config or FactoryConfig()
+    remaining = remaining_time()
+    if remaining is not None:
+        candidate_config = copy.deepcopy(candidate_config)
+        candidate_config.global_jit_time_limit_s = min(
+            float(candidate_config.global_jit_time_limit_s),
+            remaining,
+        )
+    result = schedule_all(
+        engine_data,
+        audit=audit,
+        config=candidate_config,
+        crew_priority=crew_priority,
+    )
+    planning_checkpoint()
+    assert_plan_valid(result.segments, engine_data, candidate_config, lots=result.lots)
+    planning_checkpoint()
+    return result
+
+
+def _normalization_signature(segments: list[Segment]) -> tuple[tuple, ...]:
+    """Physical/output identity, excluding explanatory annotations."""
+
+    return tuple(
+        sorted(
+            (
+                segment.lot_id,
+                segment.run_id,
+                segment.machine_id,
+                segment.tool_id,
+                segment.day_idx,
+                round(float(segment.start_min), 3),
+                round(float(segment.end_min), 3),
+                round(float(segment.setup_min), 3),
+                round(float(segment.prod_min), 3),
+                int(segment.qty),
+                tuple(segment.twin_outputs or ()),
+            )
+            for segment in segments
+        )
+    )
+
+
+@measured("candidate_normalization")
+def _normalize_operational_result(
+    result: ScheduleResult,
+    engine_data: EngineData,
+    config: FactoryConfig,
+    *,
+    robustness_seed: int,
+) -> ScheduleResult:
+    """Apply the scheduler's canonical close-out to an advisory candidate."""
+
+    before = _normalization_signature(result.segments)
+    normalized = normalize_earliest_legal_plan(
+        result.segments,
+        result.lots,
+        engine_data,
+        config,
+    )
+    from backend.scheduler.improvement import is_verified, record_verified
+
+    alternative_moves: list[dict] = []
+    # Search again unless this exact physical state was already verified;
+    # never infer that from warning text.
+    if not is_verified(
+        getattr(result, "improvement_report", None), "alternative_machine",
+        normalized, result.lots,
+    ):
+        from backend.scheduler.alternative_repair import (
+            repair_alternative_machine_delivery,
+        )
+
+        alternative_repair = repair_alternative_machine_delivery(
+            normalized,
+            result.lots,
+            engine_data,
+            config,
+        )
+        planning_checkpoint()
+        normalized = alternative_repair.segments
+        result.lots = alternative_repair.lots
+        alternative_moves = alternative_repair.moves
+        result.improvement_report = record_verified(
+            getattr(result, "improvement_report", None), "alternative_machine",
+            normalized, result.lots,
+        )
+        if alternative_moves:
+            normalized = normalize_earliest_legal_plan(
+                normalized,
+                result.lots,
+                engine_data,
+                config,
+            )
+
+    # Canonical left-shift normalization intentionally closes every legal gap.
+    # A configured campaign-tail placement is the narrow exception: after the
+    # CPO close-out, reapply it through the same transactional validation used
+    # by the scheduler and persisted-plan restore paths.
+    from backend.scheduler.campaign_tail import (
+        campaign_tail_warnings,
+        repair_short_runs_after_merged_campaigns,
+    )
+
+    campaign_tail = repair_short_runs_after_merged_campaigns(
+        normalized,
+        result.lots,
+        engine_data,
+        config,
+    )
+    planning_checkpoint()
+    if campaign_tail.moves:
+        normalized = campaign_tail.segments
+        for warning in campaign_tail_warnings(campaign_tail):
+            if warning not in result.warnings:
+                result.warnings.append(warning)
+        normalized = normalize_earliest_legal_plan(
+            normalized,
+            result.lots,
+            engine_data,
+            config,
+        )
+    from backend.scheduler.shift_exchange import repair_shift_capacity_exchange
+
+    normalized = repair_shift_capacity_exchange(
+        normalized,
+        result.lots,
+        engine_data,
+        config,
+    )
+    changed = _normalization_signature(normalized) != before
+    result.segments = normalized
+    result.operator_alerts = compute_operator_alerts(
+        normalized,
+        engine_data,
+        config=config,
+    )
+    result.gate_report = None
+    if alternative_moves:
+        result.warnings.append(
+            "Máquinas alternativas: reparação pós-otimizador aplicada."
+        )
+    if not changed:
+        return result
+
+    previous_score = result.score or {}
+    score = compute_score(normalized, result.lots, engine_data, config=config)
+    for key in ("buffer_days", "_earliness_target"):
+        if key in previous_score:
+            score[key] = previous_score[key]
+    result.score = score
+    _apply_score_policy(result, config)
+    _attach_robustness_score(
+        result,
+        engine_data,
+        config,
+        seed=robustness_seed,
+    )
+    return result
+
+
+@measured("optimization")
 def optimize(
     engine_data: EngineData,
     mode: str = "normal",
     config: FactoryConfig | None = None,
     seed: int | None = 42,
     audit: bool = False,
+    cancel_event: CancellationEvent | None = None,
+    improve: bool = True,
+    reserve_improvement: bool = False,
+) -> ScheduleResult:
+    """Plan within one total budget, or raise PlanningTimeout/PlanningCancelled.
+
+    Input data/config and the caller's active plan are not mutated on failure.
+    No partially validated candidate is returned on budget exhaustion.
+    ``improve=False`` lets a caller that owns protected lots defer the no-loss
+    improvement cycle until its complete candidate exists (plan-melhoria §6.2).
+    """
+    if mode not in MODE_CONFIG:
+        raise ValueError(f"Unknown mode: {mode}. Use: {list(MODE_CONFIG)}")
+    with planning_scope(
+        timeout_s=float(MODE_CONFIG[mode].get("time_budget_s", 60.0)),
+        cancel_event=cancel_event,
+    ):
+        result = _optimize(
+            copy.deepcopy(engine_data), mode, config, seed, audit,
+            reserve_improvement=(improve or reserve_improvement) and mode != "quick",
+        )
+        if improve:
+            _apply_improvement_phase(
+                result, engine_data, config or FactoryConfig(), mode=mode, seed=seed,
+            )
+        return result
+
+
+def _apply_improvement_phase(
+    result: ScheduleResult,
+    engine_data: EngineData,
+    config: FactoryConfig,
+    *,
+    mode: str,
+    seed: int | None,
+) -> None:
+    """Incorporate admissible no-loss improvements into a complete candidate."""
+
+    from backend.scheduler.canonical import result_validation_data
+    from backend.scheduler.improvement import improve_plan, improvement_gate_summary
+
+    previous = dict(getattr(result, "improvement_report", None) or {})
+    view = result_validation_data(engine_data, result)
+
+    def publish() -> None:
+        if result.gate_report is not None:
+            result.gate_report["improvement"] = improvement_gate_summary(
+                result.improvement_report, result.segments, result.lots, view, config,
+            )
+
+    if mode == "quick":
+        # Quick mode keeps its latency promise; the report says so.
+        result.improvement_report = {
+            **previous, "status": "not_evaluated", "stop_reason": "quick_mode",
+        }
+        publish()
+        return
+    reserve = closing_reserve(float(MODE_CONFIG[mode]["time_budget_s"]))
+    budget = improvement_time_budget(float(MODE_CONFIG[mode]["time_budget_s"]))
+    if budget <= 0:
+        result.improvement_report = {
+            **previous, "status": "not_evaluated", "stop_reason": "no_time_left",
+        }
+        publish()
+        return
+    segments, lots, report = improve_plan(
+        result.segments, result.lots, view, config, time_budget_s=budget,
+    )
+    if report.get("moves_accepted"):
+        old_gate = copy.deepcopy(result.gate_report or {})
+        assert_plan_valid(segments, view, config, lots=lots)
+        result.segments, result.lots = segments, lots
+        result.score = compute_score(segments, lots, view, config=config)
+        result.operator_alerts = compute_operator_alerts(segments, view, config=config)
+        _attach_robustness_with_reserve(result, view, config, seed=seed or 42, reserve_s=reserve)
+        result.gate_report = build_gate_report(
+            segments, lots, result.score, view, config,
+        )
+        # Keep solver provenance (status, feasibility, trace, proposals…):
+        # only the plan-derived gate content is recomputed.
+        for key, value in old_gate.items():
+            result.gate_report.setdefault(key, value)
+        _strip_score_policy(result)
+        previous.pop("verified", None)
+    result.improvement_report = {**previous, **report}
+    publish()
+
+
+def _optimize(
+    engine_data: EngineData,
+    mode: str,
+    config: FactoryConfig | None,
+    seed: int | None,
+    audit: bool,
+    *,
+    reserve_improvement: bool = False,
 ) -> ScheduleResult:
     """CPO v4 trust-loop entry point.
 
@@ -151,17 +471,85 @@ def optimize(
     """
     t0 = time.perf_counter()
 
-    if config is None:
-        config = FactoryConfig()
+    config = copy.deepcopy(config) if config is not None else FactoryConfig()
 
     if mode not in MODE_CONFIG:
         raise ValueError(f"Unknown mode: {mode}. Use: {list(MODE_CONFIG)}")
 
     cfg = MODE_CONFIG[mode]
+    global_jit_time_limit_s = float(
+        cfg.get("global_jit_time_limit_s", config.global_jit_time_limit_s)
+    )
+    # Small fixtures finish safely with the default constructor budget. A real
+    # ISOP needs the normal constructor budget even in quick mode; cutting it
+    # to one second leaves an incomplete global allocation that later repair
+    # passes cannot always make physically executable.
+    if mode == "quick":
+        global_jit_time_limit_s = (
+            FactoryConfig().global_jit_time_limit_s
+            if len(engine_data.ops) < 50
+            else float(MODE_CONFIG["normal"]["global_jit_time_limit_s"])
+        )
+    config.global_jit_time_limit_s = global_jit_time_limit_s
+    # The optimizer owns the total deadline. Standalone scheduling may enlarge
+    # a tiny constructor budget for a real ISOP, but every optimizer mode must
+    # respect the phase budget assigned here.
+    config._optimization_profile = mode
+    deadline = time.monotonic() + remaining_time(float(cfg.get("time_budget_s", 60.0)))
+    config._optimization_deadline = deadline
 
     # Phase 0: Greedy baseline
-    baseline = schedule_all(engine_data, audit=audit, config=config)
+    with phase("initial_construction"):
+        baseline = _schedule_all_bounded(engine_data, audit=audit, config=config)
     _apply_score_policy(baseline, config)
+    from backend.planning_control import candidate_completed
+
+    candidate_completed(baseline)
+    total_budget = float(cfg["time_budget_s"])
+    robustness_reserve = (
+        closing_reserve(total_budget) + improvement_reserve(total_budget)
+        if reserve_improvement else 8.0
+    )
+    if not _attach_robustness_with_reserve(
+        baseline,
+        engine_data,
+        config,
+        seed=seed or 42,
+        reserve_s=robustness_reserve,
+    ):
+        elapsed = (time.perf_counter() - t0) * 1000
+        baseline.time_ms = round(elapsed, 1)
+        baseline.solver_status = baseline.solver_status or "timeout_with_candidate"
+        baseline.warnings.append(
+            "Análise de robustez não concluída dentro do tempo; "
+            "o candidato físico validado foi conservado para revisão."
+        )
+        # schedule_all already built this report from the same immutable
+        # segments and operational audit. Reusing it avoids repeating the most
+        # expensive close-out analysis inside the reserved response window.
+        if baseline.gate_report is None:
+            baseline.gate_report = build_gate_report(
+                baseline.segments,
+                baseline.lots,
+                baseline.score,
+                engine_data,
+                config,
+            )
+        baseline.gate_report["solver_status"] = baseline.solver_status
+        baseline.gate_report["feasibility"] = baseline.feasibility
+        _attach_solver_trace(
+            baseline,
+            _build_solver_trace(
+                mode=mode,
+                cfg=cfg,
+                baseline=baseline,
+                final=baseline,
+                elapsed_ms=elapsed,
+                final_source="baseline_after_robustness_timeout",
+            ),
+        )
+        _strip_score_policy(baseline)
+        return baseline
     baseline_score = baseline.score
 
     if not baseline_score or not baseline.lots:
@@ -190,9 +578,91 @@ def optimize(
                 final_source="baseline",
             ),
         )
+        baseline.gate_report = build_gate_report(
+            baseline.segments,
+            baseline.lots,
+            baseline.score,
+            engine_data,
+            config,
+        )
+        baseline.gate_report["solver_status"] = baseline.solver_status
+        baseline.gate_report["feasibility"] = baseline.feasibility
         _strip_score_policy(baseline)
         return baseline
 
+    # Reserve time for the final physical validation and application report.
+    # A later unfinished search cannot discard an already accepted improvement.
+    remaining = remaining_time()
+    from backend.planning_control import candidate_observer
+
+    reserve = (
+        closing_reserve(float(cfg.get("time_budget_s", 60.0))) if remaining is not None else 0.0
+    )
+    if reserve_improvement:
+        reserve += improvement_reserve(total_budget)
+    complete = baseline
+
+    def retain(candidate):
+        nonlocal complete
+        planning_checkpoint()
+        if not _preserves_trust(candidate, baseline):
+            return False
+        try:
+            assert_plan_valid(candidate.segments, engine_data, config, lots=candidate.lots)
+        except PlanValidationError:
+            return False
+        if _is_better_candidate(candidate, complete):
+            complete = copy.deepcopy(candidate)
+
+    try:
+        with candidate_observer(retain, forward=True):
+            with planning_scope(
+                timeout_s=None if remaining is None else max(0.0, remaining - reserve),
+            ):
+                return _improve_baseline(
+                    engine_data, config, copy.deepcopy(baseline), mode, cfg, seed, t0,
+                    deadline - reserve,
+                )
+    except PlanningTimeout as exc:
+        planning_checkpoint()
+        try:
+            assert_plan_valid(complete.segments, engine_data, config, lots=complete.lots)
+        except PlanValidationError:
+            raise exc
+        elapsed = (time.perf_counter() - t0) * 1000
+        complete.time_ms = round(elapsed, 1)
+        complete.solver_status = complete.solver_status or "timeout_with_candidate"
+        complete.warnings.append(
+            "Tempo de melhoria esgotado; conservado o plano completo validado."
+        )
+        complete.operator_alerts = compute_operator_alerts(
+            complete.segments, engine_data, config=config,
+        )
+        complete.gate_report = build_gate_report(
+            complete.segments, complete.lots, complete.score, engine_data, config,
+        )
+        complete.gate_report["solver_status"] = complete.solver_status
+        complete.gate_report["feasibility"] = complete.feasibility
+        _attach_solver_trace(complete, _build_solver_trace(
+            mode=mode, cfg=cfg, baseline=baseline, final=complete,
+            elapsed_ms=elapsed,
+            final_source=("baseline_after_search_timeout" if complete is baseline
+                          else "candidate_after_search_timeout"),
+        ))
+        _strip_score_policy(complete)
+        return complete
+
+
+def _improve_baseline(
+    engine_data: EngineData,
+    config: FactoryConfig,
+    baseline: ScheduleResult,
+    mode: str,
+    cfg: dict,
+    seed: int | None,
+    t0: float,
+    deadline: float,
+) -> ScheduleResult:
     best_result = baseline
     best_config = config
     final_source = "baseline"
@@ -212,6 +682,7 @@ def optimize(
                 baseline,
                 mode,
                 candidate_budget=int(cfg.get("candidate_budget", 0) or 0),
+                deadline=deadline,
             )
         )
         decision_notes.extend(shadow_notes)
@@ -236,56 +707,36 @@ def optimize(
             final_source,
         )
 
-    repaired_result, repair_decision = _try_global_delay_earliness_repair(
-        best_result,
-        baseline,
-        engine_data,
-        best_config,
-    )
-    if repair_decision is not None:
-        local_repair_decisions.append(repair_decision)
-    if repaired_result is not best_result:
-        decision_notes.append(
-            "CPO local repair accepted: global suffix delay reduced earliness"
-        )
-        best_result = repaired_result
-        final_source = "global_suffix_earliness_repair"
-        trusted_result, trusted_config, trusted_source = _remember_trusted_result(
-            trusted_result,
-            trusted_config,
-            trusted_source,
-            best_result,
-            best_config,
-            final_source,
-        )
+    # The five-workday JIT rule models material release, not a reason to hold
+    # a legal production run idle.  The former "earliness repair" moved whole
+    # suffixes to the right after scheduling, recreating avoidable gaps in the
+    # Gantt.  Once the release floor is respected, production stays as early
+    # as the solver can place it.
 
     if not cfg["cp_sat"]:
-        timing_polished_result, timing_polish_decision = _try_final_jit_timing_polish(
+        best_result = _normalize_operational_result(
             best_result,
-            baseline,
             engine_data,
             best_config,
-            max_segments=int(cfg.get("final_timing_polish_max_segments", 0) or 0),
+            robustness_seed=seed or 42,
         )
-        if timing_polish_decision is not None:
-            local_repair_decisions.append(timing_polish_decision)
-        if timing_polished_result is not best_result:
-            decision_notes.append("CPO local repair accepted: final JIT timing polish")
-            best_result = timing_polished_result
-            final_source = "final_jit_timing_polish"
-            trusted_result, trusted_config, trusted_source = _remember_trusted_result(
-                trusted_result,
-                trusted_config,
-                trusted_source,
-                best_result,
-                best_config,
-                final_source,
-            )
-
+        if not _preserves_trust(best_result, baseline):
+            best_result = baseline
+            best_config = config
+            final_source = "baseline_revert_trust_regression"
         elapsed = (time.perf_counter() - t0) * 1000
         best_result.time_ms = round(elapsed, 1)
         if decision_notes:
             best_result.warnings.extend(decision_notes)
+        best_result.gate_report = build_gate_report(
+            best_result.segments,
+            best_result.lots,
+            best_result.score,
+            engine_data,
+            best_config,
+        )
+        best_result.gate_report["solver_status"] = best_result.solver_status
+        best_result.gate_report["feasibility"] = best_result.feasibility
         _attach_solver_trace(
             best_result,
             _build_solver_trace(
@@ -307,8 +758,14 @@ def optimize(
     try:
         from backend.cpo.cpsat_polish import cpsat_polish
 
-        if cfg["cp_sat"]:
+        planning_checkpoint()
+        if cfg["cp_sat"] and time.monotonic() < deadline:
             polish_machine_runs = _build_local_machine_runs(engine_data, best_config)
+            remaining_s = remaining_time(deadline - time.monotonic())
+            per_machine_limit = min(
+                float(cfg["cp_sat_time_per_machine"]),
+                max(0.1, remaining_s / max(len(polish_machine_runs), 1)),
+            )
             with _quiet_advisory_solver_logs():
                 polished_segs, polished_lots, polished_score = cpsat_polish(
                     best_result.segments,
@@ -316,9 +773,10 @@ def optimize(
                     polish_machine_runs,
                     engine_data,
                     best_config,
-                    time_limit_per_machine=cfg["cp_sat_time_per_machine"],
+                    time_limit_per_machine=per_machine_limit,
+                    seed=seed,
                 )
-            assert_plan_valid(polished_segs, engine_data, best_config)
+            assert_plan_valid(polished_segs, engine_data, best_config, lots=polished_lots)
             polished_candidate = ScheduleResult(
                 segments=polished_segs,
                 lots=polished_lots,
@@ -330,6 +788,12 @@ def optimize(
                 machine_runs=polish_machine_runs,
             )
             _apply_score_policy(polished_candidate, best_config)
+            _attach_robustness_score(
+                polished_candidate,
+                engine_data,
+                best_config,
+                seed=seed or 42,
+            )
             if _is_better_candidate(polished_candidate, best_result):
                 cp_sat_decisions.append(
                     _candidate_decision(
@@ -356,6 +820,9 @@ def optimize(
                     final_source,
                 )
                 decision_notes.append("CPO candidate accepted: local CP-SAT polish")
+                from backend.planning_control import candidate_completed
+
+                candidate_completed(best_result)
             else:
                 cp_sat_decisions.append(
                     _candidate_decision(
@@ -372,35 +839,27 @@ def optimize(
                 decision_notes.append(
                     "CPO candidate rejected: local CP-SAT polish failed trust ranking"
                 )
+    except PlanningStopped:
+        raise
     except (ImportError, RuntimeError, TimeoutError, ValueError, PlanValidationError) as e:
         logger.debug("CP-SAT polish skipped/rejected: %s", e)
         cp_sat_decisions.append(
             _candidate_error_decision("local_cp_sat_polish", {}, None, e)
         )
 
-    timing_polished_result, timing_polish_decision = _try_final_jit_timing_polish(
-        best_result,
-        baseline,
-        engine_data,
-        best_config,
-        max_segments=int(cfg.get("final_timing_polish_max_segments", 0) or 0),
-    )
-    if timing_polish_decision is not None:
-        local_repair_decisions.append(timing_polish_decision)
-    if timing_polished_result is not best_result:
-        decision_notes.append("CPO local repair accepted: final JIT timing polish")
-        best_result = timing_polished_result
-        final_source = "final_jit_timing_polish"
-        trusted_result, trusted_config, trusted_source = _remember_trusted_result(
-            trusted_result,
-            trusted_config,
-            trusted_source,
+    # ``schedule_all`` already returns a canonical, fully audited plan. Running
+    # the fixed-point normalizer again on the unchanged baseline is both
+    # redundant and very expensive on a full ISOP. Advisory candidates still
+    # cross this boundary before they may replace that baseline.
+    if best_result is not baseline:
+        best_result = _normalize_operational_result(
             best_result,
+            engine_data,
             best_config,
-            final_source,
+            robustness_seed=seed or 42,
         )
 
-    if validate_plan(best_result.segments, engine_data, best_config):
+    if validate_plan(best_result.segments, engine_data, best_config, lots=best_result.lots):
         logger.warning("CPO candidate invalid after local polish — reverting to trusted plan")
         if trusted_result is not None:
             best_result = trusted_result
@@ -434,7 +893,12 @@ def optimize(
     if decision_notes:
         best_result.warnings.extend(decision_notes)
 
-    assert_plan_valid(best_result.segments, engine_data, best_config)
+    assert_plan_valid(
+        best_result.segments, engine_data, best_config, lots=best_result.lots
+    )
+    from backend.planning_control import candidate_completed
+
+    candidate_completed(best_result)
     best_result.gate_report = build_gate_report(
         best_result.segments,
         best_result.lots,
@@ -442,6 +906,13 @@ def optimize(
         engine_data,
         best_config,
     )
+    if best_result.solver_status is None:
+        from backend.scheduler.global_jit import _strict_delivery_feasible
+
+        strict = _strict_delivery_feasible(best_result.segments, best_result.lots, engine_data)
+        best_result.solver_status = "strict_feasible" if strict else "strict_infeasible_best_effort"
+    best_result.gate_report["solver_status"] = best_result.solver_status
+    best_result.gate_report["feasibility"] = best_result.feasibility
     _attach_solver_trace(
         best_result,
         _build_solver_trace(
@@ -471,14 +942,18 @@ def optimize(
     return best_result
 
 
+@measured("candidate_search")
 def _run_shadow_candidate_search(
     engine_data: EngineData,
     base_config: FactoryConfig,
     baseline: ScheduleResult,
     mode: str,
     candidate_budget: int = 0,
+    deadline: float | None = None,
 ) -> tuple[ScheduleResult, FactoryConfig, list[str], dict]:
     """Try small operational variants and keep only trust-preserving wins."""
+
+    _attach_robustness_score(baseline, engine_data, base_config, seed=42)
 
     best_result = baseline
     best_config = base_config
@@ -502,6 +977,7 @@ def _run_shadow_candidate_search(
         "rejected": 0,
         "errored": 0,
         "skipped_by_budget": 0,
+        "stopped_by_time_budget": False,
         "delivery_repairs_skipped": 0,
         "best_candidate": None,
         "best_rejected_productivity": None,
@@ -512,20 +988,26 @@ def _run_shadow_candidate_search(
     }
 
     for idx, (name, candidate_config, changes, crew_priority) in enumerate(candidates):
-        if evaluated >= budget:
+        planning_checkpoint()
+        if evaluated >= budget or (deadline is not None and time.monotonic() >= deadline):
             skipped_by_budget = len(candidates) - idx
+            trace["stopped_by_time_budget"] = bool(
+                deadline is not None and time.monotonic() >= deadline
+            )
             break
         evaluated += 1
         try:
             with _quiet_advisory_solver_logs():
-                candidate = schedule_all(
+                candidate = _schedule_all_bounded(
                     copy.deepcopy(engine_data),
                     audit=False,
                     config=candidate_config,
                     crew_priority=crew_priority,
                 )
             _apply_score_policy(candidate, candidate_config)
-            assert_plan_valid(candidate.segments, engine_data, candidate_config)
+            assert_plan_valid(
+                candidate.segments, engine_data, candidate_config, lots=candidate.lots
+            )
             candidate_repair: dict | None = None
             delivery_repair_decision = _delivery_repair_triage(candidate, best_result)
             if delivery_repair_decision["decision"] == "attempt":
@@ -544,15 +1026,11 @@ def _run_shadow_candidate_search(
                     candidate_repair,
                     delivery_repair_decision,
                 )
-            candidate, earliness_repair = _try_global_delay_earliness_repair(
+            _attach_robustness_score(
                 candidate,
-                baseline,
                 engine_data,
                 candidate_config,
-            )
-            candidate_repair = _append_local_repair_decision(
-                candidate_repair,
-                earliness_repair,
+                seed=42,
             )
         except (RuntimeError, ValueError, PlanValidationError) as exc:
             notes.append(f"CPO candidate rejected: {name} errored ({exc})")
@@ -565,7 +1043,6 @@ def _run_shadow_candidate_search(
         if _is_better_candidate(candidate, best_result) and _preserves_trust(
             candidate, baseline
         ):
-            previous_best = best_result
             trace["decisions"].append(
                 _candidate_decision(
                     name,
@@ -586,48 +1063,12 @@ def _run_shadow_candidate_search(
             )
             best_result = candidate
             best_config = candidate_config
+            from backend.planning_control import candidate_completed
+
+            candidate_completed(best_result)
             accepted += 1
             trace["accepted"] += 1
             trace["best_candidate"] = name
-
-            setup_result, setup_config, setup_decision = _try_lns_setup_frontier_candidate(
-                source_name=name,
-                source_candidate=candidate,
-                source_config=candidate_config,
-                source_changes=changes,
-                crew_priority=crew_priority,
-                engine_data=engine_data,
-                incumbent=best_result,
-                baseline=baseline,
-            )
-            if setup_decision is not None:
-                if (
-                    setup_result is not None
-                    and setup_config is not None
-                    and setup_decision.get("decision") == "accepted"
-                ):
-                    notes.append(
-                        "CPO candidate accepted: "
-                        f"{setup_decision['name']} ({_summarize_score(best_result.score)} -> "
-                        f"{_summarize_score(setup_result.score)})"
-                    )
-                    best_result = setup_result
-                    best_config = setup_config
-                    accepted += 1
-                    trace["accepted"] += 1
-                    trace["best_candidate"] = str(setup_decision.get("name"))
-                elif setup_decision.get("decision") == "errored":
-                    trace["errored"] += 1
-                else:
-                    trace["rejected"] += 1
-                    if setup_result is not None:
-                        _record_productivity_frontier_miss(
-                            trace,
-                            setup_decision,
-                            setup_result,
-                            previous_best,
-                        )
-                trace["decisions"].append(setup_decision)
         else:
             reason = _candidate_rejection_reason(candidate, best_result)
             decision = _candidate_decision(
@@ -641,174 +1082,12 @@ def _run_shadow_candidate_search(
                 baseline,
                 candidate_repair,
             )
-            _record_productivity_frontier_miss(trace, decision, candidate, best_result)
             notes.append(
                 "CPO candidate rejected: "
                 f"{name} ({reason}; changes={_format_changes(changes)})"
             )
             trace["rejected"] += 1
             trace["decisions"].append(decision)
-
-            lns_result, lns_config, lns_decision = _try_lns_split_repair_candidate(
-                source_name=name,
-                source_candidate=candidate,
-                source_config=candidate_config,
-                source_changes=changes,
-                crew_priority=crew_priority,
-                engine_data=engine_data,
-                incumbent=best_result,
-                baseline=baseline,
-            )
-            if lns_decision is not None:
-                if (
-                    lns_result is not None
-                    and lns_config is not None
-                    and lns_decision.get("decision") == "accepted"
-                ):
-                    notes.append(
-                        "CPO candidate accepted: "
-                        f"{lns_decision['name']} ({_summarize_score(best_result.score)} -> "
-                        f"{_summarize_score(lns_result.score)})"
-                    )
-                    best_result = lns_result
-                    best_config = lns_config
-                    accepted += 1
-                    trace["accepted"] += 1
-                    trace["best_candidate"] = str(lns_decision.get("name"))
-                elif lns_decision.get("decision") == "errored":
-                    trace["errored"] += 1
-                else:
-                    trace["rejected"] += 1
-                    if lns_result is not None:
-                        _record_productivity_frontier_miss(
-                            trace,
-                            lns_decision,
-                            lns_result,
-                            best_result,
-                        )
-                trace["decisions"].append(lns_decision)
-
-            setup_result, setup_config, setup_decision = _try_lns_setup_frontier_candidate(
-                source_name=name,
-                source_candidate=candidate,
-                source_config=candidate_config,
-                source_changes=changes,
-                crew_priority=crew_priority,
-                engine_data=engine_data,
-                incumbent=best_result,
-                baseline=baseline,
-            )
-            if setup_decision is not None:
-                if (
-                    setup_result is not None
-                    and setup_config is not None
-                    and setup_decision.get("decision") == "accepted"
-                ):
-                    notes.append(
-                        "CPO candidate accepted: "
-                        f"{setup_decision['name']} ({_summarize_score(best_result.score)} -> "
-                        f"{_summarize_score(setup_result.score)})"
-                    )
-                    best_result = setup_result
-                    best_config = setup_config
-                    accepted += 1
-                    trace["accepted"] += 1
-                    trace["best_candidate"] = str(setup_decision.get("name"))
-                elif setup_decision.get("decision") == "errored":
-                    trace["errored"] += 1
-                else:
-                    trace["rejected"] += 1
-                    if setup_result is not None:
-                        _record_productivity_frontier_miss(
-                            trace,
-                            setup_decision,
-                            setup_result,
-                            best_result,
-                        )
-                trace["decisions"].append(setup_decision)
-
-            combo_candidates = _try_lns_pareto_combo_candidates(
-                source_name=name,
-                source_candidate=candidate,
-                source_config=candidate_config,
-                source_changes=changes,
-                anchor_decision=setup_decision,
-                crew_priority=crew_priority,
-                engine_data=engine_data,
-                incumbent=best_result,
-                baseline=baseline,
-            )
-            for combo_result, combo_config, combo_decision in combo_candidates:
-                if combo_decision is None:
-                    continue
-                if (
-                    combo_result is not None
-                    and combo_config is not None
-                    and combo_decision.get("decision") == "accepted"
-                    and _is_better_candidate(combo_result, best_result)
-                    and _preserves_trust(combo_result, baseline)
-                ):
-                    notes.append(
-                        "CPO candidate accepted: "
-                        f"{combo_decision['name']} ({_summarize_score(best_result.score)} -> "
-                        f"{_summarize_score(combo_result.score)})"
-                    )
-                    best_result = combo_result
-                    best_config = combo_config
-                    accepted += 1
-                    trace["accepted"] += 1
-                    trace["best_candidate"] = str(combo_decision.get("name"))
-                elif combo_decision.get("decision") == "errored":
-                    trace["errored"] += 1
-                else:
-                    trace["rejected"] += 1
-                    if combo_result is not None:
-                        _record_productivity_frontier_miss(
-                            trace,
-                            combo_decision,
-                            combo_result,
-                            best_result,
-                        )
-                trace["decisions"].append(combo_decision)
-
-            safe_result, safe_config, safe_decision = _try_lns_safe_combo_candidate(
-                source_name=name,
-                source_candidate=candidate,
-                source_config=candidate_config,
-                source_changes=changes,
-                crew_priority=crew_priority,
-                engine_data=engine_data,
-                incumbent=best_result,
-                baseline=baseline,
-            )
-            if safe_decision is not None:
-                if (
-                    safe_result is not None
-                    and safe_config is not None
-                    and safe_decision.get("decision") == "accepted"
-                ):
-                    notes.append(
-                        "CPO candidate accepted: "
-                        f"{safe_decision['name']} ({_summarize_score(best_result.score)} -> "
-                        f"{_summarize_score(safe_result.score)})"
-                    )
-                    best_result = safe_result
-                    best_config = safe_config
-                    accepted += 1
-                    trace["accepted"] += 1
-                    trace["best_candidate"] = str(safe_decision.get("name"))
-                elif safe_decision.get("decision") == "errored":
-                    trace["errored"] += 1
-                else:
-                    trace["rejected"] += 1
-                    if safe_result is not None:
-                        _record_productivity_frontier_miss(
-                            trace,
-                            safe_decision,
-                            safe_result,
-                            best_result,
-                        )
-                trace["decisions"].append(safe_decision)
 
     notes.append(
         "CPO candidate search summary: "
@@ -842,687 +1121,10 @@ def _remember_trusted_result(
         return current_result, current_config, current_source
     if current_result is None:
         return candidate, candidate_config, candidate_source
-    if _trust_rank(candidate.score or {}) < _trust_rank(current_result.score or {}):
+    candidate_rank, current_rank = _comparable_ranks(candidate, current_result)
+    if candidate_rank < current_rank:
         return candidate, candidate_config, candidate_source
     return current_result, current_config, current_source
-
-
-def _try_lns_split_repair_candidate(
-    *,
-    source_name: str,
-    source_candidate: ScheduleResult,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-) -> tuple[ScheduleResult | None, FactoryConfig | None, dict | None]:
-    """Try a tiny LNS split/repair neighborhood around an early-stock frontier."""
-
-    if source_name != "campaign_merge_frontier":
-        return None, None, None
-    source_score = source_candidate.score or {}
-    if not _is_fully_trusted_score(source_score):
-        return None, None, None
-    if _earliness_excess(source_score) <= 0:
-        return None, None, None
-    if not _has_setup_productivity_gain(source_score, incumbent.score or {}):
-        return None, None, None
-
-    split_moves = _lns_split_moves_from_pressure(
-        source_candidate,
-        engine_data,
-        source_config,
-    )
-    if not split_moves:
-        return None, None, None
-
-    best_result: ScheduleResult | None = None
-    best_config: FactoryConfig | None = None
-    best_decision: dict | None = None
-    best_key: tuple[float, float, float, float] | None = None
-
-    for split_count in (1, 3, 5):
-        split_spec = _lns_split_spec(split_moves[:split_count])
-        if not split_spec:
-            continue
-
-        candidate_name = f"lns_split_repair_{split_count}_for_{source_name}"
-        trial, candidate_config, decision = _evaluate_lns_split_spec(
-            candidate_name=candidate_name,
-            source_config=source_config,
-            source_changes=source_changes,
-            split_spec=split_spec,
-            crew_priority=crew_priority,
-            engine_data=engine_data,
-            incumbent=incumbent,
-            baseline=baseline,
-        )
-        if decision is None:
-            continue
-        if decision.get("decision") == "errored":
-            if best_decision is None:
-                best_decision = decision
-            continue
-        if trial is None or candidate_config is None:
-            continue
-        if decision.get("decision") == "accepted":
-            return trial, candidate_config, decision
-
-        score = trial.score or {}
-        key = (
-            _earliness_excess(score),
-            float(score.get("earliness_avg_days", 0.0) or 0.0),
-            _setup_minutes(score),
-            float(score.get("setups", 0) or 0),
-        )
-        if best_key is None or key < best_key:
-            best_key = key
-            best_result = trial
-            best_config = candidate_config
-            best_decision = decision
-
-    return best_result, best_config, best_decision
-
-
-def _try_lns_safe_combo_candidate(
-    *,
-    source_name: str,
-    source_candidate: ScheduleResult,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-) -> tuple[ScheduleResult | None, FactoryConfig | None, dict | None]:
-    """Greedily compose only LNS split moves that keep full trust gates green."""
-
-    if source_name != "campaign_merge_frontier":
-        return None, None, None
-    source_score = source_candidate.score or {}
-    if not _is_fully_trusted_score(source_score):
-        return None, None, None
-    if _earliness_excess(source_score) <= 0:
-        return None, None, None
-    if not _has_setup_productivity_gain(source_score, incumbent.score or {}):
-        return None, None, None
-
-    split_moves = _lns_split_moves_from_pressure(
-        source_candidate,
-        engine_data,
-        source_config,
-        limit=10,
-    )
-    if not split_moves:
-        return None, None, None
-
-    screened: list[tuple[tuple[float, float, float], tuple[str, int]]] = []
-    for move in split_moves:
-        trial, _candidate_config, decision = _evaluate_lns_split_spec(
-            candidate_name=f"lns_split_screen_for_{source_name}",
-            source_config=source_config,
-            source_changes=source_changes,
-            split_spec=_lns_split_spec([move]),
-            crew_priority=crew_priority,
-            engine_data=engine_data,
-            incumbent=incumbent,
-            baseline=baseline,
-            apply_earliness_repair=False,
-        )
-        if trial is None or decision is None:
-            continue
-        score = trial.score or {}
-        if not _is_fully_trusted_score(score):
-            continue
-        if not _has_setup_productivity_gain(score, incumbent.score or {}):
-            continue
-        screened.append(
-            (
-                (
-                    float(score.get("earliness_avg_days", 0.0) or 0.0),
-                    _setup_minutes(score),
-                    float(score.get("setups", 0) or 0),
-                ),
-                move,
-            )
-        )
-
-    if not screened:
-        return None, None, None
-
-    current_spec: dict[str, list[int]] = {}
-    current_score = source_score
-    best_result: ScheduleResult | None = None
-    best_config: FactoryConfig | None = None
-    best_decision: dict | None = None
-    candidate_name = f"lns_split_safe_combo_for_{source_name}"
-
-    for _screen_key, move in sorted(screened, key=lambda item: item[0])[:6]:
-        trial_spec = _merge_lns_split_specs(current_spec, _lns_split_spec([move]))
-        if trial_spec == current_spec:
-            continue
-        trial, trial_config, decision = _evaluate_lns_split_spec(
-            candidate_name=candidate_name,
-            source_config=source_config,
-            source_changes={
-                **source_changes,
-                "lns_screening": "greedy_trust_preserving_combo",
-            },
-            split_spec=trial_spec,
-            crew_priority=crew_priority,
-            engine_data=engine_data,
-            incumbent=incumbent,
-            baseline=baseline,
-            apply_earliness_repair=False,
-        )
-        if trial is None or trial_config is None or decision is None:
-            continue
-        score = trial.score or {}
-        if not _is_fully_trusted_score(score):
-            continue
-        if not _has_setup_productivity_gain(score, incumbent.score or {}):
-            continue
-        if float(score.get("earliness_avg_days", 0.0) or 0.0) >= float(
-            current_score.get("earliness_avg_days", 0.0) or 0.0
-        ):
-            continue
-        current_spec = trial_spec
-        current_score = score
-        best_result = trial
-        best_config = trial_config
-        best_decision = decision
-
-    return best_result, best_config, best_decision
-
-
-def _try_lns_setup_frontier_candidate(
-    *,
-    source_name: str,
-    source_candidate: ScheduleResult,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-) -> tuple[ScheduleResult | None, FactoryConfig | None, dict | None]:
-    """Expose the most productive trusted split move, even when it needs approval.
-
-    The safe-combo LNS candidate is ranked by earliness because it is the closest
-    to the default apply envelope. This companion candidate keeps a second,
-    productivity-first frontier visible for explicit approval or future repair.
-    """
-
-    if source_name != "campaign_merge_frontier":
-        return None, None, None
-    if not _is_fully_trusted_score(source_candidate.score or {}):
-        return None, None, None
-
-    split_moves = _lns_split_moves_from_pressure(
-        source_candidate,
-        engine_data,
-        source_config,
-        limit=10,
-    )
-    if not split_moves:
-        return None, None, None
-
-    best_result: ScheduleResult | None = None
-    best_config: FactoryConfig | None = None
-    best_decision: dict | None = None
-    best_split_spec: dict[str, list[int]] | None = None
-    best_key: tuple[float, float, float] | None = None
-    candidate_name = f"lns_split_setup_frontier_for_{source_name}"
-
-    for move in split_moves:
-        split_spec = _lns_split_spec([move])
-        trial, trial_config, decision = _evaluate_lns_split_spec(
-            candidate_name=candidate_name,
-            source_config=source_config,
-            source_changes={
-                **source_changes,
-                "lns_screening": "trusted_setup_frontier",
-            },
-            split_spec=split_spec,
-            crew_priority=crew_priority,
-            engine_data=engine_data,
-            incumbent=incumbent,
-            baseline=baseline,
-            apply_earliness_repair=False,
-        )
-        if decision is None:
-            continue
-        if decision.get("decision") == "errored":
-            if best_decision is None:
-                best_decision = decision
-            continue
-        if trial is None or trial_config is None:
-            continue
-        score = trial.score or {}
-        if not _is_fully_trusted_score(score):
-            continue
-        if not _has_setup_productivity_gain(score, incumbent.score or {}):
-            continue
-        key = _productivity_frontier_key(score)
-        if best_key is None or key < best_key:
-            best_key = key
-            best_result = trial
-            best_config = trial_config
-            best_decision = decision
-            best_split_spec = split_spec
-
-    if best_split_spec is None:
-        return best_result, best_config, best_decision
-
-    repaired_result, repaired_config, repaired_decision = _evaluate_lns_split_spec(
-        candidate_name=candidate_name,
-        source_config=source_config,
-        source_changes={
-            **source_changes,
-            "lns_screening": "trusted_setup_frontier",
-            "frontier_repair": "best_split_earliness_repair",
-        },
-        split_spec=best_split_spec,
-        crew_priority=crew_priority,
-        engine_data=engine_data,
-        incumbent=incumbent,
-        baseline=baseline,
-        apply_earliness_repair=True,
-    )
-    if (
-        repaired_result is not None
-        and repaired_config is not None
-        and repaired_decision is not None
-        and _productivity_frontier_key(repaired_result.score or {})
-        <= _productivity_frontier_key(best_result.score or {})
-    ):
-        return repaired_result, repaired_config, repaired_decision
-
-    return best_result, best_config, best_decision
-
-
-def _try_lns_pareto_combo_candidates(
-    *,
-    source_name: str,
-    source_candidate: ScheduleResult,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    anchor_decision: dict | None,
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-) -> list[tuple[ScheduleResult | None, FactoryConfig | None, dict | None]]:
-    """Explore a tiny split-combo Pareto neighborhood around the setup frontier."""
-
-    if source_name != "campaign_merge_frontier":
-        return []
-    if not isinstance(anchor_decision, dict):
-        return []
-    anchor_spec = _normalise_lns_split_spec(
-        (anchor_decision.get("changes") or {}).get("forced_run_split_spec")
-    )
-    anchor_moves = _split_moves_from_spec(anchor_spec)
-    if not anchor_moves:
-        return []
-    source_score = source_candidate.score or {}
-    if not _is_fully_trusted_score(source_score):
-        return []
-    if not _has_setup_productivity_gain(source_score, incumbent.score or {}):
-        return []
-
-    split_moves = _lns_split_moves_from_pressure(
-        source_candidate,
-        engine_data,
-        source_config,
-        limit=10,
-    )
-    anchor_set = set(anchor_moves)
-    extension_moves = [move for move in split_moves if move not in anchor_set]
-    if not extension_moves:
-        return []
-
-    evaluated: list[tuple[ScheduleResult | None, FactoryConfig | None, dict | None]] = []
-    pair_results: list[tuple[tuple[float, float, float], list[tuple[str, int]]]] = []
-    for move in _bounded_combo_extension_moves(extension_moves):
-        moves = [*anchor_moves, move]
-        result = _evaluate_lns_pareto_combo(
-            combo_size=2,
-            moves=moves,
-            source_name=source_name,
-            source_config=source_config,
-            source_changes=source_changes,
-            crew_priority=crew_priority,
-            engine_data=engine_data,
-            incumbent=incumbent,
-            baseline=baseline,
-        )
-        evaluated.append(result)
-        trial = result[0]
-        if trial is None or not _is_fully_trusted_score(trial.score or {}):
-            continue
-        if not _has_setup_productivity_gain(trial.score or {}, incumbent.score or {}):
-            continue
-        score = trial.score or {}
-        pair_results.append(
-            (
-                (
-                    float(score.get("earliness_avg_days", 999.0) or 999.0),
-                    _setup_minutes(score),
-                    float(score.get("setups", 999.0) or 999.0),
-                ),
-                moves,
-            )
-        )
-
-    if pair_results:
-        pair_results.sort(key=lambda item: item[0])
-        best_pair_moves = pair_results[0][1]
-        best_pair_set = set(best_pair_moves)
-        for move in _bounded_combo_extension_moves(extension_moves):
-            if move in best_pair_set:
-                continue
-            evaluated.append(
-                _evaluate_lns_pareto_combo(
-                    combo_size=3,
-                    moves=[*best_pair_moves, move],
-                    source_name=source_name,
-                    source_config=source_config,
-                    source_changes=source_changes,
-                    crew_priority=crew_priority,
-                    engine_data=engine_data,
-                    incumbent=incumbent,
-                    baseline=baseline,
-                )
-            )
-
-    return _pareto_lns_candidate_results(evaluated)[:4]
-
-
-def _bounded_combo_extension_moves(
-    moves: list[tuple[str, int]],
-    head: int = 3,
-    tail: int = 2,
-) -> list[tuple[str, int]]:
-    selected: list[tuple[str, int]] = []
-    for move in [*moves[:head], *moves[-tail:]]:
-        if move not in selected:
-            selected.append(move)
-    return selected
-
-
-def _evaluate_lns_pareto_combo(
-    *,
-    combo_size: int,
-    moves: list[tuple[str, int]],
-    source_name: str,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-) -> tuple[ScheduleResult | None, FactoryConfig | None, dict | None]:
-    return _evaluate_lns_split_spec(
-        candidate_name=f"lns_split_pareto_combo_{combo_size}_for_{source_name}",
-        source_config=source_config,
-        source_changes={
-            **source_changes,
-            "lns_screening": "bounded_pareto_combo",
-            "combo_size": combo_size,
-        },
-        split_spec=_lns_split_spec(moves),
-        crew_priority=crew_priority,
-        engine_data=engine_data,
-        incumbent=incumbent,
-        baseline=baseline,
-        apply_earliness_repair=True,
-    )
-
-
-def _pareto_lns_candidate_results(
-    results: list[tuple[ScheduleResult | None, FactoryConfig | None, dict | None]]
-) -> list[tuple[ScheduleResult | None, FactoryConfig | None, dict | None]]:
-    candidates = [
-        {"idx": idx, "score": result[0].score or {}}
-        for idx, result in enumerate(results)
-        if result[0] is not None and _is_fully_trusted_score(result[0].score or {})
-    ]
-    keep_indexes = {
-        int(item["idx"])
-        for item in _pareto_productivity_frontier(candidates)
-    }
-    filtered = [result for idx, result in enumerate(results) if idx in keep_indexes]
-    filtered.sort(
-        key=lambda result: (
-            float((result[0].score or {}).get("earliness_avg_days", 999.0) or 999.0)
-            if result[0] is not None
-            else 999.0,
-            _productivity_frontier_key(result[0].score or {})
-            if result[0] is not None
-            else (999.0, 999.0, 999.0),
-        )
-    )
-    return filtered
-
-
-def _evaluate_lns_split_spec(
-    *,
-    candidate_name: str,
-    source_config: FactoryConfig,
-    source_changes: dict[str, object],
-    split_spec: dict[str, list[int]],
-    crew_priority: list[str] | None,
-    engine_data: EngineData,
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-    apply_earliness_repair: bool = True,
-) -> tuple[ScheduleResult | None, FactoryConfig | None, dict | None]:
-    candidate_config = copy.deepcopy(source_config)
-    candidate_config.forced_run_splits = split_spec
-    candidate_changes = {
-        **source_changes,
-        "forced_run_splits": _summarize_forced_splits(split_spec),
-        "forced_run_split_spec": split_spec,
-    }
-
-    try:
-        with _quiet_advisory_solver_logs():
-            trial = schedule_all(
-                copy.deepcopy(engine_data),
-                audit=False,
-                config=candidate_config,
-                crew_priority=crew_priority,
-            )
-        _apply_score_policy(trial, candidate_config)
-        assert_plan_valid(trial.segments, engine_data, candidate_config)
-        local_repair: dict | None = None
-        delivery_repair_decision = _delivery_repair_triage(trial, incumbent)
-        if delivery_repair_decision["decision"] == "attempt":
-            trial, delivery_repair = _try_delivery_left_shift_repair(
-                trial,
-                engine_data,
-                candidate_config,
-            )
-            local_repair = _append_local_repair_decision(
-                local_repair,
-                delivery_repair,
-            )
-        elif delivery_repair_decision["decision"] == "skipped":
-            local_repair = _append_local_repair_decision(
-                local_repair,
-                delivery_repair_decision,
-            )
-        if apply_earliness_repair:
-            trial, earliness_repair = _try_global_delay_earliness_repair(
-                trial,
-                baseline,
-                engine_data,
-                candidate_config,
-            )
-            local_repair = _append_local_repair_decision(
-                local_repair,
-                earliness_repair,
-            )
-    except (RuntimeError, ValueError, PlanValidationError) as exc:
-        return (
-            None,
-            None,
-            _candidate_error_decision(
-                candidate_name,
-                candidate_changes,
-                crew_priority,
-                exc,
-            ),
-        )
-
-    accepted = _is_better_candidate(trial, incumbent) and _preserves_trust(
-        trial,
-        baseline,
-    )
-    decision = _candidate_decision(
-        candidate_name,
-        "accepted" if accepted else "rejected",
-        "trust-rank improvement"
-        if accepted
-        else _candidate_rejection_reason(trial, incumbent),
-        candidate_changes,
-        crew_priority,
-        trial,
-        incumbent,
-        baseline,
-        local_repair,
-    )
-    return trial, candidate_config, decision
-
-
-def _lns_split_spec(moves: list[tuple[str, int]]) -> dict[str, list[int]]:
-    split_spec: dict[str, list[int]] = {}
-    for run_id, position in moves:
-        split_spec.setdefault(run_id, []).append(position)
-    return split_spec
-
-
-def _merge_lns_split_specs(
-    left: dict[str, list[int]],
-    right: dict[str, list[int]],
-) -> dict[str, list[int]]:
-    merged = {run_id: list(positions) for run_id, positions in left.items()}
-    for run_id, positions in right.items():
-        bucket = merged.setdefault(run_id, [])
-        for position in positions:
-            if position not in bucket:
-                bucket.append(position)
-        bucket.sort()
-    return merged
-
-
-def _normalise_lns_split_spec(raw_spec: object) -> dict[str, list[int]]:
-    if not isinstance(raw_spec, dict):
-        return {}
-    split_spec: dict[str, list[int]] = {}
-    for raw_run_id, raw_positions in raw_spec.items():
-        run_id = str(raw_run_id)
-        if not run_id:
-            continue
-        try:
-            positions = [int(position) for position in raw_positions]  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            continue
-        clean_positions = sorted({position for position in positions if position > 0})
-        if clean_positions:
-            split_spec[run_id] = clean_positions
-    return split_spec
-
-
-def _split_moves_from_spec(split_spec: dict[str, list[int]]) -> list[tuple[str, int]]:
-    return [
-        (run_id, position)
-        for run_id, positions in sorted(split_spec.items())
-        for position in sorted(positions)
-    ]
-
-
-def _lns_split_moves_from_pressure(
-    result: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-    limit: int = 8,
-) -> list[tuple[str, int]]:
-    base_config = copy.deepcopy(config)
-    base_config.forced_run_splits = {}
-    lots = create_lots(copy.deepcopy(engine_data), config=base_config)
-    runs = create_tool_runs(lots, config=base_config)
-    run_by_id = {run.id: run for run in runs}
-
-    moves: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for row in _earliness_pressure_report(result, limit=limit).get("top_runs") or []:
-        if not isinstance(row, dict):
-            continue
-        run_id = str(row.get("run_id") or "")
-        if not run_id or run_id in seen:
-            continue
-        run = run_by_id.get(run_id)
-        if run is None or len(run.lots) < 2:
-            continue
-        position = _largest_edd_gap_split_position(run)
-        if position is None:
-            continue
-        seen.add(run_id)
-        moves.append((run_id, position))
-    return moves
-
-
-def _largest_edd_gap_split_position(run: ToolRun) -> int | None:
-    if len(run.lots) < 2:
-        return None
-    gaps = [
-        (int(run.lots[idx].edd) - int(run.lots[idx - 1].edd), idx)
-        for idx in range(1, len(run.lots))
-    ]
-    gap, position = max(gaps, key=lambda item: (item[0], -item[1]))
-    return position if gap > 0 else None
-
-
-def _summarize_forced_splits(split_spec: dict[str, list[int]]) -> str:
-    split_count = sum(len(positions) for positions in split_spec.values())
-    run_count = len(split_spec)
-    return f"{split_count} split(s) across {run_count} run(s)"
-
-
-def _record_productivity_frontier_miss(
-    trace: dict,
-    decision: dict,
-    candidate: ScheduleResult,
-    incumbent: ScheduleResult,
-) -> None:
-    """Remember the best rejected productivity gain that still preserved trust."""
-
-    candidate_score = candidate.score or {}
-    if not _is_fully_trusted_score(candidate_score):
-        return
-    incumbent_score = incumbent.score or {}
-    if not _has_setup_productivity_gain(candidate_score, incumbent_score):
-        return
-
-    current = trace.get("best_rejected_productivity")
-    if current is not None and _productivity_frontier_key(candidate_score) >= (
-        float(current["score"].get("setup_time_min", 0) or 0),
-        float(current["score"].get("setups", 0) or 0),
-        float(current["score"].get("earliness_avg_days", 0) or 0),
-    ):
-        return
-
-    trace["best_rejected_productivity"] = {
-        **decision,
-        "not_applied_policy": (
-            "Preserves physical and delivery trust, but is not applied because "
-            "it leaves the accepted productivity/earliness frontier."
-        ),
-    }
 
 
 def _reconcile_productivity_frontier_miss(trace: dict, final: ScheduleResult) -> None:
@@ -1869,12 +1471,13 @@ def _try_delivery_left_shift_repair(
         return incumbent, None
 
     beam: list[tuple[tuple[float, ...], list[str], ScheduleResult]] = [
-        (_trust_rank(incumbent.score or {}), [], incumbent)
+        (_result_rank(incumbent), [], incumbent)
     ]
     best = beam[0]
     seen = {_segment_signature(incumbent.segments)}
 
     for _depth in range(2):
+        planning_checkpoint()
         candidates: list[tuple[tuple[float, ...], list[str], ScheduleResult]] = []
         for _rank, moves, result in beam:
             for move, trial_segments in _delivery_left_shift_neighbors(
@@ -1882,6 +1485,7 @@ def _try_delivery_left_shift_repair(
                 engine_data,
                 config,
             ):
+                planning_checkpoint()
                 signature = _segment_signature(trial_segments)
                 if signature in seen:
                     continue
@@ -1894,10 +1498,11 @@ def _try_delivery_left_shift_repair(
                 )
                 if trial_score is None:
                     continue
-                trial_rank = _trust_rank(trial_score)
-                if trial_rank >= _trust_rank(result.score or {}):
-                    continue
                 trial = _clone_with_segments(result, trial_segments, trial_score)
+                # Left shifts keep the lots: the canonical anticipation applies.
+                trial_rank = _result_rank(trial)
+                if trial_rank >= _result_rank(result):
+                    continue
                 candidates.append((trial_rank, [*moves, move], trial))
         if not candidates:
             break
@@ -1926,61 +1531,6 @@ def _try_delivery_left_shift_repair(
     }
 
 
-def _try_final_jit_timing_polish(
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-    max_segments: int = 0,
-) -> tuple[ScheduleResult, dict | None]:
-    """Final trusted timing polish for stock-early reduction.
-
-    Candidate search optimizes the setup frontier first. This final polish gives
-    a fully trusted plan one last bounded chance to move safe runs closer to EDD
-    without changing setup count, lot sizing, sequencing, or hard-gate status.
-    """
-
-    if not incumbent.segments or not _is_fully_trusted_score(incumbent.score or {}):
-        return incumbent, None
-    if max_segments > 0 and len(incumbent.segments) > max_segments:
-        return incumbent, {
-            "name": "final_jit_timing_polish",
-            "decision": "skipped",
-            "reason": (
-                f"plan has {len(incumbent.segments)} segments > "
-                f"budget {max_segments}"
-            ),
-            "score": _score_snapshot(incumbent.score or {}),
-        }
-
-    polished, beam_decision = _try_beam_delay_earliness_repair(
-        incumbent,
-        baseline,
-        engine_data,
-        config,
-    )
-    if polished is incumbent or beam_decision is None:
-        return incumbent, {
-            "name": "final_jit_timing_polish",
-            "decision": "rejected",
-            "reason": "no hard-gate-safe timing improvement found",
-            "score": _score_snapshot(incumbent.score or {}),
-        }
-
-    score = polished.score or {}
-    return polished, {
-        "name": "final_jit_timing_polish",
-        "decision": "accepted",
-        "reason": "reduced earliness after setup frontier selection",
-        "method": beam_decision.get("name"),
-        "moves": beam_decision.get("moves", []),
-        "search_stats": beam_decision.get("search_stats", {}),
-        "score": _score_snapshot(score),
-        "delta_vs_incumbent": _score_delta(score, incumbent.score or {}),
-        "delta_vs_baseline": _score_delta(score, baseline.score or {}),
-    }
-
-
 def _delivery_left_shift_neighbors(
     result: ScheduleResult,
     engine_data: EngineData,
@@ -1993,6 +1543,7 @@ def _delivery_left_shift_neighbors(
     all_rows = _machine_run_rows(result.segments, config)
     neighbors: list[tuple[str, list[Segment]]] = []
     for row in rows[:12]:
+        planning_checkpoint()
         run_id = str(row["run_id"])
         machine_id = str(row["machine_id"])
         start_abs = float(row["start_abs"])
@@ -2057,258 +1608,6 @@ def _tardy_run_rows(
     )
 
 
-def _try_global_delay_earliness_repair(
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-) -> tuple[ScheduleResult, dict | None]:
-    """Delay a safe suffix of runs to reduce stock-early days.
-
-    This is a tiny LNS repair: preserve the run order and shift whole suffixes by
-    full workdays. It never creates the applied plan directly unless the full
-    trust rank improves and physical/delivery gates still pass.
-    """
-
-    if not incumbent.segments or not _is_fully_trusted_score(incumbent.score or {}):
-        return incumbent, None
-
-    best_result = incumbent
-    best_decision: dict | None = None
-    run_rows = _run_timing_rows(incumbent.segments, config)
-    if len(run_rows) < 2:
-        return _try_single_run_earliness_fallback(
-            incumbent,
-            baseline,
-            engine_data,
-            config,
-            reason="not enough run rows for suffix timing repair",
-        )
-
-    for cut_abs in _global_delay_cut_points(run_rows):
-        affected_run_ids = {
-            row["run_id"] for row in run_rows if row["start_abs"] >= cut_abs - 0.01
-        }
-        if not affected_run_ids:
-            continue
-        for delta_days in (1, 2, 3):
-            trial_segments = _shift_run_days(
-                incumbent.segments,
-                affected_run_ids,
-                delta_days,
-                engine_data,
-            )
-            if _touches_global_holiday(trial_segments, engine_data):
-                continue
-            try:
-                assert_plan_valid(trial_segments, engine_data, config)
-            except PlanValidationError:
-                continue
-            trial_score = compute_score(trial_segments, incumbent.lots, engine_data, config=config)
-            _apply_score_policy_to_score(trial_score, config)
-            if "buffer_days" in (incumbent.score or {}):
-                trial_score["buffer_days"] = incumbent.score.get("buffer_days", 0)
-            trial = ScheduleResult(
-                segments=trial_segments,
-                lots=incumbent.lots,
-                score=trial_score,
-                time_ms=incumbent.time_ms,
-                warnings=list(incumbent.warnings),
-                operator_alerts=incumbent.operator_alerts,
-                audit_trail=incumbent.audit_trail,
-                study=incumbent.study,
-                journal=incumbent.journal,
-                machine_runs=incumbent.machine_runs,
-                gate_report=incumbent.gate_report,
-            )
-            if not _is_better_candidate(trial, best_result):
-                continue
-            if not _preserves_trust(trial, baseline):
-                continue
-            best_result = trial
-            best_decision = {
-                "name": "global_suffix_earliness_repair",
-                "decision": "accepted",
-                "reason": "trust-rank improvement",
-                "cut_abs_min": round(cut_abs, 2),
-                "delta_days": delta_days,
-                "affected_runs": len(affected_run_ids),
-                "score": _score_snapshot(trial_score),
-                "delta_vs_incumbent": _score_delta(trial_score, incumbent.score or {}),
-                "delta_vs_baseline": _score_delta(trial_score, baseline.score or {}),
-            }
-
-    if best_decision is not None:
-        if _earliness_excess(best_result.score or {}) > 0:
-            beam_result, beam_decision = _try_beam_delay_earliness_repair(
-                best_result,
-                baseline,
-                engine_data,
-                config,
-            )
-            if beam_result is not best_result and beam_decision is not None:
-                best_decision["follow_up"] = beam_decision
-                return beam_result, best_decision
-        return best_result, best_decision
-
-    return _try_single_run_earliness_fallback(
-        incumbent,
-        baseline,
-        engine_data,
-        config,
-        reason="no trust-rank improvement found",
-    )
-
-
-def _try_single_run_earliness_fallback(
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-    *,
-    reason: str,
-) -> tuple[ScheduleResult, dict | None]:
-    decision = {
-        "name": "global_suffix_earliness_repair",
-        "decision": "rejected",
-        "reason": reason,
-        "score": _score_snapshot(incumbent.score or {}),
-    }
-    if _earliness_excess(incumbent.score or {}) <= 0:
-        return incumbent, decision
-
-    beam_result, beam_decision = _try_beam_delay_earliness_repair(
-        incumbent,
-        baseline,
-        engine_data,
-        config,
-    )
-    if beam_result is incumbent or beam_decision is None:
-        return incumbent, decision
-
-    decision["follow_up"] = beam_decision
-    return beam_result, decision
-
-
-def _try_beam_delay_earliness_repair(
-    incumbent: ScheduleResult,
-    baseline: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-) -> tuple[ScheduleResult, dict | None]:
-    """Small beam search over single-run right shifts after suffix timing repair."""
-
-    if not incumbent.segments or not _is_fully_trusted_score(incumbent.score or {}):
-        return incumbent, None
-
-    beam: list[tuple[float, float, list[str], ScheduleResult]] = [
-        (
-            float(incumbent.score.get("earliness_avg_days", 0.0) or 0.0),
-            float(incumbent.score.get("planning_penalty", 0.0) or 0.0),
-            [],
-            incumbent,
-        )
-    ]
-    best = beam[0]
-    seen = {_segment_signature(incumbent.segments)}
-    max_depth = 2
-    beam_width = 6
-    search_stats = {
-        "max_depth": max_depth,
-        "beam_width": beam_width,
-        "generated_neighbors": 0,
-        "unique_neighbors": 0,
-        "valid_neighbors": 0,
-        "trusted_improvements": 0,
-    }
-
-    for _depth in range(max_depth):
-        candidates: list[tuple[float, float, list[str], ScheduleResult]] = []
-        for _earliness, _penalty, moves, result in beam:
-            for move, trial_segments in _single_run_delay_neighbors(
-                result.segments,
-                engine_data,
-                config,
-            ):
-                search_stats["generated_neighbors"] += 1
-                signature = _segment_signature(trial_segments)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-                search_stats["unique_neighbors"] += 1
-                trial_score = _score_repaired_segments(
-                    trial_segments,
-                    result,
-                    engine_data,
-                    config,
-                )
-                if trial_score is None:
-                    continue
-                search_stats["valid_neighbors"] += 1
-                trial = _clone_with_segments(result, trial_segments, trial_score)
-                if not _is_better_candidate(trial, result):
-                    continue
-                if not _preserves_trust(trial, baseline):
-                    continue
-                search_stats["trusted_improvements"] += 1
-                candidates.append(
-                    (
-                        float(trial_score.get("earliness_avg_days", 0.0) or 0.0),
-                        float(trial_score.get("planning_penalty", 0.0) or 0.0),
-                        [*moves, move],
-                        trial,
-                    )
-                )
-        if not candidates:
-            break
-        candidates.sort(key=lambda item: (item[0], item[1], len(item[2]), item[2]))
-        beam = candidates[:beam_width]
-        if beam[0][:3] < best[:3]:
-            best = beam[0]
-        if _earliness_excess(best[3].score or {}) <= 0:
-            break
-
-    if best[3] is incumbent:
-        return incumbent, None
-
-    best_score = best[3].score or {}
-    return best[3], {
-        "name": "beam_single_run_earliness_repair",
-        "decision": "accepted",
-        "reason": "trust-rank improvement",
-        "moves": best[2],
-        "score": _score_snapshot(best_score),
-        "delta_vs_incumbent": _score_delta(best_score, incumbent.score or {}),
-        "delta_vs_baseline": _score_delta(best_score, baseline.score or {}),
-        "search_stats": search_stats,
-    }
-
-
-def _single_run_delay_neighbors(
-    segments: list[Segment],
-    engine_data: EngineData,
-    config: FactoryConfig,
-) -> list[tuple[str, list[Segment]]]:
-    neighbors: list[tuple[str, list[Segment]]] = []
-    for row in sorted(
-        _run_timing_rows(segments, config),
-        key=lambda item: (
-            -float(item["gap_days"]),
-            float(item["start_abs"]),
-            str(item["run_id"]),
-        ),
-    )[:24]:
-        gap_days = int(row["gap_days"])
-        if gap_days <= 0:
-            continue
-        run_id = str(row["run_id"])
-        for delta_days in range(1, min(8, gap_days) + 1):
-            trial_segments = _shift_run_days(segments, {run_id}, delta_days, engine_data)
-            move = f"run={run_id},delta_workdays={delta_days}"
-            neighbors.append((move, trial_segments))
-    return neighbors
-
-
 def _score_repaired_segments(
     segments: list[Segment],
     reference: ScheduleResult,
@@ -2318,7 +1617,7 @@ def _score_repaired_segments(
     if _touches_global_holiday(segments, engine_data):
         return None
     try:
-        assert_plan_valid(segments, engine_data, config)
+        assert_plan_valid(segments, engine_data, config, lots=reference.lots)
     except PlanValidationError:
         return None
     score = compute_score(segments, reference.lots, engine_data, config=config)
@@ -2357,17 +1656,6 @@ def _segment_signature(segments: list[Segment]) -> tuple[tuple[str, str, int, in
     )
 
 
-def _run_timing_rows(segments: list[Segment], config: FactoryConfig) -> list[dict[str, object]]:
-    return [
-        {
-            "run_id": row["run_id"],
-            "start_abs": row["start_abs"],
-            "gap_days": max(0, int(row["edd"]) - int(row["last_day"])),
-        }
-        for row in _machine_run_rows(segments, config)
-    ]
-
-
 def _machine_run_rows(segments: list[Segment], config: FactoryConfig) -> list[dict[str, object]]:
     by_run: dict[str, list[Segment]] = defaultdict(list)
     for seg in segments:
@@ -2389,25 +1677,6 @@ def _machine_run_rows(segments: list[Segment], config: FactoryConfig) -> list[di
             }
         )
     return sorted(rows, key=lambda row: float(row["start_abs"]))
-
-
-def _global_delay_cut_points(run_rows: list[dict[str, object]]) -> list[float]:
-    candidates: list[float] = []
-    if not run_rows:
-        return candidates
-
-    for q in (0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80):
-        idx = min(len(run_rows) - 1, max(0, int(len(run_rows) * q)))
-        candidates.append(float(run_rows[idx]["start_abs"]))
-
-    for row in sorted(run_rows, key=lambda item: float(item["gap_days"]), reverse=True)[:24]:
-        candidates.append(float(row["start_abs"]))
-
-    unique: list[float] = []
-    for cut_abs in candidates:
-        if all(abs(cut_abs - existing) > 1.0 for existing in unique):
-            unique.append(cut_abs)
-    return unique[:40]
 
 
 def _shift_run_days(
@@ -2435,6 +1704,7 @@ def _add_workdays(day_idx: int, delta_days: int, engine_data: EngineData) -> int
     current = day_idx
     moved = 0
     while moved < delta_days:
+        planning_checkpoint()
         current += 1
         if current not in holidays:
             moved += 1
@@ -2446,6 +1716,7 @@ def _subtract_workdays(day_idx: int, delta_days: int, engine_data: EngineData) -
     current = day_idx
     moved = 0
     while moved < delta_days:
+        planning_checkpoint()
         current -= 1
         if current not in holidays:
             moved += 1
@@ -2462,6 +1733,10 @@ def _touches_global_holiday(segments: list[Segment], engine_data: EngineData) ->
 def _is_fully_trusted_score(score: dict) -> bool:
     if _hard_violation_count(score) > 0:
         return False
+    if score.get("robustness_evaluated_samples") and not score.get(
+        "robustness_gate_passed"
+    ):
+        return False
     if float(score.get("otd", 0.0) or 0.0) < 100.0:
         return False
     if float(score.get("otd_d", 0.0) or 0.0) < 100.0:
@@ -2473,7 +1748,7 @@ def _productivity_frontier_key(score: dict) -> tuple[float, float, float]:
     return (
         _setup_minutes(score),
         float(score.get("setups", 0) or 0),
-        float(score.get("earliness_avg_days", 0.0) or 0.0),
+        _anticipation_workdays(score),
     )
 
 
@@ -2533,6 +1808,38 @@ def _candidate_configs(
                 "jit_buffer_pct": max(config.jit_buffer_pct, 0.08),
                 "jit_earliness_target": max(config.jit_earliness_target, 6.5),
             },
+        ),
+        (
+            "robustness_reserve_12pct",
+            {
+                "jit_buffer_pct": max(config.jit_buffer_pct, 0.12),
+            },
+        ),
+        (
+            "robustness_reserve_20pct",
+            {
+                "jit_buffer_pct": max(config.jit_buffer_pct, 0.20),
+            },
+        ),
+        (
+            "robustness_reserve_1_workday",
+            {"robustness_reserve_workdays": 1},
+        ),
+        (
+            "robustness_reserve_2_workdays",
+            {"robustness_reserve_workdays": 2},
+        ),
+        (
+            "robustness_reserve_3_workdays",
+            {"robustness_reserve_workdays": 3},
+        ),
+        (
+            "robustness_reserve_4_workdays",
+            {"robustness_reserve_workdays": 4},
+        ),
+        (
+            "robustness_reserve_5_workdays",
+            {"robustness_reserve_workdays": 5},
         ),
         (
             "compact_idle",
@@ -3199,6 +2506,8 @@ def _proposal_productivity_metrics(score: dict) -> dict:
         "otd",
         "otd_d",
         "tardy_count",
+        "subcontract_dispatch_misses",
+        "subcontract_dispatch_late_workdays",
         "otd_d_failures",
         "setups",
         "setup_time_min",
@@ -3398,7 +2707,7 @@ def _setup_frontier_report(result: ScheduleResult) -> dict:
         run_id = str(seg.run_id)
         pair = (str(seg.machine_id), str(seg.tool_id))
         run_pairs.setdefault(run_id, pair)
-        run_setup_min[run_id] = max(run_setup_min[run_id], float(seg.setup_min or 0.0))
+        run_setup_min[run_id] += float(seg.setup_min or 0.0)
         detail = run_details.setdefault(
             run_id,
             {
@@ -3420,7 +2729,7 @@ def _setup_frontier_report(result: ScheduleResult) -> dict:
         detail["end_abs"] = max(float(detail["end_abs"]), end_abs)
         detail["first_day_idx"] = min(int(detail["first_day_idx"]), int(seg.day_idx))
         detail["last_day_idx"] = max(int(detail["last_day_idx"]), int(seg.day_idx))
-        detail["setup_min"] = max(float(detail["setup_min"]), float(seg.setup_min or 0.0))
+        detail["setup_min"] = float(detail["setup_min"]) + float(seg.setup_min or 0.0)
         if seg.edd:
             edd = int(seg.edd)
             detail["edd_min"] = (
@@ -3693,8 +3002,6 @@ def _candidate_decision_class(
         return "hard_gate"
     if _delivery_regresses(candidate_score, reference_score):
         return "delivery_gate"
-    if _earliness_excess(candidate_score) > _earliness_excess(reference_score):
-        return "earliness_envelope"
     if _has_setup_productivity_gain(candidate_score, reference_score):
         return "productivity_frontier"
     return "score_frontier"
@@ -3756,19 +3063,6 @@ def _candidate_blocking_metrics(
                     "reference": _jsonable(round(reference, 3)),
                 }
             )
-
-    earliness = float(candidate_score.get("earliness_avg_days", 0.0) or 0.0)
-    if _earliness_excess(candidate_score) > _earliness_excess(reference_score):
-        approval_metadata = _earliness_approval_metadata(candidate_score, reference_score)
-        blockers.append(
-            {
-                "gate": "earliness_envelope",
-                "metric": "earliness_avg_days",
-                "value": round(earliness, 3),
-                "required": approval_metadata["current_earliness_ceiling_days"],
-                **approval_metadata,
-            }
-        )
 
     return blockers
 
@@ -3905,50 +3199,78 @@ def _preserves_trust(candidate: ScheduleResult, reference: ScheduleResult) -> bo
 def _delivery_regresses(candidate_score: dict, reference_score: dict) -> bool:
     if _hard_violation_count(candidate_score) > _hard_violation_count(reference_score):
         return True
-    if float(candidate_score.get("otd", 0.0) or 0.0) < float(
-        reference_score.get("otd", 0.0) or 0.0
-    ):
-        return True
-    if float(candidate_score.get("otd_d", 0.0) or 0.0) < float(
-        reference_score.get("otd_d", 0.0) or 0.0
-    ):
-        return True
-    for key in TRUST_DELIVERY_KEYS:
-        if float(candidate_score.get(key, 0.0) or 0.0) > float(
-            reference_score.get(key, 0.0) or 0.0
-        ):
-            return True
-    return False
+    return delivery_priority_key(candidate_score) > delivery_priority_key(reference_score)
 
 
 def _is_better_candidate(candidate: ScheduleResult, reference: ScheduleResult) -> bool:
     if not _preserves_trust(candidate, reference):
         return False
-    return _trust_rank(candidate.score or {}) < _trust_rank(reference.score or {})
+    candidate_rank, reference_rank = _comparable_ranks(candidate, reference)
+    return candidate_rank < reference_rank
 
 
-def _trust_rank(score: dict) -> tuple[float, ...]:
-    """Feasibility-first rank: physics, delivery, then productivity."""
-
+def _trust_prefix(score: dict) -> tuple[float, ...]:
     return (
-        float(_hard_violation_count(score)),
-        float(score.get("tardy_count", 0) or 0),
-        float(score.get("otd_d_failures", 0) or 0),
-        -float(score.get("otd", 0.0) or 0.0),
-        -float(score.get("otd_d", 0.0) or 0.0),
-        float(score.get("total_tardiness", 0.0) or 0.0),
-        float(score.get("max_tardiness", 0.0) or 0.0),
-        _earliness_excess(score),
-        _setup_minutes(score),
-        float(score.get("setups", 0) or 0),
-        float(score.get("planning_penalty", 0.0) or 0.0),
-        float(score.get("earliness_avg_days", 0.0) or 0.0),
-        _fitness_cost(score),
+        float(_physical_violation_count(score)),
+        float(score.get("early_window_violations", 0) or 0),
+        float(score.get("early_window_violation_workdays", 0) or 0),
+        *delivery_priority_key(score),
+        _robustness_failure(score),
     )
 
 
+def _trust_tail(score: dict) -> tuple[float, ...]:
+    # Setups are a tie-break after anticipation (AGENTS.md §1.4-1.5).
+    return (
+        -float(score.get("robustness_success_probability_pct", 0.0) or 0.0),
+        _setup_minutes(score),
+        float(score.get("setups", 0) or 0),
+        float(score.get("planning_penalty", 0.0) or 0.0),
+    )
+
+
+def _trust_rank(score: dict) -> tuple[float, ...]:
+    """Feasibility-first rank from the score alone: physics, delivery, then
+    aggregate anticipation proxies. Used only when two plans have different
+    lots; otherwise ``_result_rank`` applies the canonical anticipation."""
+
+    return (*_trust_prefix(score), _anticipation_proxies(score), *_trust_tail(score))
+
+
+def _anticipation_proxies(score: dict) -> tuple[float, float]:
+    # A larger gap to the last legal start means the work was placed earlier
+    # after material release.
+    return (
+        -float(score.get("latest_start_gap_avg_min", 0.0) or 0.0),
+        -float(score.get("start_anticipation_avg_workdays", 0.0) or 0.0),
+    )
+
+
+def _result_rank(result: ScheduleResult) -> tuple[object, ...]:
+    """Same structure as ``_trust_rank`` with the canonical per-lot
+    anticipation vector of the improvement contract in its place."""
+
+    score = result.score or {}
+    return (
+        *_trust_prefix(score),
+        # Aggregate proxies only break exact ties of the canonical vector.
+        (anticipation_key(result.segments, result.lots), _anticipation_proxies(score)),
+        *_trust_tail(score),
+    )
+
+
+def _comparable_ranks(
+    candidate: ScheduleResult, reference: ScheduleResult,
+) -> tuple[tuple[object, ...], tuple[object, ...]]:
+    """Canonical ranks when both plans have the same lots, score proxies else."""
+
+    if {lot.id for lot in candidate.lots} == {lot.id for lot in reference.lots}:
+        return _result_rank(candidate), _result_rank(reference)
+    return _trust_rank(candidate.score or {}), _trust_rank(reference.score or {})
+
+
 def _earliness_excess(score: dict) -> float:
-    earliness = float(score.get("earliness_avg_days", 0.0) or 0.0)
+    earliness = _anticipation_workdays(score)
     ceiling = _earliness_ceiling(score)
     return max(0.0, earliness - ceiling)
 
@@ -3964,13 +3286,24 @@ def _earliness_ceiling(score: dict | None) -> float:
     )
 
 
+def _anticipation_workdays(score: dict | None) -> float:
+    score = score or {}
+    return float(
+        score.get(
+            "start_anticipation_avg_workdays",
+            score.get("earliness_avg_days", 0.0),
+        )
+        or 0.0
+    )
+
+
 def _earliness_approval_metadata(score: dict, reference_score: dict | None = None) -> dict:
     current_ceiling = _earliness_ceiling(
         score
         if "productivity_earliness_ceiling_days" in (score or {})
         else reference_score
     )
-    earliness = float((score or {}).get("earliness_avg_days", 0.0) or 0.0)
+    earliness = _anticipation_workdays(score)
     required_ceiling = max(current_ceiling, earliness)
     approval_gap = max(0.0, required_ceiling - current_ceiling)
     return {
@@ -3985,6 +3318,145 @@ def _apply_score_policy(result: ScheduleResult, config: FactoryConfig) -> Schedu
     if result.score is not None:
         _apply_score_policy_to_score(result.score, config)
     return result
+
+
+def _attach_robustness_with_reserve(
+    result: ScheduleResult,
+    engine_data: EngineData,
+    config: FactoryConfig,
+    *,
+    seed: int,
+    reserve_s: float = 8.0,
+) -> bool:
+    """Keep enough parent budget to publish an already valid candidate."""
+
+    remaining = remaining_time()
+    if remaining is None:
+        _attach_robustness_score(result, engine_data, config, seed=seed)
+        return True
+    budget = max(0.0, remaining - reserve_s)
+    if budget <= 0:
+        _clear_robustness(result)
+        return False
+    try:
+        with planning_scope(timeout_s=budget):
+            _attach_robustness_score(result, engine_data, config, seed=seed)
+    except PlanningTimeout:
+        # Re-raise if the parent itself expired; only the reserved child budget
+        # may degrade robustness to an explicit approval requirement.
+        planning_checkpoint()
+        _clear_robustness(result)
+        return False
+    return True
+
+
+def _clear_robustness(result: ScheduleResult) -> None:
+    for key in list(result.score or {}):
+        if key.startswith("robustness_"):
+            result.score.pop(key)
+    result.score["robustness_evaluated_samples"] = 0
+    result.gate_report = None
+
+
+@measured("robustness")
+def _attach_robustness_score(
+    result: ScheduleResult,
+    engine_data: EngineData,
+    config: FactoryConfig,
+    *,
+    seed: int,
+) -> ScheduleResult:
+    """Evaluate the fixed candidate with common seeds; never re-optimize it."""
+
+    if result.score is None or not result.lots:
+        return result
+    from backend.planning_control import robustness_deferred
+
+    if robustness_deferred():
+        _clear_robustness(result)
+        return result
+    from backend.planning_control import execution_cache
+    from backend.plans.serialize import (
+        planning_input_fingerprints,
+        schedule_fingerprint,
+        value_fingerprint,
+    )
+    from backend.risk.robustness import ROBUSTNESS_MODEL_VERSION, run_robustness_battery
+
+    fingerprint = value_fingerprint({
+        "plan": schedule_fingerprint(result.segments, result.lots),
+        "inputs": planning_input_fingerprints(engine_data, config),
+        "model": ROBUSTNESS_MODEL_VERSION, "seed": seed, "samples": 100,
+    })
+
+    if (
+        result.score.get("robustness_input_fingerprint") == fingerprint
+        and int(result.score.get("robustness_evaluated_samples", 0) or 0) == 100
+        and int(result.score.get("robustness_model_version", -1) or -1)
+        == ROBUSTNESS_MODEL_VERSION
+    ):
+        return result
+
+    cache = execution_cache("robustness")
+    _clear_robustness(result)
+    if fingerprint in cache:
+        result.score.update(copy.deepcopy(cache[fingerprint]))
+        return result
+
+    with phase("robustness_battery"):
+        battery = run_robustness_battery(
+            result.segments,
+            result.lots,
+            engine_data,
+            config,
+            n_samples=100,
+            seed=seed,
+            profile="quick",
+        )
+    planning_checkpoint()
+    if int(battery["completed_samples"]) != 100:
+        raise PlanningTimeout("Robustness battery incomplete; candidate not validated.")
+    threshold = ROBUSTNESS_MIN_SUCCESS_PCT
+    success = float(battery["success_probability_pct"])
+    result.score.update(
+        {
+            "robustness_input_fingerprint": fingerprint,
+            "robustness_model_version": int(battery["model_version"]),
+            "robustness_profile": str(battery["profile"]),
+            "robustness_seed": int(battery["seed"]),
+            "robustness_sample_seeds": list(battery["sample_seeds"]),
+            "robustness_evaluated_samples": int(battery["completed_samples"]),
+            "robustness_baseline_tardy_count": int(battery["baseline_tardy_count"]),
+            "robustness_success_probability_pct": success,
+            "robustness_threshold_pct": threshold,
+            "robustness_gate_passed": success >= threshold,
+            "robustness_additional_tardy_mean": float(
+                battery["additional_tardy_mean"]
+            ),
+            "robustness_additional_tardy_p95": float(
+                battery["additional_tardy_p95"]
+            ),
+            "robustness_otd_p95": float(battery["otd_p95"]),
+            "robustness_tardy_p95": float(battery["tardy_p95"]),
+            "robustness_total_tardiness_cvar95": float(
+                battery["total_tardiness_cvar95"]
+            ),
+        }
+    )
+    if len(cache) >= 32:
+        cache.pop(next(iter(cache)))
+    cache[fingerprint] = {
+        key: copy.deepcopy(value)
+        for key, value in result.score.items()
+        if key.startswith("robustness_")
+    }
+    return result
+
+
+def _robustness_failure(score: dict) -> float:
+    if not score.get("robustness_evaluated_samples"):
+        return 1.0
+    return 0.0 if bool(score.get("robustness_gate_passed")) else 1.0
 
 
 def _apply_score_policy_to_score(score: dict, config: FactoryConfig) -> None:
@@ -4012,6 +3484,12 @@ def _setup_minutes(score: dict) -> float:
 
 
 def _hard_violation_count(score: dict) -> int:
+    return _physical_violation_count(score) + int(
+        score.get("early_window_violations", 0) or 0
+    )
+
+
+def _physical_violation_count(score: dict) -> int:
     aggregate = int(score.get("hard_violations") or 0)
     explicit = sum(int(score.get(key, 0) or 0) for key in HARD_GATE_KEYS)
     return max(aggregate, explicit)
@@ -4021,7 +3499,8 @@ def _candidate_rejection_reason(candidate: ScheduleResult, reference: ScheduleRe
     regressions = _trust_regression_reasons(candidate.score or {}, reference.score or {})
     if regressions:
         return "; ".join(regressions[:3])
-    if _trust_rank(candidate.score or {}) >= _trust_rank(reference.score or {}):
+    candidate_rank, reference_rank = _comparable_ranks(candidate, reference)
+    if candidate_rank >= reference_rank:
         return _score_frontier_reason(candidate.score or {}, reference.score or {})
     return "not accepted"
 
@@ -4041,40 +3520,49 @@ def _trust_regression_reasons(candidate_score: dict, reference_score: dict) -> l
     elif c_hard > r_hard:
         reasons.append(f"hard_violations {c_hard} > {r_hard}")
 
+    if delivery_priority_key(candidate_score) <= delivery_priority_key(reference_score):
+        return reasons
+
     c_otd = float(candidate_score.get("otd", 0.0) or 0.0)
     r_otd = float(reference_score.get("otd", 0.0) or 0.0)
-    if c_otd < r_otd:
-        reasons.append(f"OTD {_format_metric(c_otd)} < {_format_metric(r_otd)}")
-
     c_otd_d = float(candidate_score.get("otd_d", 0.0) or 0.0)
     r_otd_d = float(reference_score.get("otd_d", 0.0) or 0.0)
-    if c_otd_d < r_otd_d:
-        reasons.append(f"OTD-D {_format_metric(c_otd_d)} < {_format_metric(r_otd_d)}")
+    if delivery_is_complete(reference_score) and not delivery_is_complete(candidate_score):
+        if c_otd < r_otd:
+            reasons.append(f"OTD {_format_metric(c_otd)} < {_format_metric(r_otd)}")
+        if c_otd_d < r_otd_d:
+            reasons.append(f"OTD-D {_format_metric(c_otd_d)} < {_format_metric(r_otd_d)}")
 
     for key in TRUST_DELIVERY_KEYS:
         current = float(candidate_score.get(key, 0.0) or 0.0)
         previous = float(reference_score.get(key, 0.0) or 0.0)
+        if current == previous:
+            continue
         if current > previous:
             reasons.append(f"{key} {_format_metric(current)} > {_format_metric(previous)}")
+        break
+
+    if not reasons and c_otd < r_otd:
+        reasons.append(f"OTD {_format_metric(c_otd)} < {_format_metric(r_otd)}")
+    if not reasons and c_otd_d < r_otd_d:
+        reasons.append(f"OTD-D {_format_metric(c_otd_d)} < {_format_metric(r_otd_d)}")
+    if not reasons:
+        reasons.append("delivery priority regressed")
     return reasons
 
 
 def _score_frontier_reason(candidate_score: dict, reference_score: dict) -> str:
-    c_excess = _earliness_excess(candidate_score)
-    r_excess = _earliness_excess(reference_score)
-    if c_excess > r_excess:
+    candidate_gap = float(candidate_score.get("latest_start_gap_avg_min", 0.0) or 0.0)
+    reference_gap = float(reference_score.get("latest_start_gap_avg_min", 0.0) or 0.0)
+    if candidate_gap < reference_gap:
         return (
-            "earliness envelope "
-            f"{_format_metric(c_excess)}d > {_format_metric(r_excess)}d"
+            "legal production starts later "
+            f"({_format_metric(candidate_gap)}min < {_format_metric(reference_gap)}min)"
         )
     c_setup_min = _setup_minutes(candidate_score)
     r_setup_min = _setup_minutes(reference_score)
     if c_setup_min >= r_setup_min:
         return f"setup minutes {_format_metric(c_setup_min)} >= {_format_metric(r_setup_min)}"
-    c_cost = _fitness_cost(candidate_score)
-    r_cost = _fitness_cost(reference_score)
-    if c_cost >= r_cost:
-        return f"fitness cost {_format_metric(c_cost)} >= {_format_metric(r_cost)}"
     return "no score-frontier improvement"
 
 
@@ -4103,302 +3591,13 @@ def _build_local_machine_runs(
     """Build deterministic local windows for CP-SAT polish."""
 
     lots = create_lots(engine_data, config=config)
-    runs = create_tool_runs(lots, config=config)
+    runs = create_tool_runs(
+        lots,
+        config=config,
+        release_holidays=calendar_holidays(
+            engine_data,
+            -14,
+            engine_data.n_days + 30,
+        ),
+    )
     return assign_machines(runs, engine_data, config=config)
-
-
-def offline_ga_optimize(
-    engine_data: EngineData,
-    mode: str = "normal",
-    config: FactoryConfig | None = None,
-    seed: int | None = 42,
-) -> ScheduleResult:
-    """Offline GA/MAP-Elites experiment path.
-
-    This is intentionally separate from `optimize()` so production planning stays
-    proposal-based and gate-first. Use it for parameter studies, never direct
-    plan application.
-    """
-
-    if config is None:
-        config = FactoryConfig()
-    if mode not in {"normal", "deep", "max"}:
-        raise ValueError("offline_ga_optimize supports normal/deep/max only")
-
-    ga_cfg = {
-        "normal": {
-            "pop_size": 20,
-            "max_gen": 30,
-            "time_budget": 15.0,
-            "use_surrogate": False,
-            "use_archive": True,
-        },
-        "deep": {
-            "pop_size": 40,
-            "max_gen": 100,
-            "time_budget": 120.0,
-            "use_surrogate": True,
-            "use_archive": True,
-        },
-        "max": {
-            "pop_size": 60,
-            "max_gen": 300,
-            "time_budget": 300.0,
-            "use_surrogate": True,
-            "use_archive": True,
-        },
-    }[mode]
-
-    baseline = schedule_all(engine_data, config=config)
-    lots = create_lots(engine_data, config=config)
-    runs = create_tool_runs(lots, config=config)
-    machine_runs = assign_machines(runs, engine_data, config=config)
-    baseline_chrom = Chromosome.from_baseline(runs, machine_runs, config=config)
-
-    rng = random.Random(seed)
-    pipeline = CachedPipeline(engine_data, config)
-    result = _ga_search(
-        pipeline=pipeline,
-        baseline_chrom=baseline_chrom,
-        baseline_result=baseline,
-        pop_size=ga_cfg["pop_size"],
-        max_gen=ga_cfg["max_gen"],
-        time_budget=ga_cfg["time_budget"],
-        use_surrogate=ga_cfg["use_surrogate"],
-        use_archive=ga_cfg["use_archive"],
-        rng=rng,
-    )
-    assert_plan_valid(result.segments, engine_data, config)
-    result.gate_report = build_gate_report(
-        result.segments,
-        result.lots,
-        result.score,
-        engine_data,
-        config,
-    )
-    return result
-
-
-def _fitness_cost(score: dict) -> float:
-    """Compute cost from score. Lower is better.
-
-    Feasibility-first: infeasible solutions get a large penalty.
-    Earliness is heavily penalized above 6.5d (SOFT constraint threshold).
-    """
-    tardy = score.get("tardy_count", 0)
-    otd_d_fail = score.get("otd_d_failures", 0)
-    day_cap_fail = score.get("day_cap_violations", 0)
-    hard_violations = score.get("hard_violations", 0)
-
-    if tardy > 0 or otd_d_fail > 0 or day_cap_fail > 0 or hard_violations > 0:
-        # Infeasible: large penalty proportional to violations
-        return (
-            10000.0
-            + tardy * 100.0
-            + otd_d_fail * 50.0
-            + day_cap_fail * 200.0
-            + hard_violations * 500.0
-        )
-
-    earliness = score.get("earliness_avg_days", 10.0)
-
-    # Earliness penalty: quadratic above config threshold (default 5.5d)
-    earl_threshold = score.get("_earliness_target", 5.5)
-    earl_cost = earliness * 0.50
-    if earliness > earl_threshold:
-        earl_cost += (earliness - earl_threshold) ** 2 * 5.0
-
-    # Setup cost: weighted by machine utilisation (bottleneck setups cost more)
-    weighted_setup = score.get("weighted_setup_cost", 0.0)
-    if weighted_setup > 0:
-        setup_cost = weighted_setup * 0.015
-    else:
-        # Fallback: flat count (backward compat with non-CPO scores)
-        setup_cost = score.get("setups", 200) * 0.20
-
-    return earl_cost + setup_cost + score.get("planning_penalty", 0.0)
-
-
-def _ga_search(
-    pipeline: CachedPipeline,
-    baseline_chrom: Chromosome,
-    baseline_result: ScheduleResult,
-    pop_size: int,
-    max_gen: int,
-    time_budget: float,
-    use_surrogate: bool,
-    use_archive: bool,
-    rng: random.Random,
-) -> ScheduleResult:
-    """Core GA loop."""
-
-    baseline_cost = _fitness_cost(baseline_result.score)
-    best_cost = baseline_cost
-    best_result = baseline_result
-
-    # Initialize components
-    op_names = list(OPERATORS.keys())
-    frrmab = FRRMAB(op_names)
-    archive = MAPElitesArchive() if use_archive else None
-    one_fifth = OneFifthRule()
-    surrogate = SurrogateModel() if use_surrogate else None
-
-    # Insert baseline into archive
-    if archive:
-        archive.try_insert(baseline_chrom, baseline_result.score, baseline_cost)
-
-    # Initial population: baseline + random mutations
-    population: list[tuple[Chromosome, float]] = [(baseline_chrom, baseline_cost)]
-    for _ in range(pop_size - 1):
-        child = baseline_chrom.clone()
-        # Apply 1-3 random mutations
-        n_muts = rng.randint(1, 3)
-        for _ in range(n_muts):
-            op_name = rng.choice(op_names)
-            op_fn = OPERATORS[op_name]
-            child = op_fn(child, rng)
-        population.append((child, float("inf")))  # unevaluated
-
-    # Evaluate initial population
-    for i, (chrom, cost) in enumerate(population):
-        if cost == float("inf"):
-            result = pipeline.evaluate(chrom)
-            cost = _fitness_cost(result.score)
-            population[i] = (chrom, cost)
-
-            if surrogate:
-                surrogate.add_sample(chrom, cost)
-            if archive:
-                archive.try_insert(chrom, result.score, cost)
-
-            if cost < best_cost and result.score.get("tardy_count", 1) == 0:
-                best_cost = cost
-                best_result = result
-
-    # Train surrogate on initial evals
-    if surrogate and len(pipeline._fitness_cache) >= surrogate.min_samples:
-        surrogate.train()
-
-    t0 = time.perf_counter()
-    stagnation_count = 0
-    max_stagnation = max(10, max_gen // 5)  # escape after 10+ gens without improvement
-
-    for gen in range(max_gen):
-        if time.perf_counter() - t0 > time_budget:
-            break
-        if stagnation_count >= max_stagnation:
-            logger.info("GA early stop: %d generations without improvement", stagnation_count)
-            break
-
-        gen_improved = 0
-
-        for _ in range(pop_size):
-            if time.perf_counter() - t0 > time_budget:
-                break
-
-            # Select operator (OneFifthRule: force strong mutation when stagnating)
-            # Only activate after warmup (at least 2 full generations)
-            if (
-                one_fifth.rate < 0.15
-                and len(one_fifth.history) >= one_fifth.history.maxlen
-                and gen >= 2
-            ):
-                op_name = "mutate_strong"
-            else:
-                op_name = frrmab.select(rng)
-            op_fn = OPERATORS[op_name]
-
-            # Select parent(s)
-            parent = tournament_select(population, k=3, rng=rng)
-
-            # Apply operator
-            child = op_fn(parent, rng)
-
-            # Crossover: 30% chance
-            if rng.random() < 0.30 and len(population) >= 2:
-                parent2 = tournament_select(population, k=3, rng=rng)
-                child = crossover_uniform(child, parent2, rng)
-
-            # Check fitness cache
-            h = child.compute_hash()
-            if h in pipeline._fitness_cache:
-                score, result = pipeline._fitness_cache[h]
-                cost = _fitness_cost(score)
-                pipeline.cache_hits += 1
-            else:
-                # Surrogate pre-screening
-                if surrogate and surrogate.is_trained:
-                    if not surrogate.should_evaluate(child, best_cost, threshold=1.5):
-                        frrmab.update(op_name, 0.0)
-                        continue
-
-                # Full evaluation
-                result = pipeline.evaluate(child)
-                score = result.score
-                cost = _fitness_cost(score)
-
-                if surrogate:
-                    surrogate.add_sample(child, cost)
-
-            # Archive insertion
-            if archive:
-                archive.try_insert(child, score, cost)
-
-            # FRRMAB reward
-            improvement = max(0, best_cost - cost) / max(best_cost, 0.01)
-            frrmab.update(op_name, improvement)
-
-            # Track best
-            improved = False
-            if cost < best_cost and score.get("tardy_count", 1) == 0:
-                best_cost = cost
-                best_result = result
-                improved = True
-                gen_improved += 1
-
-            one_fifth.record(improved)
-
-            # Add to population
-            population.append((child, cost))
-
-        # Survivor selection: keep best pop_size
-        population.sort(key=lambda x: x[1])
-        population = population[:pop_size]
-
-        # Track stagnation
-        if gen_improved > 0:
-            stagnation_count = 0
-        else:
-            stagnation_count += 1
-
-        # Re-train surrogate periodically
-        if surrogate and gen % 10 == 9:
-            surrogate.train()
-
-        if gen % 5 == 0:
-            logger.debug(
-                "Gen %d: best_cost=%.2f, evals=%d, cache_hits=%d, archive=%d",
-                gen,
-                best_cost,
-                pipeline.eval_count,
-                pipeline.cache_hits,
-                archive.size() if archive else 0,
-            )
-
-    # Final: check archive for best
-    if archive:
-        archive_best = archive.best()
-        if archive_best and archive_best.cost < best_cost:
-            # Re-evaluate to get fresh result
-            result = pipeline.evaluate(archive_best.chrom)
-            if result.score.get("tardy_count", 0) == 0 and _fitness_cost(result.score) < best_cost:
-                best_result = result
-
-    logger.info(
-        "GA done: %d evals, %d cache hits, %d generations",
-        pipeline.eval_count,
-        pipeline.cache_hits,
-        min(max_gen, int(time.perf_counter() - t0)),
-    )
-
-    return best_result

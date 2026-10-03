@@ -1,0 +1,1723 @@
+{
+  "snapshot_id": "046b5d08b9884672ba2f9cf7e0f024d7",
+  "revision": 90,
+  "payload_sha256": "2a7d9d7c24be3c5621720ef3e64f538d49f964f74954242822e5a863d4328a0b",
+  "freeze_day": 15,
+  "freeze_date": "2026-10-02",
+  "lots": 202,
+  "segments": 558,
+  "protected_lots": 49,
+  "additional_manual_anchors": 0,
+  "movable_lots": 153,
+  "movable_runs": 152,
+  "scope": "One complete run per eligible machine; all other runs fixed",
+  "acceptance": "Existing no-loss contract, including the legacy setup cap",
+  "window_violations": [],
+  "trials": [
+    {
+      "run_id": "run_JDE002_PRM042_2__replanned_1",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_0",
+      "tool": "BFP187",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_0",
+      "tool": "BFP187",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_0__replanned_2",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_0__replanned_2",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN002_PRM043_1",
+      "tool": "HAN002",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_0__replanned_1",
+      "tool": "BFP186",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_0__replanned_1",
+      "tool": "BFP186",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_7",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_0",
+      "tool": "BFP096",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_0",
+      "tool": "BFP096",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL173_PRM019_0",
+      "tool": "VUL173",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE001_PRM042_2",
+      "tool": "JDE001",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_1",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BWI003_PRM039_0",
+      "tool": "BWI003",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL192_PRM019_0",
+      "tool": "VUL192",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_1",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN004_PRM042_0__replanned_1",
+      "tool": "HAN004",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_1__replanned_1",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_1__replanned_1",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_1__replanned_1",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_1__replanned_1",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP202_PRM043_0__replanned_1",
+      "tool": "BFP202",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN002_PRM043_2",
+      "tool": "HAN002",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_3__replanned_1",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_1",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_1",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_2",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_2",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_0__replanned_1",
+      "tool": "BFP184",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_0__replanned_1",
+      "tool": "BFP184",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_0",
+      "tool": "BFP125",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_0",
+      "tool": "BFP125",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_1",
+      "tool": "BFP188",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_1",
+      "tool": "BFP188",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_8",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_0",
+      "tool": "BFP183",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_0",
+      "tool": "BFP183",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_1",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_1",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_2",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE001_PRM042_0",
+      "tool": "JDE001",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL115_PRM042_1",
+      "tool": "VUL115",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL182_PRM039_0",
+      "tool": "VUL182",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL184_PRM019_0",
+      "tool": "VUL184",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL193_PRM039_0",
+      "tool": "VUL193",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL181_PRM039_0",
+      "tool": "VUL181",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_2",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL180_PRM039_0",
+      "tool": "VUL180",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP110_PRM039_0",
+      "tool": "BFP110",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP110_PRM039_0",
+      "tool": "BFP110",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_2",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_2",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_1",
+      "tool": "BFP178",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_1",
+      "tool": "BFP178",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_1",
+      "tool": "BFP204",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_1",
+      "tool": "BFP204",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL195_PRM039_1",
+      "tool": "VUL195",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_4",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL174_PRM039_1",
+      "tool": "VUL174",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BTL014_PRM039_0",
+      "tool": "BTL014",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN002_PRM043_3",
+      "tool": "HAN002",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP171_PRM031_0__replanned_1",
+      "tool": "BFP171",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP171_PRM031_0__replanned_1",
+      "tool": "BFP171",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP192_PRM019_1",
+      "tool": "BFP192",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP192_PRM019_1",
+      "tool": "BFP192",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_1",
+      "tool": "BFP186",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_1",
+      "tool": "BFP186",
+      "machine": "PRM039",
+      "advanced": [
+        {
+          "lot_id": "LOT_TWIN_BFP186_47",
+          "before": [
+            33,
+            895.0,
+            "PRM043"
+          ],
+          "after": [
+            33,
+            510.0,
+            "PRM039"
+          ]
+        }
+      ],
+      "status": "safe",
+      "physics": [],
+      "contract_reasons": []
+    },
+    {
+      "run_id": "run_LEC002_PRM042_0",
+      "tool": "LEC002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_3",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_3",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN004_PRM042_1",
+      "tool": "HAN004",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_3",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_3",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_2",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_2",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_1",
+      "tool": "BFP114",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_1",
+      "tool": "BFP114",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP172_PRM043_0",
+      "tool": "BFP172",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP172_PRM043_0",
+      "tool": "BFP172",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN002_PRM043_4",
+      "tool": "HAN002",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_3",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_3",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_4",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_4",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_1",
+      "tool": "BFP184",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_1",
+      "tool": "BFP184",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL115_PRM042_2",
+      "tool": "VUL115",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP192_PRM019_0",
+      "tool": "BFP192",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP192_PRM019_0",
+      "tool": "BFP192",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_1",
+      "tool": "BFP096",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_1",
+      "tool": "BFP096",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_1",
+      "tool": "BFP183",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_1",
+      "tool": "BFP183",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP101_PRM039_0",
+      "tool": "BFP101",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP101_PRM039_0",
+      "tool": "BFP101",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_2",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_2",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP100_PRM039_0",
+      "tool": "BFP100",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP100_PRM039_0",
+      "tool": "BFP100",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_2",
+      "tool": "BFP178",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_2",
+      "tool": "BFP178",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL203_PRM039_0",
+      "tool": "VUL203",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL199_PRM019_0",
+      "tool": "VUL199",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_4",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_4",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_2",
+      "tool": "BFP188",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_2",
+      "tool": "BFP188",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_2",
+      "tool": "BFP204",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_2",
+      "tool": "BFP204",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP202_PRM043_1",
+      "tool": "BFP202",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_0__replanned_1",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_5",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL173_PRM019_1",
+      "tool": "VUL173",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_5",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_5",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_3",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_3",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP179_PRM019_0__replanned_1",
+      "tool": "BFP179",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP179_PRM019_0__replanned_1",
+      "tool": "BFP179",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_1",
+      "tool": "BFP125",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_1",
+      "tool": "BFP125",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_1",
+      "tool": "BFP187",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_1",
+      "tool": "BFP187",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_3",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_3",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP092_PRM039_0",
+      "tool": "BFP092",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP092_PRM039_0",
+      "tool": "BFP092",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_2",
+      "tool": "BFP186",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_2",
+      "tool": "BFP186",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_4",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_5",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_5",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_2",
+      "tool": "BFP114",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_2",
+      "tool": "BFP114",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_3",
+      "tool": "BFP204",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_3",
+      "tool": "BFP204",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL127_PRM039_1__replanned_1",
+      "tool": "VUL127",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL127_PRM039_1__replanned_1",
+      "tool": "VUL127",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL174_PRM039_2",
+      "tool": "VUL174",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_4",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL038_PRM019_0",
+      "tool": "VUL038",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL038_PRM019_0",
+      "tool": "VUL038",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL192_PRM019_1",
+      "tool": "VUL192",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN002_PRM043_5",
+      "tool": "HAN002",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL201_PRM019_0",
+      "tool": "VUL201",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_6",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_6",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_4",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_4",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP171_PRM031_1",
+      "tool": "BFP171",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP171_PRM031_1",
+      "tool": "BFP171",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_2",
+      "tool": "BFP096",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_2",
+      "tool": "BFP096",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_3",
+      "tool": "BFP188",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_3",
+      "tool": "BFP188",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE002_PRM042_9__replanned_1",
+      "tool": "JDE002",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_3",
+      "tool": "BFP178",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_3",
+      "tool": "BFP178",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP110_PRM039_1",
+      "tool": "BFP110",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP110_PRM039_1",
+      "tool": "BFP110",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_5",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_7",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_7",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_4",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_4",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_5",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP091_PRM039_1",
+      "tool": "BFP091",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP091_PRM039_1",
+      "tool": "BFP091",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_3",
+      "tool": "BFP186",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP186_PRM039_3",
+      "tool": "BFP186",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE001_PRM042_1",
+      "tool": "JDE001",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_6",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_6",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JDE001_PRM042_3",
+      "tool": "JDE001",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_8",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_8",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_2",
+      "tool": "BFP184",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP184_PRM031_2",
+      "tool": "BFP184",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN004_PRM042_2",
+      "tool": "HAN004",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_4",
+      "tool": "BFP204",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP204_PRM043_4",
+      "tool": "BFP204",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_2",
+      "tool": "BFP183",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP183_PRM031_2",
+      "tool": "BFP183",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_4",
+      "tool": "BFP188",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP188_PRM043_4",
+      "tool": "BFP188",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL199_PRM019_1",
+      "tool": "VUL199",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE003_PRM043_6",
+      "tool": "JTE003",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_7",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_7",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP162_PRM031_1",
+      "tool": "BFP162",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP162_PRM031_1",
+      "tool": "BFP162",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL111_PRM043_0",
+      "tool": "VUL111",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_HAN004_PRM042_3",
+      "tool": "HAN004",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_5",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_5",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP083_PRM031_0",
+      "tool": "BFP083",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP083_PRM031_0",
+      "tool": "BFP083",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP202_PRM043_2",
+      "tool": "BFP202",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP191_PRM019_0",
+      "tool": "BFP191",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_4",
+      "tool": "BFP178",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP178_PRM039_4",
+      "tool": "BFP178",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP191_PRM019_1",
+      "tool": "BFP191",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL115_PRM042_3",
+      "tool": "VUL115",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL173_PRM019_2",
+      "tool": "VUL173",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_3",
+      "tool": "BFP114",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP114_PRM031_3",
+      "tool": "BFP114",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL180_PRM039_1",
+      "tool": "VUL180",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL125_PRM042_1",
+      "tool": "VUL125",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL195_PRM039_2",
+      "tool": "VUL195",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_5",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_5",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_9",
+      "tool": "BFP079",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP079_PRM031_9",
+      "tool": "BFP079",
+      "machine": "PRM031",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_2",
+      "tool": "BFP125",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP125_PRM043_2",
+      "tool": "BFP125",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP172_PRM043_1",
+      "tool": "BFP172",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP172_PRM043_1",
+      "tool": "BFP172",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_8",
+      "tool": "BFP082",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP082_PRM019_8",
+      "tool": "BFP082",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_2",
+      "tool": "BFP187",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP187_PRM043_2",
+      "tool": "BFP187",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_DYE025_PRM042_0",
+      "tool": "DYE025",
+      "machine": "PRM042",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_6",
+      "tool": "BFP080",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP080_PRM019_6",
+      "tool": "BFP080",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_3",
+      "tool": "BFP096",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP096_PRM039_3",
+      "tool": "BFP096",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_JTE001_PRM043_6",
+      "tool": "JTE001",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP190_PRM019_0",
+      "tool": "BFP190",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP190_PRM019_1",
+      "tool": "BFP190",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL127_PRM039_0",
+      "tool": "VUL127",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_VUL127_PRM039_0",
+      "tool": "VUL127",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_6",
+      "tool": "BFP112",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP112_PRM039_6",
+      "tool": "BFP112",
+      "machine": "PRM039",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP181_PRM019_1",
+      "tool": "BFP181",
+      "machine": "PRM043",
+      "advanced": [],
+      "status": "not_earlier"
+    },
+    {
+      "run_id": "run_BFP181_PRM019_1",
+      "tool": "BFP181",
+      "machine": "PRM019",
+      "advanced": [],
+      "status": "not_earlier"
+    }
+  ],
+  "safe_anticipations": [
+    {
+      "run_id": "run_BFP186_PRM039_1",
+      "tool": "BFP186",
+      "machine": "PRM039",
+      "advanced": [
+        {
+          "lot_id": "LOT_TWIN_BFP186_47",
+          "before": [
+            33,
+            895.0,
+            "PRM043"
+          ],
+          "after": [
+            33,
+            510.0,
+            "PRM039"
+          ]
+        }
+      ],
+      "status": "safe",
+      "physics": [],
+      "contract_reasons": []
+    }
+  ],
+  "local_scope_completed": true,
+  "local_seconds": 3.081,
+  "baseline_errors": [],
+  "counts": {
+    "not_earlier": 235,
+    "safe": 1
+  },
+  "rss_mib": 113.88671875,
+  "cpu_affinity": [
+    0
+  ]
+}
+

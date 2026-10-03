@@ -26,3 +26,8 @@ ISOP*.xlsx
 
 # Run logs locais (uvicorn/vite/cloudflared)
 .run-logs/
+
+# Snapshots reais de clientes para regressão (só no servidor, nunca no git)
+tests/fixtures/private/
+# Cópias da base de dados de planos (dados reais de cliente)
+data/*.db.*

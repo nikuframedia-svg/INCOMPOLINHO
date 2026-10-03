@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from backend.scheduler.jit_policy import production_due_day
 from backend.scheduler.types import Lot, Segment
 
 
@@ -49,10 +50,10 @@ def compute_stress_map(
             if seg.day_idx > prev:
                 lot_completion[seg.lot_id] = seg.day_idx
 
-    # 2. EDD per lot
-    lot_edd: dict[str, int] = {}
+    # 2. Controllable production due date per lot
+    lot_due: dict[str, int] = {}
     for lot in lots:
-        lot_edd[lot.id] = lot.edd
+        lot_due[lot.id] = production_due_day(lot)
 
     # 3. Utilisation per machine
     machine_used: dict[str, float] = defaultdict(float)
@@ -73,7 +74,7 @@ def compute_stress_map(
         if seg.day_idx < 0 or seg.prod_min <= 0:
             continue  # skip buffer days and setup-only segments
 
-        edd = lot_edd.get(seg.lot_id, n_days)
+        edd = lot_due.get(seg.lot_id, n_days)
         completion = lot_completion.get(seg.lot_id, seg.day_idx)
         slack = max(edd - completion, 0)
 

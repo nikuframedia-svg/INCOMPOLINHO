@@ -1,0 +1,37 @@
+INFO:     Started server process [1459753]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:53971 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56668 - "GET /api/copilot/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54712 - "GET /api/copilot/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54718 - "GET /api/copilot/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54728 - "GET /api/data/plan-view HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54732 - "GET /api/data/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54740 - "GET /api/data/workdays HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54754 - "GET /api/data/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54762 - "GET /api/data/workdays HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54774 - "GET /api/console?day_idx=15 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54780 - "GET /api/data/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54796 - "GET /api/data/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54804 - "GET /api/data/capacity?granularity=day HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54818 - "GET /api/data/capacity?granularity=day HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54826 - "GET /api/data/stock HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54830 - "GET /api/data/stock HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60442 - "GET /api/data/risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60450 - "GET /api/data/late HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60464 - "GET /api/data/workforce?window=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60474 - "GET /api/data/risk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60480 - "GET /api/data/late HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60482 - "GET /api/data/workforce?window=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60508 - "GET /api/data/replan-jobs?pending=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60522 - "GET /api/data/replan-jobs?pending=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60486 - "GET /api/data/config HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60500 - "GET /api/data/catalog HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60506 - "GET /api/data/trust HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60494 - "GET /api/data/ops HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60530 - "GET /api/data/config HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60534 - "GET /api/data/catalog HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1459753]

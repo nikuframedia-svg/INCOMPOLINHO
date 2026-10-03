@@ -9,6 +9,7 @@ import json
 import logging
 from collections import defaultdict
 
+from backend.calendar import available_machine_capacity
 from backend.copilot.state import state
 
 logger = logging.getLogger(__name__)
@@ -79,12 +80,24 @@ def exec_ver_carga_maquinas(args: dict) -> str:
 
     result = {}
     for mid, days in sorted(load.items()):
-        result[mid] = {
-            str(d): {"min": round(m, 1), "pct": round(m / day_cap * 100, 1)}
-            for d, m in sorted(days.items())
-        }
+        result[mid] = {}
+        for day_idx, minutes in sorted(days.items()):
+            capacity = available_machine_capacity(
+                mid,
+                day_idx,
+                state.engine_data,
+                state.config,
+            )
+            result[mid][str(day_idx)] = {
+                "min": round(minutes, 1),
+                "pct": round(minutes / capacity * 100, 1) if capacity > 0 else 0.0,
+            }
 
-    return _dumps({"carga": result, "day_cap": day_cap})
+    return _dumps({
+        "carga": result,
+        "day_cap": day_cap,
+        "capacity_rule": "factory_real_available",
+    })
 
 
 # ─── 3. ver_alertas ──────────────────────────────────────────────────────
@@ -96,7 +109,9 @@ def exec_ver_alertas(args: dict) -> str:
 
     from backend.risk import compute_risk
 
-    risk = state.risk_result or compute_risk(state.segments, state.lots, state.engine_data)
+    risk = state.risk_result or compute_risk(
+        state.segments, state.lots, state.engine_data, config=state.config
+    )
 
     alerts = []
     tardy = state.score.get("tardy_count", 0)
@@ -160,7 +175,7 @@ def exec_ver_alertas(args: dict) -> str:
 def exec_ver_score(args: dict) -> str:
     if err := _guard():
         return err
-    return _dumps(state.score)
+    return _dumps({**state.score, "plan_revision": state.plan_revision})
 
 
 # ─── 5. ver_config ───────────────────────────────────────────────────────
@@ -176,6 +191,7 @@ def exec_ver_config(args: dict) -> str:
             "nome": c.name,
             "site": c.site,
             "timezone": c.timezone,
+            "plan_revision": state.plan_revision,
             "turnos": [
                 {
                     "id": s.id,
@@ -274,15 +290,16 @@ def exec_explicar_decisao(args: dict) -> str:
 
 _LOGIC_EXPLANATIONS = {
     "jit": (
-        "JIT (Just-In-Time): Phase 4 do scheduler. Produzir o mais tarde possível "
-        "(2-5 dias antes do EDD) para reduzir stock intermédio. "
-        "O scheduler calcula o LST (Latest Start Time) para cada ToolRun. "
-        "Safety net: se o JIT piora tardiness, faz fallback ao baseline."
+        "Política JIT de libertação simulada de material: a produção começa no primeiro intervalo "
+        "viável após a data permitida. Essa data fica cinco dias úteis antes da "
+        "entrega ao cliente nos artigos normais e cinco dias úteis antes do envio "
+        "ao fornecedor nos artigos subcontratados. O prazo de produção é a entrega "
+        "nos artigos normais e o envio nos subcontratados."
     ),
     "campaign": (
         "Campaign sequencing: agrupar runs com a mesma ferramenta consecutivamente "
         "para eliminar setups. Nearest-neighbour por tool family. "
-        "Interrompido quando há runs urgentes (EDD próximo)."
+        "Interrompido quando há runs com prazo de produção mais urgente."
     ),
     "eco_lot": (
         "Eco lot HARD: cada lot é arredondado para cima ao múltiplo do lote económico. "

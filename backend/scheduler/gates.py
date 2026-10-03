@@ -4,13 +4,31 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from backend.config.types import FactoryConfig
+from backend.scheduler.jit_policy import (
+    calendar_holidays,
+    lot_demand_output_milestones,
+    window_violation_details,
+    workdays_between,
+)
+from backend.scheduler.operational_audit import build_operational_audit
 from backend.scheduler.types import Lot, Segment
-from backend.scheduler.validation import hard_gate_metrics, validate_plan
+from backend.scheduler.validation import (
+    coverage_metrics,
+    coverage_violations,
+    demand_coverage_metrics,
+    demand_coverage_violations,
+    hard_gate_metrics,
+    plan_anchor_violations,
+    validate_plan,
+)
+from backend.telemetry import measured
 from backend.types import EngineData
 
+UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
 HARD_GATE_KEYS = (
     "setup_crew_overlaps",
     "machine_overlaps",
@@ -18,55 +36,261 @@ HARD_GATE_KEYS = (
     "day_cap_violations",
     "blocked_machine_segments",
     "blocked_tool_segments",
+    "operator_capacity_violations",
     "ghost_segments",
+    "outside_shift_segments",
+    "unknown_machine_segments",
+    "unknown_tool_segments",
+    "ineligible_machine_segments",
+    "ineligible_tool_segments",
+    "lot_production_minute_violations",
+    "source_contract_violations",
     "run_setup_order_violations",
+    "detached_setup_violations",
+    "setup_production_discontinuity_violations",
+    "missing_tool_change_setup_violations",
+    "insufficient_tool_change_setup_violations",
+    "plan_anchor_violations",
+    "missing_lots",
+    "missing_qty",
+    "unexpected_lots",
+    "overproduced_qty",
+    "duplicate_twin_output_qty",
+    "twin_output_mismatches",
+    "source_missing_qty",
+    "source_overproduced_qty",
 )
+MATERIAL_GATE_KEYS = ("setup_before_material_violations",)
 
 
+@measured("validation")
 def build_gate_report(
     segments: list[Segment],
     lots: list[Lot],
     score: dict[str, Any],
     data: EngineData | None,
     config: FactoryConfig | None,
+    *,
+    operational_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the public APS trust-loop report for a candidate plan."""
 
-    violations = validate_plan(segments, data, config)
+    violations = validate_plan(segments, data, config, lots=lots)
+    violations.extend(plan_anchor_violations(segments, data, config))
+    violations.extend(coverage_violations(segments, lots))
+    source_coverage = (
+        demand_coverage_metrics(data, lots, config)
+        if data is not None and data.ops
+        else {}
+    )
+    if data is not None and data.ops:
+        violations.extend(demand_coverage_violations(data, lots, config))
     physical_metrics = hard_gate_metrics(violations)
+    coverage = coverage_metrics(segments, lots)
+    coverage.update(source_coverage)
+    physical_metrics.update(
+        {key: int(coverage[key]) for key in HARD_GATE_KEYS if key in coverage}
+    )
     delivery_metrics = {
         "otd": float(score.get("otd", 0.0) or 0.0),
         "otd_d": float(score.get("otd_d", 0.0) or 0.0),
         "tardy_count": int(score.get("tardy_count", 0) or 0),
         "otd_d_failures": int(score.get("otd_d_failures", 0) or 0),
+        "otd_d_checkpoints": int(score.get("otd_d_checkpoints", 0) or 0),
+        "otd_d_cumulative_shortfall_qty": int(
+            score.get("otd_d_cumulative_shortfall_qty", 0) or 0
+        ),
+        "otd_d_final_shortfall_qty": int(
+            score.get("otd_d_final_shortfall_qty", 0) or 0
+        ),
+        "production_due_misses": int(score.get("production_due_misses", 0) or 0),
+        "production_due_late_workdays": int(
+            score.get("production_due_late_workdays", 0) or 0
+        ),
+        "subcontract_dispatch_total": int(
+            score.get("subcontract_dispatch_total", 0) or 0
+        ),
+        "subcontract_dispatch_misses": int(
+            score.get("subcontract_dispatch_misses", 0) or 0
+        ),
+        "subcontract_dispatch_late_workdays": int(
+            score.get("subcontract_dispatch_late_workdays", 0) or 0
+        ),
+        "subcontract_dispatch_max_late_workdays": int(
+            score.get("subcontract_dispatch_max_late_workdays", 0) or 0
+        ),
+        "subcontract_dispatch_otd": float(
+            score.get("subcontract_dispatch_otd", 100.0) or 0.0
+        ),
     }
     window_metrics = {
         "early_window_violations": int(score.get("early_window_violations", 0) or 0),
         "early_window_violation_days": int(score.get("early_window_violation_days", 0) or 0),
+        "early_window_violation_workdays": int(
+            score.get("early_window_violation_workdays", 0) or 0
+        ),
+        "start_anticipation_avg_workdays": float(
+            score.get("start_anticipation_avg_workdays", 0.0) or 0.0
+        ),
+        "start_anticipation_max_workdays": int(
+            score.get("start_anticipation_max_workdays", 0) or 0
+        ),
+        "latest_start_gap_avg_min": float(
+            score.get("latest_start_gap_avg_min", 0.0) or 0.0
+        ),
+        "latest_start_gap_max_min": float(
+            score.get("latest_start_gap_max_min", 0.0) or 0.0
+        ),
     }
-    metrics = {**physical_metrics, **delivery_metrics, **window_metrics}
+    long_production_detail = _long_production_detail(segments, config)
+    long_metrics = {
+        "long_productions": len(long_production_detail),
+        "long_production_excess_workdays": sum(
+            int(item["excess_workdays"]) for item in long_production_detail
+        ),
+    }
+    robustness_evaluated = int(score.get("robustness_evaluated_samples", 0) or 0)
+    robustness_metrics = {
+        "robustness_model_version": int(
+            score.get("robustness_model_version", 0) or 0
+        ),
+        "robustness_evaluated_samples": robustness_evaluated,
+        "robustness_baseline_tardy_count": int(
+            score.get("robustness_baseline_tardy_count", 0) or 0
+        ),
+        "robustness_success_probability_pct": float(
+            score.get("robustness_success_probability_pct", 0.0) or 0.0
+        ),
+        "robustness_threshold_pct": float(
+            score.get("robustness_threshold_pct", 0.0) or 0.0
+        ),
+        "robustness_otd_p95": float(score.get("robustness_otd_p95", 0.0) or 0.0),
+        "robustness_tardy_p95": float(
+            score.get("robustness_tardy_p95", 0.0) or 0.0
+        ),
+        "robustness_additional_tardy_mean": float(
+            score.get("robustness_additional_tardy_mean", 0.0) or 0.0
+        ),
+        "robustness_additional_tardy_p95": float(
+            score.get("robustness_additional_tardy_p95", 0.0) or 0.0
+        ),
+    }
+    audit_result = (
+        operational_audit
+        if operational_audit is not None
+        else build_operational_audit(segments, lots, data, config)
+        if data is not None
+        else {
+            "left_shift_opportunities": 0,
+            "lower_priority_campaign_interruptions": 0,
+            "priority_order_anomalies": 0,
+            "avoidable_priority_order_anomalies": 0,
+            "released_tool_priority_inversions": 0,
+            "left_shift_detail": [],
+            "protected_left_shift_detail": [],
+            "campaign_interruption_detail": [],
+            "priority_order_detail": [],
+        }
+    )
+    operational_metrics = {
+        key: int(audit_result[key])
+        for key in (
+            "left_shift_opportunities",
+            "lower_priority_campaign_interruptions",
+            "priority_order_anomalies",
+            "avoidable_priority_order_anomalies",
+            "released_tool_priority_inversions",
+        )
+    }
+    metrics = {
+        **physical_metrics,
+        **delivery_metrics,
+        **window_metrics,
+        **long_metrics,
+        **robustness_metrics,
+        **operational_metrics,
+    }
 
-    hard_gate_passed = all(physical_metrics[key] == 0 for key in HARD_GATE_KEYS)
+    physical_gate_passed = all(int(metrics.get(key, 0)) == 0 for key in HARD_GATE_KEYS)
+    operator_capacity_gate_passed = (
+        int(metrics.get("operator_capacity_violations", 0)) == 0
+    )
+    coverage_gate_passed = all(
+        int(coverage.get(key, 0)) == 0
+        for key in (
+            "missing_lots",
+            "missing_qty",
+            "unexpected_lots",
+            "overproduced_qty",
+            "duplicate_twin_output_qty",
+            "twin_output_mismatches",
+            "source_missing_qty",
+            "source_overproduced_qty",
+        )
+    )
     delivery_gate_passed = (
         delivery_metrics["otd"] >= 100.0
         and delivery_metrics["otd_d"] >= 100.0
         and delivery_metrics["tardy_count"] == 0
         and delivery_metrics["otd_d_failures"] == 0
     )
-    # Materials-window gate: only gating in "hard" enforcement. A violation
-    # means production needs material earlier than the release proxy allows —
-    # a planner condition (infeasible_current_conditions), never bad physics.
-    material_gate_passed = not (
-        config is not None
-        and getattr(config, "earliness_policy", "jit") == "window"
-        and getattr(config, "early_window_enforcement", "soft") == "hard"
-        and window_metrics["early_window_violations"] > 0
+    subcontract_dispatch_gate_passed = (
+        delivery_metrics["subcontract_dispatch_misses"] == 0
     )
+    jit_window_gate_passed = window_metrics["early_window_violations"] == 0
+    robustness_gate_passed = (
+        bool(score.get("robustness_gate_passed")) if robustness_evaluated else None
+    )
+    material_gate_passed = all(
+        int(metrics.get(key, 0)) == 0 for key in MATERIAL_GATE_KEYS
+    )
+    operational_gate_passed = (
+        operational_metrics["left_shift_opportunities"] == 0
+        and operational_metrics["lower_priority_campaign_interruptions"] == 0
+        and operational_metrics["avoidable_priority_order_anomalies"] == 0
+        and operational_metrics["released_tool_priority_inversions"] == 0
+    )
+    hard_gate_passed = physical_gate_passed
 
-    if hard_gate_passed and delivery_gate_passed and material_gate_passed:
+    approval_reasons: list[str] = []
+    if not delivery_gate_passed:
+        approval_reasons.append("delivery_risk")
+    if not subcontract_dispatch_gate_passed:
+        approval_reasons.append("subcontract_dispatch_risk")
+    if not jit_window_gate_passed:
+        approval_reasons.append("jit_window_blocked")
+    if not material_gate_passed:
+        approval_reasons.append("material_release_blocked")
+    if long_production_detail:
+        approval_reasons.append("long_production")
+    if not operator_capacity_gate_passed:
+        approval_reasons.append("operator_capacity_shortage")
+    if robustness_gate_passed is None:
+        approval_reasons.append("robustness_not_evaluated")
+    elif robustness_gate_passed is False:
+        approval_reasons.append("robustness_below_threshold")
+    if not operational_gate_passed:
+        approval_reasons.append("operational_sequence_review")
+
+    if (
+        not physical_gate_passed
+        or not coverage_gate_passed
+        or not jit_window_gate_passed
+        or not material_gate_passed
+    ):
+        apply_decision = "blocked"
+    elif approval_reasons:
+        apply_decision = "approval_required"
+    else:
+        apply_decision = "auto_applicable"
+    requires_approval = apply_decision == "approval_required"
+
+    if apply_decision == "auto_applicable":
         status = "applicable"
-    elif hard_gate_passed:
-        status = "infeasible_current_conditions"
+    elif apply_decision == "approval_required":
+        status = "best_effort"
+    elif not jit_window_gate_passed or not material_gate_passed:
+        status = "jit_window_blocked"
     else:
         status = "invalid_physics"
 
@@ -74,24 +298,333 @@ def build_gate_report(
         _setup_overlap_detail(v) for v in violations if v.get("kind") == "setup_crew_overlap"
     ]
     late_detail = _late_detail(segments, lots, data, config) if data is not None else []
+    jit_window_detail = (
+        _with_calendar_dates(
+            window_violation_details(
+                segments,
+                lots,
+                calendar_holidays(
+                    data,
+                    min((segment.day_idx for segment in segments), default=0) - 7,
+                    data.n_days + 7,
+                ),
+            ),
+            data,
+        )
+        if data is not None
+        else []
+    )
+    subcontract_dispatch_detail = (
+        _subcontract_dispatch_detail(segments, lots, data)
+        if data is not None
+        else []
+    )
 
     return {
         "status": status,
-        "hard_gate_passed": hard_gate_passed,
+        "apply_decision": apply_decision,
+        "requires_approval": requires_approval,
+        "approval_reasons": approval_reasons,
+        "hard_gate_passed": hard_gate_passed and material_gate_passed,
+        "physical_gate_passed": physical_gate_passed,
+        "operator_capacity_gate_passed": operator_capacity_gate_passed,
+        "coverage_gate_passed": coverage_gate_passed,
         "delivery_gate_passed": delivery_gate_passed,
+        "subcontract_dispatch_gate_passed": subcontract_dispatch_gate_passed,
+        "jit_window_gate_passed": jit_window_gate_passed,
+        "robustness_gate_passed": robustness_gate_passed,
         "material_gate_passed": material_gate_passed,
+        "operational_gate_passed": operational_gate_passed,
         "metrics": metrics,
         "violations": violations,
         "late_detail": late_detail,
+        "jit_window_detail": jit_window_detail,
+        "subcontract_dispatch_detail": subcontract_dispatch_detail,
+        "long_production_detail": long_production_detail,
         "setup_overlap_detail": setup_overlap_detail,
+        "operational_audit": audit_result,
         "proposals": _build_proposals(metrics, violations, late_detail),
     }
 
 
 def gate_passed(report: dict[str, Any] | None) -> bool:
-    """True when a report allows applying the candidate plan."""
+    """True only when a report can be applied without human approval."""
 
-    return bool(report and report.get("status") == "applicable")
+    return bool(
+        report
+        and report.get("apply_decision", "auto_applicable") == "auto_applicable"
+        and report.get("physical_gate_passed")
+    )
+
+
+def physically_valid(report: dict[str, Any] | None) -> bool:
+    """True when no approval could hide a physical/conservation conflict."""
+
+    return bool(
+        report
+        and report.get("physical_gate_passed")
+        and report.get("coverage_gate_passed")
+        and report.get("apply_decision") != "blocked"
+    )
+
+
+def blocked_application_message(report: dict[str, Any] | None) -> str:
+    """Explain why a plan candidate cannot be applied."""
+
+    if not report:
+        return "O candidato não pode substituir o plano atual."
+    if not report.get("physical_gate_passed"):
+        operator_conflicts = int(
+            (report.get("metrics") or {}).get("operator_capacity_violations") or 0
+        )
+        if operator_conflicts:
+            return (
+                "O candidato excede a capacidade disponível de operadores em "
+                f"{operator_conflicts} intervalo(s) e não pode substituir o plano."
+            )
+        return "O candidato tem conflitos físicos e não pode substituir o plano."
+    if not report.get("coverage_gate_passed"):
+        return "O candidato tem inconsistências de quantidades e não pode substituir o plano."
+
+    reasons = set(report.get("approval_reasons") or [])
+    metrics = report.get("metrics") or {}
+    parts: list[str] = []
+    if (
+        report.get("status") == "jit_window_blocked"
+        or report.get("jit_window_gate_passed") is False
+        or report.get("material_gate_passed") is False
+        or "jit_window_blocked" in reasons
+        or "material_release_blocked" in reasons
+    ):
+        violations = int(metrics.get("early_window_violations") or 0)
+        if violations > 0:
+            parts.append(
+                "O candidato foi bloqueado por "
+                f"{violations} produção(ões) antecipada(s) fora da janela JIT "
+                "dos 5 dias úteis antes da respetiva referência de material."
+            )
+        else:
+            parts.append(
+                "O candidato foi bloqueado por produções antecipadas fora da janela "
+                "JIT dos 5 dias úteis antes da respetiva referência de material."
+            )
+    if report.get("robustness_gate_passed") is False or "robustness_below_threshold" in reasons:
+        probability = metrics.get("robustness_success_probability_pct")
+        threshold = metrics.get("robustness_threshold_pct")
+        if isinstance(probability, int | float) and isinstance(threshold, int | float):
+            parts.append(
+                f"A robustez ficou em {probability:.1f}%, abaixo do limite de "
+                f"{threshold:.1f}%."
+            )
+        else:
+            parts.append("A robustez ficou abaixo do limite configurado.")
+    if not report.get("operational_gate_passed", True):
+        opportunities = int(metrics.get("left_shift_opportunities") or 0)
+        interruptions = int(
+            metrics.get("lower_priority_campaign_interruptions") or 0
+        )
+        priority_inversions = int(
+            metrics.get("avoidable_priority_order_anomalies") or 0
+        )
+        tool_priority_inversions = int(
+            metrics.get("released_tool_priority_inversions") or 0
+        )
+        parts.append(
+            "O candidato ainda contém "
+            f"{opportunities} intervalo(s) produtivo(s) evitável(eis) e "
+            f"{interruptions} interrupção(ões) de campanha e "
+            f"{priority_inversions} inversão(ões) de prioridade evitável(eis) e "
+            f"{tool_priority_inversions} inversão(ões) numa ferramenta partilhada."
+        )
+    if parts:
+        return " ".join(parts)
+    return "O candidato foi bloqueado pelas regras de aplicação do plano."
+
+
+def authorize_application(
+    report: dict[str, Any] | None,
+    *,
+    approve_exceptions: bool = False,
+    approval_reason: str = "",
+    approval_author: str = "",
+) -> dict[str, Any] | None:
+    """Validate the shared apply contract and return an approval audit record."""
+
+    if not physically_valid(report):
+        raise ValueError(blocked_application_message(report))
+    if not report or not report.get("requires_approval"):
+        return None
+    if not approve_exceptions:
+        reasons = ", ".join(report.get("approval_reasons", []))
+        raise ValueError(f"O candidato exige aprovação explícita: {reasons}.")
+    if not approval_reason.strip() or not approval_author.strip():
+        raise ValueError("A aprovação exige motivo e autor.")
+    return {
+        "approved_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "author": approval_author.strip(),
+        "reason": approval_reason.strip(),
+        "approval_reasons": list(report.get("approval_reasons", [])),
+    }
+
+
+def _long_production_detail(
+    segments: list[Segment],
+    config: FactoryConfig | None,
+) -> list[dict[str, Any]]:
+    limit = max(1, int(getattr(config, "max_run_days", 4) or 4))
+    by_lot: dict[str, list[Segment]] = {}
+    for segment in segments:
+        if segment.prod_min > 0:
+            by_lot.setdefault(segment.lot_id, []).append(segment)
+    details: list[dict[str, Any]] = []
+    for lot_id, lot_segments in by_lot.items():
+        days = sorted({segment.day_idx for segment in lot_segments})
+        streak = _longest_consecutive_streak(days)
+        if len(streak) <= limit:
+            continue
+        first = min(lot_segments, key=lambda item: (item.day_idx, item.start_min))
+        details.append(
+            {
+                "lot_id": lot_id,
+                "sku": first.sku,
+                "machine_id": first.machine_id,
+                "workdays": len(streak),
+                "limit_workdays": limit,
+                "excess_workdays": len(streak) - limit,
+                "consecutive": True,
+                "days": days,
+                "consecutive_days": streak,
+            }
+        )
+    return details
+
+
+def _longest_consecutive_streak(days: list[int]) -> list[int]:
+    if not days:
+        return []
+    best: list[int] = []
+    current: list[int] = []
+    previous: int | None = None
+    for day in sorted(set(days)):
+        if previous is None or day == previous + 1:
+            current.append(day)
+        else:
+            if len(current) > len(best):
+                best = current
+            current = [day]
+        previous = day
+    if len(current) > len(best):
+        best = current
+    return best
+
+
+def _with_calendar_dates(details: list[dict], data: EngineData) -> list[dict]:
+    """Add stable ISO labels, including buffer days before the visible horizon."""
+
+    workdays = list(data.workdays or [])
+    first_date: date | None = None
+    if workdays:
+        try:
+            first_date = date.fromisoformat(str(workdays[0])[:10])
+        except ValueError:
+            first_date = None
+
+    def label(day_idx: int) -> str | None:
+        if 0 <= day_idx < len(workdays):
+            return str(workdays[day_idx])[:10]
+        if first_date is not None:
+            try:
+                return (first_date + timedelta(days=day_idx)).isoformat()
+            except OverflowError:
+                return None
+        return None
+
+    result: list[dict] = []
+    for item in details:
+        enriched = dict(item)
+        for day_field in (
+            "delivery_day",
+            "customer_delivery_day",
+            "start_day",
+            "earliest_allowed_start_day",
+            "material_reference_day",
+            "material_release_day",
+            "production_due_day",
+            "latest_subcontract_dispatch_day",
+            "subcontract_dispatch_day",
+            "completion_day",
+        ):
+            value = item.get(day_field)
+            if value is None:
+                continue
+            date_field = day_field.removesuffix("_day") + "_date"
+            enriched[date_field] = label(int(value))
+        result.append(enriched)
+    return result
+
+
+def _subcontract_dispatch_detail(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+) -> list[dict[str, Any]]:
+    completion_by_lot: dict[str, int] = {}
+    for segment in segments:
+        if segment.prod_min <= 0:
+            continue
+        completion_by_lot[segment.lot_id] = max(
+            completion_by_lot.get(segment.lot_id, segment.day_idx),
+            segment.day_idx,
+        )
+    holidays = calendar_holidays(data, -60, data.n_days + 60)
+    details: list[dict[str, Any]] = []
+    for lot in lots:
+        completion = completion_by_lot.get(lot.id, data.n_days)
+        for output in lot_demand_output_milestones(lot):
+            if not bool(output.get("is_subcontracted")):
+                continue
+            dispatch = output.get("subcontract_dispatch_day")
+            if dispatch is None:
+                dispatch = output.get("production_due_day", lot.edd)
+            dispatch = int(dispatch)
+            if completion <= dispatch:
+                continue
+            details.append(
+                {
+                    "lot_id": lot.id,
+                    "op_id": output.get("op_id", lot.op_id),
+                    "sku": output.get("sku", lot.sku),
+                    "qty": int(output.get("qty", lot.qty) or 0),
+                    "subcontract_company_id": output.get(
+                        "subcontract_company_id",
+                        lot.subcontract_company_id,
+                    ),
+                    "customer_delivery_day": int(
+                        output.get("customer_delivery_day", lot.edd)
+                    ),
+                    "latest_subcontract_dispatch_day": output.get(
+                        "latest_subcontract_dispatch_day"
+                    ),
+                    "subcontract_dispatch_day": dispatch,
+                    "production_due_day": int(
+                        output.get("production_due_day", dispatch)
+                    ),
+                    "completion_day": completion,
+                    "late_workdays": workdays_between(
+                        dispatch,
+                        completion,
+                        holidays,
+                    ),
+                }
+            )
+    details.sort(
+        key=lambda item: (
+            -int(item["late_workdays"]),
+            int(item["subcontract_dispatch_day"]),
+            str(item["lot_id"]),
+        )
+    )
+    return _with_calendar_dates(details, data)
 
 
 def _setup_overlap_detail(violation: dict[str, Any]) -> dict[str, Any]:
@@ -245,7 +778,7 @@ def _build_proposals(
                 affected_skus=_unique(late_skus)[:8],
                 affected_machines=list(late_machines)[:8],
                 rejection_reasons=[
-                    "lead time externo nao recupera EDD",
+                    "lead time externo nao recupera a entrega ao cliente",
                     "OTD/OTD-D continuam abaixo de 100",
                     "plano interno remanescente falha hard gates",
                 ],

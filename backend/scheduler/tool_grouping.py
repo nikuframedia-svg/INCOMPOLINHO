@@ -1,7 +1,7 @@
 """Phase 2 — Tool Grouping: Spec 02 v6 §4.
 
-Groups Lots by (tool_id, machine_id) into ToolRuns.
-1 setup covers all lots in the group. Lots produced sequentially.
+Groups Lots by physical setup identity and machine into ToolRuns.
+1 setup covers all lots in the same adjusted reference group. Lots are sequential.
 
 Fix 1: Lots within each ToolRun are ALWAYS sorted by EDD.
 
@@ -16,6 +16,9 @@ from collections import defaultdict
 
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP, MAX_EDD_GAP, MAX_RUN_DAYS
+from backend.scheduler.jit_policy import earliest_allowed_start
+from backend.scheduler.priority import lot_priority_key
+from backend.scheduler.setup_identity import SetupIdentity, lot_setup_identity
 from backend.scheduler.types import Lot, ToolRun
 
 
@@ -24,26 +27,38 @@ def create_tool_runs(
     max_edd_gap: int = MAX_EDD_GAP,
     audit_logger: object | None = None,
     config: FactoryConfig | None = None,
+    release_holidays: set[int] | None = None,
 ) -> list[ToolRun]:
-    """Group lots by (tool_id, machine_id) into ToolRuns, with splitting."""
+    """Group lots by setup identity and machine into ToolRuns, with splitting."""
     day_cap = config.day_capacity_min if config else DAY_CAP
 
-    groups: dict[tuple[str, str], list[Lot]] = defaultdict(list)
+    groups: dict[tuple[SetupIdentity, str], list[Lot]] = defaultdict(list)
 
     for lot in lots:
-        key = (lot.tool_id, lot.machine_id)
+        key = (lot_setup_identity(lot), lot.machine_id)
         groups[key].append(lot)
 
     runs: list[ToolRun] = []
-    for (tool, machine), group_lots in groups.items():
-        group_lots.sort(key=lambda x: x.edd)  # Fix 1: always EDD sorted
+    next_run_index: dict[tuple[str, str], int] = defaultdict(int)
+    for (setup_identity, machine), group_lots in sorted(groups.items()):
+        tool = setup_identity[0]
+        group_lots.sort(key=lot_priority_key)
         gap = config.max_edd_gap if config else max_edd_gap
         max_run = config.max_run_days if config else MAX_RUN_DAYS
         span = config.max_edd_span if config else 20
-        sub_runs = _split_by_edd_gap(group_lots, gap, max_run, day_cap=day_cap, max_span=span)
+        sub_runs = _split_by_edd_gap(
+            group_lots,
+            gap,
+            max_run,
+            day_cap=day_cap,
+            max_span=span,
+            release_holidays=release_holidays,
+        )
 
-        for idx, sub_lots in enumerate(sub_runs):
-            setup = sub_lots[0].setup_min
+        for sub_lots in sub_runs:
+            idx = next_run_index[(tool, machine)]
+            next_run_index[(tool, machine)] += 1
+            setup = max(lot.setup_min for lot in sub_lots)
             total_prod = sum(lot.prod_min for lot in sub_lots)
 
             runs.append(
@@ -58,6 +73,15 @@ def create_tool_runs(
                     total_min=setup + total_prod,
                     edd=sub_lots[0].edd,
                     target_start_day=_run_target_start(sub_lots),
+                    production_due_day=min(
+                        (
+                            lot.production_due_day
+                            if lot.production_due_day is not None
+                            else lot.edd
+                            for lot in sub_lots
+                        ),
+                        default=sub_lots[0].edd,
+                    ),
                 )
             )
 
@@ -145,13 +169,15 @@ def _split_by_edd_gap(
     max_run_days: int = MAX_RUN_DAYS,
     day_cap: int = DAY_CAP,
     max_span: int = 20,
+    release_holidays: set[int] | None = None,
 ) -> list[list[Lot]]:
-    """Split sorted lots by EDD gap, span, and max cumulative production time.
+    """Split sorted lots by release floor, EDD gap, span, and duration.
 
-    Splits on three criteria:
-      1. EDD gap > max_gap between consecutive lots
-      2. EDD span > max_span from first lot in group to current lot
-      3. Cumulative production time > max_run_days * day_cap
+    A ToolRun is non-preemptive and contains no deliberate idle time. Lots
+    whose simulated material-release floors differ therefore cannot share a
+    run: the later lot would delay already-released production. This was the
+    structural source of apparently unexplained four-day starts and empty
+    machine time inside the five-workday window.
     """
     if not lots:
         return []
@@ -163,13 +189,19 @@ def _split_by_edd_gap(
     cum_prod = lots[0].prod_min
 
     for lot in lots[1:]:
+        previous = sub_runs[-1][-1]
         prev_edd = sub_runs[-1][-1].edd
         first_edd = sub_runs[-1][0].edd
         gap = lot.edd - prev_edd
         span = lot.edd - first_edd
         duration_split = cum_prod + lot.prod_min > max_prod
+        release_split = bool(
+            release_holidays is not None
+            and max(0, earliest_allowed_start(lot, release_holidays))
+            != max(0, earliest_allowed_start(previous, release_holidays))
+        )
 
-        if gap > max_gap or duration_split or span > max_span:
+        if release_split or gap > max_gap or duration_split or span > max_span:
             sub_runs.append([lot])
             cum_prod = lot.prod_min
         else:
@@ -181,7 +213,7 @@ def _split_by_edd_gap(
 
 def _make_run(original: ToolRun, lots: list[Lot], run_id: str) -> ToolRun:
     """Create a new ToolRun from a subset of lots."""
-    setup = lots[0].setup_min
+    setup = max(lot.setup_min for lot in lots)
     total_prod = sum(lot.prod_min for lot in lots)
     return ToolRun(
         id=run_id,
@@ -194,6 +226,15 @@ def _make_run(original: ToolRun, lots: list[Lot], run_id: str) -> ToolRun:
         total_min=setup + total_prod,
         edd=lots[0].edd,
         target_start_day=_run_target_start(lots),
+        production_due_day=min(
+            (
+                lot.production_due_day
+                if lot.production_due_day is not None
+                else lot.edd
+                for lot in lots
+            ),
+            default=lots[0].edd,
+        ),
     )
 
 

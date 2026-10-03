@@ -1,0 +1,17 @@
+{
+  "id": "operator-absence-2026-09-21",
+  "clock": "2026-09-17T07:00:00+01:00",
+  "first_day": "2026-09-17",
+  "n_days": 14,
+  "machines": ["PRM019", "PRM031", "PRM039", "PRM043"],
+  "operators": {"A": 6, "B": 5},
+  "oee": 1,
+  "setup_crews": 4,
+  "demand": {"day": 11, "qty_per_machine": 1500, "pieces_per_hour": 60},
+  "absence": {
+    "start_at": "2026-09-21T00:01:00+01:00",
+    "end_at": "2026-09-27T23:59:00+01:00",
+    "count": 3
+  },
+  "expected": {"restricted": {"A": 3, "B": 2}, "released": 4}
+}

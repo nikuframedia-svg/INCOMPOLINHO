@@ -16,6 +16,11 @@ import heapq
 import logging
 from collections import defaultdict
 
+from backend.config.shifts import (
+    clock_to_productive_offset,
+    ordered_shifts,
+    productive_offset_to_clock,
+)
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import (
     DAY_CAP,
@@ -24,7 +29,12 @@ from backend.scheduler.constants import (
     SHIFT_A_START,
     SHIFT_B_END,
 )
-from backend.scheduler.resources import rebind_runs_to_machines
+from backend.scheduler.priority import (
+    enforce_same_deadline_run_priority,
+    run_priority_key,
+)
+from backend.scheduler.resources import clone_run_for_machine, rebind_runs_to_machines
+from backend.scheduler.setup_identity import run_setup_identity
 from backend.scheduler.types import (
     CrewState,
     Lot,
@@ -36,6 +46,43 @@ from backend.scheduler.types import (
 from backend.types import EngineData
 
 logger = logging.getLogger(__name__)
+
+
+def _productive_position(
+    offset_in_day: float,
+    config: FactoryConfig | None,
+) -> tuple[int, str, int]:
+    """Return wall-clock minute, shift id and shift end for a productive offset."""
+
+    if config is None:
+        minute = SHIFT_A_START + int(round(offset_in_day))
+        shift_id = "A" if minute < SHIFT_A_END else "B"
+        shift_end = SHIFT_A_END if minute < SHIFT_A_END else SHIFT_B_END
+        return minute, shift_id, shift_end
+
+    minute = productive_offset_to_clock(
+        config,
+        int(round(offset_in_day)),
+        boundary="start",
+    )
+    for shift in ordered_shifts(config):
+        if int(shift.start_min) <= minute < int(shift.end_min):
+            return minute, shift.id, int(shift.end_min)
+    last = ordered_shifts(config)[-1]
+    return int(last.end_min), last.id, int(last.end_min)
+
+
+def _next_productive_boundary_abs(
+    day: int,
+    shift_end: int,
+    day_cap: int,
+    config: FactoryConfig | None,
+) -> float:
+    if config is None:
+        return float((day + 1) * day_cap)
+    return float(
+        day * day_cap + clock_to_productive_offset(config, int(shift_end))
+    )
 
 
 def _early_load(
@@ -86,12 +133,24 @@ def assign_machines(
     machine_load: dict[str, float] = defaultdict(float)
     # tool_id -> list of (start_abs, end_abs, machine_id) already assigned
     tool_windows: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
+    candidate_cache: dict[tuple[int, str], ToolRun] = {}
 
-    def _record(run: ToolRun, chosen: str) -> None:
-        machine_runs[chosen].append(run)
-        machine_load[chosen] += run.total_min
-        w_start, w_end = _estimate_run_window(run, machine_runs, chosen, day_cap)
-        tool_windows[run.tool_id].append((w_start, w_end, chosen))
+    def _run_for_machine(run: ToolRun, machine_id: str) -> ToolRun:
+        if config is None:
+            return run
+        key = (id(run), machine_id)
+        candidate = candidate_cache.get(key)
+        if candidate is None:
+            candidate = clone_run_for_machine(run, machine_id, engine_data, config)
+            candidate_cache[key] = candidate
+        return candidate
+
+    def _record(run: ToolRun, chosen: str, *, resolved: bool = False) -> None:
+        assigned = run if resolved else _run_for_machine(run, chosen)
+        machine_runs[chosen].append(assigned)
+        machine_load[chosen] += assigned.total_min
+        w_start, w_end = _estimate_run_window(assigned, machine_runs, chosen, day_cap)
+        tool_windows[assigned.tool_id].append((w_start, w_end, chosen))
 
     def _conflicts(run: ToolRun, candidate: str) -> bool:
         """True if placing run on candidate overlaps the same tool on another machine."""
@@ -103,7 +162,7 @@ def assign_machines(
 
     # First pass: runs without alt go to their primary
     has_alt: list[ToolRun] = []
-    for run in runs:
+    for run in sorted(runs, key=run_priority_key):
         if run.alt_machine_id is None:
             _record(run, run.machine_id)
             if audit_logger:
@@ -120,12 +179,28 @@ def assign_machines(
     # Second pass: runs with alt go to least-loaded machine
     # For early-EDD runs (edd <= 5), use EDD-aware load to avoid overloading
     # machines in the first few days.
-    has_alt.sort(key=lambda r: -r.total_min)
+    def _sort_total(run: ToolRun) -> float:
+        if run.alt_machine_id is None:
+            return _run_for_machine(run, run.machine_id).total_min
+        return max(
+            _run_for_machine(run, run.machine_id).total_min,
+            _run_for_machine(run, run.alt_machine_id).total_min,
+        )
+
+    has_alt.sort(key=lambda r: (-_sort_total(r), *run_priority_key(r)))
     for run in has_alt:
+        primary_run = _run_for_machine(run, run.machine_id)
+        alt_run = _run_for_machine(run, run.alt_machine_id)
+        candidate_runs = {
+            run.machine_id: primary_run,
+            run.alt_machine_id: alt_run,
+        }
         edd_thresh = config.edd_assign_threshold if config else 5
         if run.edd <= edd_thresh:
-            primary_early = _early_load(machine_runs, run.machine_id, run.edd)
-            alt_early = _early_load(machine_runs, run.alt_machine_id, run.edd)
+            primary_early = (
+                _early_load(machine_runs, run.machine_id, run.edd) + primary_run.total_min
+            )
+            alt_early = _early_load(machine_runs, run.alt_machine_id, run.edd) + alt_run.total_min
             if primary_early <= alt_early:
                 chosen = run.machine_id
             else:
@@ -133,8 +208,8 @@ def assign_machines(
             reason = "assign_edd_aware"
             options = [(run.machine_id, primary_early), (run.alt_machine_id, alt_early)]
         else:
-            primary_load_val = machine_load.get(run.machine_id, 0)
-            alt_load_val = machine_load.get(run.alt_machine_id, 0)
+            primary_load_val = machine_load.get(run.machine_id, 0) + primary_run.total_min
+            alt_load_val = machine_load.get(run.alt_machine_id, 0) + alt_run.total_min
             if primary_load_val <= alt_load_val:
                 chosen = run.machine_id
             else:
@@ -145,9 +220,9 @@ def assign_machines(
         # Tool contention: if the load-preferred machine would place the same
         # tool on another machine during an overlapping window, switch to the
         # other option when that one is conflict-free.
-        if _conflicts(run, chosen):
+        if _conflicts(candidate_runs[chosen], chosen):
             other = run.alt_machine_id if chosen == run.machine_id else run.machine_id
-            if not _conflicts(run, other):
+            if not _conflicts(candidate_runs[other], other):
                 chosen = other
                 reason = "assign_tool_contention"
 
@@ -156,7 +231,7 @@ def assign_machines(
             if reason == "assign_edd_aware":
                 audit_logger.decisions[-1].state_snapshot["edd"] = run.edd
 
-        _record(run, chosen)
+        _record(candidate_runs[chosen], chosen, resolved=True)
 
     # Re-resolve machine-dependent setup/OEE against the chosen machines
     # (no-op unless setup_overrides or per-machine OEE are configured).
@@ -174,9 +249,9 @@ def sequence_per_machine(
     config: FactoryConfig | None = None,
     holidays: set[int] | None = None,
 ) -> dict[str, list[ToolRun]]:
-    """Sequence runs per machine: target start/EDD → campaign → interleave → 2-opt."""
+    """Sequence runs per machine: risk priority → campaign → interleave → 2-opt."""
     for machine_id, runs in machine_runs.items():
-        runs.sort(key=_run_priority)  # 1. target start / EDD baseline
+        runs.sort(key=_run_priority)  # 1. rupture / delivery baseline
 
         # Campaign grouping: cluster same-tool runs to reduce setups
         before = [r.id for r in runs]
@@ -197,6 +272,7 @@ def sequence_per_machine(
 
         before = [r.id for r in runs]
         runs = _two_opt(runs, config=config)
+        runs = enforce_same_deadline_run_priority(runs)
         after_2opt = [r.id for r in runs]
         if audit_logger and before != after_2opt:
             moves = sum(1 for a, b in zip(before, after_2opt) if a != b)
@@ -206,13 +282,12 @@ def sequence_per_machine(
     return machine_runs
 
 
-def _run_priority(run: ToolRun) -> tuple[int, int]:
-    target = run.target_start_day if run.target_start_day is not None else run.edd
-    return (target, run.edd)
+def _run_priority(run: ToolRun) -> tuple[int, int, int, int, int, int, int, str]:
+    return run_priority_key(run)
 
 
 def _campaign_sequence(runs: list[ToolRun], config: FactoryConfig | None = None) -> list[ToolRun]:
-    """Nearest-neighbor: prefer same tool within EDD tolerance.
+    """Nearest-neighbor: prefer the same setup identity within EDD tolerance.
 
     Reduces setups by grouping runs of the same tool.
     """
@@ -226,17 +301,28 @@ def _campaign_sequence(runs: list[ToolRun], config: FactoryConfig | None = None)
 
     while remaining:
         last = result[-1]
-        # Candidates: within campaign window
+    # Candidates: within campaign window
         candidates = [r for r in remaining if r.edd <= last.edd + window]
         if not candidates:
             candidates = remaining
 
-        # Prefer same tool
-        same_tool = [r for r in candidates if r.tool_id == last.tool_id]
-        if same_tool:
-            best = min(same_tool, key=lambda r: r.edd)
+        # Campaign convenience can only break ties between requirements with
+        # the same stock-risk/deadline class.  It must never put a later
+        # rupture ahead of the best available requirement.
+        most_urgent = min(candidates, key=_run_priority)
+        urgency_class = _run_priority(most_urgent)[:3]
+        same_setup = [
+            run
+            for run in candidates
+            if run_setup_identity(run) == run_setup_identity(last)
+        ]
+        same_priority_setup = [
+            run for run in same_setup if _run_priority(run)[:3] == urgency_class
+        ]
+        if same_priority_setup:
+            best = min(same_priority_setup, key=_run_priority)
         else:
-            best = min(candidates, key=lambda r: r.edd)
+            best = most_urgent
 
         result.append(best)
         remaining.remove(best)
@@ -245,7 +331,7 @@ def _campaign_sequence(runs: list[ToolRun], config: FactoryConfig | None = None)
 
 
 def _interleave_urgent(runs: list[ToolRun]) -> list[ToolRun]:
-    """Break campaigns when an urgent run is blocked behind same-tool runs.
+    """Break campaigns when an urgent run is blocked behind equal setup runs.
 
     When two consecutive runs share a tool (campaign), check if any later run
     has an earlier EDD. If so, move it between them to break the campaign.
@@ -269,16 +355,21 @@ def _interleave_urgent(runs: list[ToolRun]) -> list[ToolRun]:
             current = result[i]
             next_run = result[i + 1]
 
-            # Only act when two consecutive runs share the same tool
-            if current.tool_id == next_run.tool_id:
-                # Look for runs further ahead with earlier EDD
+            # Only act when two consecutive runs share the mounted adjustment.
+            if run_setup_identity(current) == run_setup_identity(next_run):
+                # Look for runs further ahead with higher operational urgency.
                 best_insert = None
                 best_idx = None
 
                 for j in range(i + 2, len(result)):
                     candidate = result[j]
-                    if candidate.tool_id != current.tool_id and candidate.edd < next_run.edd:
-                        if best_insert is None or candidate.edd < best_insert.edd:
+                    if (
+                        run_setup_identity(candidate) != run_setup_identity(current)
+                        and _run_priority(candidate) < _run_priority(next_run)
+                    ):
+                        if best_insert is None or _run_priority(candidate) < _run_priority(
+                            best_insert
+                        ):
                             best_insert = candidate
                             best_idx = j
 
@@ -300,11 +391,14 @@ def _two_opt(runs: list[ToolRun], config: FactoryConfig | None = None) -> list[T
     while improved:
         improved = False
         for i in range(len(runs) - 1):
-            if runs[i].tool_id == runs[i + 1].tool_id:
+            if run_setup_identity(runs[i]) == run_setup_identity(runs[i + 1]):
                 continue
             for j in range(i + 2, min(i + 10, len(runs))):
-                if runs[j].tool_id == runs[i].tool_id:
-                    if abs(runs[i + 1].edd - runs[j].edd) <= tolerance:
+                if run_setup_identity(runs[j]) == run_setup_identity(runs[i]):
+                    if (
+                        abs(runs[i + 1].edd - runs[j].edd) <= tolerance
+                        and _run_priority(runs[j]) >= _run_priority(runs[i + 1])
+                    ):
                         runs[i + 1], runs[j] = runs[j], runs[i + 1]
                         improved = True
                         break
@@ -325,12 +419,11 @@ def per_machine_dispatch(
     tool_tl: ToolTimeline | None = None,
     lot_floors: dict[str, float] | None = None,
 ) -> tuple[list[Segment], list[Lot], list[str]]:
-    """Dispatch runs across machines. Parallel per-machine with crew mutex.
+    """Dispatch runs across machines with one setup resource per group.
 
     Each machine advances independently through its sequenced run queue.
-    The crew (single setup resource) is shared — machines wait for crew
-    only when they need a tool change. Campaign continuations (same tool)
-    skip the crew entirely.
+    Machines wait only for the crew of their own group.  Grandes and Médias
+    can therefore be prepared simultaneously.
 
     The ``tool_tl`` (tool timeline) is SHARED across every machine in this
     call: a physical tool can never be in two machines simultaneously. Callers
@@ -339,7 +432,12 @@ def per_machine_dispatch(
 
     Returns (segments, all_lots, warnings).
     """
-    crew = CrewState()
+    crews = {
+        group: CrewState()
+        for group in {
+            machine.group for machine in engine_data.machines
+        }
+    }
     if tool_tl is None:
         tool_tl = ToolTimeline()
     timelines: dict[str, MachineState] = {}
@@ -359,16 +457,16 @@ def per_machine_dispatch(
 
     all_segments: list[Segment] = []
 
-    # Priority queue: (available_at, next_edd, machine_id)
+    # Priority queue: availability, then deterministic run urgency.
     # Machines with earliest available time get served first.
     # Tie-break by most urgent EDD so crew serves the most time-critical machine.
-    heap: list[tuple[float, int, str]] = []
+    heap: list[tuple[float, int, int, int, str, str]] = []
     for m_id in queues:
         if queues[m_id]:
-            heapq.heappush(heap, (0.0, queues[m_id][0].edd, m_id))
+            heapq.heappush(heap, (0.0, *run_priority_key(queues[m_id][0]), m_id))
 
     while heap:
-        _, _, machine_id = heapq.heappop(heap)
+        *_priority, machine_id = heapq.heappop(heap)
 
         if not queues[machine_id]:
             continue
@@ -376,7 +474,7 @@ def per_machine_dispatch(
         tl = timelines[machine_id]
         holiday_set = machine_holiday_sets.get(machine_id, global_holidays)
 
-        # Process runs — campaign continuation: keep going while same tool
+        # Process runs while the exact tool adjustment can be retained.
         while queues[machine_id]:
             run = queues[machine_id][0]
 
@@ -386,7 +484,8 @@ def per_machine_dispatch(
                 if tl.available_at < lst_gate[run.id]:
                     tl.available_at = lst_gate[run.id]
 
-            needs_setup = tl.last_tool != run.tool_id
+            setup_identity = run_setup_identity(run)
+            needs_setup = tl.last_setup_identity != setup_identity
 
             queues[machine_id].pop(0)
             # Merge tool-blocked days into holiday set for this run
@@ -396,7 +495,7 @@ def per_machine_dispatch(
                 machine_id,
                 needs_setup,
                 timelines,
-                crew,
+                crews.setdefault(tl.group, CrewState()),
                 tool_tl,
                 engine_data,
                 run_holidays,
@@ -405,15 +504,20 @@ def per_machine_dispatch(
             )
             all_segments.extend(segments)
 
-            # Campaign continuation: next run same tool → skip heap, no crew needed
-            if queues[machine_id] and queues[machine_id][0].tool_id == run.tool_id:
+            # A retained adjustment can continue without re-entering the crew heap.
+            if (
+                queues[machine_id]
+                and run_setup_identity(queues[machine_id][0]) == setup_identity
+            ):
                 continue
             break  # back to heap for crew-aware scheduling
 
         # Re-enqueue if more runs remain
         if queues[machine_id]:
-            next_edd = queues[machine_id][0].edd
-            heapq.heappush(heap, (tl.available_at, next_edd, machine_id))
+            heapq.heappush(
+                heap,
+                (tl.available_at, *run_priority_key(queues[machine_id][0]), machine_id),
+            )
 
     # Extract all lots
     all_lots: list[Lot] = []
@@ -442,10 +546,14 @@ def _allocate_run(
     last_segments: list[Segment] = []
 
     for _ in range(max_attempts):
+        previous_machine = tool_tl.previous_machine(run.tool_id, candidate_start)
+        candidate_needs_setup = needs_setup or (
+            previous_machine is not None and previous_machine != machine_id
+        )
         segments, final_abs, crew_available, used_per_day = _allocate_run_candidate(
             run,
             machine_id,
-            needs_setup,
+            candidate_needs_setup,
             timelines,
             crew,
             engine_data,
@@ -459,11 +567,20 @@ def _allocate_run(
             return segments
 
         first_abs = _segment_start_abs(segments[0], config)
+        previous_machine = tool_tl.previous_machine(run.tool_id, first_abs)
+        if (
+            not candidate_needs_setup
+            and previous_machine is not None
+            and previous_machine != machine_id
+        ):
+            needs_setup = True
+            continue
         conflict = _first_tool_conflict(tool_tl, run.tool_id, first_abs, final_abs, machine_id)
         if conflict is None:
             tl = timelines[machine_id]
             tl.available_at = final_abs
             tl.last_tool = run.tool_id
+            tl.last_setup_identity = run_setup_identity(run)
             for day, used in used_per_day.items():
                 tl.used_per_day[day] = tl.used_per_day.get(day, 0) + used
             crew.available_at = crew_available
@@ -493,10 +610,6 @@ def _allocate_run_candidate(
 ) -> tuple[list[Segment], float, float, dict[int, float]]:
     """Build a run allocation without mutating shared machine/crew/tool state."""
     day_cap = config.day_capacity_min if config else DAY_CAP
-    shift_a_start = config.shift_a_start if config else SHIFT_A_START
-    shift_a_end = config.shift_a_end if config else SHIFT_A_END
-    shift_b_end = config.shift_b_end if config else SHIFT_B_END
-
     tl = timelines[machine_id]
     segments: list[Segment] = []
     used_per_day: dict[int, float] = {}
@@ -512,30 +625,44 @@ def _allocate_run_candidate(
         setup_start = _snap_to_shift(setup_start, holidays, day_cap=day_cap)
         while True:
             day = int(setup_start) // day_cap
-            min_in_day = shift_a_start + int(round(setup_start - day * day_cap))
             if day >= engine_data.n_days:
                 return [], setup_start, crew_available, used_per_day
-            if shift_b_end - min_in_day >= run.setup_min:
+            offset_in_day = setup_start - day * day_cap
+            min_in_day, _shift_id, shift_end = _productive_position(
+                offset_in_day,
+                config,
+            )
+            if shift_end - min_in_day >= run.setup_min:
                 break
-            setup_start = _snap_to_shift(float((day + 1) * day_cap), holidays, day_cap=day_cap)
+            setup_start = _snap_to_shift(
+                _next_productive_boundary_abs(
+                    day,
+                    shift_end,
+                    day_cap,
+                    config,
+                ),
+                holidays,
+                day_cap=day_cap,
+            )
         crew_available = setup_start + run.setup_min
         start_abs = setup_start
 
     # Production: each lot sequentially (already in EDD order — Fix 1)
-    last_end_on_day: dict[int, int] = {}  # track end_min per day to prevent overlaps
+    last_end_on_day: dict[int, float] = {}
 
     for lot_idx, lot in enumerate(run.lots):
         remaining_min = lot.prod_min
         remaining_qty = lot.qty
         is_first_seg = True
 
-        # Materials-window floor (earliness_policy="window"): never start a
-        # lot before its release floor. Floors are OTD-guarded upstream
-        # (window.compute_window_gates) so this cannot force tardiness alone.
+        # Fixed JIT floor applies to the first productive minute.  A required
+        # setup may therefore be prepared immediately before that floor.
         if lot_floors:
             floor_abs = lot_floors.get(lot.id)
-            if floor_abs is not None and start_abs < floor_abs:
-                start_abs = floor_abs
+            productive_abs = start_abs + setup_remaining
+            if floor_abs is not None and productive_abs < floor_abs:
+                start_abs = floor_abs - setup_remaining
+                crew_available = max(crew_available, start_abs + setup_remaining)
 
         # Fix 5: ensure at least 1 segment even for micro-lots
         while remaining_min > 0.01 or (remaining_qty > 0 and is_first_seg):
@@ -546,25 +673,47 @@ def _allocate_run_candidate(
                 break
 
             offset_in_day = round(start_abs - day * day_cap, 2)
-            min_in_day = shift_a_start + int(round(offset_in_day))
 
             # Prevent float/int truncation overlaps: ensure we start after last segment
-            if day in last_end_on_day and min_in_day < last_end_on_day[day]:
-                min_in_day = last_end_on_day[day]
-                start_abs = day * day_cap + (min_in_day - shift_a_start)
+            if day in last_end_on_day and offset_in_day < last_end_on_day[day]:
+                offset_in_day = last_end_on_day[day]
+                start_abs = day * day_cap + offset_in_day
+
+            min_in_day, shift, shift_end = _productive_position(
+                offset_in_day,
+                config,
+            )
 
             # Setup only on first segment of first lot of run
             seg_setup = setup_remaining if (lot_idx == 0 and is_first_seg) else 0.0
 
-            day_remaining = shift_b_end - min_in_day
+            day_remaining = shift_end - min_in_day
 
             if day_remaining < 1:
-                start_abs = _snap_to_shift(float((day + 1) * day_cap), holidays, day_cap=day_cap)
+                start_abs = _snap_to_shift(
+                    _next_productive_boundary_abs(
+                        day,
+                        shift_end,
+                        day_cap,
+                        config,
+                    ),
+                    holidays,
+                    day_cap=day_cap,
+                )
                 continue
 
             # If setup doesn't fit in remaining day, push to next day
             if seg_setup >= day_remaining:
-                start_abs = _snap_to_shift(float((day + 1) * day_cap), holidays, day_cap=day_cap)
+                start_abs = _snap_to_shift(
+                    _next_productive_boundary_abs(
+                        day,
+                        shift_end,
+                        day_cap,
+                        config,
+                    ),
+                    holidays,
+                    day_cap=day_cap,
+                )
                 continue
 
             # Production time available AFTER setup
@@ -579,8 +728,6 @@ def _allocate_run_candidate(
                 block_qty = remaining_qty
             block_qty = min(block_qty, remaining_qty)
 
-            shift = "A" if min_in_day < shift_a_end else "B"
-
             # Twin outputs proportional (floor-based to avoid over-allocation)
             twin_out = None
             if lot.twin_outputs and lot.qty > 0:
@@ -593,11 +740,11 @@ def _allocate_run_candidate(
                         for op_id, sku, qty in lot.twin_outputs
                     ]
 
-            # SKU from twin outputs or op_id
-            sku = ""
-            if lot.twin_outputs:
+            # Lot.sku is the controlling output for a twin cycle.
+            sku = lot.sku
+            if not sku and lot.twin_outputs:
                 sku = lot.twin_outputs[0][1]
-            elif "_" in lot.op_id:
+            elif not sku and "_" in lot.op_id:
                 parts = lot.op_id.split("_")
                 sku = parts[-1] if len(parts) >= 3 else lot.op_id
 
@@ -616,6 +763,7 @@ def _allocate_run_candidate(
                 is_continuation=not is_first_seg,
                 edd=lot.edd,
                 sku=sku,
+                setup_family=lot.setup_family,
                 twin_outputs=twin_out,
                 lot_qty=lot.qty,
                 run_qty=sum(r_lot.qty for r_lot in run.lots),
@@ -624,6 +772,13 @@ def _allocate_run_candidate(
                 original_edd=lot.original_edd,
                 internal_deadline=lot.internal_deadline,
                 delivery_day=lot.delivery_day,
+                customer_delivery_day=lot.customer_delivery_day,
+                latest_subcontract_dispatch_day=lot.latest_subcontract_dispatch_day,
+                subcontract_dispatch_day=lot.subcontract_dispatch_day,
+                production_due_day=lot.production_due_day,
+                internal_target_day=lot.internal_target_day,
+                material_reference_day=lot.material_reference_day,
+                material_reference_kind=lot.material_reference_kind,
                 eco_lot_isop=lot.eco_lot_isop,
                 eco_lot_effective=lot.eco_lot_effective,
                 start_buffer_days=lot.start_buffer_days,
@@ -632,8 +787,16 @@ def _allocate_run_candidate(
                 min_campaign_qty=lot.min_campaign_qty,
                 min_campaign_prod_min=lot.min_campaign_prod_min,
                 max_group_gap_days=lot.max_group_gap_days,
+                planning_priority=lot.planning_priority,
+                material_release_day=lot.material_release_day,
+                output_milestones=(
+                    [dict(item) for item in lot.output_milestones]
+                    if lot.output_milestones is not None
+                    else None
+                ),
                 planning_source=lot.planning_source,
                 economic_warning=lot.economic_warning,
+                is_subcontracted=lot.is_subcontracted,
                 subcontract_company_id=lot.subcontract_company_id,
                 subcontract_lead_time_days=lot.subcontract_lead_time_days,
                 subcontract_buffer_days=lot.subcontract_buffer_days,
@@ -641,7 +804,7 @@ def _allocate_run_candidate(
             segments.append(seg)
 
             used_per_day[day] = used_per_day.get(day, 0) + block_min + seg_setup
-            last_end_on_day[day] = seg.end_min
+            last_end_on_day[day] = offset_in_day + block_min + seg_setup
             start_abs += block_min + seg_setup
             remaining_min -= block_min
             remaining_qty -= block_qty
@@ -656,8 +819,12 @@ def _allocate_run_candidate(
 
 def _segment_start_abs(seg: Segment, config: FactoryConfig | None = None) -> float:
     day_cap = config.day_capacity_min if config else DAY_CAP
-    shift_a_start = config.shift_a_start if config else SHIFT_A_START
-    return seg.day_idx * day_cap + (seg.start_min - shift_a_start)
+    offset = (
+        clock_to_productive_offset(config, seg.start_min)
+        if config is not None
+        else seg.start_min - SHIFT_A_START
+    )
+    return seg.day_idx * day_cap + offset
 
 
 def _first_tool_conflict(

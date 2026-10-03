@@ -2,7 +2,7 @@
 name = "pp1-scheduler"
 version = "1.0.0"
 description = "ProdPlan PP1 — Industrial APS Scheduler"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

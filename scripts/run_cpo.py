@@ -121,8 +121,12 @@ def main():
     holiday_ok = all(s.day_idx not in holidays for s in cpo_result.segments)
     _check("No holidays", holiday_ok)
 
-    prm020_ok = all(s.machine_id != "PRM020" for s in cpo_result.segments)
-    _check("PRM020 inactive", prm020_ok)
+    prm020_ok = (
+        all(op.m != "PRM020" and op.alt != "PRM020" for op in engine_data.ops)
+        and all(machine.id != "PRM020" for machine in engine_data.machines)
+        and all(s.machine_id != "PRM020" for s in cpo_result.segments)
+    )
+    _check("PRM020 excluded", prm020_ok)
 
     start_end_ok = all(s.start_min <= s.end_min for s in cpo_result.segments)
     _check("Segment start <= end", start_end_ok)

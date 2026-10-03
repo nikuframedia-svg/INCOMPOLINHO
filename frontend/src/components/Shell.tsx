@@ -1,34 +1,46 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { T } from "../theme/tokens";
 import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
+import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
-import { getHealth, getTrust, recalculate } from "../api/endpoints";
+import { assertRefreshed, RefreshError } from "../lib/refreshOutcome";
+import { getHealth, recalculate } from "../api/endpoints";
 import { TH } from "../constants/thresholds";
+import { approvalGateFromError, approvalImpactMessage } from "../lib/gateApproval";
 import { Sidebar } from "./Sidebar";
 import { ChatPanel } from "./ChatPanel";
+import { PageErrorBoundary } from "./PageErrorBoundary";
+import { GlobalLoadingOverlay } from "./GlobalLoadingOverlay";
 import { UploadZone } from "./ui/UploadZone";
 import { ConsolePage } from "../pages/ConsolePage";
 import { GanttPage } from "../pages/GanttPage";
-import { StockPage } from "../pages/StockPage";
 import { RiskPage } from "../pages/RiskPage";
-import { SimulatorPage } from "../pages/SimulatorPage";
 import { ConfigPage } from "../pages/ConfigPage";
-import { ExpeditionPage } from "../pages/ExpeditionPage";
+import { DeliveriesPage } from "../pages/DeliveriesPage";
 import { JournalPage } from "../pages/JournalPage";
 import { RulesPage } from "../pages/RulesPage";
+import { CapacityPage } from "../pages/CapacityPage";
+import { useConfirm } from "./ui/confirmContext";
 import type { MutationInput } from "../api/types";
 
+type OperationStatus = {
+  phase: "idle" | "pending" | "success" | "error";
+  message: string;
+  detail: string;
+};
+
 const NAV_LABELS: Record<string, string> = {
-  console: "Consola",
-  gantt: "Produção",
-  stock: "Stock",
+  console: "Hoje",
+  gantt: "Plano",
+  capacity: "Carga e capacidade",
+  deliveries: "Entregas",
   risk: "Risco",
-  expedition: "Expedição",
-  sim: "Simulador",
   config: "Configuração",
   journal: "Journal",
   rules: "Regras",
 };
+
+const DELIVERIES_FOCUS_KEY = "pp1DeliveriesFocus";
 
 function mutationLabel(mutation: MutationInput): string {
   const p = mutation.params;
@@ -51,10 +63,9 @@ function PageContent() {
   switch (page) {
     case "console": return <ConsolePage />;
     case "gantt": return <GanttPage />;
-    case "stock": return <StockPage />;
+    case "capacity": return <CapacityPage />;
+    case "deliveries": return <DeliveriesPage />;
     case "risk": return <RiskPage />;
-    case "expedition": return <ExpeditionPage />;
-    case "sim": return <SimulatorPage />;
     case "config": return <ConfigPage />;
     case "journal": return <JournalPage />;
     case "rules": return <RulesPage />;
@@ -63,9 +74,18 @@ function PageContent() {
 }
 
 export function Shell() {
+  const { confirm } = useConfirm();
   const hasData = useAppStore((s) => s.hasData);
+  const loadJobId = useLoadStore((s) => s.jobId);
+  const loadOpen = useLoadStore((s) => s.isOpen);
+  const loadJob = useLoadStore((s) => s.job);
+  const loadCompletion = useLoadStore((s) => s.completion);
+
+  useEffect(() => {
+    useLoadStore.getState().resume();
+    return stopLoadPolling;
+  }, []);
   const setHasData = useAppStore((s) => s.setHasData);
-  const setTrust = useAppStore((s) => s.setTrust);
   const clearTrust = useAppStore((s) => s.clearTrust);
   const dataset = useAppStore((s) => s.dataset);
   const setDataset = useAppStore((s) => s.setDataset);
@@ -78,29 +98,56 @@ export function Shell() {
   const isSimulated = useDataStore((s) => s.isSimulated);
   const activeMutations = useDataStore((s) => s.activeMutations);
   const simulationSummary = useDataStore((s) => s.simulationSummary);
+  const manualEdits = useDataStore((s) => s.manualEdits);
+  const canRevert = useDataStore((s) => s.canRevert);
   const revert = useDataStore((s) => s.revert);
   const clearData = useDataStore((s) => s.clear);
   const [checkingData, setCheckingData] = useState(true);
+  const [backendUnavailable, setBackendUnavailable] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [recalcing, setRecalcing] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const [copilotAvailable, setCopilotAvailable] = useState(false);
+  const [copilotReason, setCopilotReason] = useState("A verificar a disponibilidade do Copilot…");
+  const [operationStatus, setOperationStatus] = useState<OperationStatus>({
+    phase: "idle",
+    message: "",
+    detail: "",
+  });
+  const operationPending = refreshing || recalcing || reverting;
+
+  useEffect(() => {
+    if (operationStatus.phase !== "success") return;
+    const timeout = window.setTimeout(() => {
+      setOperationStatus({ phase: "idle", message: "", detail: "" });
+    }, 4000);
+    return () => window.clearTimeout(timeout);
+  }, [operationStatus.phase]);
 
   useEffect(() => {
     let alive = true;
+    let retryTimer: number | undefined;
 
     async function hydrateFromBackend() {
+      // The loading workflow recovers and refreshes its own result. Do not race
+      // an older health response against its application of the new dataset.
+      if (useLoadStore.getState().jobId) {
+        setCheckingData(false);
+        return;
+      }
       try {
         const health = await getHealth();
-        if (!alive) return;
-        const activeDatasetId = sessionStorage.getItem(ACTIVE_DATASET_KEY);
-        if (health.has_data && health.dataset && activeDatasetId === health.dataset.id) {
-          setDataset(health.dataset);
-          await refreshAll();
-          try {
-            const trust = await getTrust();
-            if (alive) setTrust(trust.score, trust.gate);
-          } catch {
-            // Trust is helpful for the sidebar, but the dashboard can load without it.
-          }
+        if (!alive || useLoadStore.getState().jobId) return;
+        setBackendUnavailable(false);
+        setCopilotAvailable(health.copilot?.available ?? false);
+        setCopilotReason(
+          health.copilot?.reason
+          || (health.copilot?.available ? "" : "O Copilot não está configurado."),
+        );
+        if (health.has_data && health.dataset) {
+          assertRefreshed(await refreshAll());
+          const currentDataset = useAppStore.getState().dataset;
+          if (currentDataset) sessionStorage.setItem(ACTIVE_DATASET_KEY, currentDataset.id);
           if (alive) setHasData(true);
         } else {
           clearData();
@@ -110,11 +157,11 @@ export function Shell() {
           if (!health.has_data) sessionStorage.removeItem(ACTIVE_DATASET_KEY);
         }
       } catch {
-        clearData();
-        clearTrust();
-        setDataset(null);
-        setHasData(false);
-        sessionStorage.removeItem(ACTIVE_DATASET_KEY);
+        if (!alive) return;
+        // A falha do servidor não significa que o ISOP deixou de existir.
+        // Preserva a seleção local e tenta novamente enquanto o serviço reinicia.
+        setBackendUnavailable(true);
+        retryTimer = window.setTimeout(hydrateFromBackend, 2000);
       } finally {
         if (alive) setCheckingData(false);
       }
@@ -123,35 +170,174 @@ export function Shell() {
     hydrateFromBackend();
     return () => {
       alive = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [clearData, clearTrust, refreshAll, setDataset, setHasData, setTrust]);
+  }, [clearData, clearTrust, refreshAll, setDataset, setHasData, loadJobId]);
+
+  useEffect(() => {
+    let inFlight = false;
+    let lastCheck = 0;
+    const reconcileVisiblePlan = async () => {
+      if (document.hidden || inFlight || operationPending || useLoadStore.getState().jobId) return;
+      if (Date.now() - lastCheck < 5000) return;
+      lastCheck = Date.now();
+      inFlight = true;
+      try {
+        const health = await getHealth();
+        if (!health.has_data || useLoadStore.getState().jobId) return;
+        const current = useDataStore.getState();
+        if (health.dataset?.id !== current.datasetId || health.plan_revision !== current.planRevision) {
+          await refreshAll();
+        }
+      } catch {
+        // Keep the last coherent snapshot until the service is reachable again.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const onVisible = () => { if (!document.hidden) void reconcileVisiblePlan(); };
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    const interval = window.setInterval(onVisible, 60_000);
+    return () => {
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(interval);
+    };
+  }, [operationPending, refreshAll]);
 
   const handleChangeIsop = () => {
-    sessionStorage.removeItem(ACTIVE_DATASET_KEY);
-    clearData();
-    clearTrust();
-    setDataset(null);
-    setHasData(false);
-    setPage("console");
+    useLoadStore.getState().open();
   };
 
   const handleRevert = async () => {
     setReverting(true);
-    try { await revert(); } catch (err) { console.error("Revert failed:", err); }
-    setReverting(false);
+    setOperationStatus({
+      phase: "pending",
+      message: "A desfazer a alteração…",
+      detail: "O plano real continua protegido até a operação terminar.",
+    });
+    try {
+      await revert();
+      setOperationStatus({
+        phase: "success",
+        message: "Alteração desfeita",
+        detail: "O plano anterior voltou a estar ativo.",
+      });
+    } catch (err) {
+      setOperationStatus({
+        phase: "error",
+        message: err instanceof RefreshError && err.applied ? "Alteração desfeita; ecrã por atualizar" : "Não foi possível desfazer",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setOperationStatus({
+      phase: "pending",
+      message: "A atualizar dados…",
+      detail: "A obter o estado mais recente sem recalcular o plano.",
+    });
+    try {
+      assertRefreshed(await refreshAll());
+      setOperationStatus({
+        phase: "success",
+        message: "Dados atualizados",
+        detail: "O plano não foi recalculado.",
+      });
+    } catch (err) {
+      setOperationStatus({
+        phase: "error",
+        message: "Não foi possível atualizar",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleRecalc = async () => {
     setRecalcing(true);
+    setOperationStatus({
+      phase: "pending",
+      message: "A recalcular o plano…",
+      detail: "A reorganizar produções, setups e recursos.",
+    });
     try {
       await recalculate();
-      await refreshAll();
-    } catch (err) { console.error("Recalculate failed:", err); }
-    setRecalcing(false);
+      assertRefreshed(await refreshAll(), true);
+      setOperationStatus({
+        phase: "success",
+        message: "Plano recalculado",
+        detail: "Os novos resultados já estão visíveis.",
+      });
+    } catch (err) {
+      const gate = approvalGateFromError(err);
+      if (gate) {
+        const approved = await confirm({
+          title: "Aplicar plano com exceções?",
+          message: approvalImpactMessage(gate),
+          confirmLabel: "Aplicar plano",
+          variant: "danger",
+        });
+        if (!approved) {
+          setOperationStatus({
+            phase: "idle",
+            message: "",
+            detail: "",
+          });
+          return;
+        }
+        try {
+          await recalculate({
+            reason: `Recalculo confirmado com exceções: ${gate.approval_reasons.join(", ") || "exceções operacionais"}`,
+            author: "planeador",
+          });
+          assertRefreshed(await refreshAll(), true);
+          setOperationStatus({
+            phase: "success",
+            message: "Plano recalculado com exceções",
+            detail: "O plano foi aplicado após confirmação do planeador.",
+          });
+        } catch (approvalError) {
+          setOperationStatus({
+            phase: "error",
+            message: approvalError instanceof RefreshError && approvalError.applied ? "Plano aplicado; ecrã por atualizar" : "Não foi possível aplicar o plano",
+            detail: approvalError instanceof Error ? approvalError.message : String(approvalError),
+          });
+        }
+        return;
+      }
+      setOperationStatus({
+        phase: "error",
+        message: err instanceof RefreshError && err.applied ? "Plano recalculado; ecrã por atualizar" : "Não foi possível recalcular",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRecalcing(false);
+    }
+  };
+
+  const handleDeliveriesFocus = (metric: "otd" | "otd_d") => {
+    sessionStorage.setItem(
+      DELIVERIES_FOCUS_KEY,
+      JSON.stringify({
+        page: "deliveries",
+        view: "order",
+        metric,
+        source: "shell-kpi",
+      }),
+    );
+    setPage("deliveries");
   };
 
   return (
     <div
+      className="app-shell"
       style={{
         display: "flex",
         height: "100vh",
@@ -161,10 +347,12 @@ export function Shell() {
         WebkitFontSmoothing: "antialiased",
       }}
     >
+      <GlobalLoadingOverlay />
       <Sidebar />
 
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <main className="app-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <header
+          className="app-header"
           style={{
             height: 48,
             padding: "0 24px",
@@ -175,7 +363,7 @@ export function Shell() {
             flexShrink: 0,
           }}
         >
-          <div style={{ minWidth: 0 }}>
+          <div className="app-header-title" style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: T.primary }}>
               {NAV_LABELS[page] || page}
             </div>
@@ -196,25 +384,25 @@ export function Shell() {
               </div>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div className="app-header-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {hasData && score && (
               <div style={{ display: "flex", gap: 12 }}>
-                <span style={{ fontSize: 11, color: (score.otd ?? 0) >= TH.OTD_GREEN ? T.green : T.orange, fontFamily: T.mono, fontWeight: 500 }}>
-                  OTD {score.otd?.toFixed(1)}%
-                </span>
-                <span style={{ fontSize: 11, color: (score.otd_d ?? 0) >= TH.OTD_D_GREEN ? T.green : T.orange, fontFamily: T.mono, fontWeight: 500 }}>
-                  OTD-D {score.otd_d?.toFixed(1)}%
-                </span>
-                {dataset && (
-                  <>
-                    <span style={{ fontSize: 11, color: T.green, fontFamily: T.mono, fontWeight: 500 }}>
-                      Trust {dataset.trust_score}
-                    </span>
-                    <span style={{ fontSize: 11, color: dataset.tardy_count ? T.orange : T.green, fontFamily: T.mono, fontWeight: 500 }}>
-                      {dataset.tardy_count ?? 0} atrasos
-                    </span>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => handleDeliveriesFocus("otd")}
+                  title="Abrir entregas a tempo"
+                  style={{ ...kpiButtonStyle, color: (score.otd ?? 0) >= TH.OTD_GREEN ? T.green : T.orange }}
+                >
+                  Entregas a tempo <b style={{ fontFamily: T.mono }}>{score.otd?.toFixed(1)}%</b>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeliveriesFocus("otd_d")}
+                  title="Abrir cumprimento diário"
+                  style={{ ...kpiButtonStyle, color: (score.otd_d ?? 0) >= TH.OTD_D_GREEN ? T.green : T.orange }}
+                >
+                  Cumprimento diário <b style={{ fontFamily: T.mono }}>{score.otd_d?.toFixed(1)}%</b>
+                </button>
               </div>
             )}
             {hasData && (
@@ -236,8 +424,9 @@ export function Shell() {
                   Trocar ISOP
                 </button>
                 <button
-                  onClick={() => refreshAll()}
-                  title="Actualizar dados"
+                  onClick={() => void handleRefresh()}
+                  disabled={operationPending}
+                  title="Obtém os dados mais recentes sem voltar a calcular o plano"
                   style={{
                     background: "transparent",
                     border: `1px solid ${T.border}`,
@@ -245,16 +434,16 @@ export function Shell() {
                     borderRadius: 8,
                     padding: "5px 10px",
                     cursor: "pointer",
-                    fontSize: 12,
+                    fontSize: 11,
                     fontFamily: "inherit",
                   }}
                 >
-                  ↻
+                  {refreshing ? "A atualizar…" : "Atualizar dados"}
                 </button>
                 <button
                   onClick={handleRecalc}
-                  disabled={recalcing || isSimulated}
-                  title={isSimulated ? "Reverta o cenario simulado primeiro" : "Recalcular schedule"}
+                  disabled={operationPending || isSimulated}
+                  title={isSimulated ? "Desfaz primeiro o cenário simulado" : "Volta a organizar todas as produções e setups"}
                   style={{
                     background: "transparent",
                     border: `1px solid ${T.border}`,
@@ -266,28 +455,56 @@ export function Shell() {
                     fontFamily: "inherit",
                   }}
                 >
-                  {recalcing ? "..." : "Recalcular"}
+                  {recalcing ? "A recalcular…" : "Recalcular plano"}
                 </button>
               </>
             )}
             <button
               onClick={toggleChat}
+              disabled={!copilotAvailable}
+              title={copilotAvailable ? "Abrir o assistente de planeamento" : copilotReason}
               style={{
                 background: chatOpen ? `${T.blue}18` : "transparent",
                 border: `1px solid ${chatOpen ? `${T.blue}44` : T.border}`,
                 color: chatOpen ? T.blue : T.secondary,
                 borderRadius: 8,
                 padding: "5px 12px",
-                cursor: "pointer",
+                cursor: copilotAvailable ? "pointer" : "not-allowed",
                 fontSize: 12,
                 fontWeight: 500,
                 fontFamily: "inherit",
               }}
             >
-              Copilot
+              {copilotAvailable ? "Copilot" : "Copilot indisponível"}
             </button>
           </div>
         </header>
+        {hasData && operationStatus.phase !== "idle" && (() => {
+          const color = operationStatus.phase === "error"
+            ? T.red
+            : operationStatus.phase === "success"
+              ? T.green
+              : T.blue;
+          return (
+            <div
+              role={operationStatus.phase === "error" ? "alert" : "status"}
+              aria-live="polite"
+              style={{
+                padding: "7px 24px",
+                background: `${color}10`,
+                borderBottom: `1px solid ${color}35`,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexShrink: 0,
+                fontSize: 11,
+              }}
+            >
+              <span style={{ color, fontWeight: 600 }}>{operationStatus.message}</span>
+              <span style={{ color: T.secondary }}>{operationStatus.detail}</span>
+            </div>
+          );
+        })()}
 
         {isSimulated && (
           <div style={{
@@ -299,11 +516,11 @@ export function Shell() {
             gap: 12,
             flexShrink: 0,
           }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: T.orange }}>Cenario simulado</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.orange }}>Cenário simulado</span>
             <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
               {activeMutations.length > 0
                 ? activeMutations.map(mutationLabel).join(" · ")
-                : simulationSummary[0] ?? "Mutacoes aplicadas no plano activo"}
+                : simulationSummary[0] ?? "Alterações aplicadas ao plano ativo"}
             </span>
             <button
               onClick={handleRevert}
@@ -325,11 +542,86 @@ export function Shell() {
           </div>
         )}
 
-        <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
-          {checkingData ? (
+        {manualEdits.length > 0 && (
+          <div style={{
+            padding: "8px 24px",
+            background: `${T.blue}12`,
+            borderBottom: `1px solid ${T.blue}35`,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.blue }}>Edição manual ativa</span>
+            <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
+              {manualEdits.map((edit) => `${edit.lot_id} → dia ${edit.target_day} (${edit.target_machine})`).join(" · ")}
+            </span>
+            {canRevert ? (
+              <button
+                onClick={handleRevert}
+                disabled={reverting}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${T.blue}`,
+                  color: T.blue,
+                  borderRadius: 6,
+                  padding: "4px 12px",
+                  cursor: reverting ? "default" : "pointer",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  fontFamily: "inherit",
+                }}
+              >
+                {reverting ? "A desfazer…" : "Desfazer"}
+              </button>
+            ) : (
+              <span style={{ color: T.tertiary, fontSize: 10 }}>Versão anterior disponível em Planos</span>
+            )}
+          </div>
+        )}
+
+        {loadCompletion && (
+          <div role="status" style={{ padding: "12px 24px", background: `${T.green}10`, color: T.secondary, fontSize: 13 }}>
+            <strong>Plano atualizado.</strong> {loadCompletion.filename}
+            {loadWarnings(loadCompletion).length > 0 && <ul style={{ margin: "8px 0", paddingLeft: 18 }}>
+              {loadWarnings(loadCompletion).map((warning, index) => <li key={index}>{warning}</li>)}
+            </ul>}
+            <button onClick={() => useLoadStore.setState({ completion: null })}
+              style={{ marginLeft: 12, cursor: "pointer", background: "transparent", border: "none", color: T.blue }}>Fechar aviso</button>
+          </div>
+        )}
+        {loadJobId && !loadOpen && (
+          <div role="status" style={{ padding: "10px 24px", background: `${T.blue}10`, color: T.secondary, fontSize: 12 }}>
+            {loadJob && ["prepared", "awaiting_approval"].includes(loadJob.status)
+              ? "O ficheiro está pronto para atualizar o plano."
+              : loadJob && ["applied", "blocked", "failed", "cancelled", "stale"].includes(loadJob.status)
+                ? loadJob.message : "A atualizar o plano…"}
+            <button style={{ marginLeft: 12, cursor: "pointer", color: T.blue, background: "transparent", border: "none", fontFamily: "inherit" }}
+              onClick={() => useLoadStore.getState().open()}>Acompanhar carregamento</button>
+          </div>
+        )}
+        <div className="app-content" style={{ flex: 1, overflow: "auto", padding: page === "console" ? 0 : 24 }}>
+          {loadOpen ? (
+            <UploadZone />
+          ) : checkingData ? (
             <div style={{ color: T.secondary, padding: 24 }}>A verificar dados...</div>
+          ) : backendUnavailable ? (
+            <div
+              role="status"
+              style={{
+                minHeight: "100%",
+                display: "grid",
+                placeItems: "center",
+                color: T.secondary,
+                fontSize: 13,
+              }}
+            >
+              A restabelecer ligação ao servidor…
+            </div>
           ) : hasData ? (
-            <PageContent />
+              <PageErrorBoundary key={page}>
+                <PageContent />
+              </PageErrorBoundary>
           ) : (
             <UploadZone />
           )}
@@ -340,3 +632,14 @@ export function Shell() {
     </div>
   );
 }
+
+const kpiButtonStyle: CSSProperties = {
+  appearance: "none",
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  cursor: "pointer",
+  fontSize: 10,
+  fontWeight: 600,
+  fontFamily: "inherit",
+};

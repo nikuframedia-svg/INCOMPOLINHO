@@ -67,7 +67,8 @@ Exemplo: np_values = [2751, 2751, 2751, -15600, 0, -10400]
 
 ### 1.4 Filtros de Input
 
-- **PRM020** — FORA DE USO. Todas as linhas com `machine_id == "PRM020"` são IGNORADAS
+- **PRM020** — fora do âmbito; operações nesta máquina fazem falhar a importação
+  com diagnóstico explícito, sem descartar procura
 - **pH <= 0** — Warning, default para 1.0
 - **SKU vazio** — Para leitura (break)
 - Valores safe: `_safe_int(None) = 0`, `_safe_int("") = 0`, `_safe_int("abc") = 0`
@@ -118,6 +119,11 @@ O `_raw_to_eop()` enriquece cada RawRow com dados do `factory.yaml`:
 - **ID:** formato `"{tool}_{machine}_{sku}"`
 - **pH:** se `raw.pH <= 0` → default 1.0
 - **operators:** se `raw.operators <= 0` → default 1
+
+O ISOP define as referências e ferramentas ativas. A configuração pode manter
+referências históricas sem linha no ISOP atual para preservar regras de
+planeamento e subcontratação; `CF589MMA1A02.20` é um caso operacional que deve
+continuar visível como origem `config` quando não existe no upload.
 
 ### 2.3 Multi-Client Merge
 
@@ -261,7 +267,7 @@ EngineData
   ↓ Phase 2: Tool Grouping     — Lots → ToolRuns
   ↓ Phase 3: Dispatch           — Assign + Sequence + Allocate → Segments
   ↓ Auto Buffer (se necessário)
-  ↓ Phase 4: JIT                — Backward scheduling
+  ↓ Phase 4: Material/Prazo     — Release-first + prazo de produção
   ↓ Phase 4b: VNS               — Polish (swap, relocate, cross-machine)
   ↓ Unshift Buffer
   ↓ Fix Overlaps + Crew Serialization + Sanitize
@@ -305,26 +311,23 @@ Senão: ceil(demand / eco_lot) × eco_lot    # SEMPRE arredonda para CIMA
 ### 5.3 Twin Lots (peças gémeas)
 
 ```
-surplus_a = 0, surplus_b = 0
+Validar eco_lot_effective_a == eco_lot_effective_b.
+Se forem diferentes, bloquear o cálculo e exigir correção dos dados.
 
-Para cada dia onde A OU B tem demand:
-  need_a = max(0, demand_a - surplus_a)
-  need_b = max(0, demand_b - surplus_b)
+Criar eventos cronológicos de procura A e B e aplicar o excedente FIFO por SKU.
+Para o evento mais urgente:
+  procurar o evento oposto mais próximo até 5 dias de entrega
 
-  Se need_a <= 0 AND need_b <= 0: skip (consume surplus)
+  Se existe parceiro:
+    qty = max(eco_lot_hard(need_a), eco_lot_hard(need_b))
+  Senão:
+    qty = eco_lot_hard(need_urgente)
 
-  eco_a = eco_lot_hard(need_a, eco_lot_a) se need_a > 0, senão 0
-  eco_b = eco_lot_hard(need_b, eco_lot_b) se need_b > 0, senão 0
+  Em ambos os casos:
+    qty_a = qty_b = qty
+    marcar como stock coproduzido o output sem procura compatível
 
-  Se AMBOS > 0:
-    qty = max(eco_a, eco_b)
-    Arredondar qty para satisfazer AMBOS eco lots:
-      Se qty % eco_lot_a != 0: qty = ceil(qty/eco_lot_a) × eco_lot_a
-      Se qty % eco_lot_b != 0: qty = ceil(qty/eco_lot_b) × eco_lot_b
-      Se conflito: qty = ceil(qty / LCM(eco_a, eco_b)) × LCM(eco_a, eco_b)
-    qty_a = qty, qty_b = qty
-  Se SÓ A: qty_a = eco_a, qty_b = 0
-  Se SÓ B: qty_a = 0, qty_b = eco_b
+  Debitar cada output na procura futura do respetivo SKU e transportar excedente.
 
   time_a = (qty_a / (pH_a × OEE)) × 60
   time_b = (qty_b / (pH_b × OEE)) × 60
@@ -333,13 +336,17 @@ Para cada dia onde A OU B tem demand:
   twin_outputs = [(op_id_a, sku_a, qty_a), (op_id_b, sku_b, qty_b)]
 ```
 
-**REGRA FUNDAMENTAL:** Tempo máquina = max(time_A, time_B). Produção SIMULTÂNEA. Cada SKU recebe exactamente o que precisa.
+**REGRA FUNDAMENTAL:** todo ciclo gémeo tem `qty_a == qty_b > 0` e o tempo máquina é `max(time_A, time_B)`, nunca a soma. O excedente intencional fica disponível para procuras futuras do mesmo SKU; não cria uma encomenda nem um envio SUBC fictícios.
 
-### 5.4 Complementary Twin Merge
+### 5.4 Emparelhamento complementar
 
-Lotes twin consecutivos onde um tem `qty_a > 0, qty_b = 0` e o seguinte `qty_a = 0, qty_b > 0`:
-- Se gap EDD ≤ 5 dias → fundir num único lote que produz ambos
-- EDD merged = min(edd_curr, edd_next)
+Não existe merge posterior de lotes. O emparelhamento é feito antes da criação,
+independentemente da ordem A/B, e cada evento de procura só pode ser consumido
+uma vez. O lote conjunto usa o prazo de produção mais cedo e a libertação de
+material mais cedo, porque a matéria-prima da necessidade urgente alimenta os
+dois outputs do ciclo. Sem procura oposta até cinco dias de entrega, o ciclo
+continua fisicamente 1:1 e o output sem procura emparelhada é registado como
+stock coproduzido.
 
 ### 5.5 Holiday Adjustment
 
@@ -396,11 +403,12 @@ ToolRun:
   id: str                    # "run_{tool}_{machine}_{idx}"
   tool_id, machine_id
   alt_machine_id: str|None
-  lots: list[Lot]            # ordenados por EDD
+  lots: list[Lot]            # ordenados por prazo operacional
   setup_min: float           # UM setup para todo o grupo
   total_prod_min: float      # soma prod_min dos lotes
   total_min: float           # setup + prod
-  edd: int                   # EDD do lote mais urgente
+  edd: int                   # alias compatível de production_due_day
+  production_due_day: int    # entrega normal ou envio subcontratado
   lst: int = 0               # Latest Start Time (preenchido na Phase 4)
 ```
 
@@ -520,80 +528,74 @@ Segment:
 Antes do dispatch, detecta infeasibilidade per-machine:
 
 ```
-Para cada máquina, simula strict-EDD dispatch:
-  Se qualquer run completa depois do seu EDD:
+Para cada máquina, simula dispatch por prazo de produção:
+  Se qualquer run completa depois do seu prazo:
     buffer_days = max(tardiness observada)
 
 Se buffer_days > 0:
-  Todos os EDDs += buffer_days
+  Todos os marcos (entrega, envio, prazo, referência e libertação) += buffer_days
+  Os marcos por output de lotes gémeos também += buffer_days
   EngineData.n_days += buffer_days
   Holidays shift += buffer_days
   Re-assign machines
 
 Após JIT, unshift:
   Segmentos: day_idx -= buffer_days (pode ficar negativo)
-  Lots: edd -= buffer_days
+  Lots/Segmentos: todos os marcos -= buffer_days
 ```
 
 ---
 
 ## 9. PHASE 4: JIT (Just-In-Time)
 
-**Objectivo:** Produzir o mais tarde possível (2-5 dias antes do EDD).
+**Objectivo:** Nunca produzir antes da libertação simulada de material e
+concluir até ao último marco controlável pela fábrica.
 
-### 9.1 Steps
+### 9.1 Contrato de datas
 
-1. **Assign machines** (mesma lógica de load-balance)
-2. **EDD sort** por máquina (estrito, sem campaign)
-3. **Backward-stack gates** por máquina
-4. **Dispatch com gates** (independente por máquina)
-5. **Binary search safety net** se há tardy
+Para cada necessidade:
 
-### 9.2 Backward-Stack Gates
+- `customer_delivery_day` (`C`): compromisso do ISOP.
+- `latest_subcontract_dispatch_day` (`H`): `C` menos o lead time útil do
+  fornecedor.
+- `subcontract_dispatch_day` (`P`): `H` menos o buffer de subcontratação.
+- `production_due_day` (`U`): `P` para subcontratados; entrega ao cliente para
+  artigos normais.
+- `internal_target_day` (`I`): `U` menos o buffer interno de fim.
+- `material_reference_day` (`M`): `P` para subcontratados; `C` para normais.
+- `material_release_day` (`R`): `M` menos 5 dias úteis.
 
-```
-Para cada máquina (runs em ordem EDD crescente):
-  next_start_abs = n_days × DAY_CAP   # fim do horizonte
+Fins de semana e feriados são ignorados na aritmética útil. Marcos anteriores
+ao início do horizonte mantêm índices negativos para revelar compromissos já
+vencidos; apenas a execução física é limitada a `D0`.
 
-  Para i = último run até primeiro (backward):
-    max_gate = dia mais tarde que run pode começar (conta workdays backward do EDD)
-    buffer = total_min × (jit_buffer_pct + holiday_density × 0.05) + setup_min
-    candidate = next_start_abs - total_min - buffer
-    gate = min(max_gate, candidate)
-    gate = max(0, gate)
+Num lote gémeo, cada output conserva os seus marcos isolados. Como os outputs
+partilham a matéria-prima do mesmo ciclo, a janela conjunta usa
+`R = min(R_output)` e `U = min(U_output)`: a libertação da necessidade mais
+urgente autoriza o ciclo comum e a necessidade posterior pode ser coproduzida
+antes da sua própria janela isolada.
 
-    Snap to day boundary, skip holidays
-    gates[run.id] = gate
-    next_start_abs = gate
-```
+### 9.2 Restrições e construção
 
-### 9.3 LST Calculation
+1. Criar lotes e marcos por output.
+2. Atribuir e ordenar por `production_due_day`, rutura e prioridade explícita.
+3. Impor `productive_start >= R` e `productive_end <= U`.
+4. Resolver globalmente máquina, ferramenta, setup e operadores.
+5. Se a janela estrita for inviável, devolver `best_effort` sem relaxar `R`.
+6. Normalizar o plano no primeiro intervalo legal sem piorar entregas ou envios.
 
-```
-LST = EDD - days_needed - safety_buffer
-  days_needed = ceil(total_min / DAY_CAP)
-  Skip holidays ao contar backward
+O dispatch determinístico de fallback usa os mesmos limites. Os helpers
+`LST`/backward permanecem apenas para compatibilidade e também usam `U`.
 
-Paced LST: para cada lot no run, calcula lot.edd - cum_days_needed
-  Retorna min(LST_basic, LST_paced)
-```
+### 9.3 KPIs e gates
 
-### 9.4 Binary Search Safety Net
-
-```
-gate_lo = {run: 0.0}   # baseline (sempre feasible)
-gate_hi = backward-stacked gates
-
-Para até max_retries (15) iterações:
-  Se tardy_count ≤ target: DONE
-  Para cada run tardy (end_day > edd):
-    mid = (lo + hi) / 2
-    Se |hi - mid| > DAY_CAP × 0.5: gate = mid
-    Senão: gate = lo (snap to baseline)
-  Re-dispatch com gates ajustados
-
-Se ainda tardy após retries → REVERT para baseline
-```
+- OTD/OTD-D continuam referidos à entrega ao cliente. Para um output
+  subcontratado, a disponibilidade ao cliente é a conclusão na fábrica mais o
+  lead time útil do fornecedor.
+- `subcontract_dispatch_misses` e
+  `subcontract_dispatch_late_workdays` medem separadamente o handoff.
+- Produção antes de `R` bloqueia aplicação; atraso de envio ou entrega exige
+  aprovação explícita e permanece visível.
 
 ---
 
@@ -789,12 +791,11 @@ Capacidades:
 
 ### 14.1 Turnos e Capacidade
 
-| Constante | Valor | Descrição |
+| Campo | Valor | Descrição |
 |---|---|---|
-| SHIFT_A_START | 420 | 07:00 (min from midnight) |
-| SHIFT_A_END | 930 | 15:30 |
-| SHIFT_B_END | 1440 | 00:00 |
-| DAY_CAP | 1020 | 07:00-00:00 = 17h = 1020 min |
+| shifts | `config/factory.yaml` | Turnos ativos usados pelo backend e pelo Gantt |
+| day_capacity_min | soma dos turnos | Capacidade diária comum por máquina |
+| DAY_CAP fallback | 1020 | Compatibilidade quando não há config carregada |
 
 ### 14.2 Produção
 
@@ -833,6 +834,23 @@ Capacidades:
 | vns_enabled | true | |
 | vns_max_iter | 150 | Max avaliações |
 
+### 14.6 Subcontratação
+
+Subcontratação é uma regra persistente por SKU em `production.sku_subcontracts`.
+O campo `lead_time_days` representa a leitura documental em dias corridos; o
+campo `lead_time_workdays` é o valor consumido pelo planeador. O padrão
+operacional é:
+
+| Campo | Valor | Uso |
+|---|---|---|
+| lead_time_days | 7 | leitura fornecedor / UI |
+| lead_time_workdays | 5 | cálculo do deadline interno |
+| buffer_days | 0 | margem interna adicional |
+
+Payloads legados que enviam apenas `lead_time_days: 7` são normalizados para
+`lead_time_workdays: 5`. O scheduler continua a subtrair o prazo contando dias
+úteis e feriados configurados.
+
 ### 14.6 Scoring Weights
 
 | Peso | Valor |
@@ -854,7 +872,6 @@ Capacidades:
 | PRM039 | Grandes | 1020 min | 28 SKUs, +variedade |
 | PRM042 | Medias | 1020 min | 11 SKUs, SEM ALTERNATIVA |
 | PRM043 | Grandes | 1020 min | 14 SKUs |
-| PRM020 | — | — | FORA DE USO. IGNORAR. |
 
 ### 15.2 Alt Machines (29 ferramentas)
 
@@ -868,7 +885,7 @@ Capacidades:
 | PRM039 | PRM031 | BFP112, BFP186 |
 | PRM043 | PRM031 | BFP188 |
 
-### 15.3 Twin Pairs (18 confirmados)
+### 15.3 Twin Pairs (14 ativos)
 
 | Tool | SKU 1 | SKU 2 | Máquina |
 |---|---|---|---|
@@ -877,7 +894,6 @@ Capacidades:
 | BFP100 | 1086227X070 | 1954311X030 | PRM039 |
 | BFP101 | 1135760X070 | 1955341X030 | PRM039 |
 | BFP110 | 1177295X150 | 1177297X150 | PRM039 |
-| BFP114 | 1172769X030 | 1694825X040 | PRM031 |
 | BFP125 | 1403150X050 | 1413147X070 | PRM043 |
 | BFP162 | 1768601X030 | 1768602X030 | PRM031 |
 | BFP171 | 2689556X090 | 2689557X090 | PRM031 |
@@ -885,11 +901,13 @@ Capacidades:
 | BFP178 | 2100373X120.10 | 2185094X110.10 | PRM039 |
 | BFP179 | 5246946X080 | 5246947X080 | PRM019 |
 | BFP186 | 3778765060.10 | 3778766060.10 | PRM039 |
-| BFP197 | 3822924050 | 3822925050.10 | PRM019 |
-| VUL115 | 8718696125 | 8716774145 | PRM042 |
-| VUL127 | 8750302197.20 | 8750302200.20 | PRM039 |
 | JTE004 | JJB14-000760D.10 | JJB14-000761A.10 | PRM019 |
 | BTL013 | VW2872957 | VW2872960 | PRM039 |
+
+BFP114, BFP197, VUL115 e VUL127 permanecem documentados como candidatos
+pendentes de confirmação fabril. Até existir confirmação de produção simultânea
+e da respetiva proporção, as suas referências são planeadas de forma independente
+e conservam os eco-lotes recebidos no ISOP.
 
 ### 15.4 Setup Times
 
@@ -915,9 +933,9 @@ Capacidades:
 | **Tardy = 0** | Nenhum lote completa depois do EDD | `score["tardy_count"] == 0` |
 | **Shift bounds** | Todos os segmentos dentro de [420, 1440] | `seg.start_min >= 420 AND seg.end_min <= 1440` |
 | **Feriados** | Nenhum segmento em dias feriados | `seg.day_idx NOT IN holidays` |
-| **PRM020 inactivo** | Nenhum segmento na PRM020 | Filtrado no parser |
+| **PRM020 fora do âmbito** | Nenhuma operação, máquina ou segmento PRM020; importações que dependam dela são recusadas | Validação na transformação |
 | **Tool contention** | Mesma ferramenta nunca em 2 máquinas ao mesmo tempo | `ToolTimeline.is_available()` |
-| **Crew mutex** | Nenhum setup simultâneo entre máquinas | `_serialize_crew_setups()` |
+| **Equipas de setup** | Capacidade cumulativa independente por grupo (Grandes/Medias) | `setup_crews_by_group` |
 | **Day capacity** | `used_per_day ≤ 1020 min` por máquina | Enforced no allocator |
 | **Eco lot** | Quantidades arredondadas para cima ao lote económico | `_apply_eco_lot()` |
 | **Demand conservation** | `sum(produced) ≥ sum(demanded)` por operação | OTD-D check |
@@ -955,6 +973,12 @@ ScheduleResult:
   audit_trail: object | None         # AuditTrail se audit=True
   journal: list[dict] | None         # telemetria por fase
 ```
+
+### Capacity API
+
+`/api/data/capacity?granularity=week` agrega dias por semana ISO e devolve
+`workday_count` por máquina/grupo. A UI usa a legenda operacional:
+cinzento = sem carga; vermelho = carga > capacidade.
 
 ---
 
@@ -1016,8 +1040,9 @@ ScheduleResult:
 - Multi-machine: ambas as máquinas usadas
 - Twin pipeline: 1 lot, is_twin=True
 - Twin joint equal qty: ambos produzem max(1000, 800) = 1000
-- Twin with eco lot: qty satisfaz AMBOS eco lots (LCM se necessário)
-- Twin solo: só A → B gets 0
+- Twin with eco lot: eco lots iguais e qty igual nos dois outputs
+- Twin com eco lots diferentes: configuração bloqueada
+- Twin sem procura B próxima: A e B saem 1:1; B fica como stock coproduzido
 - Holidays: nenhum segmento em dia feriado
 - Setup count reduced: 3 lots same tool → 1 setup
 - Crew no overlap per machine
@@ -1296,7 +1321,7 @@ Segmentos com `day_idx < 0` (buffer) ou `prod_min <= 0` (setup-only) são ignora
 | `backend/scheduler/lot_sizing.py` | 249 | Phase 1 | EOps → Lots (eco lot, twins, carry-forward) |
 | `backend/scheduler/tool_grouping.py` | 166 | Phase 2 | Lots → ToolRuns (split, infeasibility) |
 | `backend/scheduler/dispatch.py` | 523 | Phase 3 | Assign + Sequence + Allocate |
-| `backend/scheduler/jit.py` | 321 | Phase 4 | JIT backward scheduling |
+| `backend/scheduler/jit.py` | 321 | Phase 4 | Libertação de material e fallback |
 | `backend/scheduler/vns.py` | 365 | Phase 4b | VNS polish (4 neighbourhoods) |
 | `backend/scheduler/scheduler.py` | 586 | All | Orchestrator, buffer, crew, post-proc |
 | `backend/scheduler/scoring.py` | 147 | Phase 5 | OTD, OTD-D, earliness, setups |
@@ -1320,7 +1345,7 @@ Segmentos com `day_idx < 0` (buffer) ou `prod_min <= 0` (setup-only) são ignora
 3. **tardy_count = 0** — nenhum lot completa após EDD
 4. **DAY_CAP nunca excedido** — max 1020 min/dia/máquina
 5. **Eco lot HARD** — produção sempre arredondada para cima
-6. **Twins simultâneos** — tempo = max(A,B), output = demand_A + demand_B
+6. **Twins simultâneos** — num ciclo conjunto, `qty_A = qty_B` e tempo = max(A,B)
 7. **1 crew para setups** — nunca 2 setups em paralelo (com G7 priority)
 8. **Pipeline greedy determinístico** — mesmo input → mesmo output
 9. **CPO safety net** — resultado CPO nunca pior que baseline greedy

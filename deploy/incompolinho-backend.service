@@ -1,0 +1,17 @@
+[Unit]
+Description=INCOMPOLINHO backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/luis/projects/INCOMPOLINHO
+Environment=PYTHONHASHSEED=0
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/luis/projects/INCOMPOLINHO/.venv/bin/python -m uvicorn backend.api.copilot:app --host 127.0.0.1 --port 8010
+Restart=always
+RestartSec=2
+StandardOutput=append:/home/luis/projects/INCOMPOLINHO/.run-logs/backend.log
+StandardError=append:/home/luis/projects/INCOMPOLINHO/.run-logs/backend.log
+
+[Install]
+WantedBy=default.target

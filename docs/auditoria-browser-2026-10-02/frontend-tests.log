@@ -1,0 +1,155 @@
+
+> frontend@0.0.0 test
+> node --experimental-strip-types --test tests/*.test.ts && vitest run
+
+TAP version 13
+# Subtest: preserva o gate report dos erros estruturados da API
+ok 1 - preserva o gate report dos erros estruturados da API
+  ---
+  duration_ms: 24.045546
+  type: 'test'
+  ...
+# Subtest: modo consulta bloqueia operações mutáveis e permite previews
+ok 2 - modo consulta bloqueia operações mutáveis e permite previews
+  ---
+  duration_ms: 1.378322
+  type: 'test'
+  ...
+# Subtest: não apresenta HTML de um erro 502
+ok 3 - não apresenta HTML de um erro 502
+  ---
+  duration_ms: 602.444011
+  type: 'test'
+  ...
+# Subtest: não apresenta HTML de um erro 503
+ok 4 - não apresenta HTML de um erro 503
+  ---
+  duration_ms: 602.925176
+  type: 'test'
+  ...
+# Subtest: não apresenta HTML de um erro 504
+ok 5 - não apresenta HTML de um erro 504
+  ---
+  duration_ms: 603.147741
+  type: 'test'
+  ...
+# Subtest: não apresenta HTML de um erro 524
+ok 6 - não apresenta HTML de um erro 524
+  ---
+  duration_ms: 602.811836
+  type: 'test'
+  ...
+# Subtest: trata erros vazios, HTML sem cabeçalho e JSON inesperado
+ok 7 - trata erros vazios, HTML sem cabeçalho e JSON inesperado
+  ---
+  duration_ms: 3010.349018
+  type: 'test'
+  ...
+# Subtest: o limite de espera inclui a leitura do corpo da resposta
+ok 8 - o limite de espera inclui a leitura do corpo da resposta
+  ---
+  duration_ms: 6.063443
+  type: 'test'
+  ...
+# Subtest: distingue falha de rede de timeout
+ok 9 - distingue falha de rede de timeout
+  ---
+  duration_ms: 606.799154
+  type: 'test'
+  ...
+# Subtest: trata HTML inesperado mesmo numa resposta 200
+ok 10 - trata HTML inesperado mesmo numa resposta 200
+  ---
+  duration_ms: 0.806414
+  type: 'test'
+  ...
+# Subtest: setup e ensaio exigem ferramenta e hora prevista
+ok 11 - setup e ensaio exigem ferramenta e hora prevista
+  ---
+  duration_ms: 0.960917
+  type: 'test'
+  ...
+# Subtest: produção exige referência, ferramenta, quantidade positiva e hora prevista
+ok 12 - produção exige referência, ferramenta, quantidade positiva e hora prevista
+  ---
+  duration_ms: 0.179275
+  type: 'test'
+  ...
+# Subtest: mudar o estado remove campos que deixaram de ser aplicáveis
+ok 13 - mudar o estado remove campos que deixaram de ser aplicáveis
+  ---
+  duration_ms: 0.780622
+  type: 'test'
+  ...
+# Subtest: subcontract analysis uses the backend dispatch-anchored release
+ok 14 - subcontract analysis uses the backend dispatch-anchored release
+  ---
+  duration_ms: 1.034152
+  type: 'test'
+  ...
+# Subtest: an explicit backend release wins over a client-side derived date
+ok 15 - an explicit backend release wins over a client-side derived date
+  ---
+  duration_ms: 0.263304
+  type: 'test'
+  ...
+# Subtest: normaliza listas opcionais sem bloquear a página
+ok 16 - normaliza listas opcionais sem bloquear a página
+  ---
+  duration_ms: 0.914747
+  type: 'test'
+  ...
+# Subtest: bloqueia uma resposta antiga antes de permitir aplicar
+ok 17 - bloqueia uma resposta antiga antes de permitir aplicar
+  ---
+  duration_ms: 0.282782
+  type: 'test'
+  ...
+# Subtest: normaliza fases e cancelamento dos trabalhos de movimento
+ok 18 - normaliza fases e cancelamento dos trabalhos de movimento
+  ---
+  duration_ms: 0.136141
+  type: 'test'
+  ...
+# Subtest: preserva a causa física de um movimento rejeitado
+ok 19 - preserva a causa física de um movimento rejeitado
+  ---
+  duration_ms: 0.102077
+  type: 'test'
+  ...
+# Subtest: rejeita estados desconhecidos dos trabalhos de movimento
+ok 20 - rejeita estados desconhecidos dos trabalhos de movimento
+  ---
+  duration_ms: 0.175506
+  type: 'test'
+  ...
+# Subtest: explica o que falta antes de aplicar um movimento com exceções
+ok 21 - explica o que falta antes de aplicar um movimento com exceções
+  ---
+  duration_ms: 0.217888
+  type: 'test'
+  ...
+# Subtest: não exige confirmação nem motivo quando o movimento não tem exceções
+ok 22 - não exige confirmação nem motivo quando o movimento não tem exceções
+  ---
+  duration_ms: 0.172384
+  type: 'test'
+  ...
+1..22
+# tests 22
+# suites 0
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6161.869744
+
+ RUN  v4.1.10 /tmp/incompol-browser-audit-20261002/frontend
+
+
+ Test Files  19 passed (19)
+      Tests  166 passed (166)
+   Start at  10:59:12
+   Duration  5.49s (transform 6.55s, setup 0ms, import 12.58s, tests 13.71s, environment 22.45s)
+

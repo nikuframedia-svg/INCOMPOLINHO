@@ -19,10 +19,21 @@ class Lot:
     setup_min: float  # minutos de setup (do YAML)
     edd: int  # deadline (day_idx)
     is_twin: bool
+    sku: str = ""
+    setup_family: str = ""
     twin_outputs: list[tuple[str, str, int]] | None = None  # [(op_id, sku, qty)]
     original_edd: int | None = None
     internal_deadline: int | None = None
     delivery_day: int | None = None
+    customer_delivery_day: int | None = None
+    latest_subcontract_dispatch_day: int | None = None
+    subcontract_dispatch_day: int | None = None
+    production_due_day: int | None = None
+    internal_target_day: int | None = None
+    material_reference_day: int | None = None
+    material_reference_kind: str = "customer_delivery"
+    material_release_day: int | None = None
+    output_milestones: list[dict[str, object]] | None = None
     eco_lot_isop: int | None = None
     eco_lot_effective: int | None = None
     start_buffer_days: int = 0
@@ -31,8 +42,10 @@ class Lot:
     min_campaign_qty: int | None = None
     min_campaign_prod_min: float | None = None
     max_group_gap_days: int | None = None
+    planning_priority: int = 0
     planning_source: str = "isop"
     economic_warning: str | None = None
+    is_subcontracted: bool = False
     subcontract_company_id: str | None = None
     subcontract_lead_time_days: int = 0
     subcontract_buffer_days: int = 0
@@ -53,6 +66,7 @@ class ToolRun:
     edd: int  # EDD of most urgent lot
     lst: int = 0  # Latest Start Time (filled in Phase 4)
     target_start_day: int | None = None
+    production_due_day: int | None = None
 
 
 @dataclass(slots=True)
@@ -69,10 +83,13 @@ class Segment:
     shift: str  # "A" or "B"
     qty: int
     prod_min: float
-    setup_min: float = 0.0  # >0 ONLY on first segment of ToolRun
+    # Setup minutes physically contained in this block. Normally non-zero only
+    # on the first block; a shift boundary may create contiguous fragments.
+    setup_min: float = 0.0
     is_continuation: bool = False
     edd: int = 0
     sku: str = ""
+    setup_family: str = ""
     twin_outputs: list[tuple[str, str, int]] | None = None
     lot_qty: int = 0
     run_qty: int = 0
@@ -81,6 +98,13 @@ class Segment:
     original_edd: int | None = None
     internal_deadline: int | None = None
     delivery_day: int | None = None
+    customer_delivery_day: int | None = None
+    latest_subcontract_dispatch_day: int | None = None
+    subcontract_dispatch_day: int | None = None
+    production_due_day: int | None = None
+    internal_target_day: int | None = None
+    material_reference_day: int | None = None
+    material_reference_kind: str = "customer_delivery"
     eco_lot_isop: int | None = None
     eco_lot_effective: int | None = None
     start_buffer_days: int = 0
@@ -89,11 +113,24 @@ class Segment:
     min_campaign_qty: int | None = None
     min_campaign_prod_min: float | None = None
     max_group_gap_days: int | None = None
+    planning_priority: int = 0
+    material_release_day: int | None = None
+    output_milestones: list[dict[str, object]] | None = None
+    release_delay_workdays: int = 0
     planning_source: str = "isop"
     economic_warning: str | None = None
+    is_subcontracted: bool = False
     subcontract_company_id: str | None = None
     subcontract_lead_time_days: int = 0
     subcontract_buffer_days: int = 0
+    # Reasons why the first productive block cannot be pulled further left.
+    # Filled after the final physical-repair pass for Gantt/API explainability.
+    left_shift_blockers: list[str] = field(default_factory=list)
+
+    @property
+    def production_start_min(self) -> float:
+        """Exact setup/production boundary; round only when choosing clock slots."""
+        return min(float(self.end_min), self.start_min + max(0.0, self.setup_min))
 
 
 @dataclass
@@ -104,6 +141,7 @@ class MachineState:
     group: str
     available_at: float = 0.0  # absolute minute in scheduling timeline
     last_tool: str = ""
+    last_setup_identity: tuple[str, tuple[str, ...]] | None = None
     used_per_day: dict[int, float] = field(default_factory=dict)
 
 
@@ -156,6 +194,18 @@ class ToolTimeline:
                     moved = True
         return cursor
 
+    def previous_machine(self, tool_id: str, at_time: float) -> str | None:
+        """Return the machine holding the latest completed booking before a time."""
+
+        completed = [
+            booking
+            for booking in self.bookings.get(tool_id, [])
+            if booking[1] <= at_time + 0.01
+        ]
+        if not completed:
+            return None
+        return max(completed, key=lambda booking: (booking[1], booking[0]))[2]
+
     def book(self, tool_id: str, start: float, end: float, machine_id: str) -> None:
         """Book a tool on a machine for a time range."""
         if tool_id not in self.bookings:
@@ -191,3 +241,9 @@ class ScheduleResult:
     journal: list[dict] | None = None  # Spec 12: structured phase telemetry
     machine_runs: dict[str, list[ToolRun]] | None = None
     gate_report: dict | None = None
+    solver_status: str | None = None
+    feasibility: dict | None = None
+    preserved_lot_proofs: dict[str, str] | None = None
+    # Structured improvement facts (plan-melhoria §7.1). ``verified`` maps a
+    # search scope to the physical signature of the state it last verified.
+    improvement_report: dict | None = None

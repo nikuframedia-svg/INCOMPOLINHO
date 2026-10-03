@@ -26,6 +26,7 @@ Twins: one physical setup per run — the worst (max) of the two SKUs governs.
 from __future__ import annotations
 
 import copy
+import math
 
 from backend.config.types import FactoryConfig
 from backend.scheduler.types import Lot, ToolRun
@@ -41,6 +42,17 @@ def build_setup_override_map(config: FactoryConfig) -> dict[tuple[str, str], flo
     }
 
 
+def reserved_setup_segments(data):
+    """Read-only crew occupancy of protected lots in a residual calculation."""
+    from backend.scheduler.types import Segment
+
+    return [Segment(
+        str(block["id"]), str(block["id"]), block["machine_id"], block["tool_id"],
+        int(block["start_day"]), int(block["start_min"]), math.ceil(block["end_min"]),
+        "", 0, 0, setup_min=float(block["end_min"] - block["start_min"]),
+    ) for block in data.setup_crew_reservations] if data is not None else []
+
+
 def resolve_setup_hours(
     sku: str,
     machine_id: str,
@@ -54,7 +66,7 @@ def resolve_setup_hours(
     hours = override_map.get((sku, machine_id))
     if hours is not None:
         return hours
-    if fallback_hours:
+    if fallback_hours is not None:
         return fallback_hours
     return config.default_setup_hours
 
@@ -117,9 +129,14 @@ def clone_run_for_machine(
         new_lot = copy.copy(lot)
         if new_lot.twin_outputs is not None:
             new_lot.twin_outputs = list(new_lot.twin_outputs)
+        if new_lot.output_milestones is not None:
+            new_lot.output_milestones = [
+                dict(item) for item in new_lot.output_milestones
+            ]
         new_lots.append(new_lot)
     new_run = copy.copy(run)
     new_run.lots = new_lots
+    new_run.machine_id = machine_id
 
     if _machine_dependent_config(config):
         ops_by_id = {op.id: op for op in engine_data.ops}
@@ -151,7 +168,7 @@ def _rebind_run(
             else:
                 lot.prod_min = min_prod
     if run.lots:
-        run.setup_min = run.lots[0].setup_min
+        run.setup_min = max(lot.setup_min for lot in run.lots)
     run.total_prod_min = sum(lot.prod_min for lot in run.lots)
     run.total_min = run.setup_min + run.total_prod_min
 

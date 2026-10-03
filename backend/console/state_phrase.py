@@ -36,10 +36,14 @@ def compute_state_phrase(
 
     parts = [f"{n_mach} máquinas a produzir."]
     if total_orders > 0:
+        entrega_label = "entrega" if total_orders == 1 else "entregas"
         if total_ready == total_orders:
-            parts.append(f"{total_orders} entregas hoje, todas prontas.")
+            if total_orders == 1:
+                parts.append("1 entrega hoje, pronta.")
+            else:
+                parts.append(f"{total_orders} {entrega_label} hoje, todas prontas.")
         else:
-            parts.append(f"{total_ready}/{total_orders} entregas prontas.")
-    parts.append("Sem problemas.")
+            ready_label = "entrega pronta" if total_ready == 1 else "entregas prontas"
+            parts.append(f"{total_ready}/{total_orders} {ready_label}.")
 
     return "green", " ".join(parts)

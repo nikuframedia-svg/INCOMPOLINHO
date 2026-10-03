@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from backend.audit import (
     AuditLogger,
@@ -373,6 +374,32 @@ class TestAuditStore:
         loaded = store.load_decisions("sched", subject_id="r1")
         assert len(loaded) == 1
         assert loaded[0]["subject_id"] == "r1"
+        store.close()
+
+    def test_store_can_be_reused_from_a_worker_thread(self):
+        store = AuditStore(db_path=":memory:")
+        logger = AuditLogger()
+        logger.log_assign("r1", "T1", "M1", [("M1", 100)], "assign_no_alt")
+        trail = logger.get_trail("threaded")
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            saved_id = executor.submit(store.save_trail, trail, {"otd": 100}).result()
+            loaded = executor.submit(store.load_decisions, saved_id).result()
+
+        assert len(loaded) == 1
+        assert loaded[0]["chosen"] == "M1"
+        store.close()
+
+    def test_resaving_schedule_replaces_decisions(self):
+        store = AuditStore(db_path=":memory:")
+        logger = AuditLogger()
+        logger.log_assign("r1", "T1", "M1", [("M1", 100)], "assign_no_alt")
+        trail = logger.get_trail("same-schedule")
+
+        store.save_trail(trail, {"otd": 100})
+        store.save_trail(trail, {"otd": 100})
+
+        assert len(store.load_decisions("same-schedule")) == 1
         store.close()
 
 

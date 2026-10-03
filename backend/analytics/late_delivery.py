@@ -9,8 +9,16 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from backend.calendar import available_machine_capacity, total_machine_capacity
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP
+from backend.scheduler.jit_policy import (
+    add_workdays,
+    calendar_holidays,
+    expedition_day,
+    lot_demand_output_milestones,
+    lot_output_milestones,
+    production_due_day,
+)
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -30,6 +38,9 @@ class TardyAnalysis:
     explanation: str  # Portuguese
     capacity_gap_min: float
     competing_lots: list[str]
+    customer_ready_day: int | None = None
+    production_due_day: int | None = None
+    subcontract_dispatch_day: int | None = None
 
 
 @dataclass(slots=True)
@@ -49,8 +60,6 @@ def analyze_late_deliveries(
     config: FactoryConfig | None = None,
 ) -> LateDeliveryReport:
     """Classify root causes for all tardy lots."""
-    day_cap = config.day_capacity_min if config else DAY_CAP
-
     # Build lot → segments mapping
     lot_segs: dict[str, list[Segment]] = defaultdict(list)
     for seg in segments:
@@ -69,6 +78,19 @@ def analyze_late_deliveries(
             machine_day_lots[key].append(seg.lot_id)
 
     lot_map = {lot.id: lot for lot in lots}
+    max_lead = max(
+        (
+            int(output.get("subcontract_lead_time_days", 0) or 0)
+            for lot in lots
+            for output in lot_output_milestones(lot)
+        ),
+        default=0,
+    )
+    holidays = calendar_holidays(
+        engine_data,
+        min((segment.day_idx for segment in segments), default=0) - 14,
+        engine_data.n_days + max_lead * 2 + 14,
+    )
     analyses: list[TardyAnalysis] = []
 
     for lot in lots:
@@ -77,37 +99,76 @@ def analyze_late_deliveries(
             continue
 
         completion_day = max(s.day_idx for s in segs)
-        if completion_day <= lot.edd:
+        output_readiness = [
+            (
+                add_workdays(
+                    completion_day,
+                    int(output.get("subcontract_lead_time_days", 0) or 0),
+                    holidays,
+                )
+                if bool(output.get("is_subcontracted"))
+                else completion_day,
+                int(output.get("customer_delivery_day", expedition_day(lot))),
+                output,
+            )
+            for output in lot_demand_output_milestones(lot)
+        ]
+        customer_ready_day, customer_delivery_day, controlling_output = min(
+            output_readiness,
+            key=lambda item: (
+                -(item[0] - item[1]),
+                item[1],
+                str(item[2].get("op_id", lot.op_id)),
+            ),
+            default=(completion_day, expedition_day(lot), {}),
+        )
+        if customer_ready_day <= customer_delivery_day:
             continue  # not tardy
 
-        delay = completion_day - lot.edd
+        delay = customer_ready_day - customer_delivery_day
         machine = segs[0].machine_id
-        sku = segs[0].sku if segs[0].sku else lot.op_id
+        op_id = str(controlling_output.get("op_id", lot.op_id))
+        sku = str(controlling_output.get("sku", lot.sku or op_id))
+        controlling_production_due = int(
+            controlling_output.get(
+                "production_due_day",
+                production_due_day(lot, holidays),
+            )
+        )
 
         cause, explanation, gap, competing = _classify(
             lot,
             segs,
             completion_day,
+            controlling_production_due,
             machine,
-            day_cap,
             machine_day_used,
             machine_day_lots,
             lot_map,
+            engine_data,
+            config,
         )
 
         analyses.append(
             TardyAnalysis(
                 lot_id=lot.id,
-                op_id=lot.op_id,
+                op_id=op_id,
                 sku=sku,
                 machine_id=machine,
-                edd=lot.edd,
+                edd=customer_delivery_day,
                 completion_day=completion_day,
                 delay_days=delay,
                 root_cause=cause,
                 explanation=explanation,
                 capacity_gap_min=gap,
                 competing_lots=competing,
+                customer_ready_day=customer_ready_day,
+                production_due_day=controlling_production_due,
+                subcontract_dispatch_day=(
+                    int(controlling_output["subcontract_dispatch_day"])
+                    if controlling_output.get("subcontract_dispatch_day") is not None
+                    else None
+                ),
             )
         )
 
@@ -150,29 +211,37 @@ def _classify(
     lot: Lot,
     segs: list[Segment],
     completion_day: int,
+    delivery_day: int,
     machine: str,
-    day_cap: float,
     machine_day_used: dict[tuple[str, int], float],
     machine_day_lots: dict[tuple[str, int], list[str]],
     lot_map: dict[str, Lot],
+    engine_data: EngineData,
+    config: FactoryConfig | None,
 ) -> tuple[str, str, float, list[str]]:
     """Classify root cause. Returns (cause, explanation, gap_min, competing_lots)."""
 
     total_prod = lot.prod_min
     total_setup = lot.setup_min
+    total_time = total_prod + total_setup
 
     # 1. Lead time: impossible even with full capacity
-    if total_prod > lot.edd * day_cap:
+    capacity_until_deadline = total_machine_capacity(
+        machine,
+        range(0, max(0, delivery_day + 1)),
+        engine_data,
+        config,
+    )
+    if total_time > capacity_until_deadline:
         return (
             "lead_time",
-            f"Tempo de produção ({total_prod:.0f} min) excede capacidade "
-            f"até ao deadline ({lot.edd * day_cap:.0f} min).",
-            total_prod - lot.edd * day_cap,
+            f"Produção e setup ({total_time:.0f} min) excedem a capacidade "
+            f"até ao deadline ({capacity_until_deadline:.0f} min).",
+            total_time - capacity_until_deadline,
             [],
         )
 
     # 2. Setup overhead: setup > 20% of total run time
-    total_time = total_prod + total_setup
     if total_time > 0 and total_setup / total_time > 0.20:
         return (
             "setup_overhead",
@@ -183,11 +252,25 @@ def _classify(
         )
 
     # 3. Capacity: machine utilization near EDD > 95%
-    edd_window = range(max(0, lot.edd - 2), lot.edd + 1)
-    window_util = [machine_day_used.get((machine, d), 0) / day_cap for d in edd_window]
+    edd_window = range(max(0, delivery_day - 2), delivery_day + 1)
+    window_util = []
+    for day_idx in edd_window:
+        capacity = available_machine_capacity(machine, day_idx, engine_data, config)
+        window_util.append(
+            machine_day_used.get((machine, day_idx), 0) / capacity
+            if capacity > 0
+            else 0.0
+        )
     avg_util = sum(window_util) / max(len(window_util), 1)
     if avg_util > 0.95:
-        gap = sum(max(0, machine_day_used.get((machine, d), 0) - day_cap) for d in edd_window)
+        gap = sum(
+            max(
+                0,
+                machine_day_used.get((machine, d), 0)
+                - available_machine_capacity(machine, d, engine_data, config),
+            )
+            for d in edd_window
+        )
         return (
             "capacity",
             f"Máquina {machine} a {avg_util * 100:.0f}% nos dias "
@@ -203,13 +286,14 @@ def _classify(
             if other_id == lot.id:
                 continue
             other = lot_map.get(other_id)
-            if other and other.edd < lot.edd:
+            if other and production_due_day(other) < delivery_day:
                 competing.append(other_id)
 
     if competing:
         return (
             "priority_conflict",
-            f"{len(competing)} lote{'s' if len(competing) > 1 else ''} com EDD anterior "
+            f"{len(competing)} lote{'s' if len(competing) > 1 else ''} "
+            "com prazo de produção anterior "
             f"na {machine} deslocaram este lote.",
             0.0,
             competing[:5],
@@ -218,7 +302,8 @@ def _classify(
     # 5. Tool contention fallback would need a full segment scan; keep capacity as default.
     return (
         "capacity",
-        f"Capacidade insuficiente na {machine} para cumprir EDD {lot.edd}.",
+        f"Capacidade insuficiente na {machine} para cumprir o prazo de produção "
+        f"D{delivery_day}.",
         0.0,
         [],
     )

@@ -17,7 +17,12 @@ from backend.console.action_items import (
 from backend.console.expedition_today import compute_expedition_today
 from backend.console.machines_today import compute_machines_today
 from backend.console.state_phrase import compute_state_phrase
-from backend.console.tomorrow_prep import check_crew_bottleneck, compute_tomorrow_prep
+from backend.console.tomorrow_prep import (
+    check_crew_bottleneck,
+    compute_day_setups,
+    compute_tomorrow_prep,
+)
+from backend.risk.types import LotRisk
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.scheduler import schedule_all
 from backend.scheduler.types import Lot, Segment
@@ -135,13 +140,14 @@ def _schedule(engine=None, config=None):
 
 
 class TestStatePhrase:
-    def test_green_no_problems(self):
+    def test_green_status_omits_no_problems_phrase(self):
         expedition = {"total_orders": 3, "total_ready": 3}
         machines = {"machines": [{"util": 0.5}, {"util": 0.3}]}
         color, phrase = compute_state_phrase([], expedition, machines)
         assert color == "green"
-        assert "Sem problemas" in phrase
+        assert "Sem problemas" not in phrase
         assert "2 máquinas" in phrase
+        assert "todas prontas" in phrase
 
     def test_red_critical(self):
         item = ActionItem(
@@ -218,6 +224,98 @@ class TestMachinesToday:
         machine_ids = {m["id"] for m in r["machines"]}
         for m in engine.machines:
             assert m.id in machine_ids
+
+    def test_fractional_segment_time_does_not_break_today_view(self):
+        engine = _engine(ops=[_eop()], n_days=1)
+        config = _config()
+        segment = Segment(
+            lot_id="L1",
+            run_id="R1",
+            machine_id="M1",
+            tool_id="T1",
+            day_idx=0,
+            start_min=420,
+            end_min=451.89262507097345,
+            shift="A",
+            qty=30,
+            prod_min=1.8926250709734402,
+            setup_min=30,
+            sku="SKU1",
+        )
+
+        result = compute_machines_today([segment], engine, config, 0)
+
+        run = next(machine for machine in result["machines"] if machine["id"] == "M1")[
+            "runs"
+        ][0]
+        assert run["start"] == "07:00"
+        assert run["end"] == "07:32"
+
+    def test_eta_current_uses_end_of_split_shift_same_production(self):
+        engine = _engine(
+            ops=[
+                _eop(
+                    op_id="JDED002_PRM042_TP042173-0040-1",
+                    sku="TP042173-0040-1",
+                    machine="PRM042",
+                    tool="JDED002",
+                    d=[100],
+                )
+            ],
+            n_days=1,
+        )
+        config = FactoryConfig()
+        config.machines = {"PRM042": MachineConfig(id="PRM042", group="Medias", active=True)}
+        segments = [
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="PRM042",
+                tool_id="JDED002",
+                day_idx=0,
+                start_min=420,
+                end_min=930,
+                shift="A",
+                qty=50,
+                prod_min=510,
+                setup_min=0,
+                sku="TP042173-0040-1",
+            ),
+            Segment(
+                lot_id="L1",
+                run_id="R1",
+                machine_id="PRM042",
+                tool_id="JDED002",
+                day_idx=0,
+                start_min=930,
+                end_min=1003,
+                shift="B",
+                qty=50,
+                prod_min=73,
+                setup_min=0,
+                is_continuation=True,
+                sku="TP042173-0040-1",
+            ),
+            Segment(
+                lot_id="L2",
+                run_id="R2",
+                machine_id="PRM042",
+                tool_id="JDED003",
+                day_idx=0,
+                start_min=1003,
+                end_min=1185,
+                shift="B",
+                qty=50,
+                prod_min=182,
+                setup_min=0,
+                sku="JD471512-0031",
+            ),
+        ]
+
+        r = compute_machines_today(segments, engine, config, 0)
+
+        assert r["machines"][0]["current_sku"] == "TP042173-0040-1"
+        assert r["machines"][0]["eta_current"] == 1003
 
     def test_sorted_by_util(self):
         engine, config, result = _schedule()
@@ -304,6 +402,14 @@ class TestTomorrowPrep:
         r = compute_tomorrow_prep(result.segments, result.lots, engine, config, 1)
         assert isinstance(r["expeditions_summary"], str)
 
+    def test_day_setups_include_shift_and_sku(self):
+        engine, config, result = _schedule()
+        setups = compute_day_setups(result.segments, 1)
+        for setup in setups:
+            assert setup["shift"] in {"A", "B"}
+            assert "sku" in setup
+            assert "start_min" in setup
+
 
 # ─── TestCrewBottleneck ──────────────────────────────────────────────────
 
@@ -341,7 +447,7 @@ class TestCrewBottleneck:
         result = check_crew_bottleneck(segs, day_idx=1)
         assert len(result) == 0
 
-    def test_bottleneck_3_setups(self):
+    def test_nearby_sequential_setups_are_not_a_bottleneck(self):
         segs = [
             Segment(
                 lot_id="L1",
@@ -384,8 +490,14 @@ class TestCrewBottleneck:
             ),
         ]
         result = check_crew_bottleneck(segs, day_idx=1)
-        assert len(result) >= 1
-        assert result[0]["simultaneous"] >= 3
+        assert result == []
+        for segment in segs:
+            segment.start_min, segment.end_min = 420, 480
+        result = check_crew_bottleneck(segs, day_idx=1)
+        assert result == [{"time": "07:00", "simultaneous": 3,
+                           "machines": ["M1", "M2", "M3"], "wait_min": 30}]
+        config = FactoryConfig(setup_crews_by_group={"Grandes": 3})
+        assert check_crew_bottleneck(segs, 1, config=config) == []
 
 
 # ─── TestActionItems ─────────────────────────────────────────────────────
@@ -746,10 +858,48 @@ class TestHasProductionBefore:
 
 
 class TestConsoleAPI:
+    def test_risk_rows_are_sorted_by_nearest_risk_date(self):
+        from backend.api.console import _risk_rows
+
+        risks = [
+            LotRisk("late", "SKU_LATE", "M1", 20, 20, 0, 0, 1.0, "critical", "capacity"),
+            LotRisk("early", "SKU_EARLY", "M1", 5, 5, 0, 0, 0.8, "high", "capacity"),
+            LotRisk("mid", "SKU_MID", "M1", 10, 10, 0, 0, 0.9, "critical", "capacity"),
+        ]
+        segments = [
+            Segment("late", "OP", 0, "M1", 12, 420, 500, 0, 80, 1, 1, "SKU_LATE", 0, 0, 0, "T1"),
+            Segment("early", "OP", 0, "M1", 3, 420, 500, 0, 80, 1, 1, "SKU_EARLY", 0, 0, 0, "T1"),
+            Segment("mid", "OP", 0, "M1", 8, 420, 500, 0, 80, 1, 1, "SKU_MID", 0, 0, 0, "T1"),
+        ]
+
+        rows = _risk_rows(risks, segments, [f"2026-03-{day:02d}" for day in range(1, 25)])
+
+        assert [row["sku"] for row in rows] == ["SKU_EARLY", "SKU_MID", "SKU_LATE"]
+
     def test_console_structure(self):
         from backend.copilot.state import state
+        from backend.types import CurrentMachineState
 
         engine, config, result = _schedule()
+        config.machine_unavailability = [
+            {
+                "id": "down-m1",
+                "resource": "M1",
+                "category": "Avaria",
+                "reason": "Sensor",
+                "start_at": "2026-03-05T09:00:00",
+                "end_at": "2026-03-05T11:00:00",
+            }
+        ]
+        engine.current_machine_states = [
+            CurrentMachineState(
+                machine_id="M2",
+                status="trial",
+                tool_id="T2",
+                expected_end="2026-03-05T10:30:00",
+                note="Ensaio de validação",
+            )
+        ]
         state.engine_data = engine
         state.config = config
         state.update_schedule(result)
@@ -773,8 +923,37 @@ class TestConsoleAPI:
         assert "phrase" in data["state"]
         assert "actions" in data
         assert "machines" in data
+        assert "setups_today" in data
+        assert "top_risks" in data
+        for machine in data["machines"]:
+            assert "group" in machine
+            assert "runs" in machine
+            for run in machine["runs"]:
+                assert {"sku", "tool_id", "start_min", "end_min"} <= set(run)
         assert "expedition" in data
         assert "tomorrow" in data
+        assert "day_overview" in data
+        assert "operational_summary" in data
+        operational = data["operational_summary"]
+        assert operational["production_by_group"]
+        assert "average_utilization_pct" in operational
+        assert operational["unavailable"]["machines"] == [
+            {
+                "resource": "M1",
+                "category": "Avaria",
+                "reason": "Sensor",
+                "start_at": "2026-03-05T09:00:00",
+                "end_at": "2026-03-05T11:00:00",
+            }
+        ]
+        assert operational["trials"][0]["machine_id"] == "M2"
+        assert set(operational["expedition"]) == {"ready", "partial", "not_ready"}
+        overview = data["day_overview"]
+        assert overview["today"]["date"] == "2026-03-05"
+        assert overview["today"]["unavailable_count"] == 1
+        assert overview["today"]["trial_count"] == 1
+        assert "setups_count" in overview["tomorrow"]
+        assert "operator_deficit" in overview["tomorrow"]
 
     def test_console_no_data_503(self):
         from backend.copilot.state import state

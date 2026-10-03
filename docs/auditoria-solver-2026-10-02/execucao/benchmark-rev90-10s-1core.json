@@ -1,0 +1,464 @@
+{
+  "fixture": "rev90",
+  "clock": null,
+  "budget_s": 10.0,
+  "cores": 1,
+  "repeat": 20,
+  "python": "3.12.3",
+  "cpu_count": 20,
+  "total_s": {
+    "p50": 11.498,
+    "p95": 11.788,
+    "min": 11.453,
+    "max": 11.836,
+    "mean": 11.532
+  },
+  "cycle_s": {
+    "p50": 11.071,
+    "p95": 11.316,
+    "min": 11.047,
+    "max": 11.371,
+    "mean": 11.106
+  },
+  "load_s": {
+    "p50": 0.422,
+    "p95": 0.466,
+    "min": 0.404,
+    "max": 0.472,
+    "mean": 0.426
+  },
+  "rss_mib": {
+    "p50": 127.5,
+    "p95": 127.7,
+    "min": 127.4,
+    "max": 127.8,
+    "mean": 127.53
+  },
+  "moves": {
+    "p50": 8.0,
+    "p95": 8.0,
+    "min": 7.0,
+    "max": 8.0,
+    "mean": 7.9
+  },
+  "lots_changed": {
+    "p50": 6.0,
+    "p95": 7.0,
+    "min": 6.0,
+    "max": 7.0,
+    "mean": 6.1
+  },
+  "start_gain_min": {
+    "p50": 4622.0,
+    "p95": 4622.0,
+    "min": 4622.0,
+    "max": 4622.0,
+    "mean": 4622.0
+  },
+  "stop_reasons": {
+    "budget": 20
+  },
+  "distinct_results": 2,
+  "runs": [
+    {
+      "total_s": 11.59,
+      "load_s": 0.423,
+      "cycle_s": 11.167,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.788,
+      "load_s": 0.472,
+      "cycle_s": 11.316,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 7,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 6
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 7,
+      "start_gain_min": 4622.0,
+      "signature": "b0e07de7e1f7cd520cd4a1581074823fe707b711113b95313ad7bb37078b0739"
+    },
+    {
+      "total_s": 11.486,
+      "load_s": 0.415,
+      "cycle_s": 11.071,
+      "rss_mib": 127.5,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.836,
+      "load_s": 0.466,
+      "cycle_s": 11.371,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 7,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 6
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 7,
+      "start_gain_min": 4622.0,
+      "signature": "b0e07de7e1f7cd520cd4a1581074823fe707b711113b95313ad7bb37078b0739"
+    },
+    {
+      "total_s": 11.498,
+      "load_s": 0.447,
+      "cycle_s": 11.051,
+      "rss_mib": 127.7,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.453,
+      "load_s": 0.407,
+      "cycle_s": 11.047,
+      "rss_mib": 127.5,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.489,
+      "load_s": 0.42,
+      "cycle_s": 11.069,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.483,
+      "load_s": 0.419,
+      "cycle_s": 11.064,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.473,
+      "load_s": 0.418,
+      "cycle_s": 11.055,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.491,
+      "load_s": 0.419,
+      "cycle_s": 11.072,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.478,
+      "load_s": 0.41,
+      "cycle_s": 11.068,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.533,
+      "load_s": 0.416,
+      "cycle_s": 11.118,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.566,
+      "load_s": 0.431,
+      "cycle_s": 11.135,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.5,
+      "load_s": 0.428,
+      "cycle_s": 11.071,
+      "rss_mib": 127.5,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.464,
+      "load_s": 0.404,
+      "cycle_s": 11.061,
+      "rss_mib": 127.8,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.504,
+      "load_s": 0.428,
+      "cycle_s": 11.076,
+      "rss_mib": 127.5,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.508,
+      "load_s": 0.422,
+      "cycle_s": 11.086,
+      "rss_mib": 127.5,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.488,
+      "load_s": 0.427,
+      "cycle_s": 11.061,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.522,
+      "load_s": 0.421,
+      "cycle_s": 11.101,
+      "rss_mib": 127.4,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    },
+    {
+      "total_s": 11.489,
+      "load_s": 0.426,
+      "cycle_s": 11.064,
+      "rss_mib": 127.6,
+      "stop_reason": "budget",
+      "moves": 8,
+      "accepted_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "evaluations_by_scope": {
+        "alternative_anticipation": 1,
+        "pair_reinsertion": 7
+      },
+      "setups": 195,
+      "lots_changed": 6,
+      "start_gain_min": 4622.0,
+      "signature": "50dde0cd99597dfda670f4c2696f317e8337952851de74ad27a9eea45681e132"
+    }
+  ]
+}

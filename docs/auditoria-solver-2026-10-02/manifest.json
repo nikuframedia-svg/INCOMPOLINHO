@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-02",
+  "timezone": "Europe/Lisbon",
+  "head": "4950a9ea13d5e6ea6f8f7e55be5bbecfeb1bda7e",
+  "working_tree_was_dirty": true,
+  "tracked_modified_before_audit": 118,
+  "python": "3.12.3",
+  "ortools": "9.15.6755",
+  "source_sha256": {
+    "backend/scheduler/alternative_repair.py": "6e8f47c159034a4b30fe05dc781bcf97a3ff7cb4889ffbf779e50bddb09f83ba",
+    "backend/scheduler/improvement.py": "c842603cf0ade8cb0cc4e0006824bbf59d207eddf93cc1f5e6766c619a387fa1",
+    "backend/scheduler/scheduler.py": "89fbfb6801956609ae45a22c0a4c028db0e00fd926d416fbc79b788935bea038",
+    "backend/scheduler/scoring.py": "a5aba37014b8ccb6bd0644103a24dad6d95f0502dfa7d4694cdbb1a864bdb496",
+    "backend/scheduler/global_jit.py": "53c73c4535efcad18c4db1a865675e80926e3d228aa6506600a41e751e587b8e",
+    "backend/scheduler/setup_identity.py": "b0ce84a20264c7a2c8f2d9688ec4f4853fb8c1e133aed6796a35d020905ca9d4",
+    "backend/scheduler/canonical.py": "5086628439387cf3d7e63a1fd112eba222a3a6993deb22060ef8ef2e83f711ef",
+    "backend/scheduler/validation.py": "0cfee28a61ac4ac6a05c878b45510a5ebd5f117f2f7e628d251f32415d2080e1",
+    "backend/scheduler/jit_policy.py": "66cae722f35e5b6f6b8adfa5f9e0c7bb127af8e9117d124b7716703728b2f0ef",
+    "backend/cpo/optimizer.py": "14b85933d38f5d04ce8ba78bc1b0d96328d107ab05802d08ab697976a2c083a9",
+    "backend/plans/frozen.py": "06bef302c67e2d45ce630f1c716ce6950288e02d236993468a69248dba442178",
+    "backend/planning_control.py": "9cbb8e776bb5a71ca8560814b1e7ea466d64ab9e32814d0bada4607124c16887",
+    "config/factory.yaml": "5a389249bae036dec42cf8fe00eaf93ed855bb093e6a6331705d09ea47dc97d5",
+    "config/incompol.yaml": "9e5a892c6c5318131ab2842a34b8bf3b5e1511c775170989ddeae6193a8e9efe"
+  },
+  "research": {
+    "searches": 10,
+    "returned_results": 61,
+    "unique_search_urls": 58,
+    "workstreams": 4
+  },
+  "verification": {
+    "existing_tests_passed": 204,
+    "test_seconds": 2.2,
+    "solver_changed": false,
+    "active_plan_changed": false
+  }
+}

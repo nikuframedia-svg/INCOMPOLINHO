@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections import defaultdict
 
 from backend.analytics.expedition import compute_expedition
+from backend.analytics.order_tracking import readiness_for_entry
+from backend.calendar import _day_date
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -18,20 +20,13 @@ def _estimate_eta(
     lots: list[Lot],
     engine_data: EngineData,
 ) -> str | None:
-    """Estimate when production for this SKU will be ready."""
-    op = next((o for o in engine_data.ops if o.sku == entry.sku), None)
-    if not op:
-        return None
-
-    lot_to_op = {lot.id: lot.op_id for lot in lots}
-    op_segs = [s for s in segments if lot_to_op.get(s.lot_id) == op.id]
-    if not op_segs:
-        return None
-
-    ready_day = max(s.day_idx for s in op_segs)
-    if ready_day < len(engine_data.workdays):
-        return engine_data.workdays[ready_day]
-    return None
+    """Use the quantity allocated to this order, not a later order of its SKU."""
+    day = getattr(entry, "ready_day", None)
+    if day is None:
+        allocation = readiness_for_entry(entry, segments, lots, engine_data)
+        day = allocation.ready_day if allocation is not None else None
+    date = _day_date(day, engine_data) if day is not None else None
+    return date.isoformat() if date else None
 
 
 def compute_expedition_today(

@@ -163,13 +163,16 @@ class TestStockAndDemand:
 class TestSafeHelpers:
     def test_safe_int_normal(self):
         assert _safe_int(42) == 42
-        assert _safe_int(42.7) == 42
+        assert _safe_int(42.0) == 42
+        with pytest.raises(ValueError):
+            _safe_int(42.7)
         assert _safe_int("36400") == 36400
 
     def test_safe_int_edge(self):
         assert _safe_int(None) == 0
         assert _safe_int("") == 0
-        assert _safe_int("abc") == 0
+        with pytest.raises(ValueError):
+            _safe_int("abc")
 
     def test_safe_float_normal(self):
         assert _safe_float(1681.0) == 1681.0
@@ -216,7 +219,7 @@ class TestReadIsop:
         assert rows[0].machine_id == "PRM031"
         assert rows[0].eco_lot == 36400
 
-    def test_prm020_filtered(self):
+    def test_prm020_is_kept_when_present_in_isop(self):
         wb = _make_isop_wb(
             rows=[
                 {
@@ -250,8 +253,49 @@ class TestReadIsop:
             ]
         )
         rows, _, _ = _save_and_read(wb)
-        assert len(rows) == 1
-        assert rows[0].sku == "SKU2"
+        assert len(rows) == 2
+        assert [(row.sku, row.machine_id) for row in rows] == [
+            ("SKU1", "PRM020"),
+            ("SKU2", "PRM031"),
+        ]
+
+    def test_blank_rows_do_not_truncate_following_skus(self):
+        source_rows = [
+            {
+                "client_id": "A",
+                "client_name": "ANTES",
+                "sku": "SKU-ANTES",
+                "designation": "D1",
+                "eco_lot": 0,
+                "machine": "M1",
+                "tool": "T1",
+                "pH": 100,
+                "operators": 1,
+                "wip": 0,
+                "backlog": 0,
+                "np": [0, -100, 0],
+            },
+            {
+                "client_id": "B",
+                "client_name": "DEPOIS",
+                "sku": "SKU-DEPOIS",
+                "designation": "D2",
+                "eco_lot": 0,
+                "machine": "M2",
+                "tool": "T2",
+                "pH": 100,
+                "operators": 1,
+                "wip": 0,
+                "backlog": 0,
+                "np": [0, 0, -200],
+            },
+        ]
+        wb = _make_isop_wb(rows=source_rows)
+        wb.active.insert_rows(7)
+
+        rows, _, _ = _save_and_read(wb)
+
+        assert [row.sku for row in rows] == ["SKU-ANTES", "SKU-DEPOIS"]
 
     def test_twin_column_detected(self):
         wb = _make_isop_wb(

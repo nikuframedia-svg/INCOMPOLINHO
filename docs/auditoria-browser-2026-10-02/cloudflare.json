@@ -1,0 +1,26 @@
+{
+  "base": "https://inside-arranged-county-wing.trycloudflare.com",
+  "screenshots": [
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Hoje.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Plano.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Carga_e_capacidade.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Entregas.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Risco.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-1440-Configura__o.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Hoje.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Plano.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Carga_e_capacidade.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Entregas.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Risco.png",
+    "/home/luis/projects/INCOMPOLINHO/docs/auditoria-browser-2026-10-02/cloudflare-390-Configura__o.png"
+  ],
+  "errors": [],
+  "blockedWrites": [],
+  "apiFailures": [],
+  "identity": {
+    "dataset": "6d55d4d1d9094833aebdf62d89297d52",
+    "revision": 89,
+    "segments": 558
+  },
+  "status": "passed"
+}

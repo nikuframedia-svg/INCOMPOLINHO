@@ -15,6 +15,7 @@ import copy
 import logging
 from collections import defaultdict
 
+from backend.calendar import total_machine_capacity
 from backend.config.types import FactoryConfig
 from backend.cpo.chromosome import Chromosome
 from backend.scheduler.constants import DAY_CAP
@@ -27,7 +28,13 @@ from backend.scheduler.dispatch import (
     sequence_per_machine,
 )
 from backend.scheduler.jit import jit_dispatch
+from backend.scheduler.jit_policy import calendar_holidays
 from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler.priority import (
+    delivery_improves,
+    delivery_not_worse,
+    enforce_same_deadline_run_priority,
+)
 from backend.scheduler.resources import rebind_runs_to_machines
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.tool_grouping import create_tool_runs
@@ -64,7 +71,15 @@ class CachedPipeline:
             cfg = copy.copy(self.config)
             cfg.max_edd_gap = edd_gap
             cfg.max_edd_span = max_edd_span
-            self._runs_cache[key] = create_tool_runs(lots, config=cfg)
+            self._runs_cache[key] = create_tool_runs(
+                lots,
+                config=cfg,
+                release_holidays=calendar_holidays(
+                    self.data,
+                    -14,
+                    self.data.n_days + 30,
+                ),
+            )
         return self._runs_cache[key]
 
     def evaluate(self, chrom: Chromosome) -> ScheduleResult:
@@ -121,13 +136,10 @@ class CachedPipeline:
         # Phase 4: timing policy (JIT or materials window)
         jit_machine_runs = None
         jit_gates = None
-        if self.config.jit_enabled and baseline_score["otd"] >= self.config.jit_threshold:
+        if self.config.jit_enabled:
             jit_cfg = copy.copy(self.config)
             jit_cfg.jit_buffer_pct = chrom.buffer_pct
-            if self.config.earliness_policy == "window":
-                from backend.scheduler.window import window_dispatch as _phase4_dispatch
-            else:
-                _phase4_dispatch = jit_dispatch
+            _phase4_dispatch = jit_dispatch
             jit_segs, jit_lots, jit_warnings, jit_machine_runs, jit_gates = _phase4_dispatch(
                 runs,
                 data,
@@ -154,9 +166,21 @@ class CachedPipeline:
                 lots,
                 jit_score,
             )
-            if vns_score["tardy_count"] <= jit_score["tardy_count"] and (
-                vns_score["setups"] < jit_score["setups"]
-                or vns_score["earliness_avg_days"] < jit_score["earliness_avg_days"]
+            vns_latest_start_gap = float(
+                vns_score.get("latest_start_gap_avg_min", 0.0) or 0.0
+            )
+            jit_latest_start_gap = float(
+                jit_score.get("latest_start_gap_avg_min", 0.0) or 0.0
+            )
+            if delivery_improves(vns_score, jit_score) or (
+                delivery_not_worse(vns_score, jit_score)
+                and (
+                    vns_latest_start_gap > jit_latest_start_gap
+                    or (
+                        vns_latest_start_gap == jit_latest_start_gap
+                        and vns_score["setups"] < jit_score["setups"]
+                    )
+                )
             ):
                 segments = vns_segs
                 lots = vns_lots
@@ -181,7 +205,7 @@ class CachedPipeline:
         global_holidays = set(getattr(data, "holidays", []))
         segments = _fix_day_overlaps(segments, self.config, holidays=global_holidays)
 
-        # Crew serialization (safe — revert if tardy worsens)
+        # Crew serialization (safe — revert if delivery priority worsens)
         pre_crew_score = compute_score(segments, lots, data, config=self.config)
         crew_segments = copy.deepcopy(segments)
         prev_hash = None
@@ -201,7 +225,7 @@ class CachedPipeline:
                 break
             prev_hash = curr_hash
         crew_score = compute_score(crew_segments, lots, data, config=self.config)
-        if crew_score["tardy_count"] <= pre_crew_score["tardy_count"]:
+        if delivery_not_worse(crew_score, pre_crew_score):
             segments = crew_segments
         else:
             # EDD-safe fallback: per-overlap resolution
@@ -227,7 +251,7 @@ class CachedPipeline:
                     break
                 prev_hash_s = curr_hash_s
             safe_score = compute_score(safe_segments, lots, data, config=self.config)
-            if safe_score["tardy_count"] <= pre_crew_score["tardy_count"]:
+            if delivery_not_worse(safe_score, pre_crew_score):
                 segments = safe_segments
 
         segments = _sanitize_segments(segments, self.config, holidays=global_holidays)
@@ -246,20 +270,32 @@ class CachedPipeline:
                 day_span[(seg.machine_id, seg.day_idx)] += seg.end_min - seg.start_min
         day_cap_violations = sum(1 for total in day_span.values() if total > day_cap + 1.0)
         score["day_cap_violations"] = day_cap_violations
-        score["hard_violations"] = len(validate_plan(segments, data, self.config))
+        score["hard_violations"] = max(
+            int(score.get("hard_violations", 0) or 0),
+            len(validate_plan(segments, data, self.config)),
+        )
 
         # Weighted setup cost: setup_min × machine utilisation
         machine_total_used: dict[str, float] = {}
         for (m_id, _day), total in day_span.items():
             machine_total_used[m_id] = machine_total_used.get(m_id, 0.0) + total
-        n_holidays = len(set(getattr(data, "holidays", []) or []))
-        n_work_days = max(data.n_days - n_holidays, 1)
-        total_available = float(n_work_days * day_cap)
+        total_available_by_machine = {
+            machine.id: float(
+                total_machine_capacity(
+                    machine.id,
+                    range(data.n_days),
+                    data,
+                    self.config,
+                )
+            )
+            for machine in data.machines
+        }
 
         weighted_setup_cost = 0.0
         for seg in segments:
             if seg.setup_min > 0 and seg.day_idx >= 0:
                 used = machine_total_used.get(seg.machine_id, 0.0)
+                total_available = total_available_by_machine.get(seg.machine_id, 0.0)
                 util = used / total_available if total_available > 0 else 0.5
                 weighted_setup_cost += seg.setup_min * min(util, 1.0)
         score["weighted_setup_cost"] = weighted_setup_cost
@@ -326,7 +362,9 @@ class CachedPipeline:
                 ordered = _campaign_sequence(ordered, config=seq_cfg)
                 if seq_cfg.interleave_enabled:
                     ordered = _interleave_urgent(ordered)
-                machine_runs[m_id] = _two_opt(ordered, config=seq_cfg)
+                machine_runs[m_id] = enforce_same_deadline_run_priority(
+                    _two_opt(ordered, config=seq_cfg)
+                )
                 keyed_machines.add(m_id)
 
         remaining = {

@@ -13,6 +13,9 @@ import sqlite3
 from .types import ISContext, SchedulerParams, StudyResult
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "learning.db")
+DEFAULT_DB_PATH = os.path.join(
+    os.environ.get("PP1_DATA_DIR", os.path.dirname(DEFAULT_DB_PATH)), "learning.db"
+)
 
 
 class LearnStore:

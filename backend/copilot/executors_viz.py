@@ -9,6 +9,7 @@ import json
 import logging
 from collections import defaultdict
 
+from backend.calendar import available_machine_capacity
 from backend.copilot.state import state
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,19 @@ def exec_visualizar_carga_temporal(args: dict) -> str:
 
     series = []
     for mid in machines:
-        values = [round(load[mid].get(d, 0) / day_cap * 100, 1) for d in days]
+        values = []
+        for day_idx in days:
+            capacity = available_machine_capacity(
+                mid,
+                day_idx,
+                state.engine_data,
+                state.config,
+            )
+            values.append(
+                round(load[mid].get(day_idx, 0) / capacity * 100, 1)
+                if capacity > 0
+                else 0.0
+            )
         series.append({"name": mid, "values": values})
 
     return _dumps(
@@ -109,7 +122,7 @@ def exec_visualizar_carga_temporal(args: dict) -> str:
                 "labels": [str(d) for d in days],
                 "series": series,
             },
-            "meta": {"day_cap": day_cap},
+            "meta": {"day_cap": day_cap, "capacity_rule": "factory_real_available"},
         }
     )
 
@@ -123,7 +136,9 @@ def exec_visualizar_risco_heatmap(args: dict) -> str:
 
     from backend.risk import compute_risk
 
-    risk = state.risk_result or compute_risk(state.segments, state.lots, state.engine_data)
+    risk = state.risk_result or compute_risk(
+        state.segments, state.lots, state.engine_data, config=state.config
+    )
 
     cells = []
     for cell in risk.heatmap:
@@ -444,34 +459,40 @@ def exec_visualizar_workforce(args: dict) -> str:
     from backend.analytics.workforce_forecast import forecast_workforce
 
     window = args.get("window", 5)
-    wf = forecast_workforce(state.segments, state.engine_data, state.config, window=window)
+    from backend.calendar import current_factory_day
 
-    rows = []
-    for d in wf.days:
-        rows.append(
-            {
-                "dia": d.day_idx,
-                "operadores": d.operators_needed,
-                "maquinas_activas": d.machines_active,
-                "pico": d.is_peak,
-            }
-        )
+    wf = forecast_workforce(state.segments, state.engine_data, state.config, window=window,
+                            start_day=current_factory_day(state.engine_data, state.config))
+
+    by_day: dict[int, dict[str, int]] = {}
+    for item in wf.daily:
+        row = by_day.setdefault(item.day_idx, {"required": 0, "available": 0})
+        row["required"] += item.required
+        row["available"] += item.available
+    days = sorted(by_day)
 
     return _dumps(
         {
             "viz_type": "bar_chart",
             "title": f"Workforce (próximos {window} dias)",
             "data": {
-                "labels": [str(d.day_idx) for d in wf.days],
+                "labels": [str(day) for day in days],
                 "series": [
-                    {"name": "Operadores", "values": [d.operators_needed for d in wf.days]},
-                    {"name": "Máquinas activas", "values": [d.machines_active for d in wf.days]},
+                    {
+                        "name": "Necessários",
+                        "values": [by_day[day]["required"] for day in days],
+                    },
+                    {
+                        "name": "Disponíveis",
+                        "values": [by_day[day]["available"] for day in days],
+                    },
                 ],
             },
             "meta": {
                 "peak_day": wf.peak_day,
-                "peak_operators": wf.peak_operators,
+                "peak_operators": wf.peak_required,
                 "trend": wf.trend,
+                "deficit_days": wf.deficit_days,
             },
         }
     )

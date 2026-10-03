@@ -16,14 +16,14 @@ class LotRisk:
     slack_min: float
     risk_score: float  # 0.0 (safe) to 1.0 (critical)
     risk_level: str  # "low" | "medium" | "high" | "critical"
-    binding_constraint: str  # "capacity" | "crew" | "none"
+    binding_constraint: str  # capacity|crew|jit_exception|long_run|operator|setup|calendar|none
 
 
 @dataclass(slots=True)
 class MachineRisk:
     machine_id: str
-    peak_utilization: float  # max utilisation in a single day (0-1)
-    avg_utilization: float
+    peak_utilization: float | None  # None: positive load without capacity
+    avg_utilization: float | None
     critical_lot_count: int  # lots with slack < 2 days on this machine
     bottleneck_score: float  # 0-1, sensitivity of OTD to this machine
 
@@ -32,7 +32,9 @@ class MachineRisk:
 class HeatmapCell:
     machine_id: str
     day_idx: int
-    utilization: float  # 0-1
+    utilization: float | None  # None: positive load without capacity
+    load_min: float
+    capacity_min: float
     min_slack_min: float  # min slack of active lots (-1 if none)
     risk_level: str  # "low" | "medium" | "high" | "critical"
 

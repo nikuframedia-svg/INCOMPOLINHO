@@ -24,6 +24,9 @@ export function Modal({ children, onClose, title, width = 400 }: Props) {
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         style={{
           background: T.card,
           borderRadius: 16,
@@ -37,11 +40,12 @@ export function Modal({ children, onClose, title, width = 400 }: Props) {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <span style={{ fontSize: 17, fontWeight: 600, color: T.primary }}>{title}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <span style={{ fontSize: 17, fontWeight: 600, color: T.primary, minWidth: 0, overflowWrap: "anywhere" }}>{title}</span>
           <button
             onClick={onClose}
-            style={{ background: "none", border: "none", color: T.tertiary, cursor: "pointer", fontSize: 18, fontFamily: "inherit" }}
+            aria-label={`Fechar ${title}`}
+            style={{ background: "none", border: "none", color: T.tertiary, cursor: "pointer", fontSize: 18, fontFamily: "inherit", flexShrink: 0 }}
           >
             ×
           </button>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from backend.config.types import FactoryConfig, MachineConfig
 from backend.risk import compute_risk, RiskResult
 from backend.risk.heatmap import compute_heatmap
 from backend.risk.slack_analytics import (
@@ -33,6 +34,7 @@ def _eop(
     sH: float = 0.5,
     oee: float = 0.66,
     alt: str | None = None,
+    operators: int = 1,
 ) -> EOp:
     return EOp(
         id=op_id,
@@ -43,7 +45,7 @@ def _eop(
         t=tool,
         pH=pH,
         sH=sH,
-        operators=1,
+        operators=operators,
         eco_lot=0,
         alt=alt,
         stk=0,
@@ -101,6 +103,7 @@ def _seg(
     lot_id: str = "L1",
     machine: str = "M1",
     tool: str = "T1",
+    sku: str = "SKU1",
     day: int = 0,
     start: int = 420,
     end: int = 720,
@@ -120,6 +123,7 @@ def _seg(
         qty=qty,
         prod_min=prod_min,
         setup_min=setup_min,
+        sku=sku,
     )
 
 
@@ -179,6 +183,81 @@ class TestLotRisks:
         risks = compute_lot_risks(segs, lots, engine)
         for r in risks:
             assert 0.0 <= r.risk_score <= 1.0
+
+    def test_binding_constraint_identifies_jit_exception(self):
+        engine = _engine(n_days=5)
+        lots = [_lot(edd=10)]
+        lots[0].delivery_day = 10
+        segs = [_seg(day=0)]
+
+        risks = compute_lot_risks(segs, lots, engine, FactoryConfig())
+
+        assert risks[0].binding_constraint == "jit_exception"
+
+    def test_binding_constraint_identifies_long_consecutive_run(self):
+        engine = _engine(n_days=6)
+        lots = [_lot(edd=10)]
+        lots[0].delivery_day = 4
+        segs = [
+            _seg(day=day, start=420, end=480, prod_min=60, setup_min=0)
+            for day in range(5)
+        ]
+
+        risks = compute_lot_risks(segs, lots, engine, FactoryConfig(max_run_days=4))
+
+        assert risks[0].binding_constraint == "long_run"
+
+    def test_binding_constraint_identifies_operator_capacity(self):
+        engine = _engine(ops=[_eop(operators=2)], n_days=5)
+        lots = [_lot(edd=4)]
+        lots[0].delivery_day = 4
+        segs = [_seg(day=0, setup_min=0)]
+        config = FactoryConfig()
+        config.machines = {"M1": MachineConfig(id="M1", group="Grandes")}
+        config.operators[("Grandes", "A")] = 1
+
+        risks = compute_lot_risks(segs, lots, engine, config)
+
+        assert risks[0].binding_constraint == "operator"
+
+    def test_binding_constraint_identifies_setup_overlap(self):
+        engine = _engine(
+            ops=[
+                _eop(op_id="OP1", sku="SKU1", machine="M1", tool="T1"),
+                _eop(op_id="OP2", sku="SKU2", machine="M2", tool="T2"),
+            ],
+            n_days=5,
+        )
+        lots = [
+            _lot("L1", op_id="OP1", tool="T1", machine="M1", edd=4),
+            _lot("L2", op_id="OP2", tool="T2", machine="M2", edd=4),
+        ]
+        for lot in lots:
+            lot.delivery_day = 4
+        segs = [
+            _seg(lot_id="L1", machine="M1", tool="T1", setup_min=30),
+            _seg(lot_id="L2", machine="M2", tool="T2", sku="SKU2", setup_min=30),
+        ]
+        config = FactoryConfig()
+        config.machines = {
+            "M1": MachineConfig(id="M1", group="Grandes"),
+            "M2": MachineConfig(id="M2", group="Grandes"),
+        }
+
+        risks = compute_lot_risks(segs, lots, engine, config)
+
+        assert {risk.binding_constraint for risk in risks} == {"setup"}
+
+    def test_binding_constraint_identifies_calendar_block(self):
+        engine = _engine(n_days=5)
+        engine.machine_blocked_days = {"M1": {0}}
+        lots = [_lot(edd=4)]
+        lots[0].delivery_day = 4
+        segs = [_seg(day=0, setup_min=0)]
+
+        risks = compute_lot_risks(segs, lots, engine, FactoryConfig())
+
+        assert risks[0].binding_constraint == "calendar"
 
 
 # --- Tier 1: Machine Risks ---
@@ -285,6 +364,8 @@ class TestHeatmap:
 
         cells = compute_heatmap(segs, lot_risks, engine)
         assert cells[0].risk_level == "critical"
+        assert cells[0].load_min == 1010.0
+        assert cells[0].capacity_min == 1020.0
 
 
 # --- Tier 2: Surrogate ---
@@ -385,8 +466,8 @@ class TestComputeRisk:
         assert result.health_score >= 0
         assert result.lot_risks == []
 
-    def test_top_risks_sorted_by_score(self):
-        """top_risks are sorted by risk_score descending."""
+    def test_top_risks_sorted_by_nearest_risk_date(self):
+        """The nearest delivery/rupture risk is shown first."""
         engine = _engine()
         lots = [
             _lot(lot_id="L1", edd=10),
@@ -400,5 +481,5 @@ class TestComputeRisk:
         ]
 
         result = compute_risk(segs, lots, engine)
-        scores = [r.risk_score for r in result.top_risks]
-        assert scores == sorted(scores, reverse=True)
+        dates = [r.edd for r in result.top_risks]
+        assert dates == sorted(dates)

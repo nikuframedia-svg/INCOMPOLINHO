@@ -3,7 +3,7 @@
   Industrial APS Scheduler — Incompol / NIKUFRA.AI
 ================================================================================
 
-FABRICA: Incompol (5 prensas, 59 ferramentas, ~94 SKUs, 14 clientes)
+FABRICA: Incompol (5 prensas base, 59 ferramentas, ~94 SKUs, 14 clientes)
 TURNOS:  A: 07:00-15:30 (510 min) | B: 15:30-00:00 (510 min)
 DAY_CAP: 1020 min/dia | OEE: 0.66 | Setup default: 0.5h
 
@@ -13,7 +13,6 @@ MAQUINAS:
   PRM039  Grandes  28 SKUs  (+variedade)
   PRM042  Medias   11 SKUs  (SEM ALTERNATIVA)
   PRM043  Grandes  14 SKUs
-  PRM020  FORA DE USO — IGNORAR
 
 ================================================================================
   PIPELINE PRINCIPAL
@@ -54,11 +53,15 @@ MAQUINAS:
 
   PECAS GEMEAS (TWIN):
     - Mesma ferramenta + maquina, producao SIMULTANEA
-    - Qtd por SKU = exactamente o que cada um precisa (eco lot per-SKU)
+    - Eco lots efetivos diferentes bloqueiam o planeamento; nao usar LCM
+    - Em TODOS os ciclos, ambos os SKUs produzem a mesma quantidade positiva
     - Tempo = UMA execucao: max(time_A, time_B), NAO o dobro
     - Carry-forward independente por SKU
-    - Emparelhamento: 1a-1a, 2a-2a, ordenado por EDD (cross-EDD merge)
-    - Merge complementar dentro de 5 dias de gap
+    - Emparelhamento cronologico e independente da ordem A/B, ate 5 dias
+    - A libertacao mais cedo dos outputs disponibiliza material para o ciclo comum
+    - Sem parceiro ate 5 dias de entrega, o segundo output e stock coproduzido
+    - Stock coproduzido respeita lead SUBC/OTD-D, mas nao cria entrega ou dispatch ficticio
+    - Cada evento de procura e consumido uma unica vez; nao existe merge posterior
 
   OUTPUT: Lista de Lot { id, op_id, tool_id, machine_id, alt_machine_id,
                          qty, prod_min, setup_min, edd, is_twin, twin_outputs }
@@ -177,7 +180,7 @@ MAQUINAS:
 
 
 ================================================================================
-  FASE 4 — JIT (Backward Scheduling)
+  FASE 4 — LIBERTACAO DE MATERIAL E PRAZO DE PRODUCAO
 ================================================================================
 
   Ficheiro: backend/scheduler/jit.py
@@ -185,51 +188,37 @@ MAQUINAS:
                          baseline_score, config)
             -> (Segment[], Lot[], warnings[], machine_runs, gates)
 
-  OBJECTIVO: Produzir o mais tarde possivel (2-5 dias antes EDD).
-             Reduzir earliness sem aumentar tardy.
+  OBJECTIVO: Proibir setup/producao antes da libertacao simulada de material,
+             concluir ate ao marco controlavel pela fabrica e produzir no
+             primeiro intervalo fisicamente viavel.
 
-  ACTIVACAO: So corre se baseline OTD >= 95% (jit_threshold)
+  CONTRATO DE DATAS:
+    C = entrega ao cliente
+    H = C - lead time util do fornecedor
+    P = H - buffer de subcontratacao
+    U = P para subcontratados; C para artigos normais
+    I = U - buffer interno de fim
+    M = P para subcontratados; C para artigos normais
+    R = M - 5 dias uteis
+    Marcos podem ser negativos; a execucao comeca no minimo em D0.
 
   ALGORITMO (5 passos):
 
-    1. ASSIGN MACHINES (mesmo que baseline)
-
-    2. EDD SORT (estrito, obrigatorio para backward stacking)
-
-    3. BACKWARD-STACK GATES (_backward_stack_gates):
-       Para cada maquina (runs em ordem EDD crescente):
-       - Ultimo run: gate = max_gate(run)
-           max_gate = EDD - ceil(total_min / DAY_CAP), skip holidays
-       - Cada run anterior: gate = min(max_gate, next_start - total - buffer)
-       - Buffer = run.total_min * 5% + run.setup_min
-           (absorve overhead de shift-boundary)
-       - Gate em minutos absolutos: gate_day * DAY_CAP
-
-    4. PER-MACHINE DISPATCH COM GATES
-       Cada maquina e despachada independentemente (CrewState independente)
-       per_machine_dispatch({m_id: m_runs}, data, lst_gate=gates)
-       NOTA: Isto pode criar overlaps de crew entre maquinas
-             (corrigido no post-processing)
-
-    5. BINARY SEARCH SAFETY NET (se tardy > baseline)
-       Para cada run tardy:
-         gate_lo = 0.0 (posicao baseline, sempre feasible)
-         gate_hi = backward-stacked gate
-         gate_mid = (lo + hi) / 2
-       Re-dispatch e verificar.
-       Se abs(hi - mid) < DAY_CAP * 0.5 → snap para baseline
-       Max retries: 15
-       Se ainda tardy apos retries → REVERTER TUDO para baseline
+    1. CRIAR MARCOS por necessidade e por output gemeo.
+    2. ORDENAR por U, rutura e prioridade explicita.
+    3. IMPOR inicio produtivo >= R e fim produtivo <= U.
+    4. RESOLVER globalmente maquina, ferramenta, setup e operadores.
+    5. NORMALIZAR para o primeiro intervalo legal sem piorar entrega/envio.
 
   OUTPUT:
-    Se JIT melhorou: (jit_segs, jit_lots, warnings, machine_runs, gates)
-    Se JIT reverteu: (baseline_segs, baseline_lots, warnings, None, None)
+    Plano estrito quando viavel.
+    Plano best_effort quando U nao cabe, sem relaxar R.
+    OTD/OTD-D usam C e disponibilidade apos lead externo.
+    Gate separado mede atrasos de envio para subcontratacao.
 
   CONSTANTES:
-    LST_SAFETY_BUFFER = 2 dias
-    JIT_THRESHOLD = 95% OTD
-    JIT_BUFFER_PCT = 0.05 (5%)
-    JIT_MAX_RETRIES = 15
+    JIT_MAX_ANTICIPATION_WORKDAYS = 5
+    PLANNING_POLICY_VERSION = twin-shared-material-v2
 
 
 ================================================================================

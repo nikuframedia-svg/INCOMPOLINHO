@@ -13,14 +13,21 @@ Neighborhoods:
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 
 from backend.config.types import FactoryConfig
 from backend.scheduler.dispatch import per_machine_dispatch
 from backend.scheduler.gates import HARD_GATE_KEYS
 from backend.scheduler.jit import _backward_stack_gates
+from backend.scheduler.jit_policy import (
+    clamp_run_gates_to_window,
+    lot_floor_minutes,
+)
+from backend.scheduler.priority import delivery_priority_key
 from backend.scheduler.resources import clone_run_for_machine
 from backend.scheduler.scoring import compute_score
+from backend.scheduler.setup_identity import SetupIdentity, run_setup_identity
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.types import EngineData
 
@@ -34,33 +41,25 @@ def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
         return False
     if _hard_violation_count(new) > _hard_violation_count(old):
         return False
-    if float(new.get("otd", 100.0) or 0.0) < float(old.get("otd", 100.0) or 0.0):
+    new_delivery = delivery_priority_key(new)
+    old_delivery = delivery_priority_key(old)
+    if new_delivery > old_delivery:
         return False
-    if float(new.get("otd_d", 100.0) or 0.0) < float(old.get("otd_d", 100.0) or 0.0):
-        return False
-    if int(new.get("tardy_count", 0) or 0) > int(old.get("tardy_count", 0) or 0):
-        return False
-
-    # Fewer tardy lots is always better once hard gates and OTD-D are preserved.
-    if int(new.get("tardy_count", 0) or 0) < int(old.get("tardy_count", 0) or 0):
+    if new_delivery < old_delivery:
         return True
 
-    if int(new.get("otd_d_failures", 0) or 0) > int(
-        old.get("otd_d_failures", 0) or 0
-    ):
-        return False
-    if float(new.get("total_tardiness", 0.0) or 0.0) > float(
-        old.get("total_tardiness", 0.0) or 0.0
-    ):
-        return False
-    if float(new.get("max_tardiness", 0.0) or 0.0) > float(
-        old.get("max_tardiness", 0.0) or 0.0
-    ):
+    # Once delivery and the material-release floor are preserved, keep work as
+    # early as possible. A larger gap to the latest legal start means that the
+    # candidate starts earlier inside the five-workday material window.
+    new_latest_start_gap = float(new.get("latest_start_gap_avg_min", 0.0) or 0.0)
+    old_latest_start_gap = float(old.get("latest_start_gap_avg_min", 0.0) or 0.0)
+    if new_latest_start_gap > old_latest_start_gap:
+        return True
+    if new_latest_start_gap < old_latest_start_gap:
         return False
 
-    # Productivity guard: once delivery is preserved, local VNS moves must not
-    # buy earliness by spending extra setups. JIT timing repair handles pure
-    # earliness improvements later in the CPO loop.
+    # With the same production timing, reducing setups is beneficial. It must
+    # never be used as a reason to delay a legal production run.
     if int(new.get("setups", 0) or 0) > int(old.get("setups", 0) or 0):
         return False
     if "setup_time_min" in new and "setup_time_min" in old:
@@ -75,19 +74,16 @@ def _is_better(new: dict, old: dict, config: FactoryConfig) -> bool:
     ):
         return False
 
-    from backend.scheduler.window import effective_earliness_target
-
-    target = effective_earliness_target(config) if config else 5.5
-    earliness_ceiling = max(old["earliness_avg_days"], target)
-    if new["earliness_avg_days"] > earliness_ceiling:
-        return False
-
-    # SOFT — weighted composite: tradeoff setups vs earliness
-    w_setups = config.weight_setups if config else 0.30
-    w_earliness = config.weight_earliness if config else 0.40
-    old_cost = old["setups"] * w_setups + old["earliness_avg_days"] * w_earliness
-    new_cost = new["setups"] * w_setups + new["earliness_avg_days"] * w_earliness
-    if new_cost < old_cost - 0.01:  # small epsilon to avoid float noise
+    if int(new.get("setups", 0) or 0) < int(old.get("setups", 0) or 0):
+        return True
+    if "setup_time_min" in new and "setup_time_min" in old:
+        if float(new.get("setup_time_min", 0.0) or 0.0) < float(
+            old.get("setup_time_min", 0.0) or 0.0
+        ):
+            return True
+    if float(new.get("planning_penalty", 0.0) or 0.0) < float(
+        old.get("planning_penalty", 0.0) or 0.0
+    ):
         return True
     return False
 
@@ -105,7 +101,7 @@ def _hard_violation_count(score: dict) -> int:
     aggregate = int(score.get("hard_violations", 0) or 0) - int(
         score.get("setup_crew_overlaps", 0) or 0
     )
-    return max(aggregate, explicit)
+    return max(aggregate, explicit) + int(score.get("early_window_violations", 0) or 0)
 
 
 def _deep_copy_runs(machine_runs: dict[str, list[ToolRun]]) -> dict[str, list[ToolRun]]:
@@ -125,16 +121,29 @@ def _dispatch_and_score(
     """
     all_segs: list[Segment] = []
     all_lots: list[Lot] = []
+    holiday_set = set(getattr(engine_data, "holidays", []) or [])
+    floors = lot_floor_minutes(machine_runs, holiday_set, config.day_capacity_min)
+    gates = clamp_run_gates_to_window(machine_runs, gates, floors)
     for m_id, m_runs in machine_runs.items():
         m_segs, m_lots, _ = per_machine_dispatch(
             {m_id: m_runs},
             engine_data,
             lst_gate=gates,
             config=config,
+            lot_floors=floors,
         )
         all_segs.extend(m_segs)
         all_lots.extend(m_lots)
-    score = compute_score(all_segs, all_lots, engine_data, config=config)
+    # The canonical scheduler audits legal gaps once on the settled plan.
+    # Repeating that O(n²) explainability scan for every VNS neighbour changes
+    # no VNS decision and made real recalculations exceed their time budget.
+    score = compute_score(
+        all_segs,
+        all_lots,
+        engine_data,
+        config=config,
+        include_operational_audit=False,
+    )
     return all_segs, all_lots, score
 
 
@@ -152,17 +161,14 @@ def _recompute_machine_gates(
     # Only recompute affected machines
     affected_runs = {m_id: runs for m_id, runs in machine_runs.items() if m_id in affected_machines}
     if affected_runs:
-        if config is not None and getattr(config, "earliness_policy", "jit") == "window":
-            from backend.scheduler.window import compute_window_gates
-
-            recomputed, _ = compute_window_gates(affected_runs, holiday_set, config)
-        else:
-            recomputed = _backward_stack_gates(
-                affected_runs,
-                holiday_set,
-                engine_data.n_days,
-                config=config,
-            )
+        recomputed = _backward_stack_gates(
+            affected_runs,
+            holiday_set,
+            engine_data.n_days,
+            config=config,
+        )
+        floors = lot_floor_minutes(affected_runs, holiday_set, config.day_capacity_min)
+        recomputed = clamp_run_gates_to_window(affected_runs, recomputed, floors)
         new_gates.update(recomputed)
 
     return new_gates
@@ -182,7 +188,7 @@ def _generate_n1_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryCo
     for m_id, runs in machine_runs.items():
         for i in range(len(runs) - 1):
             j = i + 1
-            # Only swap if EDD difference is within tolerance
+            # Only swap if operational due-date difference is within tolerance
             if abs(runs[i].edd - runs[j].edd) > tolerance:
                 continue
 
@@ -191,13 +197,16 @@ def _generate_n1_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryCo
 
             # After swap: runs[j] at position i, runs[i] at position j
             # Check if runs[j] matches tool at position i-1
-            if i > 0 and runs[j].tool_id == runs[i - 1].tool_id:
+            if i > 0 and run_setup_identity(runs[j]) == run_setup_identity(runs[i - 1]):
                 would_create_adjacency = True
             # Check if runs[i] matches tool at position j+1
-            if j < len(runs) - 1 and runs[i].tool_id == runs[j + 1].tool_id:
+            if (
+                j < len(runs) - 1
+                and run_setup_identity(runs[i]) == run_setup_identity(runs[j + 1])
+            ):
                 would_create_adjacency = True
             # Check if the swap itself creates adjacency (same tool)
-            if runs[i].tool_id == runs[j].tool_id:
+            if run_setup_identity(runs[i]) == run_setup_identity(runs[j]):
                 continue  # already adjacent same tool, no benefit
 
             if would_create_adjacency:
@@ -213,11 +222,11 @@ def _generate_n2_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryCo
 
     for m_id, runs in machine_runs.items():
         # Build tool → positions index
-        tool_positions: dict[str, list[int]] = defaultdict(list)
+        tool_positions: dict[SetupIdentity, list[int]] = defaultdict(list)
         for idx, run in enumerate(runs):
-            tool_positions[run.tool_id].append(idx)
+            tool_positions[run_setup_identity(run)].append(idx)
 
-        for tool_id, positions in tool_positions.items():
+        for _setup_identity, positions in tool_positions.items():
             if len(positions) < 2:
                 continue
 
@@ -254,7 +263,9 @@ def _generate_n3_moves(machine_runs: dict[str, list[ToolRun]], config: FactoryCo
             # Check if alt machine has a same-tool run within EDD tolerance
             alt_runs = machine_runs[alt]
             has_adjacency = any(
-                r.tool_id == run.tool_id and abs(r.edd - run.edd) <= tolerance for r in alt_runs
+                run_setup_identity(r) == run_setup_identity(run)
+                and abs(r.edd - run.edd) <= tolerance
+                for r in alt_runs
             )
             if has_adjacency:
                 yield ("cross_machine", m_id, idx, alt)
@@ -277,7 +288,7 @@ def _generate_n4_block_moves(machine_runs: dict[str, list[ToolRun]], config: Fac
 
         for anchor_idx, anchor in enumerate(blocks):
             for src in blocks[anchor_idx + 2 :]:
-                if src["tool_id"] != anchor["tool_id"]:
+                if src["setup_identity"] != anchor["setup_identity"]:
                     continue
                 if int(src["edd_min"]) - int(anchor["edd_max"]) > tolerance:
                     continue
@@ -295,8 +306,8 @@ def _same_tool_blocks(runs: list[ToolRun]) -> list[dict[str, object]]:
     start = 0
     while start < len(runs):
         end = start + 1
-        tool_id = runs[start].tool_id
-        while end < len(runs) and runs[end].tool_id == tool_id:
+        setup_identity = run_setup_identity(runs[start])
+        while end < len(runs) and run_setup_identity(runs[end]) == setup_identity:
             end += 1
 
         edds = [run.edd for run in runs[start:end]]
@@ -304,7 +315,7 @@ def _same_tool_blocks(runs: list[ToolRun]) -> list[dict[str, object]]:
             {
                 "start": start,
                 "end": end,
-                "tool_id": tool_id,
+                "setup_identity": setup_identity,
                 "edd_min": min(edds),
                 "edd_max": max(edds),
             }
@@ -347,6 +358,15 @@ def _make_split_run(original: ToolRun, lots: list[Lot], suffix: str) -> ToolRun:
         total_prod_min=total_prod,
         total_min=setup + total_prod,
         edd=lots[0].edd,
+        production_due_day=min(
+            (
+                lot.production_due_day
+                if lot.production_due_day is not None
+                else lot.edd
+                for lot in lots
+            ),
+            default=lots[0].edd,
+        ),
     )
 
 
@@ -436,11 +456,12 @@ def vns_polish(
     best_lots: list[Lot],
     best_score: dict,
 ) -> tuple[list[Segment], list[Lot], dict, list[str]]:
-    """VNS post-processing: explore neighborhoods to reduce setups/earliness.
+    """VNS post-processing: explore neighborhoods to improve timing/setups.
 
     Returns (segments, lots, score, warnings).
     """
     max_iter = config.vns_max_iter if config else 50
+    deadline = getattr(config, "_optimization_deadline", None)
     generators = [_generate_n1_moves, _generate_n2_moves]
     neighborhood_names = ["N1_swap", "N2_relocate"]
     if getattr(config, "vns_block_moves_enabled", False):
@@ -459,13 +480,19 @@ def vns_polish(
     total_evals = 0
 
     initial_setups = best_score["setups"]
-    initial_earliness = best_score["earliness_avg_days"]
+    initial_latest_start_gap = float(best_score.get("latest_start_gap_avg_min", 0.0) or 0.0)
 
     k = 0  # neighbourhood index
-    while k < len(generators) and total_evals < max_iter:
+    while (
+        k < len(generators)
+        and total_evals < max_iter
+        and (deadline is None or time.perf_counter() < float(deadline))
+    ):
         improved = False
 
         for move in generators[k](current_runs, config):
+            if deadline is not None and time.perf_counter() >= float(deadline):
+                break
             total_evals += 1
             if total_evals >= max_iter:
                 break
@@ -493,7 +520,8 @@ def vns_polish(
                 best_score = cand_score
                 improvements.append(
                     f"{neighborhood_names[k]}: setups={cand_score['setups']}, "
-                    f"earliness={cand_score['earliness_avg_days']:.1f}d"
+                    "latest-start gap="
+                    f"{float(cand_score.get('latest_start_gap_avg_min', 0.0) or 0.0):.0f}min"
                 )
                 improved = True
                 break  # restart from N1
@@ -506,9 +534,13 @@ def vns_polish(
     # Build summary warnings
     warnings: list[str] = []
     if improvements:
+        final_latest_start_gap = float(
+            best_score.get("latest_start_gap_avg_min", 0.0) or 0.0
+        )
         warnings.append(
             f"VNS: {initial_setups}→{best_score['setups']} setups, "
-            f"{initial_earliness:.1f}→{best_score['earliness_avg_days']:.1f}d earliness "
+            f"{initial_latest_start_gap:.0f}→{final_latest_start_gap:.0f}min "
+            "de margem até ao último início legal "
             f"({len(improvements)} improvements, {total_evals} evals)"
         )
         for imp in improvements:

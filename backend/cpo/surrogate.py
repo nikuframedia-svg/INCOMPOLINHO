@@ -1,7 +1,8 @@
 """Offline surrogate pre-screening for CPO v4 tuning.
 
 Uses RandomForest to predict fitness of chromosomes before full evaluation.
-Only used in deep/max modes. Graceful fallback if sklearn unavailable.
+Only used by the offline GA in ``backend.cpo.offline_ga``; never by
+``optimize()``. Graceful fallback if sklearn unavailable.
 """
 
 from __future__ import annotations
