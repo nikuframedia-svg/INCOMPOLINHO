@@ -27,6 +27,8 @@ from dataclasses import dataclass, field, replace
 from backend.scheduler.jit_policy import lot_output_milestones
 from backend.scheduler.policy import (  # noqa: F401  (re-exported)
     AnticipationKey,
+    anticipation_better,
+    anticipation_compare,
     anticipation_key,
     production_windows,
 )
@@ -348,6 +350,32 @@ def improvement_key(
         changed_lots,
         round(displacement_min, 3),
     )
+
+
+def improvement_better(candidate_key: tuple, reference_key: tuple) -> bool:
+    """Canonical preference between two ``improvement_key`` values.
+
+    Delivery first; then anticipation with the policy tolerance (a lot may
+    lose an hour or more only if a more urgent lot gains as much); then the
+    exact key (exact minutes, setups, transfers, disturbance).
+    """
+
+    if candidate_key[0] != reference_key[0]:
+        return candidate_key[0] < reference_key[0]
+    decided = anticipation_compare(candidate_key[1], reference_key[1])
+    if decided:
+        return decided < 0
+    return candidate_key < reference_key
+
+
+def regresses_reference(candidate_key: tuple, reference_key: tuple) -> bool:
+    """Guard of a chain of tolerant improvements against its starting plan:
+    with the same delivery, no lot may drift an hour or more later unless a
+    more urgent lot gained as much."""
+
+    return candidate_key[0] == reference_key[0] and anticipation_compare(
+        candidate_key[1], reference_key[1],
+    ) > 0
 
 
 def lot_changes(
@@ -1038,7 +1066,9 @@ def improve_plan(
             note(scope, proposal.subject, "rejected", "contract", losses)
             keep_tradeoffs([tradeoff_proposal(scope, ContractVerdict(False, losses))])
             return False
-        if not candidate.key < current.key:
+        if not improvement_better(candidate.key, current.key) or regresses_reference(
+            candidate.key, reference.key,
+        ):
             reject(f"{scope}:no_strict_gain")
             note(scope, proposal.subject, "rejected", "no_strict_gain")
             return False

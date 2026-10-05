@@ -38,6 +38,7 @@ from backend.scheduler.alternative_repair import (
 )
 from backend.scheduler.improvement import Proposal, SkippedProposal, production_windows
 from backend.scheduler.jit_policy import earliest_allowed_start
+from backend.scheduler.policy import anticipation_better
 from backend.scheduler.priority import lot_priority_key, run_priority_key
 from backend.scheduler.resources import clone_run_for_machine
 from backend.scheduler.types import Lot, Segment, ToolRun
@@ -177,7 +178,7 @@ def local_cpsat_proposals(
             continue
         after_windows = production_windows(created)
         after = tuple(after_windows.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
-        if not after < before:
+        if not anticipation_better(after, before):
             continue
         subject = {
             "key": "cpsat:" + "|".join(f"{rid}>{m}" for rid, m in plan),

@@ -16,6 +16,7 @@ from backend.scheduler.alternative_repair import anticipation_proposals
 from backend.scheduler.canonical import result_validation_data
 from backend.scheduler.improvement import (
     Proposal,
+    anticipation_better,
     anticipation_key,
     no_loss_verdict,
     plan_facts,
@@ -106,7 +107,8 @@ def test_improvement_cycle_applies_bfp186_without_any_order_loss(rev90):
             rev90.result.segments, rev90.result.lots, view, rev90.config, not_before_abs=floor,
         ) if isinstance(item, Proposal) and item.subject["run_id"] == BFP186_RUN
     )
-    assert candidate.anticipation < anticipation_key(audited.segments, audited.lots)
+    assert anticipation_better(candidate.anticipation,
+                               anticipation_key(audited.segments, audited.lots))
     assert old[BFP186_LOT][0] - new[BFP186_LOT][0] > 0
     assert report["moves_accepted"] >= 5
     assert sum(s.qty for s in improved.segments) == sum(s.qty for s in before.segments)

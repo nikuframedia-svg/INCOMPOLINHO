@@ -36,6 +36,11 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    Confirmado em 03/10/2026: com o mesmo prazo e a mesma rutura, a maior
    quantidade a entregar tem prioridade (`lot_priority_key`); o id do lote é
    só o desempate final estável.
+   **Tolerância (05/10/2026):** diferenças inferiores a 60 min não decidem
+   entre lotes. Um lote só pode começar ou acabar 1 h ou mais tarde se um lote
+   mais urgente ganhar pelo menos 1 h; abaixo disso, os minutos exatos
+   desempatam. Cada melhoria é comparada com o plano atual e com o de partida
+   (`policy.anticipation_compare`, `improvement.improvement_better`).
 4. **Objetivos seguintes:** menos setups físicos/minutos, menos transferências,
    menor alteração do plano. Não podem fazer perder uma antecipação admissível.
 5. **Decisão explícita de 02/10/2026:** uma antecipação pode aumentar o número
@@ -158,9 +163,11 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
 - Começar com um worker do solver; medir antes de aumentar. O código atual já
   usa um worker. GA/ML não são o caminho operacional e não são necessários
   para corrigir a falha reproduzida.
-- Confirmado em 03/10/2026: o ciclo de melhoria mantém 10 s na compactação
-  após libertar capacidade, no movimento manual e no CPO; o recálculo completo
-  usa o tempo restante até à reserva de fecho.
+- Confirmado em 05/10/2026 (substitui a nota de 03/10): compactação,
+  movimento manual, CPO e recálculo dão ao ciclo de melhoria o tempo que resta
+  no orçamento do pedido menos a reserva de fecho
+  (`planning_control.improvement_time_budget`); na revisão 90 a compactação
+  demora ~50 s. Mais pesquisa, não menor latência.
 - Um deadline exterior abrange preparação, pesquisa, fecho, validação e escrita.
   Subfases nunca reiniciam o relógio. Preservar a reserva de fecho existente.
 - Guardar o último candidato completo validado fora do solver. Timeout de uma

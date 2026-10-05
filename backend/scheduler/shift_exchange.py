@@ -24,6 +24,7 @@ from backend.planning_control import planning_checkpoint, remaining_time
 from backend.scheduler.global_jit import materialise_fixed_run
 from backend.scheduler.improvement import (
     ContractVerdict,
+    anticipation_better,
     anticipation_key,
     contract_verdict,
     tradeoff_proposal,
@@ -239,7 +240,9 @@ def repair_shift_capacity_exchange(
                 # Same order as the improvement evaluator: callers apply
                 # this repair directly, so it must be a canonical gain.
                 if verdict.admissible:
-                    if anticipation_key(candidate, lots) < anticipation_key(segments, lots):
+                    if anticipation_better(
+                        anticipation_key(candidate, lots), anticipation_key(segments, lots),
+                    ):
                         return candidate
                     verdict = ContractVerdict(False, [
                         "antecipacao atrasa um lote de maior prioridade comercial",

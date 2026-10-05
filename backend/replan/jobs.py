@@ -59,6 +59,7 @@ def _valid_delivery_floor(baseline, engine_data, config):
 def _prefer_no_loss_plan(candidate, reference, engine_data):
     """Compare unchanged-input plans with the same automatic-improvement rule."""
     from backend.scheduler.improvement import (
+        improvement_better,
         improvement_key,
         lot_changes,
         no_loss_verdict,
@@ -82,8 +83,9 @@ def _prefer_no_loss_plan(candidate, reference, engine_data):
             changed_lots=changed_lots, displacement_min=displacement_min,
         )
 
-    return key(candidate, candidate_facts, changed, displacement) < key(
-        reference, reference_facts, 0, 0.0,
+    return improvement_better(
+        key(candidate, candidate_facts, changed, displacement),
+        key(reference, reference_facts, 0, 0.0),
     )
 
 _REPLAN_TRANSACTION_FIELDS = (

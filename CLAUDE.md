@@ -1,5 +1,9 @@
 # ProdPlan PP1 — Industrial APS Scheduler
 
+> **`AGENTS.md` prevalece sobre este ficheiro.** Define o contrato de planeamento
+> (física → entregas por encomenda → antecipação → setups/transferências) e as
+> decisões confirmadas. O que aqui contradiga o AGENTS.md é histórico.
+
 Scheduler de produção para fábricas de estampagem.
 Fábrica: Incompol (5 prensas, 59 ferramentas, ~94 SKUs, 14 clientes).
 Empresa: NIKUFRA.AI (Portugal).
@@ -10,7 +14,7 @@ Empresa: NIKUFRA.AI (Portugal).
 - `frontend/` — React 19 + TypeScript + Vite + Zustand (UI: Console, Gantt, Stock, Risk, Expedition, Simulator, Config, Journal, Rules)
 - `config/incompol.yaml` — Master data (máquinas, setups, twins, holidays)
 - `docker/` + `Dockerfile` + `docker-compose.yml` — Orquestração multi-stage (Node build → Python slim + Nginx + Supervisor)
-- `tests/` — 528 testes (backend Python)
+- `tests/` — ~2780 testes (backend Python); casos reais congelados em `tests/fixtures/private/` (fora do git)
 
 ## Comandos
 ```bash
@@ -40,14 +44,18 @@ Modos: quick (greedy passthrough), normal/deep/max (pesquisa de candidatos + CP-
 
 Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
 
-## ═══ PRIORIDADE Nº1 ═══
-ENTREGAR TUDO A TEMPO. Sem excepção.
+## ═══ ENTREGAS ═══
+Entregar a tempo é o primeiro objetivo **depois das leis físicas** (máquina,
+ferramenta, equipa, calendário, material). Quando há capacidade, o alvo é
+OTD = OTD-D = 100%.
 
-## ═══ OTD-DELIVERY = 100% (OBRIGATÓRIO) ═══
-
-- **OTD** (global) = total produzido >= total procura → 100%
-- **OTD-D** (por dia) = em CADA dia com procura, produção acumulada >= procura acumulada → 100%
-- Qualquer regressão abaixo de 100% é um BUG
+- **OTD** (global) = total produzido >= total procura
+- **OTD-D** (por dia) = em cada dia com procura, produção acumulada >= procura acumulada
+- Uma melhoria automática nunca pode piorar **nenhuma** encomenda individual.
+- Se não há capacidade dentro da janela de material, o plano mantém e reporta
+  os atrasos: nunca relaxar a janela, inventar stock ou violar física para
+  mostrar 100%. Ex.: revisão 90 tem OTD 96,5% por falta real de capacidade
+  na PRM042 (sem alternativa).
 
 ## ═══ DADOS ISOP ═══
 
@@ -119,8 +127,12 @@ Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamen
 **Bug**: `_fix_day_overlaps` marcava `is_continuation=True` incondicionalmente ao empurrar segmentos, mesmo quando o segmento era o primeiro do lot. 25 segmentos ficavam como "continuação" sem precedente visível no Gantt.
 **Fix**: `_fix_orphan_continuations` identifica o primeiro segmento de cada lot (ordenado por day_idx, start_min) e reseta a flag.
 
-## ═══ RESULTADOS VALIDADOS ═══
-ISOP 27/02: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.4d, 125 setups
-ISOP 17/03: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.9d, 136 setups
-528 testes passam. Pipeline determinístico. <500ms para ~60 ops.
-0 violações de capacidade. 0 ghost segments. 0 orphan continuations.
+## ═══ RESULTADOS ═══
+Históricos (política antiga JIT, não comparáveis): ISOP 27/02 e 17/03 com
+OTD=100%, 125/136 setups, <500ms no modo quick.
+
+Atuais (revisão 90, ISOP 17/09, recálculo a 02/10, 1 núcleo): 0 violações
+físicas; OTD 96,5%, OTD-D 99,1%, 7 atrasados (capacidade PRM042); ciclo de
+melhoria ~11,5 s p50, 128 MiB. Com corte por tempo o resultado **não é
+garantidamente determinístico** (AGENTS §6). Ver
+`docs/plano-solver-2026-10-02.md` §10–12.

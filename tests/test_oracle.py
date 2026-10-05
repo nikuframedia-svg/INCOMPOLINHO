@@ -129,14 +129,19 @@ KNOWN_GAPS = {27}
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_cycle_reaches_the_oracle_optimum_under_the_setup_window_rule(seed):
-    """Decision of 03/10/2026: a setup and its first productive minute share
-    one shift window, as in the allocator; against that oracle the cycle is
-    expected to be optimal on these small instances."""
+def test_no_oracle_schedule_is_preferred_to_the_cycle_result(seed):
+    """Decisions of 03/10 (setup window) and 05/10 (anticipation tolerance):
+    under the canonical preference, no schedule enumerated by the oracle is
+    better than the plan the cycle returns."""
+    from backend.scheduler.policy import anticipation_better
+
+    from tests.oracle import all_vectors
+
     if seed in KNOWN_GAPS:
         pytest.xfail("N4 does not model retained mounts")
     data, config, lots, jobs = _instance(seed)
-    strict_key, _best = best_schedule(jobs, split_setup=False)
     start = _segments(worst_order_schedule(jobs), lots)
     improved, improved_lots, _report = improve_plan(start, lots, data, config, time_budget_s=20)
-    assert anticipation_key(improved, improved_lots) == strict_key
+    result = anticipation_key(improved, improved_lots)
+    better = [v for v in all_vectors(jobs, split_setup=False) if anticipation_better(v, result)]
+    assert not better, better[0]

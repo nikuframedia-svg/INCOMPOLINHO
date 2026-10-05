@@ -658,3 +658,21 @@ relógio). Suíte integral verde.
 - Commit de todo o working tree, exceto dados reais de cliente: cópias da
   base de dados em `data/` (agora ignoradas) e a cópia integral do plano
   `docs/auditoria-browser-2026-10-02/live-before.json`.
+
+### 12.3 Pré-visualização e decisões de 05/10/2026
+
+- Pré-visualização da compactação do plano ativo (rev. 90, proteção a 05/10),
+  sem gravar: 0 violações, nenhuma encomenda prejudicada, OTD/OTD-D iguais.
+  A cadeia de movimentos mostrou trocas extremas pela regra estrita (ex.:
+  VUL203 +30 min contra BFP192 −2 dias).
+- **Tolerância de 60 min** (`ANTICIPATION_TOLERANCE_MIN`, `POLICY_VERSION`
+  `earliest-lexicographic-tolerant-v2`): aplicada no ciclo, CPO, recálculo,
+  troca de turnos e filtros N1–N4. Com ela, as perdas por movimento ficam
+  abaixo de 1 h salvo quando um lote mais urgente ganha ≥1 h. O oráculo passou
+  a verificar que nenhum plano enumerado é preferível ao do ciclo.
+- **Orçamento:** a outra linha de trabalho ("Bloco 39") substituiu os 10 s
+  fixos pelo tempo restante menos a reserva; confirmado pelo utilizador.
+  Compactação da rev. 90 ≈ 50 s.
+- **Segurança:** o túnel `trycloudflare` expõe a API sem autenticação
+  (`/api/data/segments` devolve o plano completo; escrita não testada).
+  O utilizador decidiu manter o link aberto por agora; risco registado.

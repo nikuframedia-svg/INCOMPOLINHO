@@ -38,7 +38,7 @@ from backend.scheduler.gates import HARD_GATE_KEYS, build_gate_report
 from backend.scheduler.jit_policy import calendar_holidays
 from backend.scheduler.lot_sizing import create_lots
 from backend.scheduler.operators import compute_operator_alerts
-from backend.scheduler.policy import anticipation_key
+from backend.scheduler.policy import anticipation_compare, anticipation_key
 from backend.scheduler.priority import (
     DELIVERY_PRIORITY_KEYS,
     delivery_is_complete,
@@ -1122,7 +1122,7 @@ def _remember_trusted_result(
     if current_result is None:
         return candidate, candidate_config, candidate_source
     candidate_rank, current_rank = _comparable_ranks(candidate, current_result)
-    if candidate_rank < current_rank:
+    if _rank_better(candidate_rank, current_rank):
         return candidate, candidate_config, candidate_source
     return current_result, current_config, current_source
 
@@ -1501,7 +1501,7 @@ def _try_delivery_left_shift_repair(
                 trial = _clone_with_segments(result, trial_segments, trial_score)
                 # Left shifts keep the lots: the canonical anticipation applies.
                 trial_rank = _result_rank(trial)
-                if trial_rank >= _result_rank(result):
+                if not _rank_better(trial_rank, _result_rank(result)):
                     continue
                 candidates.append((trial_rank, [*moves, move], trial))
         if not candidates:
@@ -3206,7 +3206,7 @@ def _is_better_candidate(candidate: ScheduleResult, reference: ScheduleResult) -
     if not _preserves_trust(candidate, reference):
         return False
     candidate_rank, reference_rank = _comparable_ranks(candidate, reference)
-    return candidate_rank < reference_rank
+    return _rank_better(candidate_rank, reference_rank)
 
 
 def _trust_prefix(score: dict) -> tuple[float, ...]:
@@ -3234,7 +3234,7 @@ def _trust_rank(score: dict) -> tuple[float, ...]:
     aggregate anticipation proxies. Used only when two plans have different
     lots; otherwise ``_result_rank`` applies the canonical anticipation."""
 
-    return (*_trust_prefix(score), _anticipation_proxies(score), *_trust_tail(score))
+    return (_trust_prefix(score), _anticipation_proxies(score), _trust_tail(score))
 
 
 def _anticipation_proxies(score: dict) -> tuple[float, float]:
@@ -3252,11 +3252,26 @@ def _result_rank(result: ScheduleResult) -> tuple[object, ...]:
 
     score = result.score or {}
     return (
-        *_trust_prefix(score),
+        _trust_prefix(score),
         # Aggregate proxies only break exact ties of the canonical vector.
         (anticipation_key(result.segments, result.lots), _anticipation_proxies(score)),
-        *_trust_tail(score),
+        _trust_tail(score),
     )
+
+
+def _rank_better(candidate: tuple, reference: tuple) -> bool:
+    """Ranks are (physics+delivery, anticipation, tie-breaks). With the
+    canonical per-lot vector on both sides, anticipation uses the policy
+    tolerance before the exact order (same rule as the improvement cycle)."""
+
+    if candidate[0] != reference[0]:
+        return candidate[0] < reference[0]
+    left, right = candidate[1], reference[1]
+    if left and right and isinstance(left[0], tuple) and isinstance(right[0], tuple):
+        decided = anticipation_compare(left[0], right[0])
+        if decided:
+            return decided < 0
+    return candidate < reference
 
 
 def _comparable_ranks(
@@ -3500,7 +3515,7 @@ def _candidate_rejection_reason(candidate: ScheduleResult, reference: ScheduleRe
     if regressions:
         return "; ".join(regressions[:3])
     candidate_rank, reference_rank = _comparable_ranks(candidate, reference)
-    if candidate_rank >= reference_rank:
+    if not _rank_better(candidate_rank, reference_rank):
         return _score_frontier_reason(candidate.score or {}, reference.score or {})
     return "not accepted"
 

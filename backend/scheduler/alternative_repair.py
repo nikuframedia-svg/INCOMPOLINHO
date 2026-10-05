@@ -35,6 +35,7 @@ from backend.scheduler.jit_policy import (
     expedition_day,
     production_due_day,
 )
+from backend.scheduler.policy import anticipation_better
 from backend.scheduler.priority import (
     delivery_improves,
     delivery_is_complete,
@@ -399,7 +400,7 @@ def anticipation_proposals(
                 continue
             placed = production_windows(scheduled[1])
             after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in run_lots)
-            if after < before:
+            if anticipation_better(after, before):
                 placements.append((after, str(machine_id), scheduled))
         # The evaluator accepts the first strict gain: offer the best machine first.
         for after, machine_id, (rebound_run, created) in sorted(
@@ -534,7 +535,7 @@ def group_reinsertion_proposals(
             for created, rebound, assignments in chains(list(order), fixed, [], [], ()):
                 placed = production_windows(created)
                 after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
-                if after < before:
+                if anticipation_better(after, before):
                     placements.append((after, assignments, created, rebound))
         for _after, assignments, created, rebound_lots in sorted(
             placements, key=lambda item: item[:2],

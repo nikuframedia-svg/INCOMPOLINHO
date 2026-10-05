@@ -328,3 +328,55 @@ def test_closeout_reruns_alternative_search_only_for_unverified_state(monkeypatc
     assert run(verified, []) == 0
     # A warning claiming a repair does not skip the search any more.
     assert run(None, ["Máquinas alternativas: 1 reparação(ões) de entrega validada(s)."]) == 1
+
+
+# ── Anticipation tolerance (decision of 05/10/2026) ──────────────────────
+
+
+def _two_lots(urgent_start: int, next_start: int):
+    data = _data(
+        [_op("OP-A", "A", {3: 100}), _op("OP-B", "B", {8: 100})],
+        {"A": [_entry("A", "X", 3, 100)], "B": [_entry("B", "X", 8, 100)]},
+    )
+    urgent, later = _lot("L1", "OP-A", "A", 100, 3), _lot("L2", "OP-B", "B", 100, 8)
+    day, minute = divmod(next_start, 1440)
+    return _facts([
+        _seg("L1", 1, 100, start=urgent_start, end=urgent_start + 90),
+        _seg("L2", day, 100, machine="M2", sku="B", start=minute, end=minute + 90),
+    ], [later, urgent], data)
+
+
+def test_thirty_minutes_for_an_urgent_lot_do_not_buy_two_days_of_the_next():
+    from backend.scheduler.improvement import improvement_better
+
+    reference = _key(_two_lots(480, 2 * 1440 + 420))
+    candidate = _key(_two_lots(450, 4 * 1440 + 420))
+    assert not improvement_better(candidate, reference)
+    assert improvement_better(reference, candidate)
+
+
+def test_an_hour_for_an_urgent_lot_decides_before_the_next():
+    from backend.scheduler.improvement import improvement_better
+
+    reference = _key(_two_lots(540, 2 * 1440 + 420))
+    candidate = _key(_two_lots(480, 4 * 1440 + 420))
+    assert improvement_better(candidate, reference)
+
+
+def test_small_gains_still_count_when_nothing_larger_is_at_stake():
+    from backend.scheduler.improvement import improvement_better
+
+    reference = _key(_two_lots(480, 2 * 1440 + 420))
+    candidate = _key(_two_lots(460, 2 * 1440 + 440))
+    assert improvement_better(candidate, reference)
+
+
+def test_a_chain_of_tolerated_moves_cannot_drift_from_its_reference():
+    from backend.scheduler.improvement import improvement_better, regresses_reference
+
+    reference = _key(_two_lots(480, 2 * 1440 + 420))
+    step_one = _key(_two_lots(470, 2 * 1440 + 470))
+    step_two = _key(_two_lots(460, 2 * 1440 + 520))
+    assert improvement_better(step_one, reference)
+    assert improvement_better(step_two, step_one)
+    assert regresses_reference(step_two, reference)

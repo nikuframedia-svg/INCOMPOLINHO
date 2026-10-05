@@ -151,3 +151,13 @@ def worst_order_schedule(jobs: dict[str, Job]) -> list[Placement]:
     eligible machine."""
     order = [job.id for job in sorted(jobs.values(), key=lambda j: j.priority, reverse=True)]
     return _schedule(order, {j: jobs[j].machines[0] for j in jobs}, jobs)
+
+
+def all_vectors(jobs: dict[str, Job], *, split_setup: bool = True):
+    """Anticipation vector of every enumerated list schedule."""
+    ids = sorted(jobs)
+    for order in itertools.permutations(ids):
+        for machines in itertools.product(*(jobs[j].machines for j in ids)):
+            yield vector(_schedule(order, dict(zip(ids, machines, strict=True)), jobs,
+                                   split_setup=split_setup), jobs)
+
