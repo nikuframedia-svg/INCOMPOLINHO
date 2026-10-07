@@ -1,0 +1,3 @@
+from backend.runtime_guard import assert_isolated_environment
+
+assert_isolated_environment()

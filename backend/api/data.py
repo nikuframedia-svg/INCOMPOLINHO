@@ -395,6 +395,7 @@ def _compute_schedule(config):
         from backend.simulator.mutations import reapply_calendar_mutations
 
         reapply_calendar_mutations(state.engine_data, state.active_mutations, config)
+    from backend.plans.context import recalculation_from_start
     from backend.plans.frozen import optimize_preserving_started_lots
 
     return optimize_preserving_started_lots(
@@ -402,6 +403,7 @@ def _compute_schedule(config):
         config,
         _schedule_result_from_state(),
         audit=True,
+        **({"recalculate_from_start": True} if recalculation_from_start() else {}),
     ), None
 
 
@@ -415,7 +417,7 @@ def _compact_active_schedule(config):
 
 
 def _compact_active_schedule_bounded(config):
-    """Recompact the active plan without rebuilding lots or moving history."""
+    """Recompact existing lots in the scope selected by the server-side writer."""
 
     if state.engine_data is None:
         state.config = config
@@ -423,7 +425,9 @@ def _compact_active_schedule_bounded(config):
     from backend.config.planning import synchronize_active_twin_groups
     from backend.cpo.optimizer import MODE_CONFIG, _attach_robustness_with_reserve
     from backend.planning_control import closing_reserve
+    from backend.plans.context import recalculation_from_start
     from backend.plans.frozen import compact_preserving_started_lots
+    from backend.scheduler.canonical import result_validation_data
     from backend.scheduler.gates import build_gate_report
     from backend.transform.calendars import apply_calendars
 
@@ -437,16 +441,18 @@ def _compact_active_schedule_bounded(config):
         state.engine_data,
         config,
         _schedule_result_from_state(),
+        **({"recalculate_from_start": True} if recalculation_from_start() else {}),
     )
+    validation_data = result_validation_data(state.engine_data, result)
     _attach_robustness_with_reserve(
-        result, state.engine_data, config, seed=42,
+        result, validation_data, config, seed=42,
         reserve_s=closing_reserve(float(MODE_CONFIG["normal"]["time_budget_s"])),
     )
     result.gate_report = build_gate_report(
         result.segments,
         result.lots,
         result.score,
-        state.engine_data,
+        validation_data,
         config,
     )
     from backend.scheduler.improvement import improvement_gate_summary
@@ -454,7 +460,7 @@ def _compact_active_schedule_bounded(config):
     # Same informational summary as the full recalculation: what the no-loss
     # improvement did and why each remaining tool transfer stays.
     result.gate_report["improvement"] = improvement_gate_summary(
-        result.improvement_report, result.segments, result.lots, state.engine_data, config,
+        result.improvement_report, result.segments, result.lots, validation_data, config,
     )
     state.config = config
     state.manual_edits = []
@@ -2240,7 +2246,7 @@ def _apply_ctp_locked(request: CTPRequest):
 
 
 @router.post("/recalculate")
-@plan_writer
+@plan_writer(recalculate_from_start=True)
 async def recalculate(body: dict):
     _require_data()
 

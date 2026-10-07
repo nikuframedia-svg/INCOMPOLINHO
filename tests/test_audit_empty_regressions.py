@@ -1,5 +1,8 @@
 """Empty plans remain loaded, durable and usable for subsequent demand."""
 
+from datetime import datetime
+from unittest.mock import Mock
+
 from backend.api import plans
 from backend.copilot.state import CopilotState, state
 from backend.plans.restore import restore_plan_into_state
@@ -9,6 +12,10 @@ refresh_analytics = CopilotState._refresh_analytics
 
 
 def test_cancel_all_save_restart_and_add_new_demand(services, monkeypatch):  # noqa: F811
+    clock = Mock(wraps=datetime)
+    fixed = datetime.fromisoformat(state.engine_data.workdays[0] + "T12:00:00+01:00")
+    clock.now.side_effect = lambda tz: fixed.astimezone(tz)
+    monkeypatch.setattr("backend.plans.frozen.datetime", clock)
     monkeypatch.setattr(CopilotState, "_refresh_analytics", refresh_analytics)
     services.client.app.include_router(plans.router)
     mutations = [{"type": "cancel_order", "params": {"sku": "S1", "from_day": 0, "to_day": 13}}]

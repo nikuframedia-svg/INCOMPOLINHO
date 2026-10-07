@@ -39,7 +39,7 @@ from backend.types import ClientDemandEntry, EngineData
 
 # 2: anticipation vector ranks before setups; extra setups no longer veto.
 CONTRACT_VERSION = 2
-PROTECTED_CONTEXT_VERSION = 4
+PROTECTED_CONTEXT_VERSION = 5
 
 # Same precision as ``scoring.setup_time_min``. Both the phase reference and
 # the last accepted candidate are checked, so rounding cannot drift upwards

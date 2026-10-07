@@ -216,6 +216,9 @@ class ReplanJobStore:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        from backend.runtime_guard import assert_writable
+
+        assert_writable(self.path)
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         with self.lock:

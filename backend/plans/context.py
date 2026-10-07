@@ -13,6 +13,7 @@ class MutationContext:
     validators: list[Callable] = field(default_factory=list)
     callbacks: list[Callable] = field(default_factory=list)
     api_write: bool = False
+    recalculate_from_start: bool = False
     approval_required: object | None = None
     approval_action: str = "recompute"
 
@@ -27,6 +28,11 @@ def redirected_state(instance):
 
 def is_staging() -> bool:
     return _context.get() is not None
+
+
+def recalculation_from_start() -> bool:
+    context = _context.get()
+    return context is not None and context.recalculate_from_start
 
 
 def api_write_context() -> MutationContext | None:

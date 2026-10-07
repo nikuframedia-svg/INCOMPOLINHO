@@ -32,6 +32,9 @@ class RobustnessJobStore:
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        from backend.runtime_guard import assert_writable
+
+        assert_writable(self._path)
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock:

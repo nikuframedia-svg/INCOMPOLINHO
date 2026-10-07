@@ -21,7 +21,7 @@ machines:
     group: Grandes
     active: true
     day_capacity_min: null
-    oee: 0.44
+    oee: 0.66
   PRM039:
     group: Grandes
     active: true
@@ -36,7 +36,7 @@ machines:
     group: Grandes
     active: true
     day_capacity_min: null
-    oee: null
+    oee: 0.66
 tools:
   _default:
     setup_hours: 0.5

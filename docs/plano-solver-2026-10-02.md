@@ -676,3 +676,72 @@ relógio). Suíte integral verde.
 - **Segurança:** o túnel `trycloudflare` expõe a API sem autenticação
   (`/api/data/segments` devolve o plano completo; escrita não testada).
   O utilizador decidiu manter o link aberto por agora; risco registado.
+
+### 12.4 Recálculo integral confirmado em 06/10/2026
+
+O plano ativo na revisão 91 continuava a apresentar as mesmas posições de
+vários lotes de setembro. A implementação então publicada congelava 53 lotes
+porque tinham segmentos anteriores ao dia corrente da fábrica (D19), não
+porque existisse prova de execução. Melhorar apenas o restante plano não
+atualizava essas posições no Gantt. A BFP083 tem, adicionalmente, uma âncora
+manual em 29/09 às 15:30 na PRM031: não se trata de capacidade física em falta.
+
+Decisão explícita: "Recalcular plano" deve voltar a pesquisar desde D0.
+Compactação e otimização integral recebem o mesmo âmbito interno, libertando
+apenas a proteção derivada da passagem do tempo. Não se apagam decisões manuais,
+observações nem oferta comprometida, nem se inventam registos de execução.
+Validação, robustez e relatório final usam o contexto do candidato, não as
+provas de proteção antigas do plano substituído. O orçamento não foi alterado.
+
+A persistência exige uma operação preparada pelo coordenador com esse âmbito;
+um campo enviado pelo cliente ou colocado no snapshot não o autoriza. Guardar
+outros planos, restaurar e os restantes escritores mantêm a proteção existente.
+As aprovações continuam a aplicar exatamente o candidato apresentado, sem novo
+cálculo; a versão do contexto de proteção invalida candidatos anteriores.
+
+Regressões: `tests/test_full_horizon_recalculation.py`. Ensaio real isolado:
+`scripts/full_horizon_acceptance.py` e
+`scripts/audit_full_horizon_recalculation.mjs`, com aplicação no navegador,
+gravação, igualdade com a pré-visualização e recuperação após reinício.
+Esta decisão remove o impedimento de pesquisa do passado; não prova que a
+pesquisa limitada encontra todas as antecipações possíveis.
+
+Ensaio pelo botão real, na cópia da revisão 91, aplicado e recuperado como
+revisão 92 privada (não corresponde a uma aplicação em produção):
+
+| Caso | Início produtivo obtido | Observação |
+|---|---|---|
+| BFP082 / 1092262X100, primeira necessidade | 17/09, 09:15 | Entrou na pesquisa desde D0 |
+| BFP080 / 1065170X100, prazo D19 | 28/09, 09:15 | Antecipação no próprio dia |
+| VUL195 / 8750705018 | 25/09, 09:12 | Antecipado de D11 para D8 |
+| VUL174 / 8750792794 | 25/09, 12:53 | Antecipado de D11 para D8 |
+| BFP114 / 1694825X040 | 24/09, 22:41 | Dentro da libertação e das regras físicas |
+| BFP083, lote gémeo D15 | 29/09, 15:30 | Âncora manual conservada |
+
+O ensaio demorou 51,62 s até à confirmação; é uma execução, não uma média nem
+um p95. A melhoria ficou parcial por orçamento. Verificações: quantidades
+conservadas, nenhuma encomenda prejudicada, zero conflitos físicos, fixações
+preservadas; igualdade dos segmentos/lotes aplicados com o candidato apresentado
+e recuperação exata após reinício. Navegador a 390 e 1440 px sem erros JavaScript.
+
+A primeira regressão integral revelou dois testes anteriores dependentes de
+`hoje`: cancelamento para obter um plano vazio e transporte do relatório de
+melhoria. Ambos falharam também na árvore original, em 06/10. Os respetivos
+ensaios passam agora com o relógio explícito em D0 da fixture; não se alterou
+o comportamento do simulador nem se relaxou a proteção das outras rotas.
+
+Validação final da árvore isolada: backend integral **2796 passaram, 2
+ignorados, 1 xfail** (673 s); os 3 casos adicionais de interrupção/observações
+também passaram (13 regressões novas no total). Frontend **22 testes de lógica
+e 190 de interface passaram**; Ruff, ESLint, TypeScript e build passaram.
+
+Publicação: backend reiniciado em 06/10/2026 às 12:20 CEST, mantendo portas e
+túnel. Navegação pública de leitura nas seis páginas a 390/1440 px passou,
+sem erros JavaScript ou API; 75 regressões de recálculo/persistência passaram
+novamente na árvore integrada. Backup consistente em
+`/tmp/incompolinho-full-horizon-release-backup-20261006/`.
+O plano de produção permaneceu na revisão 91, snapshot
+`846542ae2b5448238ac2f88217761dd6`, com SHA-256 do payload
+`a59b81cefcff12e75818072ce7c7a10fd4c50af1dde1c3737d2407ae8d033e65`
+inalterado. A publicação é de código: atualizar o Gantt exige executar e
+aprovar o recálculo, não houve substituição automática do plano ativo.

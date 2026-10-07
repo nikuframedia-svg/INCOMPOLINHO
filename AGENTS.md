@@ -134,6 +134,15 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
 
 - Distinguir planeamento passado protegido de execução real. A aplicação não
   deve afirmar execução só porque passou a data planeada.
+- **Decisão de 06/10/2026:** o comando explícito "Recalcular plano" revê o
+  ISOP completo desde D0, incluindo produção passada apenas planeada. Nesse
+  comando, a data decorrida não congela lotes nem gera reservas de capacidade;
+  provas antigas derivadas exclusivamente da data são retiradas da cópia de
+  cálculo. Mantêm-se âncoras manuais, estados observados das máquinas e oferta
+  já comprometida. Outras alterações operacionais e reposições conservam a
+  proteção por data existente. Esta exceção é interna ao coordenador, não um
+  parâmetro de cliente que permita contornar a validação. O orçamento atual
+  permanece inalterado; recalcular continua sujeito às aprovações existentes.
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
 - Replanear apenas produção móvel, mas validar contra o contexto completo:

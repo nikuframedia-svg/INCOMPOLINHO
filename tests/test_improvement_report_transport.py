@@ -127,11 +127,18 @@ def test_changed_candidate_does_not_inherit_verification_status(reported_state, 
 
 
 def test_job_capacity_release_keeps_report_through_apply_and_reopening(ready_replan, monkeypatch):  # noqa: F811
+    from datetime import datetime
+    from unittest.mock import Mock
+
     from backend.plans.store import PlansStore
     from backend.replan import jobs
 
     live, manager, _old_job, result, _config_path = ready_replan
     live.engine_data.workdays = ["2026-10-05", "2026-10-06"]
+    clock = Mock(wraps=datetime)
+    fixed = datetime.fromisoformat(live.engine_data.workdays[0] + "T12:00:00+01:00")
+    clock.now.side_effect = lambda tz: fixed.astimezone(tz)
+    monkeypatch.setattr("backend.plans.frozen.datetime", clock)
     live.engine_data.ops[0].stk = 0
     result.segments = [replace(result.segments[0], start_min=600, end_min=690)]
     result.score = compute_score(result.segments, result.lots, live.engine_data, live.config)

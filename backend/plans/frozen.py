@@ -347,15 +347,36 @@ def _splice_frozen_started_lots(result, frozen_segments, frozen_lots):
     return result
 
 
-def compact_preserving_started_lots(engine_data, config, baseline_result):
+def _recalculation_context(engine_data, config, baseline_result, recalculate_from_start):
+    if not recalculate_from_start:
+        return engine_data, baseline_result, _current_planning_day(engine_data, config)
+    # Date-derived proofs belong to the old protected plan, not to observed
+    # execution. Clear them only on detached inputs; keep anchors/observations.
+    data, baseline = copy.deepcopy((engine_data, baseline_result))
+    data.preserved_lot_proofs = {}
+    baseline.preserved_lot_proofs = {}
+    baseline.warnings = [
+        warning for warning in baseline.warnings
+        if not warning.startswith("Plano anterior preservado:")
+    ]
+    return data, baseline, 0
+
+
+def compact_preserving_started_lots(
+    engine_data, config, baseline_result, *, recalculate_from_start=False,
+):
     """Recompact a valid active plan after capacity is released."""
     from backend.planning_control import planning_scope
 
     with planning_scope(timeout_s=60.0):
-        return _compact_preserving_started_lots(engine_data, config, baseline_result)
+        return _compact_preserving_started_lots(
+            engine_data, config, baseline_result, recalculate_from_start=recalculate_from_start,
+        )
 
 
-def _compact_preserving_started_lots(engine_data, config, baseline_result):
+def _compact_preserving_started_lots(
+    engine_data, config, baseline_result, *, recalculate_from_start=False,
+):
     from backend.planning_control import improvement_time_budget
     from backend.scheduler.canonical import result_validation_data
     from backend.scheduler.operators import compute_operator_alerts
@@ -363,8 +384,10 @@ def _compact_preserving_started_lots(engine_data, config, baseline_result):
     from backend.scheduler.validation import assert_plan_valid
 
     started_at = time.perf_counter()
+    engine_data, baseline_result, freeze_day = _recalculation_context(
+        engine_data, config, baseline_result, recalculate_from_start,
+    )
     result = copy.deepcopy(baseline_result)
-    freeze_day = _current_planning_day(engine_data, config)
     frozen_segments, frozen_lots, anchored = _protected_lots(
         result, freeze_day, engine_data, config,
     )
@@ -490,7 +513,7 @@ def improve_preserving_protected_lots(
 
 def optimize_preserving_started_lots(
     engine_data, config, baseline_result, *, mode="normal", audit=False, cancel_event=None,
-    optimizer=None,
+    optimizer=None, recalculate_from_start=False,
 ):
     """Optimize a detached input, preserving every segment of already-started lots.
 
@@ -526,7 +549,9 @@ def optimize_preserving_started_lots(
         timeout_s=float(MODE_CONFIG[mode].get("time_budget_s", 60.0)),
         cancel_event=cancel_event,
     ):
-        freeze_day = _current_planning_day(engine_data, config)
+        engine_data, baseline_result, freeze_day = _recalculation_context(
+            engine_data, config, baseline_result, recalculate_from_start,
+        )
         segments, lots, anchored = _protected_lots(
             baseline_result, freeze_day, engine_data, config,
         )
@@ -549,6 +574,8 @@ def optimize_preserving_started_lots(
                     )
                 return
             merged = copy.deepcopy(candidate)
+            if recalculate_from_start:
+                merged.preserved_lot_proofs = {}
             if lots:
                 merged = _splice_frozen_started_lots(merged, segments, lots)
                 view = result_validation_data(original_data, merged)

@@ -78,6 +78,9 @@ def _file_identity() -> dict:
 
 
 def _atomic_text(path: Path, text: str | None) -> None:
+    from backend.runtime_guard import assert_writable
+
+    assert_writable(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if text is None:
         path.unlink(missing_ok=True)
@@ -110,6 +113,7 @@ def _sync_directory(path: Path) -> None:
 def _prepare_files(config, config_path, files):
     """All replacement files reach durable storage before any live rename."""
     from backend.config.loader import save_config
+    from backend.runtime_guard import assert_writable
 
     prepared = []
     try:
@@ -117,6 +121,7 @@ def _prepare_files(config, config_path, files):
         if config_path is not None:
             entries.insert(0, (config_path, None))
         for target, text in entries:
+            assert_writable(target)
             target.parent.mkdir(parents=True, exist_ok=True)
             fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.prepared-")
             os.close(fd)
@@ -166,7 +171,9 @@ def _failed_result(response) -> bool:
 
 
 def _commit(
-    state, staged, origin, file_identity, operation_id, fingerprint, response, validators, callbacks
+    state, staged, origin, file_identity, operation_id, fingerprint, response,
+    validators, callbacks,
+    *, recalculate_from_start=False,
 ):
     with commit_lock:
         store = state.get_plans_store()
@@ -235,6 +242,7 @@ def _commit(
             "old_active_snapshot": store.runtime_identity()["snapshot_id"],
             "origin": origin,
             "plan_revision": staged.plan_revision,
+            "recalculate_from_start": recalculate_from_start,
         }
         planning_checkpoint()
         store.prepare_mutation(operation_id, fingerprint, journal)
@@ -245,7 +253,8 @@ def _commit(
                 os.replace(temporary, target)
                 _sync_directory(target.parent)
             planning_checkpoint()
-            store.commit_mutation(operation_id, payload, response_json, source="auto")
+            scope = {"recalculate_from_start": True} if recalculate_from_start else {}
+            store.commit_mutation(operation_id, payload, response_json, source="auto", **scope)
         except BaseException:
             # A lost acknowledgement after COMMIT is not a failed operation.
             committed = _receipt(store, operation_id, fingerprint)
@@ -311,8 +320,10 @@ def run_sync_mutation(
         )
 
 
-def plan_writer(fn):
+def plan_writer(fn=None, *, recalculate_from_start=False):
     """Use existing handlers on isolated state; serialize only capture/commit."""
+    if fn is None:
+        return lambda handler: plan_writer(handler, recalculate_from_start=recalculate_from_start)
     signature = inspect.signature(fn, eval_str=True)
 
     @wraps(fn)
@@ -406,6 +417,7 @@ def plan_writer(fn):
                 return prepared.response, [], []
             with stage_state(state, staged) as context:
                 context.api_write = True
+                context.recalculate_from_start = recalculate_from_start
                 response = asyncio.run(fn(*args, **kwargs))
             if context.approval_required is not None:
                 if context.validators or context.callbacks:
@@ -434,6 +446,7 @@ def plan_writer(fn):
                 return await run_in_threadpool(
                     _commit, state, staged, origin, file_identity, operation_id, fingerprint,
                     response, validators, callbacks,
+                    recalculate_from_start=recalculate_from_start,
                 )
 
     wrapped.__signature__ = signature

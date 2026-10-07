@@ -25,6 +25,9 @@ class LearnStore:
         self._path = db_path or DEFAULT_DB_PATH
         if self._path != ":memory:":
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        from backend.runtime_guard import assert_writable
+
+        assert_writable(self._path)
         self._conn = sqlite3.connect(self._path)
         self._init_schema()
 

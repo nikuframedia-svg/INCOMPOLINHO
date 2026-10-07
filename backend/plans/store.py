@@ -48,6 +48,9 @@ class PlansStore:
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
+        from backend.runtime_guard import assert_writable
+
+        assert_writable(self._path)
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -254,6 +257,25 @@ class PlansStore:
                 raise ValueError("active_plan_invalid: identidade ativa ausente")
             return dict(row)
 
+    def _assert_recalculation_context_locked(self, payload: dict) -> None:
+        row = self._conn.execute(
+            "SELECT p.payload_json FROM plans p "
+            "JOIN plan_runtime r ON r.snapshot_id=p.id WHERE r.singleton=1"
+        ).fetchone()
+        if row is None:
+            return
+        before = json.loads(row[0])
+        if (before.get("dataset_info") or {}).get("id") != (
+            payload.get("dataset_info") or {}
+        ).get("id"):
+            raise ValueError("recalculation_context: o ISOP mudou")
+        # A past date is not execution. Observations and intentional anchors
+        # are real constraints and must survive this special recalculation.
+        old_data, new_data = before.get("engine_data") or {}, payload.get("engine_data") or {}
+        for field in ("plan_anchors", "current_machine_states", "committed_supplies"):
+            if old_data.get(field, []) != new_data.get(field, []):
+                raise ValueError(f"recalculation_context: restricao alterada: {field}")
+
     def active(self) -> dict | None:
         from backend.plans.serialize import snapshot_integrity_errors
 
@@ -347,7 +369,8 @@ class PlansStore:
             )
 
     def commit_mutation(
-        self, operation_id: str, payload: dict | None, response, *, source: str
+        self, operation_id: str, payload: dict | None, response, *, source: str,
+        recalculate_from_start: bool = False,
     ) -> None:
         from backend.plans.serialize import assert_snapshot_integrity
 
@@ -362,8 +385,14 @@ class PlansStore:
             ).fetchone()
             if row is None or row[0] != "preparing":
                 raise ValueError("A operacao ja nao pode ser confirmada.")
+            journal = json.loads(row[1])
+            if recalculate_from_start and journal.get("recalculate_from_start") is not True:
+                raise ValueError("recalculation_scope: falta autorizacao interna do recalculo")
             if payload is not None:
-                self._assert_historical_unchanged_locked(payload)
+                if recalculate_from_start:
+                    self._assert_recalculation_context_locked(payload)
+                else:
+                    self._assert_historical_unchanged_locked(payload)
                 plan_id = uuid4().hex
                 self._conn.execute(
                     "INSERT INTO plans(id,name,source,origin,note,is_auto,otd,otd_d,tardy_count,"
@@ -389,7 +418,6 @@ class PlansStore:
                     "UPDATE plan_runtime SET plan_revision=? WHERE singleton=1",
                     (json.loads(row[1])["plan_revision"],),
                 )
-            journal = json.loads(row[1])
             journal.update(response=response, plan_revision=(payload or journal)["plan_revision"])
             self._conn.execute(
                 "UPDATE plan_mutations SET status='committed',payload_json=? WHERE id=?",

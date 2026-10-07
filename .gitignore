@@ -31,3 +31,5 @@ ISOP*.xlsx
 tests/fixtures/private/
 # Cópias da base de dados de planos (dados reais de cliente)
 data/*.db.*
+# Cópias de segurança de estado e configuração (dados reais)
+data/*.backup-*

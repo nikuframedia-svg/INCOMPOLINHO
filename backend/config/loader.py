@@ -416,9 +416,11 @@ def _min_to_time(mins: int | float) -> str:
 def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
     """Serialize FactoryConfig back to YAML."""
     from backend.plans.context import is_staging
+    from backend.runtime_guard import assert_writable
 
     if is_staging():
         return
+    assert_writable(path)
     machine_unavailability = _normalize_unavailability(
         config.machine_unavailability,
         timezone=config.timezone,
