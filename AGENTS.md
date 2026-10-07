@@ -143,6 +143,16 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
   proteção por data existente. Esta exceção é interna ao coordenador, não um
   parâmetro de cliente que permita contornar a validação. O orçamento atual
   permanece inalterado; recalcular continua sujeito às aprovações existentes.
+  **Confirmado em 07/10/2026, com risco aceite:** com um ISOP anterior a hoje,
+  o recálculo pode colocar produção em dias já passados e a gravação normal
+  seguinte protege-a como histórico (contraria o §2 sobre não inventar
+  execução). Mitigações: o ecrã avisa antes de recalcular com ISOP antigo
+  (`frontend/src/lib/recalcGuard.ts`); o teste
+  `test_accepted_risk_recalculation_then_ordinary_write_freezes_past_placement`
+  documenta a sequência. Se lotes protegidos ficarem com durações de uma
+  configuração anterior (ex.: OEE alterado), o recálculo reconstrói os lotes
+  com o optimizador completo em vez de compactar
+  (`api/data._recalculation_needs_rebuild`).
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
 - Replanear apenas produção móvel, mas validar contra o contexto completo:

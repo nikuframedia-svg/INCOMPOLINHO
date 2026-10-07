@@ -268,3 +268,48 @@ def test_real_compaction_moves_past_planned_production_and_keeps_quantities(monk
     view = result_validation_data(data, moved)
     assert not validate_plan(moved.segments, view, config, lots=moved.lots)
     assert (data, baseline) == before
+
+
+@pytest.mark.parametrize("stale", [True, False])
+def test_recalculate_rebuilds_lots_when_protected_durations_are_stale(
+    client, compact, monkeypatch, stale,
+):
+    """After an OEE change, "Recalcular" from D0 cannot compact lots planned
+    under the old configuration; it must rebuild them instead of failing."""
+    rebuild = Mock(side_effect=lambda config: compact.side_effect(config))
+    monkeypatch.setattr(data_api, "_recompute", rebuild)
+    monkeypatch.setattr(data_api, "_recalculation_needs_rebuild", lambda _config: stale)
+    body = {"expected_revision": 7, "compact_active_plan": True, "request_id": f"recalc-{stale}"}
+
+    response = client.post("/api/data/recalculate", json=body)
+
+    assert response.status_code in (200, 409), response.text
+    assert rebuild.call_count == (1 if stale else 0)
+    assert compact.call_count == (0 if stale else 1)
+
+
+def test_accepted_risk_recalculation_then_ordinary_write_freezes_past_placement(monkeypatch):
+    """Documents the risk accepted on 07/10/2026 (AGENTS.md §5): with an ISOP
+    older than today, "Recalcular" may place production on an elapsed day,
+    and the next ordinary write protects it as if it had been executed. The
+    UI warns before recalculating with an old ISOP. Changing this behaviour
+    must be a deliberate decision that updates this test."""
+    from backend.transform.calendars import apply_calendars
+
+    loaded = transaction_fixtures._loaded_state()
+    data, config = loaded.engine_data, loaded.config
+    from backend.scheduler.types import ScheduleResult
+
+    baseline = ScheduleResult(copy.deepcopy(loaded.segments), copy.deepcopy(loaded.lots),
+                              copy.deepcopy(loaded.score), 0, [], [])
+    baseline.segments[0].start_min += 180
+    baseline.segments[0].end_min += 180
+    apply_calendars(data, config)
+    monkeypatch.setattr(frozen, "_current_planning_day", lambda *_: 1)
+    moved = frozen.compact_preserving_started_lots(data, config, baseline,
+                                                  recalculate_from_start=True)
+    assert min(s.day_idx for s in moved.segments if s.lot_id == "LOT1") == 0
+
+    _segments, protected, _anchored = frozen._protected_lots(moved, 1, data, config)
+
+    assert "LOT1" in {lot.id for lot in protected}

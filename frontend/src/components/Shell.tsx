@@ -4,7 +4,8 @@ import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
 import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
 import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
-import { getHealth, recalculate } from "../api/endpoints";
+import { getHealth, getToday, recalculate } from "../api/endpoints";
+import { staleIsopWarning } from "../lib/recalcGuard";
 import { TH } from "../constants/thresholds";
 import { approvalGateFromError, approvalImpactMessage } from "../lib/gateApproval";
 import { Sidebar } from "./Sidebar";
@@ -261,6 +262,14 @@ export function Shell() {
   };
 
   const handleRecalc = async () => {
+    const today = await getToday().catch(() => null);
+    const warning = staleIsopWarning(today, useDataStore.getState().workdays[0]);
+    if (warning && !(await confirm({
+      title: "ISOP anterior a hoje",
+      message: warning,
+      confirmLabel: "Recalcular mesmo assim",
+      variant: "danger",
+    }))) return;
     setRecalcing(true);
     setOperationStatus({
       phase: "pending",

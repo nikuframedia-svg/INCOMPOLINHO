@@ -484,6 +484,25 @@ def _recompute(config):
     return result
 
 
+def _recalculation_needs_rebuild(config) -> bool:
+    """Whether "Recalcular" from D0 must rebuild lots instead of compacting.
+
+    Recalculation from the start drops the date-derived protection, so lots
+    planned under an older configuration (e.g. before an OEE change) are
+    checked against the current one. Compaction only moves segments and
+    cannot fix their durations, so it would fail; the full optimizer rebuilds
+    them (reproduced on the frozen revision 87 after an OEE change).
+    """
+    from backend.plans.context import recalculation_from_start
+    from backend.scheduler.canonical import source_contract_violations
+
+    if state.engine_data is None or not recalculation_from_start():
+        return False
+    detached = copy.copy(state.engine_data)
+    detached.preserved_lot_proofs = {}
+    return bool(source_contract_violations(state.segments, state.lots, detached, config))
+
+
 def _recompute_transactional(
     config,
     approval_body: dict | None = None,
@@ -531,7 +550,9 @@ def _recompute_transactional(
         "stress_map": copy.deepcopy(state.stress_map),
     }
     try:
-        if (approval_body or {}).get("compact_active_plan", False):
+        if (approval_body or {}).get("compact_active_plan", False) and not (
+            _recalculation_needs_rebuild(config)
+        ):
             result = _compact_active_schedule(config)
         else:
             result = _recompute(config)

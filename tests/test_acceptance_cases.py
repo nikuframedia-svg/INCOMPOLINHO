@@ -204,3 +204,38 @@ def test_bfp079_stay_and_transfer_are_compared_by_the_canonical_order():
     assert stay_facts.anticipation < transfer_facts.anticipation
     assert physical_setups(stay.segments).count == physical_setups(
         snapshot.result.segments).count - 1
+
+
+# ── "Recalcular" from D0 after an OEE change (07/10/2026 review) ─────────
+
+
+def test_recalculation_after_oee_change_rebuilds_instead_of_failing():
+    from backend.plans.frozen import (
+        compact_preserving_started_lots,
+        optimize_preserving_started_lots,
+    )
+    from backend.scheduler.canonical import source_contract_violations
+    from backend.scheduler.validation import PlanValidationError
+
+    snapshot = load_snapshot("rev87")
+    data, config, result = copy.deepcopy((snapshot.data, snapshot.config, snapshot.result))
+    config.machines["PRM039"].oee = 0.44
+    replanned = optimize_preserving_started_lots(data, config, result)
+    current = result_validation_data(data, replanned)
+    assert not validate_plan(replanned.segments, current, config, lots=replanned.lots)
+
+    with pytest.raises(PlanValidationError) as failure:
+        compact_preserving_started_lots(
+            copy.deepcopy(current), config, copy.deepcopy(replanned),
+            recalculate_from_start=True,
+        )
+    assert {item.get("kind") for item in failure.value.violations} == {"source_contract"}
+    detached = copy.copy(current)
+    detached.preserved_lot_proofs = {}
+    assert source_contract_violations(replanned.segments, replanned.lots, detached, config)
+
+    rebuilt = optimize_preserving_started_lots(
+        copy.deepcopy(current), config, copy.deepcopy(replanned), recalculate_from_start=True,
+    )
+    rebuilt_view = result_validation_data(current, rebuilt)
+    assert not validate_plan(rebuilt.segments, rebuilt_view, config, lots=rebuilt.lots)
