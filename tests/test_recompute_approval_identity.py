@@ -265,3 +265,52 @@ def test_legacy_master_writer_approval_reuses_exact_schedule(
     assert state.approvals[-1]["action"] == "master_data"
     assert state.approvals[-1]["candidate_id"] == preview["candidate_id"]
     optimizer.assert_called_once()
+
+
+@pytest.mark.parametrize(("method", "path", "payload", "check"), [
+    ("post", "/api/data/holidays", {"data": "2026-09-16"},
+     lambda: "2026-09-16" in state.config.holidays),
+    ("post", "/api/data/holidays/range", {"from": "2026-09-16", "to": "2026-09-17"},
+     lambda: {"2026-09-16", "2026-09-17"} <= set(state.config.holidays)),
+    ("post", "/api/data/workdays-extra", {"date": "2026-09-19"},
+     lambda: "2026-09-19" in state.config.extra_workdays),
+])
+def test_calendar_writer_approval_reuses_exact_schedule(
+    client, services, monkeypatch, method, path, payload, check,
+):
+    """NOK #5 (07/10/2026): non-working days need explicit approval like any
+    other plan change; the approved request applies the presented candidate."""
+    from backend.scheduler.scheduler import schedule_all
+
+    services.gate.update(
+        status="best_effort", requires_approval=True, apply_decision="approval_required",
+        approval_reasons=["delivery_risk", "long_production"],
+    )
+    expected = []
+
+    def calculate(_data, config, *_args, **_kwargs):
+        result = schedule_all(copy.deepcopy(_data), config=config)
+        result.gate_report = copy.deepcopy(services.gate)
+        expected.append(copy.deepcopy(result))
+        return result
+
+    optimizer = Mock(side_effect=calculate)
+    monkeypatch.setattr("backend.plans.frozen.optimize_preserving_started_lots", optimizer)
+    body = {"expected_revision": 7, **payload}
+    before = _snapshot()
+    first = getattr(client, method)(path, json=body)
+    assert first.status_code == 409, first.text
+    assert _snapshot() == before
+    preview = first.json()["detail"]
+    assert preview["gate_report"]["approval_reasons"] == ["delivery_risk", "long_production"]
+    optimizer.side_effect = AssertionError("Do not optimize the approved calendar candidate again")
+    response = getattr(client, method)(path, json={
+        **body, "candidate_id": preview["candidate_id"], "approve_exceptions": True,
+        "approval_reason": "Fecho acordado", "approval_author": "pytest",
+    })
+    assert response.status_code == 200, response.text
+    assert check()
+    assert state.plan_revision == 8
+    assert state.segments == expected[0].segments
+    assert state.approvals[-1]["candidate_id"] == preview["candidate_id"]
+    optimizer.assert_called_once()

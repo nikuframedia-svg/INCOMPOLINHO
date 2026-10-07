@@ -23,6 +23,38 @@ export function approvalGateFromError(error: unknown): GateReport | null {
   return gate.requires_approval && gate.apply_decision !== "blocked" ? gate : null;
 }
 
+export type GateApproval = { reason: string; author: string };
+
+/** Approval fields for a write request; empty when there is no approval. */
+export function approvalFields(approval?: GateApproval): Record<string, unknown> {
+  return approval
+    ? { approve_exceptions: true, approval_reason: approval.reason, approval_author: approval.author }
+    : {};
+}
+
+/**
+ * Send a plan-changing write; when the server answers that the candidate
+ * needs explicit approval, ask the planner for a justification and send it
+ * again with that approval. The server then applies exactly the candidate it
+ * showed (the request identity ignores approval fields). Returns null when the
+ * planner cancels: nothing was applied.
+ */
+export async function sendWithGateApproval<T>(
+  send: (approval?: GateApproval) => Promise<T>,
+  ask: (gate: GateReport) => Promise<string | null>,
+  author = "planeador",
+): Promise<T | null> {
+  try {
+    return await send();
+  } catch (error) {
+    const gate = approvalGateFromError(error);
+    if (!gate) throw error;
+    const reason = await ask(gate);
+    if (reason === null) return null;
+    return await send({ reason, author });
+  }
+}
+
 export function approvalImpactMessage(gate: GateReport): string {
   const metrics = gate.metrics ?? {};
   const tardy = Number(metrics.tardy_count ?? metrics.tardy_lots ?? 0);

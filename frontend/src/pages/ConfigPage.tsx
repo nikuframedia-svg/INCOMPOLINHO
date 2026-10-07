@@ -13,6 +13,7 @@ import {
 import type {
   EOp,
   FactoryConfig,
+  GateReport,
   MasterCatalog,
   PlanningDelta,
   ReplanJob,
@@ -27,12 +28,17 @@ import { Label } from "../components/ui/Label";
 import { Divider } from "../components/ui/Divider";
 import { Modal } from "../components/ui/Modal";
 import { ProgressBar } from "../components/ui/ProgressBar";
-import { useConfirm } from "../components/ui/confirmContext";
+import { useConfirm, type ConfirmContextValue } from "../components/ui/confirmContext";
 import { useDataStore } from "../stores/useDataStore";
 import { useAppStore } from "../stores/useAppStore";
 import { ApiError } from "../api/client";
 import { remainingDraft, remainingToolDraft } from "../lib/configDraft";
-import { approvalReasonLabel } from "../lib/gateApproval";
+import {
+  approvalImpactMessage,
+  approvalReasonLabel,
+  sendWithGateApproval,
+  type GateApproval,
+} from "../lib/gateApproval";
 import { getReadIdentity } from "../lib/planRevision";
 
 type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "setup_overrides" | "operadores" | "feriados" | "indisponibilidades" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes" | "qualidade_dados";
@@ -420,7 +426,8 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
   onSaved: (c: FactoryConfig) => void;
   onDelta: (prev: Score, curr: Score) => void;
 }) {
-  const { confirm } = useConfirm();
+  const { confirm, prompt } = useConfirm();
+  const ask = justificationAsker(prompt);
   const isSimulated = useDataStore((s) => s.isSimulated);
   const refreshAll = useDataStore((s) => s.refreshAll);
   const [edits, setEdits] = useState<Record<string, unknown>>({});
@@ -453,7 +460,11 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     setSaving(true);
     setMsg(null);
     try {
-      const res = await updateConfig(submitted);
+      const res = await sendWithGateApproval((approval) => updateConfig(submitted, approval), ask);
+      if (res === null) {
+        setMsg(NOT_APPLIED);
+        return;
+      }
       setEdits((current) => Object.fromEntries(Object.entries(current).filter(
         ([key, value]) => !(key in submitted) || value !== submitted[key],
       )));
@@ -463,7 +474,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       onDelta(res.score_previous, res.score);
       assertRefreshed(await refreshAll(), true);
     } catch (e) {
-      setMsg(`Erro: ${e}`);
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -480,7 +491,11 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     setSaving(true);
     setMsg(null);
     try {
-      const res = await applyPreset(name);
+      const res = await sendWithGateApproval((approval) => applyPreset(name, approval), ask);
+      if (res === null) {
+        setMsg(NOT_APPLIED);
+        return;
+      }
       setEdits((current) => Object.fromEntries(Object.entries(current).filter(
         ([key, value]) => !(key in submitted) || value !== submitted[key],
       )));
@@ -495,7 +510,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       setActivePreset(name);
       assertRefreshed(await refreshAll(), true);
     } catch (e) {
-      setMsg(`Erro: ${e}`);
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -615,6 +630,21 @@ function metricDelta(res: { delta?: PlanningDelta } | null) {
   return `OTD ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Envios sub. ${d.subcontract_dispatch_misses >= 0 ? "+" : ""}${d.subcontract_dispatch_misses} · Atraso sub. ${d.subcontract_dispatch_late_workdays >= 0 ? "+" : ""}${d.subcontract_dispatch_late_workdays}du · Setups ${d.setups >= 0 ? "+" : ""}${d.setups} · Penalização ${d.planning_penalty >= 0 ? "+" : ""}${d.planning_penalty.toFixed(1)}`;
 }
 
+const NOT_APPLIED = "Alteração não aplicada. O plano não mudou.";
+
+/** Ask the planner to justify a candidate that needs explicit approval. */
+function justificationAsker(prompt: ConfirmContextValue["prompt"]) {
+  return (gate: GateReport) => prompt({
+    title: "Aplicar alteração com exceções?",
+    message: approvalImpactMessage(gate),
+    inputLabel: "Justificação obrigatória",
+    placeholder: "Explica por que motivo este impacto é aceite…",
+    confirmLabel: "Confirmar e aplicar",
+    variant: "danger",
+    required: true,
+  });
+}
+
 function apiErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   try {
@@ -645,6 +675,7 @@ function SkuPlanningEditor({
   onReload: () => Promise<void>;
   onDelta: (prev: Score, curr: Score) => void;
 }) {
+  const ask = justificationAsker(useConfirm().prompt);
   const [search, setSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, SkuPlanningRule>>({});
   const [preview, setPreview] = useState<Record<string, SkuPlanningResponse>>({});
@@ -687,7 +718,7 @@ function SkuPlanningEditor({
       const res = await previewSkuPlanning(sku, cleanRule(ruleFor(sku)));
       setPreview({ ...preview, [sku]: res });
     } catch (e) {
-      setMsg(`Erro: ${e}`);
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
     } finally {
       setBusySku(null);
     }
@@ -697,7 +728,13 @@ function SkuPlanningEditor({
     setBusySku(sku);
     setMsg(null);
     try {
-      const res = await updateSkuPlanning(sku, cleanRule(ruleFor(sku)));
+      const res = await sendWithGateApproval(
+        (approval) => updateSkuPlanning(sku, cleanRule(ruleFor(sku)), approval), ask,
+      );
+      if (res === null) {
+        setMsg(NOT_APPLIED);
+        return;
+      }
       if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
       const nextDrafts = { ...drafts };
       delete nextDrafts[sku];
@@ -705,7 +742,7 @@ function SkuPlanningEditor({
       setMsg(`Aplicado ${sku}: ${metricDelta(res) ?? "plano recalculado"}`);
       await onReload();
     } catch (e) {
-      setMsg(`Erro: ${e}`);
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
     } finally {
       setBusySku(null);
     }
@@ -715,7 +752,11 @@ function SkuPlanningEditor({
     setBusySku(sku);
     setMsg(null);
     try {
-      const res = await resetSkuPlanning(sku);
+      const res = await sendWithGateApproval((approval) => resetSkuPlanning(sku, approval), ask);
+      if (res === null) {
+        setMsg(NOT_APPLIED);
+        return;
+      }
       if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
       const nextDrafts = { ...drafts };
       delete nextDrafts[sku];
@@ -723,7 +764,7 @@ function SkuPlanningEditor({
       setMsg(`Reposto para ISOP: ${sku}`);
       await onReload();
     } catch (e) {
-      setMsg(`Erro: ${e}`);
+      setMsg(`Erro: ${apiErrorMessage(e)}`);
     } finally {
       setBusySku(null);
     }
@@ -896,6 +937,7 @@ function SubcontractEditor({
   onReload: () => Promise<void>;
   onDelta: (prev: Score, curr: Score) => void;
 }) {
+  const ask = justificationAsker(useConfirm().prompt);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(() => subcontractInitialSelection(config));
   const [leadTimes, setLeadTimes] = useState<Record<string, number>>(() => subcontractInitialLeadTimes(config));
@@ -977,7 +1019,11 @@ function SubcontractEditor({
     setBusy("save");
     setMsg(null);
     try {
-      const res = await updateSubcontracts(bodyFor());
+      const res = await sendWithGateApproval((approval) => updateSubcontracts(bodyFor(), approval), ask);
+      if (res === null) {
+        setMsg(NOT_APPLIED);
+        return;
+      }
       if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
       setPreviewDelta(res.delta ?? null);
       setMsg(`${selected.size} referência${selected.size === 1 ? "" : "s"} guardada${selected.size === 1 ? "" : "s"} para subcontrato.`);
@@ -1453,12 +1499,20 @@ export function ConfigPage() {
     };
   }, [followReplanJob]);
 
-  // Generic save wrapper
-  const withSave = async (fn: () => Promise<{ score?: Score; score_anterior?: Score; score_previous?: Score; [k: string]: unknown }>) => {
+  // Generic save wrapper for synchronous plan writes. A candidate that needs
+  // explicit approval is shown with its impact; the planner's justification
+  // applies exactly that candidate, cancelling applies nothing.
+  const withSave = async (
+    fn: (approval?: GateApproval) => Promise<{ score?: Score; score_anterior?: Score; score_previous?: Score; [k: string]: unknown }>,
+  ) => {
     if (readOnly) return false;
     setSaving(true);
     try {
-      const res = await fn();
+      const res = await sendWithGateApproval(fn, justificationAsker(prompt));
+      if (res === null) {
+        setReplanMessage(NOT_APPLIED);
+        return false;
+      }
       await reload();
       const previous = res.score_anterior ?? res.score_previous;
       if (res.score && previous) {
@@ -1466,7 +1520,7 @@ export function ConfigPage() {
       }
       return true;
     } catch (e) {
-      alert(`Erro: ${e}`);
+      alert(`Erro: ${apiErrorMessage(e)}`);
       return false;
     } finally {
       setSaving(false);
@@ -2721,7 +2775,7 @@ export function ConfigPage() {
                     item.sku !== setupOverride.sku || item.machine !== setupOverride.machine
                   ));
                   next.push(setupOverride);
-                  if (await withSave(() => replaceSetupOverrides(next))) {
+                  if (await withSave((approval) => replaceSetupOverrides(next, approval))) {
                     setSetupOverride({ sku: "", machine: "", hours: 0.5 });
                   }
                 }}
@@ -2762,8 +2816,9 @@ export function ConfigPage() {
                         <button
                           disabled={saving}
                           aria-label={`Remover exceção ${item.sku} ${item.machine}`}
-                          onClick={() => withSave(() => replaceSetupOverrides(
+                          onClick={() => withSave((approval) => replaceSetupOverrides(
                             config.setup_overrides.filter((candidate) => candidate !== item),
+                            approval,
                           ))}
                           style={{ background: "none", border: "none", color: T.red, cursor: "pointer" }}
                         >
@@ -2818,7 +2873,7 @@ export function ConfigPage() {
                               variant: "danger",
                             });
                             if (!approved) return;
-                            void withSave(() => removeTwin(tw.tool_id));
+                            void withSave((approval) => removeTwin(tw.tool_id, approval));
                           }}
                           style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 14, fontFamily: "inherit", opacity: saving ? 0.5 : 1 }}
                         >
@@ -2850,7 +2905,7 @@ export function ConfigPage() {
                 <button
                   disabled={!twinForm.tool_id || !twinForm.sku_a || !twinForm.sku_b || saving}
                   onClick={async () => {
-                    if (await withSave(() => addTwin(twinForm.tool_id, twinForm.sku_a, twinForm.sku_b))) {
+                    if (await withSave((approval) => addTwin(twinForm.tool_id, twinForm.sku_a, twinForm.sku_b, approval))) {
                       setTwinForm({ tool_id: "", sku_a: "", sku_b: "" });
                       setTwinModal(false);
                     }
@@ -2905,7 +2960,7 @@ export function ConfigPage() {
               <button
                 disabled={saving}
                 onClick={async () => {
-                  if (await withSave(() => updateOperators(opEdits))) {
+                  if (await withSave((approval) => updateOperators(opEdits, approval))) {
                     setOpEdits({});
                   }
                 }}
@@ -2989,7 +3044,7 @@ export function ConfigPage() {
               <button
                 disabled={!newHoliday || saving}
                 onClick={async () => {
-                  if (await withSave(() => addHoliday(newHoliday))) {
+                  if (await withSave((approval) => addHoliday(newHoliday, approval))) {
                     setNewHoliday("");
                   }
                 }}
@@ -3019,7 +3074,7 @@ export function ConfigPage() {
               <button
                 disabled={!holidayRange.from || !holidayRange.to || saving}
                 onClick={async () => {
-                  if (await withSave(() => addHolidayRange(holidayRange.from, holidayRange.to))) {
+                  if (await withSave((approval) => addHolidayRange(holidayRange.from, holidayRange.to, approval))) {
                     setHolidayRange({ from: "", to: "" });
                   }
                 }}
@@ -3037,7 +3092,7 @@ export function ConfigPage() {
                     variant: "danger",
                   });
                   if (!approved) return;
-                  if (await withSave(() => removeHolidayRange(holidayRange.from, holidayRange.to))) {
+                  if (await withSave((approval) => removeHolidayRange(holidayRange.from, holidayRange.to, approval))) {
                     setHolidayRange({ from: "", to: "" });
                   }
                 }}
@@ -3069,7 +3124,7 @@ export function ConfigPage() {
                           variant: "danger",
                         });
                         if (!approved) return;
-                        void withSave(() => removeHoliday(h));
+                        void withSave((approval) => removeHoliday(h, approval));
                       }}
                       style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 13, fontFamily: "inherit", padding: 0, opacity: saving ? 0.5 : 1 }}
                     >
@@ -3096,7 +3151,7 @@ export function ConfigPage() {
               <button
                 disabled={!extraWorkday || saving}
                 onClick={async () => {
-                  if (await withSave(() => addExtraWorkday(extraWorkday))) {
+                  if (await withSave((approval) => addExtraWorkday(extraWorkday, approval))) {
                     setExtraWorkday("");
                   }
                 }}
@@ -3110,7 +3165,7 @@ export function ConfigPage() {
                   <button
                     disabled={saving}
                     aria-label={`Remover dia de trabalho extra ${date}`}
-                    onClick={() => withSave(() => removeExtraWorkday(date))}
+                    onClick={() => withSave((approval) => removeExtraWorkday(date, approval))}
                     style={{ background: "none", border: "none", color: T.red, cursor: "pointer", marginLeft: 8 }}
                   >
                     ×

@@ -50,6 +50,7 @@ import { commitPlanRevision, getPlanRevision, getReadIdentity } from "../lib/pla
 import { candidateApplyBody } from "../lib/previewCandidate";
 import { operationIdentity } from "../lib/operationIdentity";
 import { withApprovalCandidate } from "../lib/approvalRetry";
+import { approvalFields, type GateApproval } from "../lib/gateApproval";
 
 export { commitPlanRevision };
 const COMPUTE_OPTIONS = { timeoutMs: 600_000 };
@@ -187,10 +188,10 @@ export const applyReplan = (
 // ── Config / Master Data ─────────────────────────────────────
 
 export const getConfig = () => analyticGet<FactoryConfig>("/api/data/config");
-export const updateConfig = (updates: Record<string, unknown>) =>
+export const updateConfig = (updates: Record<string, unknown>, approval?: GateApproval) =>
   putWithRevision<{ status: string; changed: string[]; score: Score; score_previous: Score }>(
     "/api/data/config",
-    revisionBody(updates),
+    revisionBody({ ...updates, ...approvalFields(approval) }),
   );
 export const getOps = () => analyticGet<EOp[]>("/api/data/ops");
 export const getCatalog = () => analyticGet<MasterCatalog>("/api/data/catalog");
@@ -199,23 +200,23 @@ export const getCurrentState = () =>
 export const getRules = () => get<{ id: string; tipo: string; descricao: string }[]>("/api/data/rules");
 export const previewSkuPlanning = (sku: string, rule: SkuPlanningRule) =>
   post<SkuPlanningResponse>(`/api/data/skus/${encodeURIComponent(sku)}/planning/preview`, rule);
-export const updateSkuPlanning = (sku: string, rule: SkuPlanningRule) =>
+export const updateSkuPlanning = (sku: string, rule: SkuPlanningRule, approval?: GateApproval) =>
   putWithRevision<SkuPlanningResponse>(
     `/api/data/skus/${encodeURIComponent(sku)}/planning`,
-    revisionBody(rule as unknown as Record<string, unknown>),
+    revisionBody({ ...(rule as unknown as Record<string, unknown>), ...approvalFields(approval) }),
   );
-export const resetSkuPlanning = (sku: string) =>
+export const resetSkuPlanning = (sku: string, approval?: GateApproval) =>
   deleteWithRevision<SkuPlanningResponse>(
     `/api/data/skus/${encodeURIComponent(sku)}/planning`,
-    revisionBody({}),
+    revisionBody(approvalFields(approval)),
   );
 export const getSubcontracts = () => get<SubcontractsResponse>("/api/data/subcontracts");
 export const previewSubcontracts = (body: SubcontractsResponse) =>
   post<SubcontractsResponse>("/api/data/subcontracts/preview", body);
-export const updateSubcontracts = (body: SubcontractsResponse) =>
+export const updateSubcontracts = (body: SubcontractsResponse, approval?: GateApproval) =>
   putWithRevision<SubcontractsResponse>(
     "/api/data/subcontracts",
-    revisionBody(body as unknown as Record<string, unknown>),
+    revisionBody({ ...(body as unknown as Record<string, unknown>), ...approvalFields(approval) }),
   );
 
 // ── Master Data Mutations ────────────────────────────────────
@@ -247,34 +248,34 @@ export const addTool = (body: {
 }) =>
   postWithRevision<{ status: "queued"; job: ReplanJob }>("/api/data/tools", body);
 
-export const updateOperators = (ops: Record<string, number>) =>
-  putWithRevision<MasterDataResult>("/api/data/operators", ops);
+export const updateOperators = (ops: Record<string, number>, approval?: GateApproval) =>
+  putWithRevision<MasterDataResult>("/api/data/operators", { ...ops, ...approvalFields(approval) });
 
-export const addHoliday = (date: string) =>
-  postWithRevision<MasterDataResult>("/api/data/holidays", { data: date });
+export const addHoliday = (date: string, approval?: GateApproval) =>
+  postWithRevision<MasterDataResult>("/api/data/holidays", { data: date, ...approvalFields(approval) });
 
-export const removeHoliday = (date: string) =>
+export const removeHoliday = (date: string, approval?: GateApproval) =>
   deleteWithRevision<MasterDataResult>(
     `/api/data/holidays/${encodeURIComponent(date)}`,
-    revisionBody({}),
+    revisionBody(approvalFields(approval)),
   );
 
-export const addHolidayRange = (from: string, to: string) =>
-  postWithRevision<MasterDataResult>("/api/data/holidays/range", { from, to });
+export const addHolidayRange = (from: string, to: string, approval?: GateApproval) =>
+  postWithRevision<MasterDataResult>("/api/data/holidays/range", { from, to, ...approvalFields(approval) });
 
-export const removeHolidayRange = (from: string, to: string) =>
+export const removeHolidayRange = (from: string, to: string, approval?: GateApproval) =>
   deleteWithRevision<MasterDataResult>(
     "/api/data/holidays/range",
-    revisionBody({ from, to }),
+    revisionBody({ from, to, ...approvalFields(approval) }),
   );
 
-export const addExtraWorkday = (date: string) =>
-  postWithRevision<MasterDataResult>("/api/data/workdays-extra", { date });
+export const addExtraWorkday = (date: string, approval?: GateApproval) =>
+  postWithRevision<MasterDataResult>("/api/data/workdays-extra", { date, ...approvalFields(approval) });
 
-export const removeExtraWorkday = (date: string) =>
+export const removeExtraWorkday = (date: string, approval?: GateApproval) =>
   deleteWithRevision<MasterDataResult>(
     `/api/data/workdays-extra/${encodeURIComponent(date)}`,
-    revisionBody({}),
+    revisionBody(approvalFields(approval)),
   );
 
 export const addUnavailability = (body: Record<string, unknown>) =>
@@ -286,22 +287,22 @@ export const removeUnavailability = (entryId: string) =>
     {},
   );
 
-export const replaceSetupOverrides = (items: SetupOverride[]) =>
-  putWithRevision<MasterDataResult>("/api/data/setup-overrides", { items });
+export const replaceSetupOverrides = (items: SetupOverride[], approval?: GateApproval) =>
+  putWithRevision<MasterDataResult>("/api/data/setup-overrides", { items, ...approvalFields(approval) });
 
-export const addTwin = (tool_id: string, sku_a: string, sku_b: string) =>
+export const addTwin = (tool_id: string, sku_a: string, sku_b: string, approval?: GateApproval) =>
   postWithRevision<MasterDataResult>(
     "/api/data/twins",
-    revisionBody({ tool_id, sku_a, sku_b }),
+    revisionBody({ tool_id, sku_a, sku_b, ...approvalFields(approval) }),
   );
 
-export const removeTwin = (tool_id: string) =>
+export const removeTwin = (tool_id: string, approval?: GateApproval) =>
   deleteWithRevision<MasterDataResult>(
     `/api/data/twins/${encodeURIComponent(tool_id)}`,
-    revisionBody({}),
+    revisionBody(approvalFields(approval)),
   );
 
-export const applyPreset = (name: string) =>
+export const applyPreset = (name: string, approval?: GateApproval) =>
   postWithRevision<{
     status: string;
     preset: string;
@@ -309,7 +310,7 @@ export const applyPreset = (name: string) =>
     score: Score;
     score_previous: Score;
     simulation_active: boolean;
-  }>(`/api/data/presets/${name}`, revisionBody({}));
+  }>(`/api/data/presets/${name}`, revisionBody(approvalFields(approval)));
 
 // ── Persistent plans ─────────────────────────────────────────
 
