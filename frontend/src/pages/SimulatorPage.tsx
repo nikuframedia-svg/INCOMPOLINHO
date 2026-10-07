@@ -460,7 +460,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
         author: "planeador",
       });
       if (useSimulatorStore.getState().mutations === submittedDraft) setMutations([]);
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
       if (!mounted.current) return;
       setScenarioMessage(`Cenário “${scenario.name}” aplicado como realidade.`);
       onApplied?.();
@@ -522,7 +522,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       }
       // A committed promise cannot become applicable again after remounting.
       if (useSimulatorStore.getState().ctpResult === ctpResult) setCtpResult(null);
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
       if (mounted.current) setCtpApplied(true);
     } catch (e: unknown) {
       if (mounted.current) setCtpError(String(e));
@@ -923,4 +923,4 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
     </div>
   );
 }
-import { assertRefreshed } from "../lib/refreshOutcome";
+import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";

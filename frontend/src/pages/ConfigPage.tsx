@@ -472,9 +472,9 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       const fresh = await getConfig();
       onSaved(fresh);
       onDelta(res.score_previous, res.score);
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setSaving(false);
     }
@@ -508,9 +508,9 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       const simNote = res.simulation_active ? " — simulacao mantida" : "";
       setMsg(`Preset "${name}" aplicado (${res.changed.length} parametros)${simNote}`);
       setActivePreset(name);
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setSaving(false);
     }
@@ -645,6 +645,11 @@ function justificationAsker(prompt: ConfirmContextValue["prompt"]) {
   });
 }
 
+/** "Erro: …", except when the change was saved and only the screen is behind. */
+function failureMessage(error: unknown) {
+  return isAppliedRefreshError(error) ? error.message : `Erro: ${apiErrorMessage(error)}`;
+}
+
 function apiErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   try {
@@ -718,7 +723,7 @@ function SkuPlanningEditor({
       const res = await previewSkuPlanning(sku, cleanRule(ruleFor(sku)));
       setPreview({ ...preview, [sku]: res });
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setBusySku(null);
     }
@@ -742,7 +747,7 @@ function SkuPlanningEditor({
       setMsg(`Aplicado ${sku}: ${metricDelta(res) ?? "plano recalculado"}`);
       await onReload();
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setBusySku(null);
     }
@@ -764,7 +769,7 @@ function SkuPlanningEditor({
       setMsg(`Reposto para ISOP: ${sku}`);
       await onReload();
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setBusySku(null);
     }
@@ -1009,7 +1014,7 @@ function SubcontractEditor({
       setPreviewDelta(res.delta ?? null);
       setMsg(`Impacto revisto: ${metricDelta(res) ?? "plano recalculado"}`);
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setBusy(null);
     }
@@ -1029,7 +1034,7 @@ function SubcontractEditor({
       setMsg(`${selected.size} referência${selected.size === 1 ? "" : "s"} guardada${selected.size === 1 ? "" : "s"} para subcontrato.`);
       await onReload();
     } catch (e) {
-      setMsg(`Erro: ${apiErrorMessage(e)}`);
+      setMsg(failureMessage(e));
     } finally {
       setBusy(null);
     }
@@ -1329,7 +1334,7 @@ export function ConfigPage() {
   }, [ops, opsSearch, opsSort, opsSortDir]);
 
   const reload = async () => {
-    const outcome = await refreshAll();
+    const outcome = await refreshAfterCommit(refreshAll);
     assertRefreshed(outcome, true);
     await loadConfiguration();
   };
@@ -1421,7 +1426,7 @@ export function ConfigPage() {
           setActiveReplanJobId(null);
           setSaving(false);
           setReplanConnectionMessage(null);
-          setReplanMessage(`Erro: ${apiErrorMessage(failure)}`);
+          setReplanMessage(failureMessage(failure));
           return;
         }
         consecutivePollingFailures += 1;
@@ -1456,9 +1461,9 @@ export function ConfigPage() {
       setReplanMessage("Alteração já aplicada. A atualizar o plano.");
       try {
         await loadConfiguration();
-        assertRefreshed(await refreshAll(), true);
+        assertRefreshed(await refreshAfterCommit(refreshAll), true);
       } catch (failure) {
-        if (stillFollowing()) setReplanMessage(`Erro: ${apiErrorMessage(failure)}`);
+        if (stillFollowing()) setReplanMessage(failureMessage(failure));
       }
       return;
     }
@@ -1520,7 +1525,11 @@ export function ConfigPage() {
       }
       return true;
     } catch (e) {
-      alert(`Erro: ${apiErrorMessage(e)}`);
+      if (isAppliedRefreshError(e)) {
+        setReplanMessage(e.message);
+        return true;
+      }
+      alert(failureMessage(e));
       return false;
     } finally {
       setSaving(false);
@@ -1556,7 +1565,7 @@ export function ConfigPage() {
       }, generation);
     } catch (failure) {
       if (!mounted.current || generation !== replanPollGeneration.current) return;
-      setReplanMessage(`Erro: ${apiErrorMessage(failure)}`);
+      setReplanMessage(failureMessage(failure));
       setActiveReplanJobId(null);
       setReplanConnectionMessage(null);
       setSaving(false);
@@ -1641,7 +1650,7 @@ export function ConfigPage() {
       setPendingReplan(null);
       await reload();
     } catch (failure) {
-      if (mounted.current && generation === replanPollGeneration.current) setReplanMessage(`Erro: ${apiErrorMessage(failure)}`);
+      if (mounted.current && generation === replanPollGeneration.current) setReplanMessage(failureMessage(failure));
     } finally {
       if (mounted.current && generation === replanPollGeneration.current) setSaving(false);
     }
@@ -3657,4 +3666,4 @@ export function ConfigPage() {
     </div>
   );
 }
-import { assertRefreshed } from "../lib/refreshOutcome";
+import { assertRefreshed, isAppliedRefreshError, refreshAfterCommit } from "../lib/refreshOutcome";

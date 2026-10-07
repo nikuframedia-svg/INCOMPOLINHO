@@ -273,7 +273,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       });
       setPreview(null);
       setPreviewJobId(null);
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
       if (!mountedRef.current || requestGenerationRef.current !== generation) return;
       onApplied();
     } catch (failure) {
@@ -486,4 +486,4 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     </Modal>
   );
 }
-import { assertRefreshed, RefreshError } from "../lib/refreshOutcome";
+import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";

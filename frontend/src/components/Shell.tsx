@@ -3,7 +3,7 @@ import { T } from "../theme/tokens";
 import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
 import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
-import { assertRefreshed, RefreshError } from "../lib/refreshOutcome";
+import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
 import { getHealth, recalculate } from "../api/endpoints";
 import { TH } from "../constants/thresholds";
 import { approvalGateFromError, approvalImpactMessage } from "../lib/gateApproval";
@@ -269,7 +269,7 @@ export function Shell() {
     });
     try {
       await recalculate();
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
       setOperationStatus({
         phase: "success",
         message: "Plano recalculado",
@@ -297,7 +297,7 @@ export function Shell() {
             reason: `Recalculo confirmado com exceções: ${gate.approval_reasons.join(", ") || "exceções operacionais"}`,
             author: "planeador",
           });
-          assertRefreshed(await refreshAll(), true);
+          assertRefreshed(await refreshAfterCommit(refreshAll), true);
           setOperationStatus({
             phase: "success",
             message: "Plano recalculado com exceções",

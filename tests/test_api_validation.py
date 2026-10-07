@@ -156,6 +156,20 @@ def test_plan_view_returns_one_coherent_revision():
     assert payload["blocked_days"]["workdays"] == state.engine_data.workdays
 
 
+def test_plan_view_is_compressed_without_losing_revision_headers():
+    state.plan_revision = 17
+    client = TestClient(app)
+
+    compressed = client.get("/api/data/plan-view", headers={"Accept-Encoding": "gzip"})
+    plain = client.get("/api/data/plan-view", headers={"Accept-Encoding": "identity"})
+
+    assert compressed.headers.get("content-encoding") == "gzip"
+    assert "content-encoding" not in plain.headers
+    assert compressed.headers.get("x-plan-revision") == plain.headers.get("x-plan-revision")
+    assert compressed.headers.get("x-dataset-id") == plain.headers.get("x-dataset-id")
+    assert compressed.json() == plain.json()
+
+
 def test_blocked_days_exposes_operator_absences_with_counts_and_shifts():
     state.engine_data.operator_blocked_intervals = [{
         "id": "absence-1", "start_day": 1, "start_min": 420,

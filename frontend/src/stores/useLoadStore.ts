@@ -6,7 +6,7 @@ import {
 import type { LoadJob, LoadJobResponse } from "../api/types";
 import { ACTIVE_DATASET_KEY, useAppStore } from "./useAppStore";
 import { useDataStore } from "./useDataStore";
-import { assertRefreshed } from "../lib/refreshOutcome";
+import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";
 
 export const ACTIVE_LOAD_KEY = "pp1ActiveLoadJobId";
 export const TERMINAL_LOAD_STATES = new Set(["applied", "blocked", "failed", "cancelled", "stale"]);
@@ -244,7 +244,7 @@ export const useLoadStore = create<LoadState>((set, get) => ({
     if (!id || get().refreshing || get().job?.status !== "applied") return;
     set({ refreshing: true, refreshError: null });
     try {
-      assertRefreshed(await useDataStore.getState().refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(() => useDataStore.getState().refreshAll()), true);
       if (get().jobId !== id) return;
       const app = useAppStore.getState();
       const dataset = app.dataset;

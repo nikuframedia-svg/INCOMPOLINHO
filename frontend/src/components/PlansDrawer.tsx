@@ -99,7 +99,7 @@ export function PlansDrawer({ onClose }: Props) {
         reason,
         author: "planeador",
       });
-      assertRefreshed(await refreshAll(), true);
+      assertRefreshed(await refreshAfterCommit(refreshAll), true);
       await reload();
       setMessage(
         response.gate_report.status === "applicable"
@@ -236,4 +236,4 @@ export function PlansDrawer({ onClose }: Props) {
     </div>
   );
 }
-import { assertRefreshed, RefreshError } from "../lib/refreshOutcome";
+import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";

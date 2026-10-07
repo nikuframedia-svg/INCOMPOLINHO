@@ -31,7 +31,8 @@ it("ignores late refreshes and advances the command revision only with the accep
   const first = useDataStore.getState().refreshAll();
   expect(await useDataStore.getState().refreshAll()).toBe("updated");
   old.resolve(snapshot(21));
-  expect(await first).toBe("superseded");
+  // The overtaken refresh reports the newer outcome; its old data is ignored.
+  expect(await first).toBe("updated");
   expect(useDataStore.getState().planRevision).toBe(22);
   expect(useDataStore.getState().score?.otd).toBe(22);
   expect(getPlanRevision()).toBe(22);
@@ -98,8 +99,13 @@ it("reports an acknowledged apply followed by a failed refresh without applying 
   useSimulatorStore.getState().acceptSimulation(generation, candidate, mutations);
   vi.mocked(api.simulateApply).mockResolvedValue({ plan_revision: 22, summary: [] } as never);
   vi.mocked(api.getPlanView).mockRejectedValue(new Error("offline"));
-  await expect(useDataStore.getState().applySimulation(mutations, undefined, candidate)).rejects.toThrow(/Aplicado; ecrã por atualizar/);
+  vi.useFakeTimers();
+  const applied = expect(useDataStore.getState().applySimulation(mutations, undefined, candidate)).rejects.toThrow(/A alteração foi guardada/);
+  await vi.runAllTimersAsync();
+  await applied;
+  vi.useRealTimers();
   expect(api.simulateApply).toHaveBeenCalledTimes(1);
+  expect(api.getPlanView).toHaveBeenCalledTimes(3);
   expect(useDataStore.getState().planRevision).toBe(21);
   expect(useSimulatorStore.getState().result).toBeNull();
 });
