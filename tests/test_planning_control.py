@@ -261,8 +261,8 @@ def test_total_budget_includes_construction_and_preserves_inputs(planning_module
         return candidate()
 
     monkeypatch.setattr(planning_modules.optimizer, "schedule_all", construct)
-    robustness = Mock(side_effect=AssertionError("expired candidate evaluated"))
-    monkeypatch.setattr(planning_modules.optimizer, "_attach_robustness_score", robustness)
+    robustness = Mock(side_effect=AssertionError("planning never runs the robustness battery"))
+    monkeypatch.setattr(planning_modules.robustness, "run_robustness_battery", robustness)
     with pytest.raises(control.PlanningTimeout):
         with control.planning_scope(clock=clock):
             planning_modules.optimizer.optimize(data, mode="normal", config=config)
@@ -278,7 +278,6 @@ def test_advisory_polish_cancel_propagates_timeout_keeps_validated_candidate(pla
         optimizer.MODE_CONFIG, "normal", {**optimizer.MODE_CONFIG["normal"], "candidate_search": False}
     )
     monkeypatch.setattr(optimizer, "schedule_all", lambda *_args, **_kwargs: candidate())
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda result, *_a, **_k: result)
     monkeypatch.setattr(optimizer, "_build_local_machine_runs", lambda *_args: {})
     monkeypatch.setattr(planning_modules.polish, "cpsat_polish", Mock(side_effect=error("stop")))
     if error is control.PlanningCancelled:
@@ -361,7 +360,9 @@ def test_robustness_can_stop_inside_one_replay(planning_modules):
             planning_modules.robustness._advance_work_with_intervals(0, 100, BlockedDays(), 60, [])
 
 
-def test_incomplete_robustness_never_attaches_score(planning_modules, monkeypatch):
+def test_incomplete_robustness_battery_raises_instead_of_partial_result(
+    planning_modules, monkeypatch,
+):
     from backend.config.types import FactoryConfig
 
     clock = FakeClock()
@@ -377,11 +378,11 @@ def test_incomplete_robustness_never_attaches_score(planning_modules, monkeypatc
     monkeypatch.setattr(planning_modules.robustness, "replay_scenario", replay)
     with pytest.raises(control.PlanningTimeout):
         with control.planning_scope(timeout_s=2, clock=clock):
-            planning_modules.optimizer._attach_robustness_score(
-                result, empty_data(), FactoryConfig(), seed=42
+            planning_modules.robustness.run_robustness_battery(
+                result.segments, result.lots, empty_data(), FactoryConfig(),
+                n_samples=100, seed=42, profile="quick",
             )
     assert calls == [0, 1]
-    before.score["robustness_evaluated_samples"] = 0
     assert result == before
 
 
@@ -418,23 +419,3 @@ def test_legacy_battery_callback_does_not_swallow_parent_cancellation(planning_m
             planning_modules.robustness.run_robustness_battery(
                 [], [], empty_data(), FactoryConfig(), n_samples=100, cancelled=lambda: False
             )
-
-
-@pytest.mark.parametrize("failures,passed", [(5, True), (6, False)])
-def test_robustness_keeps_100_samples_and_95_percent_gate(
-    planning_modules, monkeypatch, failures, passed
-):
-    from backend.config.types import FactoryConfig
-
-    def replay(index, seed, *_args):
-        tardy = int(index < failures)
-        return planning_modules.robustness.ScenarioOutcome(
-            index, seed, 0 if tardy else 100, tardy, tardy, tardy, [], {}
-        )
-
-    monkeypatch.setattr(planning_modules.robustness, "replay_scenario", replay)
-    result = candidate()
-    planning_modules.optimizer._attach_robustness_score(result, empty_data(), FactoryConfig(), seed=42)
-    assert result.score["robustness_evaluated_samples"] == 100
-    assert result.score["robustness_threshold_pct"] == 95
-    assert result.score["robustness_gate_passed"] is passed

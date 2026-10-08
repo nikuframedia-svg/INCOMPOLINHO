@@ -311,15 +311,13 @@ def test_closeout_reruns_alternative_search_only_for_unverified_state(monkeypatc
     monkeypatch.setattr(alternative_module, "repair_alternative_machine_delivery", fake_repair)
     monkeypatch.setattr(optimizer_module, "normalize_earliest_legal_plan",
                         lambda segs, *_a, **_k: segs)
-    monkeypatch.setattr(optimizer_module, "_attach_robustness_score", lambda *_a, **_k: None)
 
     def run(report, warnings):
         result = ScheduleResult(segments=list(segments), lots=[lot], score={}, time_ms=0,
                                 warnings=list(warnings), operator_alerts=[],
                                 improvement_report=report)
         try:
-            optimizer_module._normalize_operational_result(result, data, config,
-                                                           robustness_seed=1)
+            optimizer_module._normalize_operational_result(result, data, config)
         except Exception:  # noqa: BLE001 - only the repair decision matters here
             pass
         return len(calls)

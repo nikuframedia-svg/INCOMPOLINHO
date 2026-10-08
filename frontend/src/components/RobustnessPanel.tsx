@@ -15,12 +15,80 @@ import { useAppStore } from "../stores/useAppStore";
 type Profile = "quick" | "standard" | "intensive";
 
 const PROFILE_LABELS: Record<Profile, string> = {
-  quick: "Rápido · 100",
-  standard: "Normal · 500",
-  intensive: "Intensivo · 2.000",
+  quick: "Rápido · 100 cenários",
+  standard: "Normal · 500 cenários",
+  intensive: "Intensivo · 2.000 cenários",
 };
 
+const LATEST_RETRIES = 3;
+const LATEST_RETRY_MS = 2000;
+
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+const STATUS_LABELS: Record<RobustnessJob["status"], string> = {
+  queued: "em espera",
+  running: "a calcular",
+  cancelling: "a cancelar",
+  cancelled: "cancelado",
+  completed: "concluído",
+  failed: "falhou",
+  interrupted: "interrompido",
+};
+
+/** A job computed for another revision does not describe the plan on screen. */
+function belongsToRevision(job: RobustnessJob, revision: number | null | undefined): boolean {
+  return typeof job.plan_revision !== "number" || typeof revision !== "number" || job.plan_revision === revision;
+}
+
+function originText(job: RobustnessJob): string {
+  const revision = typeof job.plan_revision === "number" ? ` da revisão ${job.plan_revision}` : "";
+  if (job.trigger === "auto") return `Cálculo automático${revision}, feito depois de gravar o plano.`;
+  if (job.trigger === "manual") return `Cálculo pedido manualmente${revision}.`;
+  return "Cálculo deste plano.";
+}
+
+/** "2026-10-08" -> "08/10"; parsed by hand so the timezone never shifts the day. */
+function shortDate(iso: string | null | undefined): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  return match ? `${match[3]}/${match[2]}` : null;
+}
+
+function horizonWorkdays(job: RobustnessJob): number | null {
+  const workdays = job.horizon_workdays ?? job.result?.horizon_workdays;
+  return typeof workdays === "number" && workdays > 0 ? workdays : null;
+}
+
+function horizonText(job: RobustnessJob): string {
+  const workdays = horizonWorkdays(job);
+  if (workdays === null) return "Olha para o plano inteiro (modelo anterior).";
+  const from = shortDate(job.result?.horizon_start_date);
+  const to = shortDate(job.result?.horizon_end_date);
+  const window = from && to
+    ? `Olha para os dias de ${from} a ${to} (${workdays} dias úteis).`
+    : `Olha para os próximos ${workdays} dias úteis.`;
+  const count = job.result?.horizon_lot_count;
+  if (typeof count !== "number" || count <= 0) return window;
+  return `${window} ${count} ${count === 1 ? "entrega" : "entregas"} nestes dias.`;
+}
+
+/** A v5 window without deliveries has nothing to measure: never show it as 100%. */
+function nothingToMeasure(job: RobustnessJob): boolean {
+  const result = job.result;
+  return Boolean(result && (result.no_deliveries_in_window || result.horizon_lot_count === 0));
+}
+
+function pct(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
+}
+
+function num(value: number | null | undefined, suffix = ""): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)}${suffix}` : "—";
+}
+
+/** Null, stale or another revision: the automatic job may still be on its way. */
+function usableLatest(job: RobustnessJob | null): boolean {
+  return Boolean(job && !job.stale && belongsToRevision(job, useDataStore.getState().planRevision));
+}
 
 export function RobustnessPanel() {
   const [profile, setProfile] = useState<Profile>("standard");
@@ -43,7 +111,8 @@ export function RobustnessPanel() {
     setSaved((previous) => {
       if (previous?.plan === plan && previous.job?.id === next?.id
         && previous.job && terminal.has(previous.job.status) && next && !terminal.has(next.status)) return previous;
-      return { plan, job: next?.stale ? null : next };
+      const revision = useDataStore.getState().planRevision;
+      return { plan, job: next?.stale || (next && !belongsToRevision(next, revision)) ? null : next };
     });
   }, [plan]);
   const jobId = job?.id;
@@ -52,10 +121,24 @@ export function RobustnessPanel() {
   useEffect(() => {
     const counter = generation;
     const token = ++counter.current;
-    getLatestRobustnessRun().then((response) => {
-      if (current(token)) { setError(null); setJob(response.job); }
-    }).catch((reason) => { if (current(token)) setError(String(reason)); });
-    return () => { ++counter.current; busy.current = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    // The automatic job is queued right after the commit; give it a few
+    // short chances to appear (or replace a stale one) before showing
+    // "sem resultado". Queued/running jobs are then followed by id below.
+    const load = () => {
+      getLatestRobustnessRun("auto").then((response) => {
+        if (!current(token)) return;
+        setError(null);
+        setJob(response.job);
+        // A new day moves the 10-day window: the server re-runs the analysis
+        // and says so with `refreshing`; keep asking until the new job shows.
+        const waiting = response.refreshing === true || !usableLatest(response.job);
+        if (waiting && ++attempts < LATEST_RETRIES) timer = setTimeout(load, LATEST_RETRY_MS);
+      }).catch((reason) => { if (current(token)) setError(String(reason)); });
+    };
+    load();
+    return () => { ++counter.current; busy.current = false; clearTimeout(timer); };
   }, [plan, current, setJob, setError]);
 
   useEffect(() => {
@@ -83,6 +166,7 @@ export function RobustnessPanel() {
   const running = Boolean(job && !terminal.has(job.status));
   const result = job?.result;
   const relativeResult = result?.success_definition === "no_additional_tardy_lots";
+  const emptyWindow = job ? nothingToMeasure(job) : false;
 
   const start = async () => {
     if (busy.current || running || readOnly) return;
@@ -124,15 +208,18 @@ export function RobustnessPanel() {
     <div style={{ border: `1px solid ${T.border}`, borderRadius: T.radiusSm, background: T.bg, padding: 14 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 220px" }}>
-          <div style={{ color: T.primary, fontSize: 13, fontWeight: 700 }}>Testar robustez</div>
+          <div style={{ color: T.primary, fontSize: 13, fontWeight: 700 }}>
+            Robustez (informativo): não altera o plano nem pede aprovação
+          </div>
           <div style={{ color: T.secondary, fontSize: 10, marginTop: 2 }}>
-            Reproduz o plano sem o alterar, usando os mesmos cenários e seed.
+            Simula imprevistos sobre o plano gravado e conta se aparecem novos atrasos. É calculada sozinha depois de cada gravação; podes repetir com mais cenários.
           </div>
         </div>
         <select
           value={profile}
           onChange={(event) => setProfile(event.target.value as Profile)}
           disabled={running || pending || readOnly}
+          aria-label="Número de cenários"
           style={{ background: T.card, border: `1px solid ${T.border}`, color: T.primary, borderRadius: 7, padding: "7px 9px" }}
         >
           {(Object.keys(PROFILE_LABELS) as Profile[]).map((value) => (
@@ -149,25 +236,43 @@ export function RobustnessPanel() {
         </button>
       </div>
 
+      {job && (
+        <div style={{ marginTop: 8, color: T.tertiary, fontSize: 10 }}>
+          {originText(job)} {horizonText(job)}
+        </div>
+      )}
+      {!job && !error && !pending && (
+        <div style={{ marginTop: 8, color: T.tertiary, fontSize: 10 }}>
+          Ainda sem resultado para esta revisão do plano.
+        </div>
+      )}
+
       {running && (
         <div style={{ marginTop: 12 }}>
           <ProgressBar value={job?.progress ?? 0} />
-          <div style={{ marginTop: 5, color: T.secondary, fontSize: 10 }}>{job?.progress ?? 0}% · {job?.status}</div>
+          <div style={{ marginTop: 5, color: T.secondary, fontSize: 10 }}>
+            {job?.progress ?? 0}% · {job ? STATUS_LABELS[job.status] ?? job.status : ""}
+          </div>
         </div>
       )}
 
       {error && <div style={{ color: T.red, fontSize: 11, marginTop: 10 }}>{error}</div>}
       {job?.error && <div style={{ color: T.red, fontSize: 11, marginTop: 10 }}>{job.error}</div>}
 
-      {job?.status === "completed" && result && (
+      {job?.status === "completed" && result && emptyWindow && (
+        <div style={{ marginTop: 12, color: T.secondary, fontSize: 12 }}>
+          Sem entregas nos próximos {horizonWorkdays(job) ?? 10} dias úteis — nada a medir.
+        </div>
+      )}
+
+      {job?.status === "completed" && result && !emptyWindow && (
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          {job.stale && <div style={{ color: T.orange, fontSize: 11 }}>Resultado de uma revisão anterior do plano.</div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(125px, 1fr))", gap: 8 }}>
             {[
-              [relativeResult ? "Sem novos atrasos" : "Cumprimento (anterior)", `${result.success_probability_pct.toFixed(1)}%`],
-              ["OTD P95", `${result.otd_p95.toFixed(1)}%`],
-              [relativeResult ? "Atrasos adicionais P95" : "Atrasos P95", (result.additional_tardy_p95 ?? result.tardy_p95).toFixed(1)],
-              ["CVaR95", `${result.total_tardiness_cvar95.toFixed(1)}d`],
+              [relativeResult ? "Cenários sem novos atrasos" : "Cenários a cumprir (anterior)", pct(result.success_probability_pct)],
+              ["Entregas a tempo num cenário mau", pct(result.otd_p95)],
+              [relativeResult ? "Novos atrasos num cenário mau" : "Atrasos num cenário mau", num(result.additional_tardy_p95 ?? result.tardy_p95)],
+              ["Dias de atraso nos piores cenários", num(result.total_tardiness_cvar95, "d")],
             ].map(([label, value]) => (
               <div key={label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: 10 }}>
                 <div style={{ color: T.tertiary, fontSize: 9, textTransform: "uppercase" }}>{label}</div>
@@ -177,7 +282,7 @@ export function RobustnessPanel() {
           </div>
           {relativeResult ? (
             <div style={{ color: T.secondary, fontSize: 11 }}>
-              Referência do plano: {result.baseline_tardy_count ?? 0} lote(s) já atrasado(s). A percentagem mede quantos cenários não criam novos lotes em atraso.
+              O plano já tem {result.baseline_tardy_count ?? 0} lote(s) atrasado(s). A percentagem diz em quantos cenários não aparece nenhum atraso novo. "Cenário mau" é o 1 em cada 20 que corre pior.
             </div>
           ) : (
             <div style={{ color: T.orange, fontSize: 11 }}>

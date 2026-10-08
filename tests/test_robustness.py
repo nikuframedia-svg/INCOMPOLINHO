@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import copy
 import os
+import random
 import threading
 import time
+from datetime import date, timedelta
 
 import pytest
 
@@ -13,11 +15,15 @@ from backend.config.types import FactoryConfig, MachineConfig, ShiftConfig
 from backend.risk.jobs import RobustnessJobManager, RobustnessJobStore
 from backend.risk.robustness import (
     PROFILE_SAMPLES,
+    ROBUSTNESS_HORIZON_WORKDAYS,
+    ROBUSTNESS_MODEL_VERSION,
     ScenarioOutcome,
+    _scenario_manifest,
     _absolute_intervals,
     _advance_work_with_intervals,
     _reserve_operator_work,
     replay_scenario,
+    robustness_horizon,
     run_robustness_battery,
 )
 from backend.scheduler.types import Lot, Segment
@@ -590,3 +596,272 @@ def test_submission_failure_clears_worker_and_marks_job_failed(monkeypatch):
     finally:
         manager._executor.shutdown(wait=True)
         store._conn.close()
+
+
+def _two_week_fixture(*, far_day: int = 24, far_edd: int = 25):
+    """One lot inside the first ten working days and one far beyond them."""
+
+    segments, lots, data, config = _fixture()
+    data.n_days = 30
+    data.workdays = [f"2026-04-{day + 1:02d}" for day in range(30)]
+    data.ops[0].d = [0] * 30
+    far_lot = copy.deepcopy(lots[0])
+    far_lot.id, far_lot.tool_id, far_lot.machine_id = "FAR", "T2", "M2"
+    far_lot.edd = far_lot.delivery_day = far_edd
+    far_segment = copy.deepcopy(segments[0])
+    far_segment.lot_id, far_segment.run_id = "FAR", "RUN2"
+    far_segment.tool_id, far_segment.machine_id = "T2", "M2"
+    far_segment.day_idx, far_segment.edd = far_day, far_edd
+    return [*segments, far_segment], [*lots, far_lot], data, config
+
+
+def test_model_v5_reports_its_ten_workday_horizon():
+    segments, lots, data, config = _two_week_fixture()
+    result = run_robustness_battery(segments, lots, data, config, n_samples=5, seed=7)
+
+    assert ROBUSTNESS_MODEL_VERSION == result["model_version"] == 5
+    assert ROBUSTNESS_HORIZON_WORKDAYS == result["horizon_workdays"] == 10
+    assert result["informational_only"] is True
+    assert (result["horizon_start_day"], result["horizon_end_day"]) == (0, 9)
+    assert result["horizon_start_date"] == "2026-04-01"
+    assert result["horizon_lot_count"] == 1
+
+
+def test_horizon_counts_working_days_from_the_anchor():
+    segments, lots, data, config = _two_week_fixture()
+    data.holidays = [2, 3]
+    horizon = robustness_horizon(lots, data, anchor_day=1)
+
+    assert horizon.start_day == 1
+    assert horizon.end_day == 12
+    assert horizon.days == (1, *range(4, 13))
+    assert horizon.lot_ids == frozenset({"LOT1"})
+    assert robustness_horizon(lots, data, anchor_day=20).lot_ids == frozenset({"FAR"})
+
+
+def test_disruption_beyond_ten_workdays_does_not_count(monkeypatch):
+    segments, lots, data, config = _two_week_fixture()
+
+    def manifest(*_args, **_kwargs):
+        stable = _stable_manifest(segments)
+        stable["machine_down"] = {"M2": [24, 25, 26]}
+        return stable
+
+    monkeypatch.setattr("backend.risk.robustness._scenario_manifest", manifest)
+    full = run_robustness_battery(
+        segments, lots, data, config, n_samples=3, seed=7, horizon_workdays=1000,
+    )
+    v5 = run_robustness_battery(segments, lots, data, config, n_samples=3, seed=7)
+
+    assert full["success_probability_pct"] == 0.0
+    assert v5["success_probability_pct"] == 100.0
+    assert v5["tardy_p95"] == 0.0
+
+
+def test_lot_late_only_after_the_horizon_is_not_baseline_tardy():
+    segments, lots, data, config = _two_week_fixture(far_day=27, far_edd=25)
+
+    full = run_robustness_battery(
+        segments, lots, data, config, n_samples=2, seed=7, horizon_workdays=1000,
+    )
+    v5 = run_robustness_battery(segments, lots, data, config, n_samples=2, seed=7)
+    anchored = run_robustness_battery(
+        segments, lots, data, config, n_samples=2, seed=7, anchor_day=20,
+    )
+
+    assert full["baseline_tardy_count"] == 1
+    assert v5["baseline_tardy_count"] == 0
+    assert anchored["baseline_tardy_count"] == 1
+
+
+def test_v5_draws_disruptions_only_inside_the_horizon():
+    segments, lots, data, config = _two_week_fixture()
+    data.holidays = [5, 6]
+    horizon = robustness_horizon(lots, data, anchor_day=0)
+    assert horizon.lot_ids == frozenset({"LOT1"})
+    drawn = 0
+    for seed in range(400):
+        manifest = _scenario_manifest(
+            random.Random(seed), segments, lots, data, config, horizon,
+        )
+        # Only resources with measured production in the window break down;
+        # M2/T2 only produce the far lot.
+        assert set(manifest["machine_down"]) <= {"M1"}
+        assert set(manifest["tool_down"]) <= {"T1"}
+        for days in [*manifest["machine_down"].values(), *manifest["tool_down"].values()]:
+            drawn += 1
+            # Consecutive working days, clipped to the window (never past day 11).
+            assert set(days) <= set(horizon.days)
+            first = horizon.days.index(days[0])
+            assert tuple(days) == horizon.days[first : first + len(days)]
+        assert set(manifest["material_delays"]) <= horizon.lot_ids
+    assert drawn > 0
+
+
+def test_breakdown_at_the_window_end_is_clipped(monkeypatch):
+    segments, lots, data, config = _two_week_fixture()
+    horizon = robustness_horizon(lots, data, anchor_day=0)
+
+    class LastDay(random.Random):
+        def random(self):
+            return 0.0  # every disruption fires
+
+        def betavariate(self, *_args):
+            return 0.5
+
+        def lognormvariate(self, *_args):
+            return 1.0
+
+        def randrange(self, *args, **kwargs):
+            return len(horizon.days) - 1
+
+        def choices(self, population, *args, **kwargs):
+            return [max(population)]
+
+    manifest = _scenario_manifest(LastDay(1), segments, lots, data, config, horizon)
+    assert manifest["machine_down"] == {"M1": [horizon.end_day]}
+    assert manifest["tool_down"] == {"T1": [horizon.end_day]}
+
+
+def _history_fixture():
+    """M1 fully loaded on days 0-14 (history) and lot L15 due on day 15."""
+
+    segments, lots, data, config = _fixture()
+    data.n_days = 30
+    data.workdays = [f"2026-04-{day + 1:02d}" for day in range(30)]
+    data.ops[0].d = [0] * 30
+    history_segments, history_lots = [], []
+    for day in range(16):
+        lot = copy.deepcopy(lots[0])
+        lot.id, lot.edd, lot.delivery_day = f"L{day}", day, day
+        lot.prod_min, lot.setup_min = 1020, 0
+        segment = copy.deepcopy(segments[0])
+        segment.lot_id, segment.run_id, segment.day_idx, segment.edd = (
+            lot.id, f"R{day}", day, day,
+        )
+        segment.start_min, segment.end_min = 420, 1440
+        segment.prod_min, segment.setup_min = 1020, 0
+        history_segments.append(segment)
+        history_lots.append(lot)
+    return history_segments, history_lots, data, config
+
+
+def test_production_before_the_anchor_is_replayed_exactly_as_planned():
+    segments, lots, data, config = _history_fixture()
+
+    with_history = run_robustness_battery(
+        segments, lots, data, config, n_samples=200, seed=42, anchor_day=15,
+    )
+    without_history = run_robustness_battery(
+        segments[15:], lots[15:], data, config, n_samples=200, seed=42, anchor_day=15,
+    )
+
+    assert with_history["horizon_lot_count"] == 1
+    # Random slowdowns of days 0-14 no longer cascade into the window.
+    assert with_history == without_history
+    assert max(item["max_tardiness"] for item in with_history["worst_scenarios"]) <= 5
+
+
+def test_window_without_deliveries_has_no_success_probability():
+    segments, lots, data, config = _two_week_fixture()
+    result = run_robustness_battery(
+        segments, lots, data, config, n_samples=20, seed=7, anchor_day=3,
+    )
+
+    assert result["horizon_lot_count"] == 0
+    assert result["no_deliveries_in_window"] is True
+    assert result["success_probability_pct"] is None
+    measured = run_robustness_battery(segments, lots, data, config, n_samples=5, seed=7)
+    assert measured["no_deliveries_in_window"] is False
+    assert measured["success_probability_pct"] is not None
+
+
+def test_window_dates_continue_past_the_isop():
+    segments, lots, data, config = _two_week_fixture()
+    result = run_robustness_battery(
+        segments, lots, data, config, n_samples=2, seed=7, anchor_day=25,
+    )
+
+    assert result["horizon_start_date"] == "2026-04-26"
+    assert result["horizon_end_day"] > 29
+    expected = date(2026, 4, 30) + timedelta(days=result["horizon_end_day"] - 29)
+    assert result["horizon_end_date"] == expected.isoformat()
+
+
+def test_planning_scopes_are_counted_only_at_top_level():
+    from backend.planning_control import planning_active, planning_scope
+
+    assert not planning_active()
+    with planning_scope(background=True):
+        assert not planning_active()
+    with planning_scope(timeout_s=30):
+        assert planning_active()
+        with planning_scope(timeout_s=10):
+            assert planning_active()
+        assert planning_active()
+    assert not planning_active()
+    with pytest.raises(RuntimeError), planning_scope():
+        raise RuntimeError("planning failed")
+    assert not planning_active()
+
+
+def test_wait_while_planning_honours_cancel():
+    from backend.planning_control import planning_scope, wait_while_planning
+
+    sleeps = []
+    with planning_scope():
+        assert wait_while_planning(lambda: len(sleeps) >= 3, sleep=sleeps.append) is False
+    assert len(sleeps) == 3
+    assert wait_while_planning(lambda: False) is True
+
+
+def test_background_battery_pauses_while_a_plan_is_calculated():
+    from backend.planning_control import planning_scope
+
+    segments, lots, data, config = _two_week_fixture()
+    progress, done, cancel = [], threading.Event(), threading.Event()
+    results = []
+
+    def background():
+        results.append(
+            run_robustness_battery(
+                segments, lots, data, config, n_samples=20, seed=7,
+                progress=lambda current, _total: progress.append(current),
+                cancelled=cancel.is_set,
+                yield_to_planning=True,
+            )
+        )
+        done.set()
+
+    with planning_scope(timeout_s=30):
+        worker = threading.Thread(target=background)
+        worker.start()
+        time.sleep(0.3)
+        assert progress == [] and not done.is_set()
+    assert done.wait(10)
+    worker.join()
+    assert results[0]["completed_samples"] == 20
+
+    # Cancelled while waiting: stops without running a scenario.
+    progress.clear()
+    done.clear()
+    with planning_scope(timeout_s=30):
+        worker = threading.Thread(target=background)
+        worker.start()
+        time.sleep(0.1)
+        cancel.set()
+        assert done.wait(5)
+        worker.join()
+    assert progress == []
+    assert results[1]["completed_samples"] == 0
+
+
+def test_battery_inside_a_planning_scope_does_not_wait_for_itself():
+    from backend.planning_control import planning_scope
+
+    segments, lots, data, config = _two_week_fixture()
+    with planning_scope(timeout_s=30):
+        result = run_robustness_battery(
+            segments, lots, data, config, n_samples=3, seed=7, yield_to_planning=True,
+        )
+    assert result["completed_samples"] == 3

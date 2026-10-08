@@ -11,7 +11,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Protocol
 
 
@@ -68,11 +68,41 @@ class PlanningControl:
 
 _control: ContextVar[PlanningControl | None] = ContextVar("planning_control", default=None)
 _candidate_observer: ContextVar[Callable | None] = ContextVar("candidate_observer", default=None)
-_defer_robustness: ContextVar[bool] = ContextVar("defer_robustness", default=False)
+
+# Process-wide count of open top-level planning scopes. Background analyses
+# (robustness) yield the CPU while it is non-zero so they never compete with,
+# and therefore never influence, a time-limited plan search.
+_active_planning = 0
+_active_planning_lock = Lock()
+
+
+def planning_active() -> bool:
+    """True while any thread runs a top-level planning scope."""
+    return _active_planning > 0
+
+
+def wait_while_planning(
+    cancelled: Callable[[], bool] | None = None,
+    *,
+    interval_s: float = 0.05,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Block a background worker while planning runs; False when cancelled first."""
+    while planning_active():
+        if cancelled is not None and cancelled():
+            return False
+        sleep(interval_s)
+    return not (cancelled is not None and cancelled())
+
+
+def _track_planning(delta: int) -> None:
+    global _active_planning
+    with _active_planning_lock:
+        _active_planning = max(0, _active_planning + delta)
 
 
 @contextmanager
-def candidate_observer(callback, *, defer_robustness=None, forward=False):
+def candidate_observer(callback, *, forward=False):
     """Notify owners unless a nested retainer explicitly rejects the candidate."""
     parent = _candidate_observer.get()
 
@@ -82,18 +112,10 @@ def candidate_observer(callback, *, defer_robustness=None, forward=False):
             parent(result)
 
     token = _candidate_observer.set(dispatch)
-    deferred = _defer_robustness.set(
-        _defer_robustness.get() if defer_robustness is None else defer_robustness,
-    )
     try:
         yield
     finally:
         _candidate_observer.reset(token)
-        _defer_robustness.reset(deferred)
-
-
-def robustness_deferred() -> bool:
-    return _defer_robustness.get()
 
 
 def candidate_completed(result) -> None:
@@ -114,9 +136,15 @@ def planning_scope(
     cancelled: Callable[[], bool] | None = None,
     clock: Callable[[], float] | None = None,
     check_on_exit: bool = True,
+    background: bool = False,
 ):
-    """Bound nested work; durable writers check explicitly before commit instead of at exit."""
+    """Bound nested work; durable writers check explicitly before commit instead of at exit.
+
+    A top-level scope counts as active planning unless ``background`` is set
+    (informational analyses that must yield to planning, never count as it).
+    """
     parent = _control.get()
+    tracked = parent is None and not background
     clock = clock or (parent.clock if parent is not None else time.monotonic)
     control = PlanningControl(
         deadline=None if timeout_s is None else clock() + max(0.0, timeout_s),
@@ -127,12 +155,16 @@ def planning_scope(
         cache=parent.cache if parent is not None else {},
     )
     token = _control.set(control)
+    if tracked:
+        _track_planning(1)
     try:
         control.checkpoint()
         yield control
         if check_on_exit:
             control.checkpoint()
     finally:
+        if tracked:
+            _track_planning(-1)
         _control.reset(token)
 
 

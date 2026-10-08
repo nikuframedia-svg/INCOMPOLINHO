@@ -385,19 +385,26 @@ def test_v1_snapshot_is_migrated_and_lot_sku_is_normalized():
 def test_failed_restore_does_not_change_live_config_or_revision():
     source = _loaded_state()
     source.config.name = "Configuração do snapshot"
+    # Genuine refusal: the snapshot delivers the day-0 order one day late, so
+    # the delivery gate requires explicit approval and none is given.
+    source.engine_data.ops[0].stk = 0
+    source.engine_data.machine_blocked_days = {}
+    source.engine_data.tool_blocked_days = {}
+    source.segments[0].day_idx = 1
     payload = serialize_snapshot(source)
     target = _loaded_state()
     target.config.name = "Configuração em produção"
     original_engine = target.engine_data
     original_revision = target.plan_revision
+    original_segments = copy.deepcopy(target.segments)
     plan = {
         "id": "snapshot-1",
-        "name": "Plano sem aprovação",
+        "name": "Plano atrasado sem aprovação",
         "origin": "isop.xlsx",
         "payload": copy.deepcopy(payload),
     }
 
-    with pytest.raises(ValueError, match="aprovação"):
+    with pytest.raises(ValueError, match="aprovação explícita: delivery_risk"):
         restore_plan_into_state(
             plan,
             target,
@@ -407,6 +414,7 @@ def test_failed_restore_does_not_change_live_config_or_revision():
     assert target.config.name == "Configuração em produção"
     assert target.engine_data is original_engine
     assert target.plan_revision == original_revision
+    assert target.segments == original_segments
 
 
 def test_startup_restore_keeps_the_current_persisted_factory_config():
@@ -858,8 +866,10 @@ def test_restore_recomputes_gate_and_dataset(tmp_path: Path):
         )
 
         assert loaded.score["otd"] == 100.0
-        assert loaded.gate_report["status"] == "best_effort"
-        assert loaded.gate_report["apply_decision"] == "approval_required"
+        # Robustness is information only: a clean plan restores without approval.
+        assert loaded.gate_report["status"] == "applicable"
+        assert loaded.gate_report["apply_decision"] == "auto_applicable"
+        assert "robustness_not_evaluated" not in loaded.gate_report["approval_reasons"]
         assert loaded.dataset_info["id"] == f"plan_{saved['id']}"
         assert response["dataset"]["filename"] == "isop.xlsx"
     finally:
@@ -1079,8 +1089,9 @@ def test_plans_api_save_list_restore_delete(plans_api_state):
     )
     assert restored.status_code == 200, restored.text
     assert state.score["otd"] == 100.0
-    assert restored.json()["gate_report"]["status"] == "best_effort"
-    assert restored.json()["gate_report"]["requires_approval"] is True
+    # Robustness is information only: a clean plan restores without approval.
+    assert restored.json()["gate_report"]["status"] == "applicable"
+    assert restored.json()["gate_report"]["requires_approval"] is False
 
     deleted = client.delete(f"/api/data/plans/{plan_id}")
     assert deleted.status_code == 200

@@ -7,6 +7,7 @@ import type { LoadJob, LoadJobResponse } from "../api/types";
 import { ACTIVE_DATASET_KEY, useAppStore } from "./useAppStore";
 import { useDataStore } from "./useDataStore";
 import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";
+import { isLegacyRobustnessReason } from "../lib/gateApproval";
 
 export const ACTIVE_LOAD_KEY = "pp1ActiveLoadJobId";
 export const TERMINAL_LOAD_STATES = new Set(["applied", "blocked", "failed", "cancelled", "stale"]);
@@ -16,13 +17,12 @@ export function loadWarnings(job: LoadJob): string[] {
     delivery_risk: "Existem entregas em risco de atraso.",
     subcontract_dispatch_risk: "Existem envios para subcontratação em risco.",
     long_production: "Existem lotes cuja produção excede o limite de dias consecutivos.",
-    robustness_below_threshold: "A robustez ficou abaixo do limite configurado.",
-    robustness_not_evaluated: "A robustez ainda não foi avaliada.",
     operator_capacity_shortage: "Existe falta de capacidade de operadores.",
   };
-  const gateWarnings = (job.gate_report ?? job.result?.gate_report)?.approval_reasons.map(
-    reason => labels[reason] ?? "Existe uma exceção de planeamento; consulta as validações.",
-  ) ?? [];
+  // Robustness is informative only; old jobs may still list it as a reason.
+  const gateWarnings = (job.gate_report ?? job.result?.gate_report)?.approval_reasons
+    .filter(reason => !isLegacyRobustnessReason(reason))
+    .map(reason => labels[reason] ?? "Existe uma exceção de planeamento; consulta as validações.") ?? [];
   return [...(job.result?.state_warnings ?? []), ...gateWarnings];
 }
 

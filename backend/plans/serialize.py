@@ -166,14 +166,13 @@ def value_fingerprint(value: Any) -> str:
 
 
 def schedule_fingerprint(segments: Any, lots: Any) -> str:
-    """Identify the exact executable schedule used by robustness results."""
+    """Identify the exact executable schedule (segments and lots)."""
 
     return _fingerprint({"segments": segments, "lots": lots})
 
 
 def planning_model_identity() -> dict[str, str | int]:
     from backend.plans.manual_move import ALLOCATION_MODEL_VERSION
-    from backend.risk.robustness import ROBUSTNESS_MODEL_VERSION
     from backend.scheduler.improvement import CONTRACT_VERSION, PROTECTED_CONTEXT_VERSION
     from backend.scheduler.transfer_consolidation import TRANSFER_SEARCH_VERSION
 
@@ -181,7 +180,6 @@ def planning_model_identity() -> dict[str, str | int]:
         "model": MODEL_VERSION,
         "planning_policy": PLANNING_POLICY_VERSION,
         "improvement_contract": CONTRACT_VERSION,
-        "robustness_model": ROBUSTNESS_MODEL_VERSION,
         "manual_allocation": ALLOCATION_MODEL_VERSION,
         "protected_context": PROTECTED_CONTEXT_VERSION,
         "transfer_search": TRANSFER_SEARCH_VERSION,

@@ -408,7 +408,7 @@ def _compute_schedule(config):
 
 
 def _compact_active_schedule(config):
-    """Budget the whole preview, including robustness and final analytics."""
+    """Budget the whole preview, including the final analytics."""
     from backend.cpo.optimizer import MODE_CONFIG
     from backend.planning_control import planning_scope
 
@@ -423,8 +423,6 @@ def _compact_active_schedule_bounded(config):
         state.config = config
         return None
     from backend.config.planning import synchronize_active_twin_groups
-    from backend.cpo.optimizer import MODE_CONFIG, _attach_robustness_with_reserve
-    from backend.planning_control import closing_reserve
     from backend.plans.context import recalculation_from_start
     from backend.plans.frozen import compact_preserving_started_lots
     from backend.scheduler.canonical import result_validation_data
@@ -444,10 +442,6 @@ def _compact_active_schedule_bounded(config):
         **({"recalculate_from_start": True} if recalculation_from_start() else {}),
     )
     validation_data = result_validation_data(state.engine_data, result)
-    _attach_robustness_with_reserve(
-        result, validation_data, config, seed=42,
-        reserve_s=closing_reserve(float(MODE_CONFIG["normal"]["time_budget_s"])),
-    )
     result.gate_report = build_gate_report(
         result.segments,
         result.lots,

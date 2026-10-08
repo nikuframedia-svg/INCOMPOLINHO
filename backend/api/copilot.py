@@ -85,6 +85,14 @@ async def lifespan(_app: FastAPI):
             logger.exception("Could not restore the explicit active plan; startup refused")
             raise
     state._load_rules()
+    # Jobs interrupted by a restart are not resumed; refresh a missing or stale
+    # analysis of the restored revision. Information only: never blocks startup.
+    try:
+        from backend.risk.jobs import enqueue_after_commit
+
+        enqueue_after_commit(state)
+    except Exception:
+        logger.exception("Automatic robustness job not started on startup")
     from backend.loading.jobs import LoadJobManager
 
     load_logger = logging.getLogger("backend.loading")

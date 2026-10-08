@@ -50,11 +50,11 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); useDataStore.getState().clear(); useAppStore.setState({ accessMode: "edit" }); });
 
-it("does not present unevaluated robustness as zero in the approval dialog", () => {
+it("keeps robustness out of the approval dialog, even for legacy reasons", () => {
   const message = approvalImpactMessage({
     apply_decision: "approval_required",
     requires_approval: true,
-    approval_reasons: ["robustness_not_evaluated"],
+    approval_reasons: ["robustness_not_evaluated", "robustness_below_threshold", "delivery_risk"],
     metrics: {
       tardy_count: 5,
       robustness_evaluated_samples: 0,
@@ -62,8 +62,9 @@ it("does not present unevaluated robustness as zero in the approval dialog", () 
     },
   } as never);
 
-  expect(message).toContain("robustez ainda não avaliada");
-  expect(message).not.toContain("robustez de 0.0%");
+  expect(message).not.toMatch(/robustez/i);
+  expect(message).toContain("Requer decisão do planeador por: existem entregas em risco.");
+  expect(message).toContain("Impacto previsto: 5 entregas com atraso.");
 });
 
 async function simulatePreview() {

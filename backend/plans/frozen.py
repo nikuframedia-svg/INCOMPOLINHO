@@ -523,8 +523,6 @@ def optimize_preserving_started_lots(
     from backend.cpo import optimize
     from backend.cpo.optimizer import (
         MODE_CONFIG,
-        _attach_robustness_with_reserve,
-        _clear_robustness,
         _strip_score_policy,
     )
     from backend.planning_control import (
@@ -583,7 +581,6 @@ def optimize_preserving_started_lots(
                 merged.operator_alerts = compute_operator_alerts(
                     merged.segments, view, config=config
                 )
-                _clear_robustness(merged)
                 started = len(lots) - len(anchored)
                 warnings = [
                     *(
@@ -613,7 +610,7 @@ def optimize_preserving_started_lots(
             planning_checkpoint()
             remaining = remaining_time()
             reserve = closing_reserve(float(MODE_CONFIG[mode].get("time_budget_s", 60.0)))
-            with candidate_observer(retain, defer_robustness=bool(lots)):
+            with candidate_observer(retain):
                 try:
                     # The improvement cycle runs once below, on the residual
                     # plan with protected lots reserved; defer it here.
@@ -668,7 +665,6 @@ def optimize_preserving_started_lots(
         }
         planning_checkpoint()
         engine_data = result_validation_data(engine_data, result)
-        _attach_robustness_with_reserve(result, engine_data, config, seed=42, reserve_s=reserve)
         result.gate_report = build_gate_report(
             result.segments, result.lots, result.score, engine_data, config,
         )

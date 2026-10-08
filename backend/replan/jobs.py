@@ -669,9 +669,6 @@ class ReplanJobManager:
         from backend.config.planning import synchronize_active_twin_groups
         from backend.config.types import PLANNING_POLICY_VERSION
         from backend.cpo import optimize
-        from backend.cpo.optimizer import (
-            _attach_robustness_with_reserve,
-        )
         from backend.plans.serialize import (
             MODEL_VERSION,
             deserialize_snapshot,
@@ -1067,12 +1064,6 @@ class ReplanJobManager:
                 and selected_source in {"optimized", "optimized_priority_repaired"}
             )
             if not can_reuse_optimizer_gate:
-                _attach_robustness_with_reserve(
-                    result,
-                    engine_data,
-                    config,
-                    seed=42,
-                )
                 result.gate_report = build_gate_report(
                     result.segments,
                     result.lots,
@@ -1231,7 +1222,6 @@ class ReplanJobManager:
             deserialize_snapshot,
             serialize_snapshot,
         )
-        from backend.risk.robustness import ROBUSTNESS_MODEL_VERSION
         from backend.scheduler.gates import authorize_application, build_gate_report
         from backend.scheduler.priority import delivery_not_worse
         from backend.scheduler.scoring import compute_score
@@ -1282,27 +1272,12 @@ class ReplanJobManager:
         active_mutations = copy.deepcopy(restored.get("active_mutations", []))
         reapply_calendar_mutations(engine_data, active_mutations, config)
         validate_active_twin_eco_lots(engine_data)
-        persisted_score = dict(result.score or {})
         result.score = compute_score(
             result.segments,
             result.lots,
             engine_data,
             config=config,
         )
-        if (
-            restored.get("model_version") == MODEL_VERSION
-            and restored.get("planning_policy_version") == PLANNING_POLICY_VERSION
-            and int(persisted_score.get("robustness_model_version", -1)) == ROBUSTNESS_MODEL_VERSION
-            and restored.get("fingerprints", {}).get("config")
-            and restored.get("fingerprints", {}).get("engine_data")
-        ):
-            result.score.update(
-                {
-                    key: copy.deepcopy(value)
-                    for key, value in persisted_score.items()
-                    if key.startswith("robustness_")
-                }
-            )
         result.gate_report = build_gate_report(
             result.segments,
             result.lots,

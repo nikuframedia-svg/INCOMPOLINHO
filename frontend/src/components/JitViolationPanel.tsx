@@ -29,7 +29,7 @@ function proposalMetricLine(proposal: GateProposal) {
   const before = proposal.before as Record<string, unknown> | undefined;
   const after = proposal.after_target as Record<string, unknown> | undefined;
   if (!before || !after) return null;
-  const keys = ["early_window_violations", "subcontract_dispatch_misses", "otd_d", "tardy_count", "robustness_success_probability_pct"];
+  const keys = ["early_window_violations", "subcontract_dispatch_misses", "otd_d", "tardy_count"];
   const parts = keys
     .filter((key) => key in before || key in after)
     .map((key) => `${key}: ${String(before[key] ?? "-")} → ${String(after[key] ?? "-")}`);
@@ -74,10 +74,6 @@ export function JitViolationPanel({
   const worstExcess = Math.max(...violations.map((item) => item.excess_workdays), 0);
   const metrics = gate?.metrics;
   const proposals = Array.isArray(gate?.proposals) ? gate.proposals : [];
-  const robustnessSamples = metricValue(metrics, "robustness_evaluated_samples");
-  const robustnessText = robustnessSamples > 0
-    ? `${metricValue(metrics, "robustness_success_probability_pct")}% / ${metricValue(metrics, "robustness_threshold_pct")}%`
-    : "por avaliar";
 
   return (
     <section
@@ -153,7 +149,7 @@ export function JitViolationPanel({
               </div>
               {gate?.status === "jit_window_blocked" && (
                 <div style={{ color: T.secondary, fontSize: 10, marginTop: 6, fontFamily: T.mono }}>
-                  Material fora da janela {metricValue(metrics, "early_window_violations")} · envios sub. em atraso {metricValue(metrics, "subcontract_dispatch_misses")} · OTD-D {metricValue(metrics, "otd_d")}% · cobertura em falta {metricValue(metrics, "missing_lots")} lote(s) / {metricValue(metrics, "missing_qty")} pç · gémeas repetidas {metricValue(metrics, "duplicate_twin_output_qty")} pç · robustez sem novos atrasos {robustnessText} · entregas em atraso {metricValue(metrics, "tardy_count")}
+                  Material fora da janela {metricValue(metrics, "early_window_violations")} · envios sub. em atraso {metricValue(metrics, "subcontract_dispatch_misses")} · OTD-D {metricValue(metrics, "otd_d")}% · cobertura em falta {metricValue(metrics, "missing_lots")} lote(s) / {metricValue(metrics, "missing_qty")} pç · gémeas repetidas {metricValue(metrics, "duplicate_twin_output_qty")} pç · entregas em atraso {metricValue(metrics, "tardy_count")}
                 </div>
               )}
             </div>

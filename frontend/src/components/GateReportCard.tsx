@@ -35,11 +35,6 @@ function affectedLine(proposal: GateProposal) {
 
 export function GateReportCard({ gate, activePlan = false }: { gate: GateReport; activePlan?: boolean }) {
   const metrics = gate.metrics ?? {};
-  const relativeRobustness = Number(metrics.robustness_model_version ?? 0) >= 4;
-  const robustnessLabel = relativeRobustness ? "robustez sem novos atrasos" : "robustez";
-  const baselineTardy = relativeRobustness
-    ? metrics.robustness_baseline_tardy_count ?? metrics.tardy_count ?? 0
-    : metrics.tardy_count ?? 0;
   const feasibility = gate.feasibility
     && Array.isArray(gate.feasibility.binding_constraints)
     && Array.isArray(gate.feasibility.interventions)
@@ -78,7 +73,7 @@ export function GateReportCard({ gate, activePlan = false }: { gate: GateReport;
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
         <Pill color={statusColor}>{statusLabel}</Pill>
         <span style={{ fontSize: 12, color: T.secondary, fontFamily: T.mono }}>
-          Material fora da janela {metrics.early_window_violations ?? 0} · envios sub. em atraso {metrics.subcontract_dispatch_misses ?? 0} · OTD-D {metrics.otd_d ?? 0}% · cobertura em falta {metrics.missing_lots ?? 0} lote(s) / {metrics.missing_qty ?? 0} pç · gémeas repetidas {metrics.duplicate_twin_output_qty ?? 0} pç · {robustnessLabel} {metrics.robustness_evaluated_samples ? `${metrics.robustness_success_probability_pct ?? 0}% / ${metrics.robustness_threshold_pct ?? 0}%` : "por avaliar"} · entregas já atrasadas {baselineTardy}
+          Material fora da janela {metrics.early_window_violations ?? 0} · envios sub. em atraso {metrics.subcontract_dispatch_misses ?? 0} · OTD-D {metrics.otd_d ?? 0}% · cobertura em falta {metrics.missing_lots ?? 0} lote(s) / {metrics.missing_qty ?? 0} pç · gémeas repetidas {metrics.duplicate_twin_output_qty ?? 0} pç · entregas em atraso {metrics.tardy_count ?? 0}
           {gate.improvement?.status === "partial" ? " · melhoria parcialmente verificada" : ""}
         </span>
       </div>

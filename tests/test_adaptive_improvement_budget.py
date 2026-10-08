@@ -20,7 +20,6 @@ def test_improvement_uses_available_time_not_a_fixed_ten_seconds(monkeypatch, pa
     _, _, data, config, baseline = named_planning_case("bfp082_initial_priority")
     now, budgets = [0.0], []
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_: 0)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda *_a, **_k: None)
 
     def improve(*args, time_budget_s, **_kwargs):
         budgets.append(time_budget_s)
@@ -74,7 +73,6 @@ def test_legacy_search_reserves_time_after_a_complete_candidate_exists(monkeypat
         control.planning_checkpoint()
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", construct)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda *_a, **_k: None)
     monkeypatch.setattr(optimizer, "_improve_baseline", search)
     monkeypatch.setattr(optimizer, "_apply_improvement_phase", lambda *_a, **_k: None)
     with control.planning_scope(timeout_s=60, clock=lambda: now[0]):

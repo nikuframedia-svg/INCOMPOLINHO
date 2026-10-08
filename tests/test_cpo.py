@@ -86,10 +86,6 @@ def _tiny_result(score: dict | None = None, machine_runs=None) -> ScheduleResult
             "planning_penalty": 0.0,
         }
     )
-    resolved_score.setdefault("robustness_evaluated_samples", 100)
-    resolved_score.setdefault("robustness_success_probability_pct", 100.0)
-    resolved_score.setdefault("robustness_threshold_pct", 95.0)
-    resolved_score.setdefault("robustness_gate_passed", True)
     segment = Segment(
         lot_id=lot.id,
         run_id="R1",
@@ -1156,10 +1152,6 @@ def test_cpo_candidate_search_repairs_delivery_before_accepting_productivity(
             "hard_violations": 0,
             "setups": 1,
             "setup_time_min": 30.0,
-            "robustness_evaluated_samples": 100,
-            "robustness_success_probability_pct": 100.0,
-            "robustness_threshold_pct": 95.0,
-            "robustness_gate_passed": True,
         },
         time_ms=0.0,
         warnings=[],
@@ -1191,7 +1183,6 @@ def test_cpo_candidate_search_repairs_delivery_before_accepting_productivity(
     assert decision["decision_class"] == "accepted"
     assert decision["local_repair"]["name"] == "delivery_left_shift_repair"
     assert decision["local_repair"]["decision"] == "accepted"
-    assert decision["score"]["robustness_gate_passed"] is True
     assert trace["decision_class_counts"]["accepted"] == 1
     assert trace["local_repair_counts"]["delivery_left_shift_repair"]["accepted"] == 1
 
@@ -1496,7 +1487,7 @@ def test_optimize_attaches_solver_trace_to_gate_report():
     assert "setup_minutes_saved" in trace["setup_frontier"]["delta"]
 
 
-def test_search_timeout_keeps_complete_baseline_and_finished_robustness(monkeypatch):
+def test_search_timeout_keeps_complete_baseline(monkeypatch):
     import copy
     from backend.cpo import optimizer
     from backend.planning_control import PlanningTimeout
@@ -1517,7 +1508,8 @@ def test_search_timeout_keeps_complete_baseline_and_finished_robustness(monkeypa
     assert data == original
     assert result.segments == seen["segments"]
     assert result.lots == seen["lots"]
-    assert result.score["robustness_evaluated_samples"] == 100
+    # Robustness is informational and never computed inside planning.
+    assert not any(key.startswith("robustness_") for key in result.score)
     assert result.gate_report["physical_gate_passed"]
     assert result.gate_report["coverage_gate_passed"]
     assert result.gate_report["solver_trace"]["final_source"] == "baseline_after_search_timeout"
@@ -1554,26 +1546,31 @@ def test_expired_parent_budget_cannot_return_baseline(monkeypatch):
 
 
 def test_last_seconds_are_reserved_for_validation_not_another_search(monkeypatch):
+    from backend import planning_control
     from backend.cpo import optimizer
     from backend.planning_control import planning_scope
 
     data = _make_engine_data(ops=[_make_eop(d=[0, 0, 100, 0, 0])], n_days=5)
     clock = [0.0]
-    robustness = optimizer._attach_robustness_score
+    construct = optimizer._schedule_all_bounded
 
-    def finish_robustness(*args, **kwargs):
-        robustness(*args, **kwargs)
+    def slow_construction(*args, **kwargs):
+        result = construct(*args, **kwargs)
         clock[0] = 56.0
+        return result
 
-    def unexpected_search(*_args):
+    def unexpected_search(*_args, **_kwargs):
+        # pytest.fail is not a PlanningTimeout: entering the search fails the test.
         pytest.fail("A new candidate must not consume the final validation reserve")
 
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", finish_robustness)
+    monkeypatch.setattr(optimizer, "_schedule_all_bounded", slow_construction)
     monkeypatch.setattr(optimizer, "_improve_baseline", unexpected_search)
+    monkeypatch.setattr(planning_control, "candidate_observer", unexpected_search)
     with planning_scope(timeout_s=60, clock=lambda: clock[0]):
         result = optimize(data, mode="normal", seed=42)
     assert result.gate_report["physical_gate_passed"]
     assert result.gate_report["coverage_gate_passed"]
+    assert result.gate_report["solver_trace"]["final_source"] == "baseline_after_search_timeout"
 
 
 def test_setup_frontier_report_exposes_campaign_split_gap():

@@ -3,6 +3,16 @@
 The evaluator replays the visible plan under execution uncertainty; it never
 re-optimizes or mutates the active plan.  This separates plan robustness from
 the scheduler's ability to find a different plan after the disruption.
+
+Model v5 is information only (AGENTS.md §1): it never ranks, gates or approves
+a plan.  Disruptions, tardiness and the baseline tardy lots are limited to the
+first ``ROBUSTNESS_HORIZON_WORKDAYS`` working days from the planning anchor
+(today's day index when the ISOP covers today, otherwise day 0), because a
+fixed-plan replay says little about deliveries weeks away that will be
+replanned long before they happen.  Production before the anchor is history:
+it is replayed exactly as planned, so every random disruption happens inside
+the window.  A window without deliveries has no success probability (None),
+never a perfect 100%.
 """
 
 from __future__ import annotations
@@ -11,12 +21,19 @@ import math
 import random
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import date, timedelta
 from statistics import mean
 
 from backend.config.shifts import clock_to_productive_offset, ordered_shifts
 from backend.config.types import FactoryConfig
-from backend.planning_control import PlanningCancelled, planning_checkpoint, planning_scope
+from backend.planning_control import (
+    PlanningCancelled,
+    current_planning_control,
+    planning_checkpoint,
+    planning_scope,
+    wait_while_planning,
+)
 from backend.scheduler.jit_policy import (
     add_workdays,
     calendar_holidays,
@@ -28,7 +45,22 @@ from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 PROFILE_SAMPLES = {"quick": 100, "standard": 500, "intensive": 2000}
-ROBUSTNESS_MODEL_VERSION = 4
+ROBUSTNESS_MODEL_VERSION = 5
+ROBUSTNESS_HORIZON_WORKDAYS = 10
+
+
+@dataclass(frozen=True, slots=True)
+class RobustnessHorizon:
+    """Working-day window whose deliveries and disruptions the model measures."""
+
+    workdays: int
+    start_day: int
+    end_day: int
+    days: tuple[int, ...]
+    lot_ids: frozenset[str]
+
+    def covers(self, day: int) -> bool:
+        return self.start_day <= day <= self.end_day
 
 
 @dataclass(slots=True)
@@ -318,11 +350,37 @@ def _scenario_manifest(
     lots: list[Lot],
     data: EngineData,
     config: FactoryConfig,
+    horizon: RobustnessHorizon | None = None,
 ) -> dict:
     machines = sorted({segment.machine_id for segment in segments})
     tools = sorted({segment.tool_id for segment in segments})
-    skus = sorted({segment.sku for segment in segments if segment.sku})
+    if horizon is not None:
+        # Events on lots outside the window cannot change the measured result.
+        lots = [lot for lot in lots if lot.id in horizon.lot_ids]
+        skus = sorted({lot.sku for lot in lots if lot.sku})
+        measured = [
+            segment
+            for segment in segments
+            if segment.lot_id in horizon.lot_ids and horizon.covers(segment.day_idx)
+        ]
+        # Breakdowns only on resources that produce measured lots in the window.
+        down_machines = sorted({segment.machine_id for segment in measured})
+        down_tools = sorted({segment.tool_id for segment in measured})
+    else:
+        skus = sorted({segment.sku for segment in segments if segment.sku})
+        down_machines, down_tools = machines, tools
     lot_ids = [lot.id for lot in lots]
+
+    def down_days(durations: list[int], weights: list[int]) -> list[int]:
+        # Draw order (start, then duration) is part of the reproducible seed.
+        if horizon is not None:
+            first = rng.randrange(len(horizon.days)) if horizon.days else 0
+            duration = rng.choices(durations, weights=weights, k=1)[0]
+            # Consecutive working days, clipped to the end of the window.
+            return list(horizon.days[first : first + duration])
+        start = rng.randrange(max(1, data.n_days))
+        duration = rng.choices(durations, weights=weights, k=1)[0]
+        return list(range(start, start + duration))
 
     oee_mean = max(
         0.01,
@@ -357,18 +415,18 @@ def _scenario_manifest(
     setup_factor = round(rng.lognormvariate(-0.5 * setup_sigma**2, setup_sigma), 4)
 
     machine_down: dict[str, list[int]] = {}
-    if machines and rng.random() < 0.14:
-        machine = rng.choice(machines)
-        start = rng.randrange(max(1, data.n_days))
-        duration = rng.choices([1, 2, 3], weights=[70, 23, 7], k=1)[0]
-        machine_down[machine] = list(range(start, start + duration))
+    if down_machines and rng.random() < 0.14:
+        machine = rng.choice(down_machines)
+        days = down_days([1, 2, 3], [70, 23, 7])
+        if days:
+            machine_down[machine] = days
 
     tool_down: dict[str, list[int]] = {}
-    if tools and rng.random() < 0.08:
-        tool = rng.choice(tools)
-        start = rng.randrange(max(1, data.n_days))
-        duration = rng.choices([1, 2], weights=[85, 15], k=1)[0]
-        tool_down[tool] = list(range(start, start + duration))
+    if down_tools and rng.random() < 0.08:
+        tool = rng.choice(down_tools)
+        days = down_days([1, 2], [85, 15])
+        if days:
+            tool_down[tool] = days
 
     material_delays: dict[str, int] = {}
     if lot_ids and rng.random() < 0.12:
@@ -415,19 +473,16 @@ def replay_scenario(
     lots: list[Lot],
     data: EngineData,
     config: FactoryConfig,
+    horizon: RobustnessHorizon | None = None,
 ) -> ScenarioOutcome:
     planning_checkpoint()
     rng = random.Random(seed)
-    manifest = _scenario_manifest(rng, segments, lots, data, config)
+    if horizon is None:
+        manifest = _scenario_manifest(rng, segments, lots, data, config)
+    else:
+        manifest = _scenario_manifest(rng, segments, lots, data, config, horizon)
     day_cap = config.day_capacity_min
-    max_lead = max(
-        (
-            int(output.get("subcontract_lead_time_days", 0) or 0)
-            for lot in lots
-            for output in lot_output_milestones(lot)
-        ),
-        default=0,
-    )
+    max_lead = _max_subcontract_lead(lots)
     holidays = calendar_holidays(
         data,
         -30,
@@ -446,12 +501,37 @@ def replay_scenario(
         (segment for segment in segments if segment.prod_min > 0 or segment.setup_min > 0),
         key=lambda segment: (segment.day_idx, segment.start_min, segment.machine_id),
     )
+    if horizon is not None:
+        # The replay is a forward pass: a later segment never moves an earlier
+        # one, so stopping after the last measured lot gives the same result.
+        last = max(
+            (index for index, segment in enumerate(ordered) if segment.lot_id in horizon.lot_ids),
+            default=-1,
+        )
+        ordered = ordered[: last + 1]
+    measured_lots = (
+        lots if horizon is None else [lot for lot in lots if lot.id in horizon.lot_ids]
+    )
     for segment in ordered:
         planning_checkpoint()
         planned = segment.day_idx * day_cap + clock_to_productive_offset(
             config,
             segment.start_min,
         )
+        if horizon is not None and segment.day_idx < horizon.start_day:
+            # Before the anchor is history: replay it exactly as planned, so no
+            # random factor there can spill into the measured window.
+            end = max(
+                planned,
+                float(
+                    segment.day_idx * day_cap
+                    + clock_to_productive_offset(config, segment.end_min)
+                ),
+            )
+            _record_completion(
+                segment, end, day_cap, machine_available, tool_available, lot_completion,
+            )
+            continue
         material_delay = int(manifest["material_delays"].get(segment.lot_id, 0))
         if material_delay:
             delayed_day = add_workdays(segment.day_idx, material_delay, holidays)
@@ -513,23 +593,17 @@ def replay_scenario(
             config=config,
             horizon=open_horizon,
         )
-        machine_available[segment.machine_id] = end
-        tool_available[segment.tool_id] = end
-        completion_day = math.floor((end - 0.001) / day_cap)
-        previous_completion = lot_completion.get(segment.lot_id)
-        lot_completion[segment.lot_id] = (
-            completion_day
-            if previous_completion is None
-            else max(previous_completion, completion_day)
+        _record_completion(
+            segment, end, day_cap, machine_available, tool_available, lot_completion,
         )
 
     tardy: list[tuple[str, int]] = []
-    for lot in lots:
+    for lot in measured_lots:
         planning_checkpoint()
         completion = lot_completion.get(lot.id, data.n_days)
         supplier_delay = int(manifest["subcontract_delays"].get(lot.id, 0))
         output_delays: list[int] = []
-        for output in lot_demand_output_milestones(lot):
+        for output in _measured_outputs(lot, horizon):
             ready_day = completion
             if bool(output.get("is_subcontracted")):
                 ready_day = add_workdays(
@@ -559,7 +633,7 @@ def replay_scenario(
     return ScenarioOutcome(
         index=index,
         seed=seed,
-        otd=round((1 - count / max(len(lots), 1)) * 100.0, 1),
+        otd=round((1 - count / max(len(measured_lots), 1)) * 100.0, 1),
         tardy_count=count,
         total_tardiness=sum(delay for _, delay in tardy),
         max_tardiness=max((delay for _, delay in tardy), default=0),
@@ -569,10 +643,88 @@ def replay_scenario(
     )
 
 
+def _record_completion(
+    segment: Segment,
+    end: float,
+    day_cap: int,
+    machine_available: dict[str, float],
+    tool_available: dict[str, float],
+    lot_completion: dict[str, int],
+) -> None:
+    machine_available[segment.machine_id] = end
+    tool_available[segment.tool_id] = end
+    completion_day = math.floor((end - 0.001) / day_cap)
+    previous_completion = lot_completion.get(segment.lot_id)
+    lot_completion[segment.lot_id] = (
+        completion_day
+        if previous_completion is None
+        else max(previous_completion, completion_day)
+    )
+
+
+def _measured_outputs(lot: Lot, horizon: RobustnessHorizon | None) -> list[dict]:
+    outputs = lot_demand_output_milestones(lot)
+    if horizon is None:
+        return outputs
+    return [
+        output
+        for output in outputs
+        if horizon.covers(int(output.get("customer_delivery_day", lot.edd)))
+    ]
+
+
+def _max_subcontract_lead(lots: list[Lot]) -> int:
+    return max(
+        (
+            int(output.get("subcontract_lead_time_days", 0) or 0)
+            for lot in lots
+            for output in lot_output_milestones(lot)
+        ),
+        default=0,
+    )
+
+
+def robustness_horizon(
+    lots: list[Lot],
+    data: EngineData,
+    *,
+    anchor_day: int | None = None,
+    horizon_workdays: int = ROBUSTNESS_HORIZON_WORKDAYS,
+) -> RobustnessHorizon:
+    """Return the measured window: ``horizon_workdays`` working days from the anchor.
+
+    The anchor day itself counts as the first working day when it is open.
+    Lots enter the window when one of their real-demand deliveries falls in it.
+    """
+
+    anchor = max(0, int(anchor_day or 0))
+    if data.n_days > 0:
+        anchor = min(anchor, data.n_days - 1)
+    workdays = max(1, int(horizon_workdays))
+    holidays = calendar_holidays(
+        data,
+        -30,
+        max(data.n_days, anchor) + _max_subcontract_lead(lots) * 2 + workdays * 2 + 30,
+    )
+    end_day = add_workdays(anchor - 1, workdays, holidays)
+    window = RobustnessHorizon(
+        workdays=workdays,
+        start_day=anchor,
+        end_day=end_day,
+        days=tuple(day for day in range(anchor, end_day + 1) if day not in holidays),
+        lot_ids=frozenset(),
+    )
+    return replace(
+        window,
+        lot_ids=frozenset(lot.id for lot in lots if _measured_outputs(lot, window)),
+    )
+
+
 def _baseline_tardy_lot_ids(
     segments: list[Segment],
     lots: list[Lot],
     data: EngineData,
+    horizon: RobustnessHorizon | None = None,
 ) -> frozenset[str]:
     """Return lots already late in the unperturbed candidate plan."""
 
@@ -584,19 +736,14 @@ def _baseline_tardy_lot_ids(
             lot_completion.get(segment.lot_id, segment.day_idx),
             segment.day_idx,
         )
-    max_lead = max(
-        (
-            int(output.get("subcontract_lead_time_days", 0) or 0)
-            for lot in lots
-            for output in lot_output_milestones(lot)
-        ),
-        default=0,
-    )
+    max_lead = _max_subcontract_lead(lots)
     holidays = calendar_holidays(data, -30, data.n_days + max_lead * 2 + 30)
     tardy: set[str] = set()
     for lot in lots:
+        if horizon is not None and lot.id not in horizon.lot_ids:
+            continue
         completion = lot_completion.get(lot.id, data.n_days)
-        for output in lot_demand_output_milestones(lot):
+        for output in _measured_outputs(lot, horizon):
             ready_day = completion
             if bool(output.get("is_subcontracted")):
                 ready_day = add_workdays(
@@ -621,21 +768,40 @@ def run_robustness_battery(
     profile: str = "custom",
     progress: Callable[[int, int], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
+    anchor_day: int | None = None,
+    horizon_workdays: int = ROBUSTNESS_HORIZON_WORKDAYS,
+    yield_to_planning: bool = False,
 ) -> dict:
     """Replay a fixed plan with common, reproducible scenario seeds.
 
     An outer planning control raises on interruption. The legacy ``cancelled``
     callback still returns partial diagnostics, never an optimizer gate score.
+    Only the first ``horizon_workdays`` working days from ``anchor_day`` are
+    measured (model v5). With ``yield_to_planning`` a background caller pauses
+    between scenarios while any plan is being calculated, so the analysis never
+    takes CPU from (and never changes) a time-limited plan search.
     """
 
+    horizon = robustness_horizon(
+        lots, data, anchor_day=anchor_day, horizon_workdays=horizon_workdays,
+    )
+    # Waiting inside our own planning scope would wait for ourselves.
+    yield_to_planning = yield_to_planning and current_planning_control() is None
+    empty_window = not horizon.lot_ids
     outcomes: list[ScenarioOutcome] = []
     planning_checkpoint()
     for index in range(n_samples):
         planning_checkpoint()
+        if yield_to_planning and not wait_while_planning(cancelled):
+            break
         if cancelled and cancelled():
             break
         try:
-            with planning_scope(cancelled=cancelled) if cancelled is not None else nullcontext():
+            with (
+                planning_scope(cancelled=cancelled, background=True)
+                if cancelled is not None
+                else nullcontext()
+            ):
                 outcome = replay_scenario(
                     index,
                     seed + index * 104729,
@@ -643,6 +809,7 @@ def run_robustness_battery(
                     lots,
                     data,
                     config,
+                    horizon,
                 )
         except PlanningCancelled:
             # Preserve the diagnostic jobs API, but never swallow a parent stop.
@@ -656,7 +823,7 @@ def run_robustness_battery(
             progress(index + 1, n_samples)
 
     planning_checkpoint()
-    baseline_tardy_lot_ids = _baseline_tardy_lot_ids(segments, lots, data)
+    baseline_tardy_lot_ids = _baseline_tardy_lot_ids(segments, lots, data, horizon)
     baseline_tardy_count = len(baseline_tardy_lot_ids)
 
     def additional_tardy_count(outcome: ScenarioOutcome) -> int:
@@ -679,6 +846,15 @@ def run_robustness_battery(
 
     return {
         "model_version": ROBUSTNESS_MODEL_VERSION,
+        "informational_only": True,
+        "horizon_workdays": horizon.workdays,
+        "horizon_start_day": horizon.start_day,
+        "horizon_end_day": horizon.end_day,
+        "horizon_start_date": _workday_label(data, horizon.start_day),
+        "horizon_end_date": _workday_label(data, horizon.end_day),
+        "horizon_lot_count": len(horizon.lot_ids),
+        # Nothing to measure is not the same as perfectly robust.
+        "no_deliveries_in_window": empty_window,
         "profile": profile,
         "seed": seed,
         "sample_seeds": [item.seed for item in outcomes],
@@ -686,7 +862,7 @@ def run_robustness_battery(
         "completed_samples": len(outcomes),
         "success_definition": "no_additional_tardy_lots",
         "baseline_tardy_count": baseline_tardy_count,
-        "success_probability_pct": round(
+        "success_probability_pct": None if empty_window else round(
             100.0
             * sum(additional_tardy_count(item) == 0 for item in outcomes)
             / max(len(outcomes), 1),
@@ -718,3 +894,17 @@ def run_robustness_battery(
             for item in worst
         ],
     }
+
+
+def _workday_label(data: EngineData, day: int) -> str | None:
+    """ISO date of a day index; past the ISOP, day indices are calendar days."""
+    workdays = list(getattr(data, "workdays", []) or [])
+    if 0 <= day < len(workdays):
+        return str(workdays[day])[:10]
+    if day < 0 or not workdays:
+        return None
+    try:
+        last = date.fromisoformat(str(workdays[-1])[:10])
+    except ValueError:
+        return None
+    return (last + timedelta(days=day - len(workdays) + 1)).isoformat()

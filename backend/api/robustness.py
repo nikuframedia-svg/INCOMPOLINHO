@@ -1,10 +1,15 @@
-"""REST API for persistent background robustness analyses."""
+"""REST API for persistent background robustness analyses.
+
+The result is information only: it never ranks, gates or approves a plan.
+Jobs carry ``trigger`` ("auto" after each commit, "manual" from this API),
+``plan_revision``, ``horizon_workdays``, ``model_version`` and ``anchor_day``.
+``GET /latest?trigger=auto`` also re-queues the automatic analysis when the
+planning day moved since it ran (the 10-working-day window starts today).
+"""
 
 from __future__ import annotations
 
-import copy
-import hashlib
-import json
+import pickle
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -12,8 +17,10 @@ from pydantic import BaseModel
 from backend.api.locks import commit_lock
 from backend.api.plan_reads import PlanReadRoute
 from backend.copilot.state import state
-from backend.risk.jobs import manager
-from backend.risk.robustness import PROFILE_SAMPLES, ROBUSTNESS_MODEL_VERSION
+from backend.risk import jobs as risk_jobs
+from backend.risk.jobs import TRIGGERS, detach_plan, manager
+from backend.risk.plan_identity import planning_anchor_day, robustness_dataset_fingerprint
+from backend.risk.robustness import PROFILE_SAMPLES
 from backend.validation import IntegerInput
 
 router = APIRouter(
@@ -35,22 +42,12 @@ def _require_plan() -> None:
 
 
 def current_dataset_fingerprint() -> str:
-    from backend.plans.serialize import planning_input_fingerprints, schedule_fingerprint
+    return robustness_dataset_fingerprint(state)
 
-    payload = {
-        "robustness_model_version": ROBUSTNESS_MODEL_VERSION,
-        "plan_revision": state.plan_revision,
-        "dataset": state.dataset_info or {},
-        "inputs": planning_input_fingerprints(state.engine_data, state.config)
-        if state.engine_data is not None
-        else None,
-        "schedule": schedule_fingerprint(state.segments, state.lots),
-        "mutations": state.active_mutations,
-        "manual_edits": state.manual_edits,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
+
+def _with_staleness(job: dict) -> dict:
+    job["stale"] = job["dataset_fingerprint"] != current_dataset_fingerprint()
+    return job
 
 
 @router.post("")
@@ -76,25 +73,48 @@ async def start_robustness_run(request: RobustnessRunRequest):
                     "message": "O plano mudou. Atualiza os dados antes de testar.",
                 },
             )
-        job = manager.start(
-            profile=request.profile,
-            samples=samples,
-            seed=request.seed,
-            dataset_fingerprint=current_dataset_fingerprint(),
-            segments=copy.deepcopy(state.segments),
-            lots=copy.deepcopy(state.lots),
-            engine_data=copy.deepcopy(state.engine_data),
-            config=copy.deepcopy(state.config),
-        )
+        blob = detach_plan(state.segments, state.lots, state.engine_data, state.config)
+        fingerprint = current_dataset_fingerprint()
+        revision = state.plan_revision
+        anchor = planning_anchor_day(state.engine_data, state.config)
+    segments, lots, engine_data, config = pickle.loads(blob)
+    job = manager.start(
+        profile=request.profile,
+        samples=samples,
+        seed=request.seed,
+        dataset_fingerprint=fingerprint,
+        segments=segments,
+        lots=lots,
+        engine_data=engine_data,
+        config=config,
+        trigger="manual",
+        plan_revision=revision,
+        anchor_day=anchor,
+    )
     return {"status": "accepted", "job": job}
 
 
 @router.get("/latest")
-async def latest_robustness_run():
-    job = manager.store.latest()
-    if job is not None:
-        job["stale"] = job["dataset_fingerprint"] != current_dataset_fingerprint()
-    return {"job": job}
+async def latest_robustness_run(trigger: str | None = None):
+    if trigger is not None and trigger not in TRIGGERS:
+        raise HTTPException(400, f"Origem inválida: {trigger}")
+    job = manager.store.latest(trigger=trigger)
+    refreshing = False
+    if (
+        trigger == "auto"
+        and job is not None
+        and risk_jobs.auto_robustness_enabled()
+        and state.engine_data is not None
+        and state.config is not None
+        and job["plan_revision"] == state.plan_revision
+        and job["anchor_day"] != planning_anchor_day(state.engine_data, state.config)
+    ):
+        # A new day moved the window: queue a fresh run, do no work here.
+        refreshing = risk_jobs.request_refresh(state) or risk_jobs.refresh_pending()
+    return {
+        "job": _with_staleness(job) if job is not None else None,
+        "refreshing": refreshing,
+    }
 
 
 @router.get("/{job_id}")
@@ -102,8 +122,7 @@ async def get_robustness_run(job_id: str):
     job = manager.store.get(job_id)
     if job is None:
         raise HTTPException(404, f"Análise {job_id} não existe.")
-    job["stale"] = job["dataset_fingerprint"] != current_dataset_fingerprint()
-    return {"job": job}
+    return {"job": _with_staleness(job)}
 
 
 @router.post("/{job_id}/cancel")

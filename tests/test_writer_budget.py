@@ -400,7 +400,7 @@ def test_interruption_after_file_preparation_rolls_back_every_file(planning, wri
 
 @pytest.mark.parametrize("path", ["direct", "protected"])
 @pytest.mark.parametrize("mode", ["normal", "deep", "max"])
-def test_improvement_and_robustness_reserve_close_budget(monkeypatch, path, mode):
+def test_improvement_reserve_closes_budget(monkeypatch, path, mode):
     from backend.cpo import optimizer
     from backend.plans import frozen
 
@@ -409,9 +409,9 @@ def test_improvement_and_robustness_reserve_close_budget(monkeypatch, path, mode
     total = optimizer.MODE_CONFIG[mode]["time_budget_s"]
 
     def robustness(*_args, **_kwargs):
-        observed["robustness"] = control.remaining_time()
+        raise AssertionError("robustness is informational and never runs in planning")
 
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", robustness)
+    monkeypatch.setattr("backend.risk.robustness.run_robustness_battery", robustness)
     with control.planning_scope(timeout_s=total, clock=lambda: now[0]):
         if path == "direct":
             def improve(segments, lots, *_args, time_budget_s):
@@ -434,11 +434,10 @@ def test_improvement_and_robustness_reserve_close_budget(monkeypatch, path, mode
             monkeypatch.setattr(frozen, "improve_preserving_protected_lots", improve)
             frozen.optimize_preserving_started_lots(data, config, baseline, mode=mode, optimizer=construct)
     assert 0 < observed["improvement"] <= 2
-    assert 0 < observed["robustness"] <= 2
 
 
-@pytest.mark.parametrize("outcome", ["completed", "timeout", "no_time"])
-def test_improvement_preserves_solver_evidence_across_robustness(monkeypatch, outcome):
+@pytest.mark.parametrize("outcome", ["completed", "no_time"])
+def test_improvement_preserves_solver_evidence(monkeypatch, outcome):
     from backend.cpo import optimizer
 
     _, _, data, config, result = named_planning_case("bfp082_initial_priority")
@@ -454,13 +453,7 @@ def test_improvement_preserves_solver_evidence_across_robustness(monkeypatch, ou
             now[0] = 51.0
         return segments, lots, {"moves_accepted": 1, "status": "completed"}
 
-    def robustness(candidate, *_args, **_kwargs):
-        optimizer._clear_robustness(candidate)
-        if outcome == "timeout":
-            raise control.PlanningTimeout("child robustness limit")
-
     monkeypatch.setattr("backend.scheduler.improvement.improve_plan", improve)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", robustness)
     with control.planning_scope(timeout_s=60, clock=lambda: now[0]):
         optimizer._apply_improvement_phase(result, data, config, mode="normal", seed=123)
     assert result.gate_report["physical_gate_passed"] is True
@@ -504,7 +497,6 @@ def test_optimizer_passes_seed_to_native_polisher(monkeypatch, seed):
         return segments, lots, copy.deepcopy(baseline.score)
 
     monkeypatch.setattr(polish, "cpsat_polish", native)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda *_args, **_kwargs: None)
     cfg = {**optimizer.MODE_CONFIG["normal"], "candidate_search": False}
     result = optimizer._improve_baseline(
         data, config, baseline, "normal", cfg, seed, time.perf_counter(), time.monotonic() + 60,

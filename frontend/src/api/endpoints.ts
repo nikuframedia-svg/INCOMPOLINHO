@@ -141,8 +141,11 @@ export const startRobustnessRun = (body: {
 export const getRobustnessRun = (id: string) =>
   analyticGet<{ job: RobustnessJob }>(`/api/data/robustness-runs/${encodeURIComponent(id)}`);
 
-export const getLatestRobustnessRun = () =>
-  analyticGet<{ job: RobustnessJob | null }>("/api/data/robustness-runs/latest");
+/** Without a trigger the backend returns the newest job of either kind. */
+export const getLatestRobustnessRun = (trigger?: "auto" | "manual") =>
+  analyticGet<{ job: RobustnessJob | null; refreshing?: boolean }>(
+    `/api/data/robustness-runs/latest${trigger ? `?trigger=${trigger}` : ""}`,
+  );
 
 export const cancelRobustnessRun = (id: string) =>
   post<{ job: RobustnessJob }>(`/api/data/robustness-runs/${encodeURIComponent(id)}/cancel`, {}, JOB_OPTIONS);

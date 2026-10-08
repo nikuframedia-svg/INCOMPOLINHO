@@ -264,7 +264,7 @@ def test_optimizer_splices_exact_whole_lot_then_rescores_without_reservations(
         # The improvement cycle is deferred to the residual plan (plan-melhoria §6.2).
         assert kwargs == {"mode": "quick", "audit": True, "config": config, "cancel_event": None,
                           "improve": False}
-        return ScheduleResult(segments=[], lots=[], score={"robustness_evaluated_samples": 100}, time_ms=1,
+        return ScheduleResult(segments=[], lots=[], score={"otd": 100.0}, time_ms=1,
                               warnings=[], operator_alerts=[])
 
     def score(segments, lots, engine, **kwargs):
@@ -274,28 +274,24 @@ def test_optimizer_splices_exact_whole_lot_then_rescores_without_reservations(
         return {"rescored": True}
 
     monkeypatch.setattr("backend.cpo.optimize", optimize)
-    def robustness(result, engine, config, *, seed):
-        assert current_planning_control() is not None
-        assert not engine.operator_blocked_intervals and not engine.committed_supplies
-        assert result.segments == baseline.segments and result.lots == baseline.lots
-        assert result.score["robustness_evaluated_samples"] == 0
-        calls.append("robustness")
-        result.score["robustness_evaluated_samples"] = 100
 
-    monkeypatch.setattr("backend.cpo.optimizer._attach_robustness_score", robustness)
+    def robustness(*_args, **_kwargs):
+        raise AssertionError("robustness is informational and never runs in planning")
+
+    monkeypatch.setattr("backend.risk.robustness.run_robustness_battery", robustness)
     monkeypatch.setattr("backend.scheduler.scoring.compute_score", score)
     monkeypatch.setattr("backend.scheduler.validation.assert_plan_valid", lambda *a, **k: calls.append("valid"))
     monkeypatch.setattr("backend.scheduler.gates.build_gate_report", lambda *a: {
         "status": "applicable", "physical_gate_passed": True, "coverage_gate_passed": True,
     })
     result = frozen.optimize_preserving_started_lots(data, config, baseline, mode="quick", audit=True)
-    assert result.score == {"rescored": True, "robustness_evaluated_samples": 100}
-    assert calls == ["score", "valid", "robustness"]
+    assert result.score == {"rescored": True}
+    assert calls == ["score", "valid"]
     assert (data, baseline) == before
     assert result.segments == baseline.segments
 
 
-@pytest.mark.parametrize("stage", ["score", "robustness", "validation", "gates"])
+@pytest.mark.parametrize("stage", ["score", "validation", "gates"])
 def test_final_merged_plan_checks_share_total_deadline(frozen_plan, monkeypatch, stage):
     from backend.planning_control import planning_checkpoint, planning_scope
 
@@ -314,7 +310,6 @@ def test_final_merged_plan_checks_share_total_deadline(frozen_plan, monkeypatch,
         return call
 
     monkeypatch.setattr("backend.scheduler.scoring.compute_score", step("score", {}))
-    monkeypatch.setattr("backend.cpo.optimizer._attach_robustness_score", step("robustness", None))
     monkeypatch.setattr("backend.scheduler.validation.assert_plan_valid", step("validation", None))
     monkeypatch.setattr("backend.scheduler.gates.build_gate_report", step("gates", {}))
     event = threading.Event()

@@ -149,32 +149,6 @@ def build_gate_report(
             int(item["excess_workdays"]) for item in long_production_detail
         ),
     }
-    robustness_evaluated = int(score.get("robustness_evaluated_samples", 0) or 0)
-    robustness_metrics = {
-        "robustness_model_version": int(
-            score.get("robustness_model_version", 0) or 0
-        ),
-        "robustness_evaluated_samples": robustness_evaluated,
-        "robustness_baseline_tardy_count": int(
-            score.get("robustness_baseline_tardy_count", 0) or 0
-        ),
-        "robustness_success_probability_pct": float(
-            score.get("robustness_success_probability_pct", 0.0) or 0.0
-        ),
-        "robustness_threshold_pct": float(
-            score.get("robustness_threshold_pct", 0.0) or 0.0
-        ),
-        "robustness_otd_p95": float(score.get("robustness_otd_p95", 0.0) or 0.0),
-        "robustness_tardy_p95": float(
-            score.get("robustness_tardy_p95", 0.0) or 0.0
-        ),
-        "robustness_additional_tardy_mean": float(
-            score.get("robustness_additional_tardy_mean", 0.0) or 0.0
-        ),
-        "robustness_additional_tardy_p95": float(
-            score.get("robustness_additional_tardy_p95", 0.0) or 0.0
-        ),
-    }
     audit_result = (
         operational_audit
         if operational_audit is not None
@@ -207,7 +181,6 @@ def build_gate_report(
         **delivery_metrics,
         **window_metrics,
         **long_metrics,
-        **robustness_metrics,
         **operational_metrics,
     }
 
@@ -238,9 +211,6 @@ def build_gate_report(
         delivery_metrics["subcontract_dispatch_misses"] == 0
     )
     jit_window_gate_passed = window_metrics["early_window_violations"] == 0
-    robustness_gate_passed = (
-        bool(score.get("robustness_gate_passed")) if robustness_evaluated else None
-    )
     material_gate_passed = all(
         int(metrics.get(key, 0)) == 0 for key in MATERIAL_GATE_KEYS
     )
@@ -265,10 +235,6 @@ def build_gate_report(
         approval_reasons.append("long_production")
     if not operator_capacity_gate_passed:
         approval_reasons.append("operator_capacity_shortage")
-    if robustness_gate_passed is None:
-        approval_reasons.append("robustness_not_evaluated")
-    elif robustness_gate_passed is False:
-        approval_reasons.append("robustness_below_threshold")
     if not operational_gate_passed:
         approval_reasons.append("operational_sequence_review")
 
@@ -332,7 +298,9 @@ def build_gate_report(
         "delivery_gate_passed": delivery_gate_passed,
         "subcontract_dispatch_gate_passed": subcontract_dispatch_gate_passed,
         "jit_window_gate_passed": jit_window_gate_passed,
-        "robustness_gate_passed": robustness_gate_passed,
+        # Robustness is informational only (computed after commit, outside
+        # the plan); the field stays for schema compatibility.
+        "robustness_gate_passed": None,
         "material_gate_passed": material_gate_passed,
         "operational_gate_passed": operational_gate_passed,
         "metrics": metrics,
@@ -408,16 +376,6 @@ def blocked_application_message(report: dict[str, Any] | None) -> str:
                 "O candidato foi bloqueado por produções antecipadas fora da janela "
                 "JIT dos 5 dias úteis antes da respetiva referência de material."
             )
-    if report.get("robustness_gate_passed") is False or "robustness_below_threshold" in reasons:
-        probability = metrics.get("robustness_success_probability_pct")
-        threshold = metrics.get("robustness_threshold_pct")
-        if isinstance(probability, int | float) and isinstance(threshold, int | float):
-            parts.append(
-                f"A robustez ficou em {probability:.1f}%, abaixo do limite de "
-                f"{threshold:.1f}%."
-            )
-        else:
-            parts.append("A robustez ficou abaixo do limite configurado.")
     if not report.get("operational_gate_passed", True):
         opportunities = int(metrics.get("left_shift_opportunities") or 0)
         interruptions = int(

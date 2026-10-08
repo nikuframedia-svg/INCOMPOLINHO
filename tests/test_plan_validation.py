@@ -200,8 +200,6 @@ def test_gate_reconciles_lots_against_engine_demand():
         "otd_d": 100,
         "tardy_count": 0,
         "otd_d_failures": 0,
-        "robustness_evaluated": True,
-        "robustness_gate_passed": True,
     }
 
     report = build_gate_report([], [], score, data, config)
@@ -727,6 +725,8 @@ def test_jit_window_violation_blocks_application():
 
 
 def test_jit_window_blocked_message_names_operational_cause():
+    # An old saved report may still carry robustness reasons; robustness is
+    # informational only and never explains a blocked application.
     report = {
         "status": "jit_window_blocked",
         "apply_decision": "blocked",
@@ -747,7 +747,7 @@ def test_jit_window_blocked_message_names_operational_cause():
 
     assert "17 produção(ões) antecipada(s)" in message
     assert "janela JIT dos 5 dias úteis" in message
-    assert "robustez ficou em 0.0%" in message
+    assert "robustez" not in message
     assert "conflitos físicos" not in message
 
 

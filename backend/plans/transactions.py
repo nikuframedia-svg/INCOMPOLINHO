@@ -276,7 +276,33 @@ def _commit(
                 logger.exception(
                     "Post-commit projection failed for %s; durable receipt retained", operation_id
                 )
-        return response
+        snapshot = _capture_robustness(state, operation_id)
+    # Off the commit lock: other commits never wait on the analysis bookkeeping.
+    _submit_robustness(snapshot, operation_id)
+    return response
+
+
+def _capture_robustness(state, operation_id):
+    """Detached image of the published revision; it can never fail a commit."""
+    try:
+        from backend.risk.jobs import capture_auto_snapshot
+
+        return capture_auto_snapshot(state)
+    except Exception:
+        logger.exception("Automatic robustness snapshot failed after %s", operation_id)
+        return None
+
+
+def _submit_robustness(snapshot, operation_id) -> None:
+    """Queue the informational analysis; it can never fail a commit."""
+    if snapshot is None:
+        return
+    try:
+        from backend.risk.jobs import submit_auto_snapshot
+
+        submit_auto_snapshot(snapshot)
+    except Exception:
+        logger.exception("Automatic robustness job not started after %s", operation_id)
 
 
 def _planning_budget(mode):

@@ -21,7 +21,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 
-from backend.config.types import ROBUSTNESS_MIN_SUCCESS_PCT, FactoryConfig
+from backend.config.types import FactoryConfig
 from backend.planning_control import (
     CancellationEvent,
     PlanningStopped,
@@ -137,16 +137,6 @@ SCORE_SNAPSHOT_KEYS = (
     "start_anticipation_max_workdays",
     "latest_start_gap_avg_min",
     "latest_start_gap_max_min",
-    "robustness_model_version",
-    "robustness_evaluated_samples",
-    "robustness_baseline_tardy_count",
-    "robustness_success_probability_pct",
-    "robustness_threshold_pct",
-    "robustness_gate_passed",
-    "robustness_otd_p95",
-    "robustness_tardy_p95",
-    "robustness_additional_tardy_mean",
-    "robustness_additional_tardy_p95",
     "setups",
     "setup_time_min",
     "earliness_avg_days",
@@ -246,8 +236,6 @@ def _normalize_operational_result(
     result: ScheduleResult,
     engine_data: EngineData,
     config: FactoryConfig,
-    *,
-    robustness_seed: int,
 ) -> ScheduleResult:
     """Apply the scheduler's canonical close-out to an advisory candidate."""
 
@@ -350,12 +338,6 @@ def _normalize_operational_result(
             score[key] = previous_score[key]
     result.score = score
     _apply_score_policy(result, config)
-    _attach_robustness_score(
-        result,
-        engine_data,
-        config,
-        seed=robustness_seed,
-    )
     return result
 
 
@@ -423,7 +405,6 @@ def _apply_improvement_phase(
         }
         publish()
         return
-    reserve = closing_reserve(float(MODE_CONFIG[mode]["time_budget_s"]))
     budget = improvement_time_budget(float(MODE_CONFIG[mode]["time_budget_s"]))
     if budget <= 0:
         result.improvement_report = {
@@ -440,7 +421,6 @@ def _apply_improvement_phase(
         result.segments, result.lots = segments, lots
         result.score = compute_score(segments, lots, view, config=config)
         result.operator_alerts = compute_operator_alerts(segments, view, config=config)
-        _attach_robustness_with_reserve(result, view, config, seed=seed or 42, reserve_s=reserve)
         result.gate_report = build_gate_report(
             segments, lots, result.score, view, config,
         )
@@ -506,50 +486,6 @@ def _optimize(
 
     candidate_completed(baseline)
     total_budget = float(cfg["time_budget_s"])
-    robustness_reserve = (
-        closing_reserve(total_budget) + improvement_reserve(total_budget)
-        if reserve_improvement else 8.0
-    )
-    if not _attach_robustness_with_reserve(
-        baseline,
-        engine_data,
-        config,
-        seed=seed or 42,
-        reserve_s=robustness_reserve,
-    ):
-        elapsed = (time.perf_counter() - t0) * 1000
-        baseline.time_ms = round(elapsed, 1)
-        baseline.solver_status = baseline.solver_status or "timeout_with_candidate"
-        baseline.warnings.append(
-            "Análise de robustez não concluída dentro do tempo; "
-            "o candidato físico validado foi conservado para revisão."
-        )
-        # schedule_all already built this report from the same immutable
-        # segments and operational audit. Reusing it avoids repeating the most
-        # expensive close-out analysis inside the reserved response window.
-        if baseline.gate_report is None:
-            baseline.gate_report = build_gate_report(
-                baseline.segments,
-                baseline.lots,
-                baseline.score,
-                engine_data,
-                config,
-            )
-        baseline.gate_report["solver_status"] = baseline.solver_status
-        baseline.gate_report["feasibility"] = baseline.feasibility
-        _attach_solver_trace(
-            baseline,
-            _build_solver_trace(
-                mode=mode,
-                cfg=cfg,
-                baseline=baseline,
-                final=baseline,
-                elapsed_ms=elapsed,
-                final_source="baseline_after_robustness_timeout",
-            ),
-        )
-        _strip_score_policy(baseline)
-        return baseline
     baseline_score = baseline.score
 
     if not baseline_score or not baseline.lots:
@@ -614,16 +550,7 @@ def _optimize(
         if _is_better_candidate(candidate, complete):
             complete = copy.deepcopy(candidate)
 
-    try:
-        with candidate_observer(retain, forward=True):
-            with planning_scope(
-                timeout_s=None if remaining is None else max(0.0, remaining - reserve),
-            ):
-                return _improve_baseline(
-                    engine_data, config, copy.deepcopy(baseline), mode, cfg, seed, t0,
-                    deadline - reserve,
-                )
-    except PlanningTimeout as exc:
+    def _keep_complete(exc: PlanningTimeout) -> ScheduleResult:
         planning_checkpoint()
         try:
             assert_plan_valid(complete.segments, engine_data, config, lots=complete.lots)
@@ -651,6 +578,25 @@ def _optimize(
         ))
         _strip_score_policy(complete)
         return complete
+
+    # Inside the closing reserve there is no time for another search: keep the
+    # validated baseline directly (no copy, no child scope).
+    if remaining is not None and remaining <= reserve:
+        return _keep_complete(
+            PlanningTimeout("Planning reserve reached; search skipped.")
+        )
+
+    try:
+        with candidate_observer(retain, forward=True):
+            with planning_scope(
+                timeout_s=None if remaining is None else max(0.0, remaining - reserve),
+            ):
+                return _improve_baseline(
+                    engine_data, config, copy.deepcopy(baseline), mode, cfg, seed, t0,
+                    deadline - reserve,
+                )
+    except PlanningTimeout as exc:
+        return _keep_complete(exc)
 
 
 def _improve_baseline(
@@ -718,7 +664,6 @@ def _improve_baseline(
             best_result,
             engine_data,
             best_config,
-            robustness_seed=seed or 42,
         )
         if not _preserves_trust(best_result, baseline):
             best_result = baseline
@@ -788,12 +733,6 @@ def _improve_baseline(
                 machine_runs=polish_machine_runs,
             )
             _apply_score_policy(polished_candidate, best_config)
-            _attach_robustness_score(
-                polished_candidate,
-                engine_data,
-                best_config,
-                seed=seed or 42,
-            )
             if _is_better_candidate(polished_candidate, best_result):
                 cp_sat_decisions.append(
                     _candidate_decision(
@@ -856,7 +795,6 @@ def _improve_baseline(
             best_result,
             engine_data,
             best_config,
-            robustness_seed=seed or 42,
         )
 
     if validate_plan(best_result.segments, engine_data, best_config, lots=best_result.lots):
@@ -953,8 +891,6 @@ def _run_shadow_candidate_search(
 ) -> tuple[ScheduleResult, FactoryConfig, list[str], dict]:
     """Try small operational variants and keep only trust-preserving wins."""
 
-    _attach_robustness_score(baseline, engine_data, base_config, seed=42)
-
     best_result = baseline
     best_config = base_config
     notes: list[str] = []
@@ -1026,12 +962,6 @@ def _run_shadow_candidate_search(
                     candidate_repair,
                     delivery_repair_decision,
                 )
-            _attach_robustness_score(
-                candidate,
-                engine_data,
-                candidate_config,
-                seed=42,
-            )
         except (RuntimeError, ValueError, PlanValidationError) as exc:
             notes.append(f"CPO candidate rejected: {name} errored ({exc})")
             trace["errored"] += 1
@@ -1732,10 +1662,6 @@ def _touches_global_holiday(segments: list[Segment], engine_data: EngineData) ->
 
 def _is_fully_trusted_score(score: dict) -> bool:
     if _hard_violation_count(score) > 0:
-        return False
-    if score.get("robustness_evaluated_samples") and not score.get(
-        "robustness_gate_passed"
-    ):
         return False
     if float(score.get("otd", 0.0) or 0.0) < 100.0:
         return False
@@ -3215,14 +3141,13 @@ def _trust_prefix(score: dict) -> tuple[float, ...]:
         float(score.get("early_window_violations", 0) or 0),
         float(score.get("early_window_violation_workdays", 0) or 0),
         *delivery_priority_key(score),
-        _robustness_failure(score),
     )
 
 
 def _trust_tail(score: dict) -> tuple[float, ...]:
     # Setups are a tie-break after anticipation (AGENTS.md §1.4-1.5).
+    # Robustness is informational only and never ranks a plan.
     return (
-        -float(score.get("robustness_success_probability_pct", 0.0) or 0.0),
         _setup_minutes(score),
         float(score.get("setups", 0) or 0),
         float(score.get("planning_penalty", 0.0) or 0.0),
@@ -3333,145 +3258,6 @@ def _apply_score_policy(result: ScheduleResult, config: FactoryConfig) -> Schedu
     if result.score is not None:
         _apply_score_policy_to_score(result.score, config)
     return result
-
-
-def _attach_robustness_with_reserve(
-    result: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-    *,
-    seed: int,
-    reserve_s: float = 8.0,
-) -> bool:
-    """Keep enough parent budget to publish an already valid candidate."""
-
-    remaining = remaining_time()
-    if remaining is None:
-        _attach_robustness_score(result, engine_data, config, seed=seed)
-        return True
-    budget = max(0.0, remaining - reserve_s)
-    if budget <= 0:
-        _clear_robustness(result)
-        return False
-    try:
-        with planning_scope(timeout_s=budget):
-            _attach_robustness_score(result, engine_data, config, seed=seed)
-    except PlanningTimeout:
-        # Re-raise if the parent itself expired; only the reserved child budget
-        # may degrade robustness to an explicit approval requirement.
-        planning_checkpoint()
-        _clear_robustness(result)
-        return False
-    return True
-
-
-def _clear_robustness(result: ScheduleResult) -> None:
-    for key in list(result.score or {}):
-        if key.startswith("robustness_"):
-            result.score.pop(key)
-    result.score["robustness_evaluated_samples"] = 0
-    result.gate_report = None
-
-
-@measured("robustness")
-def _attach_robustness_score(
-    result: ScheduleResult,
-    engine_data: EngineData,
-    config: FactoryConfig,
-    *,
-    seed: int,
-) -> ScheduleResult:
-    """Evaluate the fixed candidate with common seeds; never re-optimize it."""
-
-    if result.score is None or not result.lots:
-        return result
-    from backend.planning_control import robustness_deferred
-
-    if robustness_deferred():
-        _clear_robustness(result)
-        return result
-    from backend.planning_control import execution_cache
-    from backend.plans.serialize import (
-        planning_input_fingerprints,
-        schedule_fingerprint,
-        value_fingerprint,
-    )
-    from backend.risk.robustness import ROBUSTNESS_MODEL_VERSION, run_robustness_battery
-
-    fingerprint = value_fingerprint({
-        "plan": schedule_fingerprint(result.segments, result.lots),
-        "inputs": planning_input_fingerprints(engine_data, config),
-        "model": ROBUSTNESS_MODEL_VERSION, "seed": seed, "samples": 100,
-    })
-
-    if (
-        result.score.get("robustness_input_fingerprint") == fingerprint
-        and int(result.score.get("robustness_evaluated_samples", 0) or 0) == 100
-        and int(result.score.get("robustness_model_version", -1) or -1)
-        == ROBUSTNESS_MODEL_VERSION
-    ):
-        return result
-
-    cache = execution_cache("robustness")
-    _clear_robustness(result)
-    if fingerprint in cache:
-        result.score.update(copy.deepcopy(cache[fingerprint]))
-        return result
-
-    with phase("robustness_battery"):
-        battery = run_robustness_battery(
-            result.segments,
-            result.lots,
-            engine_data,
-            config,
-            n_samples=100,
-            seed=seed,
-            profile="quick",
-        )
-    planning_checkpoint()
-    if int(battery["completed_samples"]) != 100:
-        raise PlanningTimeout("Robustness battery incomplete; candidate not validated.")
-    threshold = ROBUSTNESS_MIN_SUCCESS_PCT
-    success = float(battery["success_probability_pct"])
-    result.score.update(
-        {
-            "robustness_input_fingerprint": fingerprint,
-            "robustness_model_version": int(battery["model_version"]),
-            "robustness_profile": str(battery["profile"]),
-            "robustness_seed": int(battery["seed"]),
-            "robustness_sample_seeds": list(battery["sample_seeds"]),
-            "robustness_evaluated_samples": int(battery["completed_samples"]),
-            "robustness_baseline_tardy_count": int(battery["baseline_tardy_count"]),
-            "robustness_success_probability_pct": success,
-            "robustness_threshold_pct": threshold,
-            "robustness_gate_passed": success >= threshold,
-            "robustness_additional_tardy_mean": float(
-                battery["additional_tardy_mean"]
-            ),
-            "robustness_additional_tardy_p95": float(
-                battery["additional_tardy_p95"]
-            ),
-            "robustness_otd_p95": float(battery["otd_p95"]),
-            "robustness_tardy_p95": float(battery["tardy_p95"]),
-            "robustness_total_tardiness_cvar95": float(
-                battery["total_tardiness_cvar95"]
-            ),
-        }
-    )
-    if len(cache) >= 32:
-        cache.pop(next(iter(cache)))
-    cache[fingerprint] = {
-        key: copy.deepcopy(value)
-        for key, value in result.score.items()
-        if key.startswith("robustness_")
-    }
-    return result
-
-
-def _robustness_failure(score: dict) -> float:
-    if not score.get("robustness_evaluated_samples"):
-        return 1.0
-    return 0.0 if bool(score.get("robustness_gate_passed")) else 1.0
 
 
 def _apply_score_policy_to_score(score: dict, config: FactoryConfig) -> None:

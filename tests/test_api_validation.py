@@ -440,7 +440,7 @@ def test_machine_unavailability_rejects_jit_blocked_operational_candidate(monkey
         result.gate_report = {
             "status": "jit_window_blocked",
             "apply_decision": "blocked",
-            "approval_reasons": ["jit_window_blocked", "robustness_below_threshold"],
+            "approval_reasons": ["jit_window_blocked"],
             "physical_gate_passed": True,
             "coverage_gate_passed": True,
             "delivery_gate_passed": True,
@@ -1946,8 +1946,6 @@ def test_compacting_the_active_plan_publishes_the_improvement_summary(monkeypatc
     ))
     monkeypatch.setattr("backend.plans.frozen.compact_preserving_started_lots",
                         lambda *_args, **_kwargs: result)
-    monkeypatch.setattr("backend.cpo.optimizer._attach_robustness_score",
-                        lambda *_args, **_kwargs: None)
     monkeypatch.setattr("backend.scheduler.gates.build_gate_report",
                         lambda *_args, **_kwargs: {"status": "best_effort"})
     monkeypatch.setattr("backend.transform.calendars.apply_calendars", lambda *_a, **_k: None)

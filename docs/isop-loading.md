@@ -115,7 +115,9 @@ validações, motivos de aprovação e exceções técnicas. `timings_ms` distin
 - `initial_construction`: construção do primeiro candidato;
 - `construction`: todas as chamadas de construção, incluindo candidatos;
 - `candidate_search`: procura de candidatos;
-- `normalization`, `robustness`, `validation`: medições das respetivas etapas;
+- `normalization`, `validation`: medições das respetivas etapas (desde
+  07/10/2026 já não há fase `robustness`: a robustez é calculada em segundo
+  plano depois da gravação e não entra na decisão);
 - `optimization`: chamada completa do otimizador;
 - `analytics`: preparação do estado, análises e serialização;
 - `persistence`: transação final e publicação.
@@ -165,7 +167,8 @@ a uma reprodução do ficheiro exato das confirmações interrompidas.
 
 No ensaio final, as quantidades por lote coincidiram com o snapshot. Os motivos
 continuaram a ser risco de entrega, risco de envio para subcontratação e robustez
-abaixo do limite. O maior atraso medido no ciclo de consultas assíncrono foi
+abaixo do limite (este último motivo deixou de existir em 07/10/2026: a
+robustez passou a ser só informação). O maior atraso medido no ciclo de consultas assíncrono foi
 266 ms e o plano anterior permaneceu disponível. Estes tempos não demonstram uma
 aceleração do motor: a alteração permite acompanhar e concluir o trabalho sem
 manter um pedido HTTP aberto durante todo o cálculo.

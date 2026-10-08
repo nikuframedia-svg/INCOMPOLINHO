@@ -782,7 +782,8 @@ export interface GateReport {
   delivery_gate_passed: boolean;
   subcontract_dispatch_gate_passed: boolean;
   jit_window_gate_passed: boolean;
-  robustness_gate_passed: boolean | null;
+  /** Legacy: robustness no longer gates plans; old revisions may still carry it. */
+  robustness_gate_passed?: boolean | null;
   material_gate_passed: boolean;
   metrics: Record<string, number>;
   violations: Record<string, unknown>[];
@@ -864,8 +865,19 @@ export interface RobustnessResult {
   requested_samples: number;
   completed_samples: number;
   success_definition?: "no_additional_tardy_lots";
+  /** Model v5 only looks this many working days ahead of the planning anchor. */
+  horizon_workdays?: number | null;
+  /** First and last working day of the v5 window (ISO yyyy-mm-dd). */
+  horizon_start_date?: string | null;
+  horizon_end_date?: string | null;
+  /** Lots with a real delivery inside the window; 0 means nothing was measured. */
+  horizon_lot_count?: number | null;
+  /** True when the window has no deliveries; the percentage is then null. */
+  no_deliveries_in_window?: boolean;
+  informational_only?: boolean;
   baseline_tardy_count?: number;
-  success_probability_pct: number;
+  /** Null when there was nothing to measure (no deliveries in the window). */
+  success_probability_pct: number | null;
   additional_tardy_mean?: number;
   additional_tardy_p95?: number;
   otd_p50: number;
@@ -900,6 +912,11 @@ export interface RobustnessJob {
   result: RobustnessResult | null;
   error: string | null;
   stale?: boolean;
+  /** "auto" runs after every plan commit; "manual" is the planner's button. */
+  trigger?: "auto" | "manual";
+  plan_revision?: number | null;
+  horizon_workdays?: number | null;
+  model_version?: number;
 }
 
 export interface ReplanJob {

@@ -5,10 +5,19 @@ const APPROVAL_REASON_LABELS: Record<string, string> = {
   delivery_risk: "existem entregas em risco",
   subcontract_dispatch_risk: "existem expedições de subcontratação em risco",
   long_production: "existem produções acima da duração recomendada",
-  robustness_not_evaluated: "a robustez ainda não foi avaliada",
-  robustness_below_threshold: "a robustez está abaixo do limite definido",
+  // Revisões antigas ainda trazem estes motivos; a robustez é hoje apenas
+  // informativa e já não pede aprovação.
+  robustness_not_evaluated: "robustez por avaliar (critério antigo; hoje só informativo)",
+  robustness_below_threshold: "robustez abaixo do limite (critério antigo; hoje só informativo)",
   operational_sequence_review: "a sequência operacional requer revisão",
 };
+
+const LEGACY_ROBUSTNESS_REASONS = new Set(["robustness_not_evaluated", "robustness_below_threshold"]);
+
+/** Old approval reasons from when robustness still gated plans; informative only now. */
+export function isLegacyRobustnessReason(reason: string): boolean {
+  return LEGACY_ROBUSTNESS_REASONS.has(reason);
+}
 
 export function approvalReasonLabel(reason: string): string {
   return APPROVAL_REASON_LABELS[reason] ?? reason;
@@ -58,21 +67,12 @@ export async function sendWithGateApproval<T>(
 export function approvalImpactMessage(gate: GateReport): string {
   const metrics = gate.metrics ?? {};
   const tardy = Number(metrics.tardy_count ?? metrics.tardy_lots ?? 0);
-  const robustness = Number(metrics.robustness_success_probability_pct);
-  const relativeRobustness = Number(metrics.robustness_model_version ?? 0) >= 4;
-  const robustnessNotEvaluated = gate.approval_reasons?.includes("robustness_not_evaluated")
-    || Number(metrics.robustness_evaluated_samples ?? 0) === 0;
-  const impact = [
-    tardy > 0 ? `${tardy} entrega${tardy === 1 ? "" : "s"} com atraso` : "sem atrasos identificados",
-    robustnessNotEvaluated
-      ? "robustez ainda não avaliada"
-      : Number.isFinite(robustness)
-      ? relativeRobustness
-        ? `probabilidade de não criar novos atrasos de ${robustness.toFixed(1)}%`
-        : `robustez de ${robustness.toFixed(1)}% (modelo anterior)`
-      : null,
-  ].filter(Boolean).join(" e ");
-  const reasons = gate.approval_reasons?.map(approvalReasonLabel).join(", ")
+  const impact = tardy > 0 ? `${tardy} entrega${tardy === 1 ? "" : "s"} com atraso` : "sem atrasos identificados";
+  // Robustness is informative only: it never explains why a decision is needed.
+  const reasons = gate.approval_reasons
+    ?.filter((reason) => !isLegacyRobustnessReason(reason))
+    .map(approvalReasonLabel)
+    .join(", ")
     || "exceções operacionais";
 
   return [

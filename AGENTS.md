@@ -54,6 +54,14 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    outras); `campaign_tail` é a exceção configurada por família de setup;
    `_repair_interrupted_tool_campaigns` exige setups iguais como prova de
    conservação de uma rotação física.
+6. **Robustez é só informação. Decidido em 07/10/2026.** Nunca ordena
+   candidatos, nunca bloqueia nem pede aprovação e nunca altera o plano.
+   Depois de cada gravação do plano corre sozinha em segundo plano (modelo v5,
+   perfil `standard`, 500 cenários) sobre os próximos 10 dias úteis a partir
+   de hoje ou do dia de congelamento; pausa enquanto há planeamento a correr.
+   `PP1_AUTO_ROBUSTNESS=0` desliga o cálculo automático. Planos que antes
+   paravam só por "robustez não avaliada" (incluindo movimentos manuais com
+   validações limpas) passam a aplicar-se diretamente.
 
 Não criar exceções algorítmicas por BFP, SKU, cliente, data, imagem ou ID de lote.
 Esses valores só pertencem aos dados mestre e às fixtures de regressão.
@@ -187,6 +195,8 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
   no orçamento do pedido menos a reserva de fecho
   (`planning_control.improvement_time_budget`); na revisão 90 a compactação
   demora ~50 s. Mais pesquisa, não menor latência.
+- Decidido em 07/10/2026: a robustez já não consome orçamento do solver nem
+  corre dentro de planeamento, melhoria, movimento ou recálculo (§1.6).
 - Um deadline exterior abrange preparação, pesquisa, fecho, validação e escrita.
   Subfases nunca reiniciam o relógio. Preservar a reserva de fecho existente.
 - Guardar o último candidato completo validado fora do solver. Timeout de uma

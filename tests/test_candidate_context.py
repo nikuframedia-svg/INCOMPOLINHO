@@ -112,7 +112,7 @@ def test_manual_job_rejects_changed_context(manual_api_state, monkeypatch, chang
         http_client.close()
 
 
-@pytest.mark.parametrize("version", ["policy", "improvement", "robustness", "manual", "protected", "transfer"])
+@pytest.mark.parametrize("version", ["policy", "improvement", "manual", "protected", "transfer"])
 def test_each_calculation_contract_invalidates_preview(client, services, monkeypatch, version):  # noqa: F811
     preview = _preview(client, "simulation")
     if version == "policy":
@@ -121,10 +121,6 @@ def test_each_calculation_contract_invalidates_preview(client, services, monkeyp
         from backend.scheduler import improvement
 
         monkeypatch.setattr(improvement, "CONTRACT_VERSION", improvement.CONTRACT_VERSION + 1)
-    elif version == "robustness":
-        from backend.risk import robustness
-
-        monkeypatch.setattr(robustness, "ROBUSTNESS_MODEL_VERSION", robustness.ROBUSTNESS_MODEL_VERSION + 1)
     elif version == "manual":
         from backend.plans import manual_move
 
@@ -146,6 +142,17 @@ def test_each_calculation_contract_invalidates_preview(client, services, monkeyp
     response = client.post(ROUTES["simulation"] + "-apply", json=_apply_body("simulation", preview))
     assert response.status_code == 409, response.text
     assert _snapshot() == before
+
+
+def test_robustness_model_is_not_part_of_the_planning_identity(monkeypatch):
+    # Robustness is informational only: a model bump must not invalidate a
+    # pending candidate or preview.
+    from backend.risk import robustness
+
+    before = serialize.planning_model_identity()
+    monkeypatch.setattr(robustness, "ROBUSTNESS_MODEL_VERSION", robustness.ROBUSTNESS_MODEL_VERSION + 1)
+    assert serialize.planning_model_identity() == before
+    assert not any("robustness" in key for key in before)
 
 
 def test_origin_covers_unreferenced_resources_and_is_hash_protected(services):  # noqa: F811

@@ -53,8 +53,6 @@ def shadow_timeout(monkeypatch, baseline, improved, clock, event=None):
         pytest.fail("Expired search unexpectedly continued")
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", construct)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda *_a, **_k: None)
-    monkeypatch.setattr(optimizer, "_attach_robustness_with_reserve", lambda *_a, **_k: True)
     monkeypatch.setattr(optimizer, "_candidate_configs", lambda config, *_a: [
         ("first-improvement", copy.deepcopy(config), {}, None),
         ("next-unfinished", copy.deepcopy(config), {}, None),
@@ -112,8 +110,6 @@ def test_polished_complete_candidate_survives_normalization_timeout(monkeypatch,
         control.planning_checkpoint()
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", lambda *_a, **_k: copy.deepcopy(baseline))
-    monkeypatch.setattr(optimizer, "_attach_robustness_with_reserve", lambda *_a, **_k: True)
-    monkeypatch.setattr(optimizer, "_attach_robustness_score", lambda *_a, **_k: None)
     monkeypatch.setattr(optimizer, "_candidate_configs", lambda *_a: [])
     monkeypatch.setattr(cpsat_polish, "cpsat_polish", lambda *_a, **_k: copy.deepcopy((
         improved.segments, improved.lots, improved.score,
@@ -142,7 +138,6 @@ def test_complete_improvement_never_hides_cancellation_or_parent_timeout(monkeyp
         control.planning_checkpoint()
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", lambda *_a, **_k: copy.deepcopy(baseline))
-    monkeypatch.setattr(optimizer, "_attach_robustness_with_reserve", lambda *_a, **_k: True)
     monkeypatch.setattr(optimizer, "_improve_baseline", search)
     error = control.PlanningCancelled if stop == "cancel" else control.PlanningTimeout
     with pytest.raises(error), control.planning_scope(
@@ -175,7 +170,6 @@ def test_unusable_observed_candidate_does_not_replace_valid_baseline(monkeypatch
         control.planning_checkpoint()
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", lambda *_a, **_k: copy.deepcopy(baseline))
-    monkeypatch.setattr(optimizer, "_attach_robustness_with_reserve", lambda *_a, **_k: True)
     monkeypatch.setattr(optimizer, "_improve_baseline", search)
     with control.planning_scope(timeout_s=60, clock=lambda: clock[0]):
         result = optimizer.optimize(data, config=config, improve=False)
@@ -197,7 +191,6 @@ def test_observed_complete_candidate_is_detached_from_later_search(monkeypatch):
         control.planning_checkpoint()
 
     monkeypatch.setattr(optimizer, "_schedule_all_bounded", lambda *_a, **_k: copy.deepcopy(baseline))
-    monkeypatch.setattr(optimizer, "_attach_robustness_with_reserve", lambda *_a, **_k: True)
     monkeypatch.setattr(optimizer, "_improve_baseline", search)
     with control.planning_scope(timeout_s=60, clock=lambda: clock[0]):
         result = optimizer.optimize(data, config=config, improve=False)
@@ -206,27 +199,23 @@ def test_observed_complete_candidate_is_detached_from_later_search(monkeypatch):
     assert result.score["otd"] == expected.score["otd"]
 
 
-def test_nested_observer_forwards_and_preserves_robustness_deferral():
+def test_nested_observer_forwards_to_the_outer_owner():
     observed = []
-    with control.candidate_observer(lambda r: observed.append(("outer", r)), defer_robustness=True):
+    with control.candidate_observer(lambda r: observed.append(("outer", r))):
         with control.candidate_observer(lambda r: observed.append(("inner", r)), forward=True):
-            assert control.robustness_deferred()
             control.candidate_completed("complete")
-        assert control.robustness_deferred()
         control.candidate_completed("after")
-    assert not control.robustness_deferred()
     assert observed == [("inner", "complete"), ("outer", "complete"), ("outer", "after")]
 
 
 def test_nested_observer_exception_restores_outer_callback():
     observed = []
-    with control.candidate_observer(observed.append, defer_robustness=True):
+    with control.candidate_observer(observed.append):
         with pytest.raises(ValueError, match="callback failed"):
             with control.candidate_observer(
                 lambda _: (_ for _ in ()).throw(ValueError("callback failed")), forward=True,
             ):
                 control.candidate_completed("failed")
-        assert control.robustness_deferred()
         control.candidate_completed("after")
     assert observed == ["after"]
 

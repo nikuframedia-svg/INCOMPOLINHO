@@ -284,17 +284,10 @@ def test_cpo_closeout_does_not_reserve_final_shift_for_campaign_tail(monkeypatch
         warnings=[],
         operator_alerts=[],
     )
-    monkeypatch.setattr(
-        optimizer_module,
-        "_attach_robustness_score",
-        lambda *_args, **_kwargs: None,
-    )
-
     normalized = optimizer_module._normalize_operational_result(
         result,
         data,
         config,
-        robustness_seed=42,
     )
 
     moved = [segment for segment in normalized.segments if segment.run_id == "RUN-SHORT"]
@@ -340,17 +333,10 @@ def test_cpo_closeout_normalizes_actionable_gap_created_by_tail_repair(monkeypat
             moves=[{"skus": [lot.sku]}],
         ),
     )
-    monkeypatch.setattr(
-        optimizer_module,
-        "_attach_robustness_score",
-        lambda *_args, **_kwargs: None,
-    )
-
     closed = optimizer_module._normalize_operational_result(
         result,
         data,
         config,
-        robustness_seed=42,
     )
 
     assert min(segment.start_min for segment in closed.segments) == 420

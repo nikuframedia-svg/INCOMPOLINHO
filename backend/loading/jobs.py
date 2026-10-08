@@ -42,7 +42,6 @@ PHASE_MESSAGES = {
     "construction": "A construir um plano…",
     "candidate_search": "A comparar candidatos…",
     "normalization": "A ajustar os intervalos livres…",
-    "robustness": "A avaliar a robustez…",
     "validation": "A validar recursos, quantidades e regras…",
     "analytics": "A preparar os indicadores do plano…",
     "persistence": "A guardar o plano…",
@@ -585,6 +584,7 @@ class LoadJobManager:
                 }
                 return staged, encoded, response
 
+        robustness_snapshot = None
         try:
             if not self._live(job_id, inputs):
                 return
@@ -671,6 +671,27 @@ class LoadJobManager:
                         logger.exception(
                             "load_id=%s post-commit diagnostics/cleanup failed", job_id,
                         )
+                    # Informational robustness of the loaded plan; never fails the load.
+                    # Only the cheap detached snapshot runs here, under the lock.
+                    try:
+                        from backend.risk.jobs import capture_auto_snapshot
+
+                        robustness_snapshot = capture_auto_snapshot(self.state)
+                    except Exception:
+                        robustness_snapshot = None
+                        logger.exception(
+                            "load_id=%s automatic robustness snapshot failed", job_id,
+                        )
+            if robustness_snapshot is not None:
+                # Fingerprints and the job row are built off the event loop.
+                try:
+                    from backend.risk.jobs import submit_auto_snapshot
+
+                    await loop.run_in_executor(None, submit_auto_snapshot, robustness_snapshot)
+                except Exception:
+                    logger.exception(
+                        "load_id=%s automatic robustness job not started", job_id,
+                    )
         except (LoadCancelled, asyncio.CancelledError):
             return
         except Exception as exc:

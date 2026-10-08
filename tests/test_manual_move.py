@@ -655,16 +655,46 @@ def test_move_lot_places_exact_production_on_requested_alternative():
     assert first.start_min + first.setup_min == 600
     assert candidate.gate_report["hard_gate_passed"] is True
     # The gap before the manual position is explained by the anchor, not an
-    # actionable left shift (plan-melhoria §6.4); confirmation stays required.
+    # actionable left shift (plan-melhoria §6.4). With a clean gate the move
+    # applies without confirmation: robustness is information only and never
+    # asks for approval (decisão do responsável, 07/10/2026).
     assert candidate.gate_report["operational_gate_passed"] is True
     assert [
         item["protection"]
         for item in candidate.gate_report["operational_audit"]["protected_left_shift_detail"]
     ] == ["manual_anchor"]
-    assert candidate.gate_report["apply_decision"] == "approval_required"
-    assert candidate.requires_confirmation is True
+    assert candidate.gate_report["apply_decision"] == "auto_applicable"
+    assert candidate.gate_report["approval_reasons"] == []
+    assert candidate.requires_confirmation is False
     assert candidate.delivery_warnings == []
     assert candidate.time_ms < 250
+
+
+def test_move_lot_with_real_gate_reason_requires_confirmation():
+    data = _engine()
+    config = _config()
+    segments = [_segment()]
+    lots = [_lot()]
+
+    # Day 3 is after the day-2 delivery: the delivery gate, not robustness,
+    # asks for confirmation.
+    candidate = move_lot(
+        segments,
+        lots,
+        _baseline(data, config, segments, lots),
+        data,
+        config,
+        lot_id="LOT1",
+        target_day=3,
+        target_machine="M1",
+        target_start_min=450,
+    )
+
+    assert candidate.gate_report["hard_gate_passed"] is True
+    assert candidate.gate_report["apply_decision"] == "approval_required"
+    assert "delivery_risk" in candidate.gate_report["approval_reasons"]
+    assert "robustness_not_evaluated" not in candidate.gate_report["approval_reasons"]
+    assert candidate.requires_confirmation is True
 
 
 def test_move_lot_rejects_when_setup_cannot_finish_at_exact_start():

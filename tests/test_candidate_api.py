@@ -56,9 +56,9 @@ def services(tmp_path, monkeypatch):
     services = SimpleNamespace(
         gate={
             "status": "trusted", "physical_gate_passed": True, "coverage_gate_passed": True,
-            "delivery_gate_passed": True, "robustness_gate_passed": True,
+            "delivery_gate_passed": True, "robustness_gate_passed": None,
             "apply_decision": "apply", "requires_approval": False,
-            "metrics": {"robustness_success_probability_pct": 95.0, "robustness_threshold_pct": 95.0},
+            "metrics": {},
         },
         last_simulation=None,
     )
@@ -348,7 +348,7 @@ def test_request_id_cannot_be_reused_for_different_parameters(client, services, 
 
 
 @pytest.mark.parametrize("kind", ROUTES)
-@pytest.mark.parametrize("gate", ["physical_gate_passed", "coverage_gate_passed", "robustness_gate_passed"])
+@pytest.mark.parametrize("gate", ["physical_gate_passed", "coverage_gate_passed"])
 def test_candidate_identity_and_approval_cannot_bypass_blocked_gate(client, services, kind, gate):
     services.gate.update({gate: False, "apply_decision": "blocked"})
     preview = _preview(client, kind)

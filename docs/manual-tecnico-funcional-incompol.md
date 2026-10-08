@@ -233,15 +233,16 @@ OTD-D (%) = checkpoints cumpridos / total de checkpoints × 100
 | Sequência: oportunidades acionáveis e inversões/interrupções reparáveis | Bloqueia |
 | Entrega: OTD/OTD-D 100%, zero atrasados e zero checkpoints falhados | Exige aprovação |
 | Envio externo, operadores ou produção longa | Exige aprovação |
-| Robustez ausente ou abaixo de 95% | Exige aprovação |
 
 **Decisões.** `auto_applicable`: pode aplicar; `approval_required`: admite exceções; `blocked`: não aplica. Aprovar risco comercial não permite sobreposição, falta de quantidade ou material antecipado. `best_effort` é melhor plano admissível encontrado, não ótimo/todas as entregas cumpridas. Aprovação associa motivo, autor, candidato e revisão.
 
 **Produção longa.** Verifica lotes com índices diários consecutivos de produção superiores a `max_run_days`, atualmente 4. Fim de semana sem produção interrompe a sequência; não é duração total da campanha nem quatro dias úteis consecutivos.
 
-**Robustez.** Reproduz plano fixo sob perturbações, sem reotimizar cada amostra. Perfis de 100, 500 ou 2 000 amostras. Sucesso = cenário com zero lotes atrasados; probabilidade = sucessos / cenários concluídos × 100. Não implica OTD-D 100% nem aprovação de todos os gates.
+**Robustez (só informação, decidido em 07/10/2026).** Reproduz o plano fixo sob perturbações, sem reotimizar cada amostra. Nunca ordena candidatos, nunca bloqueia, nunca pede aprovação e nunca altera o plano. Depois de cada gravação corre automaticamente em segundo plano (modelo v5, 500 cenários) e mede só os próximos 10 dias úteis a partir de hoje ou do dia de congelamento; pausa enquanto há planeamento a correr. `PP1_AUTO_ROBUSTNESS=0` desliga o cálculo automático; o painel continua a permitir execuções manuais de 100, 500 ou 2 000 cenários. Sucesso = cenário com zero lotes atrasados na janela; probabilidade = sucessos / cenários concluídos × 100. Se não houver entregas nessa janela, o resultado diz isso e não mostra probabilidade (nunca 100%). Não implica OTD-D 100% nem aprovação de todos os gates.
 
-«OTD P95» é Q5 do OTD, a cauda inferior; «atrasados P95» é Q95 da contagem, podendo ser fracionário. CVaR95 é média dos atrasos totais a partir de Q95, incluindo empates; não são intervalos de confiança. CPO usa 100 amostras no gate; avaliações independentes de 500/2 000 não atualizam automaticamente esse gate. Confirmar a revisão avaliada.
+«OTD P95» é Q5 do OTD, a cauda inferior; «atrasados P95» é Q95 da contagem, podendo ser fracionário. CVaR95 é média dos atrasos totais a partir de Q95, incluindo empates; não são intervalos de confiança. Confirmar a revisão avaliada.
+
+Planos que antes paravam só por «robustez não avaliada», incluindo movimentos manuais com todas as validações limpas, aplicam-se agora diretamente.
 
 ## 10. Ecrãs: Hoje e Plano
 
@@ -319,7 +320,7 @@ Mudar data comercial altera a hipótese, não melhora cumprimento do compromisso
 | Produção concluída, entrega não pronta | Lead externo ou peças atribuídas a entrega anterior |
 | Espaço / setup inesperado | Material, calendário, recursos e identidade de afinação |
 | Mudança não aparece | Aplicação do candidato, revisão e atualização/reabertura |
-| Plano válido pede aprovação | Entrega, pessoas, produção longa e robustez |
+| Plano válido pede aprovação | Entrega, envio externo, pessoas e produção longa (robustez não pede aprovação) |
 | Timeout / candidato obsoleto | Estado do mesmo job e alteração da origem |
 
 ## 15. Motor e arquitetura
@@ -328,8 +329,9 @@ Mudar data comercial altera a hipótese, não melhora cumprimento do compromisso
 ISOP + configuração + calendário
   -> operações -> lotes/gémeas -> campanhas
   -> construção -> pesquisa/polimento -> reparações
-  -> score + gates + robustez + explicações
+  -> score + gates + explicações
   -> candidato -> aprovação quando exigida -> aplicação
+  -> robustez em segundo plano (só informação)
 ```
 
 **Construção.** OR-Tools CP-SAT concilia recursos/janelas; tenta serviço estrito e admite atraso em fallback, sem relaxar material. Existe construção heurística. VNS pesquisa ordem, reposicionamento e alternativas; CPO coordena candidatos e polimento. Normalização trata gaps, prioridades, alternativas e final de campanha.
@@ -343,7 +345,7 @@ ISOP + configuração + calendário
 | deep | 300 s | Até 48 | 5 s |
 | max | 600 s | Até 80 | 20 s |
 
-Construção, análises, robustez e persistência podem aumentar duração total. Aprendizagem/Optuna/pesquisa genética existem em caminhos específicos, não obrigatórios em cada upload. Conservar ficheiro, configuração, código, opções e sementes para reproduzir.
+Construção, análises e persistência podem aumentar duração total; a robustez corre depois, fora do orçamento. Aprendizagem/Optuna/pesquisa genética existem em caminhos específicos, não obrigatórios em cada upload. Conservar ficheiro, configuração, código, opções e sementes para reproduzir.
 
 **Tecnologia.** React 19/TypeScript/Vite/Zustand; API FastAPI/Pydantic/Uvicorn; openpyxl; YAML; Python/OR-Tools; SQLite; OpenAI/Ollama opcionais. Docker usa Nginx/Supervisor. Python de referência: **3.12**; metadados legados ≥3.10 não provam compatibilidade.
 

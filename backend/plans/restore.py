@@ -26,14 +26,12 @@ from backend.plans.serialize import (
     serialize_config,
     value_fingerprint,
 )
-from backend.risk.robustness import ROBUSTNESS_MODEL_VERSION
 from backend.scheduler.gates import authorize_application, build_gate_report
 from backend.scheduler.scoring import compute_score
 from backend.transform.calendars import apply_calendars
 from backend.validation import strict_bool, strict_int
 
 UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
-_ROBUSTNESS_SCORE_PREFIX = "robustness_"
 
 
 def _twin_config_signature(twins: dict[str, list[str]] | None) -> tuple:
@@ -222,34 +220,21 @@ def restore_plan_into_state(
     # No hidden repair or optimization of the saved schedule: legacy setup
     # fragments, gaps or campaign placements are reported by the recomputed
     # gate below and require an explicit recalculation (plan-melhoria §6.6).
-    persisted_score = dict(result.score or {})
     result.score = compute_score(
         result.segments,
         result.lots,
         engine_data,
         config=candidate_config,
     )
-    # Robustness is a deterministic fixed-plan evaluation. It remains valid
-    # for an exact current-policy snapshot when its model revision matches.
+    # Exact inputs: the same configuration, data and schedule as persisted.
+    # Robustness is informational and computed after commit; persisted
+    # robustness_* score keys are not carried into the live plan.
     fingerprints = restored.get("fingerprints", {})
-    exact_robustness_inputs = (
+    exact_plan_inputs = (
         fingerprints.get("config") == value_fingerprint(serialize_config(candidate_config))
         and fingerprints.get("engine_data") == value_fingerprint(engine_data)
         and fingerprints.get("schedule") == schedule_fingerprint(result.segments, result.lots)
     )
-    if (
-        restored.get("model_version") == MODEL_VERSION
-        and restored.get("planning_policy_version") == PLANNING_POLICY_VERSION
-        and int(persisted_score.get("robustness_model_version", -1)) == ROBUSTNESS_MODEL_VERSION
-        and exact_robustness_inputs
-    ):
-        result.score.update(
-            {
-                key: copy.deepcopy(value)
-                for key, value in persisted_score.items()
-                if key.startswith(_ROBUSTNESS_SCORE_PREFIX)
-            }
-        )
     result.gate_report = build_gate_report(
         result.segments,
         result.lots,
@@ -259,7 +244,7 @@ def restore_plan_into_state(
     )
     from backend.scheduler.improvement import attach_improvement_summary
 
-    if not exact_robustness_inputs and not (recalculate and not preserve_exact):
+    if not exact_plan_inputs and not (recalculate and not preserve_exact):
         result.improvement_report = {"status": "not_evaluated", "stop_reason": "inputs_changed"}
     attach_improvement_summary(result, engine_data, candidate_config)
     recovered_from_jit = recalculate and not preserve_exact
@@ -282,7 +267,7 @@ def restore_plan_into_state(
         ]
         recovered_from_jit = True
     prior_approvals = list(restored.get("approvals", []))
-    if recovered_from_jit or not exact_robustness_inputs:
+    if recovered_from_jit or not exact_plan_inputs:
         # The approval belongs to the obsolete schedule, not its replacement.
         prior_approvals = []
     prior = prior_approvals[-1] if prior_approvals else {}
@@ -354,7 +339,7 @@ def restore_plan_into_state(
     if preserve_exact:
         # Booting the same durable state does not create a new revision.
         target_state.plan_revision = int(restored.get("plan_revision", 0))
-        if not exact_robustness_inputs:
+        if not exact_plan_inputs:
             target_state.plan_revision += 1
             target_state.persist_current_plan(
                 name="Configuracao recuperada",

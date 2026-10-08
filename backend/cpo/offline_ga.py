@@ -102,7 +102,6 @@ def offline_ga_optimize(
         result,
         engine_data,
         config,
-        robustness_seed=seed or 42,
     )
     assert_plan_valid(result.segments, engine_data, config, lots=result.lots)
     result.gate_report = build_gate_report(

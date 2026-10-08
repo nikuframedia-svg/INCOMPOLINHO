@@ -13,7 +13,7 @@ vi.mock("../src/api/endpoints", async (importOriginal) => ({
 }));
 
 import { UploadZone } from "../src/components/ui/UploadZone";
-import { ACTIVE_LOAD_KEY, stopLoadPolling, useLoadStore } from "../src/stores/useLoadStore";
+import { ACTIVE_LOAD_KEY, loadWarnings, stopLoadPolling, useLoadStore } from "../src/stores/useLoadStore";
 import { ApiError } from "../src/api/client";
 
 const loaded = {
@@ -275,4 +275,12 @@ describe("UploadZone", () => {
     expect(useLoadStore.getState().connectionLost).toBe(false);
     expect(useLoadStore.getState().jobId).toBe(serverJob.id);
   });
+});
+
+it("does not turn legacy robustness reasons into load warnings", () => {
+  const job = {
+    gate_report: { approval_reasons: ["robustness_not_evaluated", "robustness_below_threshold", "delivery_risk"] },
+    result: { state_warnings: [] },
+  } as unknown as LoadJob;
+  expect(loadWarnings(job)).toEqual(["Existem entregas em risco de atraso."]);
 });

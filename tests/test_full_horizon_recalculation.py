@@ -76,7 +76,6 @@ def test_full_optimizer_has_no_elapsed_reservations_or_stale_proofs(frozen_plan,
     monkeypatch.setattr("backend.scheduler.gates.build_gate_report", lambda *_a, **_k: {
         "physical_gate_passed": True, "coverage_gate_passed": True,
     })
-    monkeypatch.setattr("backend.cpo.optimizer._attach_robustness_with_reserve", lambda *_a, **_k: None)
     monkeypatch.setattr(frozen, "improve_preserving_protected_lots",
                         lambda result, *_a, **_k: (result, {"moves_accepted": 0}))
 
@@ -219,7 +218,7 @@ def test_calendar_recompute_does_not_take_scope_from_client(client, monkeypatch)
     operation.assert_called_once()
 
 
-def test_final_gate_and_robustness_use_candidate_protection(services, monkeypatch):
+def test_final_gate_uses_candidate_protection(services, monkeypatch):
     from backend.copilot.state import state
     from backend.scheduler.types import ScheduleResult
     from tests.test_candidate_api import _plan
@@ -230,11 +229,10 @@ def test_final_gate_and_robustness_use_candidate_protection(services, monkeypatc
     monkeypatch.setattr(frozen, "compact_preserving_started_lots", lambda *_a, **_k: result)
 
     def check(*args, **kwargs):
-        engine = args[1] if args[0] is result else args[3]
+        engine = args[3]
         assert engine.preserved_lot_proofs == result.preserved_lot_proofs
         return copy.deepcopy(services.gate)
 
-    monkeypatch.setattr("backend.cpo.optimizer._attach_robustness_with_reserve", check)
     monkeypatch.setattr("backend.scheduler.gates.build_gate_report", check)
     monkeypatch.setattr("backend.scheduler.improvement.improvement_gate_summary", lambda *_a, **_k: {})
     data_api._compact_active_schedule(state.config)
