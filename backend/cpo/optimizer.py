@@ -75,6 +75,12 @@ MODE_CONFIG = {
         "cp_sat_time_per_machine": 1.0,
         "candidate_search": True,
         "candidate_budget": 12,
+        # Real ISOPs (hundreds of operations): one alternative costs a full
+        # construction and none fits the advisory slice (measured 08/10/2026:
+        # 0 of 47 finished at 60 s, none accepted at 180 s). From this size on,
+        # normal mode skips search and CP-SAT polish and the no-loss
+        # improvement cycle gets the time. Deep/max keep searching.
+        "advisory_search_max_ops": 50,
         "final_timing_polish_max_segments": 180,
         "time_budget_s": 60.0,
         "global_jit_time_limit_s": 12.0,
@@ -550,18 +556,25 @@ def _optimize(
         if _is_better_candidate(candidate, complete):
             complete = copy.deepcopy(candidate)
 
-    def _keep_complete(exc: PlanningTimeout) -> ScheduleResult:
+    def _finish_complete(
+        final_source: str, *, timeout: bool, search_trace: dict | None = None,
+    ) -> ScheduleResult:
         planning_checkpoint()
-        try:
-            assert_plan_valid(complete.segments, engine_data, config, lots=complete.lots)
-        except PlanValidationError:
-            raise exc
+        assert_plan_valid(complete.segments, engine_data, config, lots=complete.lots)
         elapsed = (time.perf_counter() - t0) * 1000
         complete.time_ms = round(elapsed, 1)
-        complete.solver_status = complete.solver_status or "timeout_with_candidate"
-        complete.warnings.append(
-            "Tempo de melhoria esgotado; conservado o plano completo validado."
-        )
+        if timeout:
+            complete.solver_status = complete.solver_status or "timeout_with_candidate"
+            complete.warnings.append(
+                "Tempo de melhoria esgotado; conservado o plano completo validado."
+            )
+        elif complete.solver_status is None:
+            from backend.scheduler.global_jit import _strict_delivery_feasible
+
+            strict = _strict_delivery_feasible(complete.segments, complete.lots, engine_data)
+            complete.solver_status = (
+                "strict_feasible" if strict else "strict_infeasible_best_effort"
+            )
         complete.operator_alerts = compute_operator_alerts(
             complete.segments, engine_data, config=config,
         )
@@ -572,12 +585,31 @@ def _optimize(
         complete.gate_report["feasibility"] = complete.feasibility
         _attach_solver_trace(complete, _build_solver_trace(
             mode=mode, cfg=cfg, baseline=baseline, final=complete,
-            elapsed_ms=elapsed,
-            final_source=("baseline_after_search_timeout" if complete is baseline
-                          else "candidate_after_search_timeout"),
+            elapsed_ms=elapsed, final_source=final_source,
+            candidate_search_trace=search_trace,
         ))
         _strip_score_policy(complete)
         return complete
+
+    def _keep_complete(exc: PlanningTimeout) -> ScheduleResult:
+        try:
+            return _finish_complete(
+                "baseline_after_search_timeout" if complete is baseline
+                else "candidate_after_search_timeout",
+                timeout=True,
+            )
+        except PlanValidationError:
+            raise exc
+
+    # Size gate, not a time gate: the same instance always takes the same
+    # branch, whatever the machine load (AGENTS §6).
+    max_ops = cfg.get("advisory_search_max_ops")
+    if max_ops is not None and len(engine_data.ops) >= int(max_ops):
+        return _finish_complete("baseline_search_skipped", timeout=False, search_trace={
+            "status": "skipped", "reason": "instance_size",
+            "ops": len(engine_data.ops), "max_ops": int(max_ops),
+            "budget": int(cfg.get("candidate_budget", 0) or 0), "evaluated": 0,
+        })
 
     # Inside the closing reserve there is no time for another search: keep the
     # validated baseline directly (no copy, no child scope).

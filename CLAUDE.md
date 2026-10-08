@@ -36,7 +36,7 @@ ScheduleResult { segments, lots, score, warnings, operator_alerts }
 ## ═══ CPO v3.0 — Cascading Pipeline Optimizer ═══
 
 Entry point: `from backend.cpo import optimize`
-Modos: quick (greedy passthrough), normal/deep/max (pesquisa de candidatos + CP-SAT local + ciclo de melhoria sem perdas; diferem no orçamento). O GA não é operacional: vive em `backend/cpo/offline_ga.py` só para experiências offline.
+Modos: quick (greedy passthrough), normal (num ISOP real, ≥50 operações: greedy + ciclo de melhoria sem perdas; em instâncias pequenas também pesquisa candidatos e CP-SAT local), deep/max (pesquisa de candidatos + CP-SAT local + ciclo de melhoria; diferem no orçamento). O GA não é operacional: vive em `backend/cpo/offline_ga.py` só para experiências offline.
 
 - `optimize(data, mode="quick")` — mesmo que schedule_all(), <500ms
 - `optimize(data, mode="normal")` — melhoria limitada e validada sobre o greedy (critério canónico em `backend/scheduler/policy.py`, ver `AGENTS.md`)

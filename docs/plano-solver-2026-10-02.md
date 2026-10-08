@@ -745,3 +745,29 @@ O plano de produção permaneceu na revisão 91, snapshot
 `a59b81cefcff12e75818072ce7c7a10fd4c50af1dde1c3737d2407ae8d033e65`
 inalterado. A publicação é de código: atualizar o Gantt exige executar e
 aprovar o recálculo, não houve substituição automática do plano ativo.
+
+## 13. Pesquisa de candidatos em ISOP real (08/10/2026)
+
+**Problema.** No modo `normal`, a pesquisa de candidatos recebe cerca de 25 %
+do tempo depois da construção (8 a 12 s). Cada candidato custa uma construção
+completa (5 a 8,5 s), por isso nas revisões 87 e 90 terminavam 0 de 47 em 60 s.
+Em 180 s terminavam 6, todos empatados com a base, e nenhum era aceite.
+Desligar só a pesquisa não chega: o polimento CP-SAT ocupa a mesma fatia e
+também esgota o tempo.
+
+**Decisão.** Instâncias com 50 ou mais operações saltam a pesquisa e o
+polimento (`advisory_search_max_ops` em `MODE_CONFIG["normal"]`). O ciclo de
+melhoria recebe esse tempo.
+
+**Medição.** Antes e depois, 3 repetições, 60 s, 1 núcleo por corrida:
+
+| Caso | Melhoria | Lotes mais cedo / mais tarde | Antecipação total | Encomendas piores | Setups |
+|---|---|---|---|---|---|
+| rev90 (recálculo) | +8 a +10 s | 3 / 0 | −202 a −261 min | 0 de 786 | iguais |
+| rev87 (horizonte completo) | +10 a +11 s | 4 a 7 / 0 | −202 a −922 min | 0 de 786 | iguais |
+
+O modo `quick` dá exatamente o mesmo plano.
+
+**Pendente.** `validate_plan` consome cerca de 38 % do tempo de construção
+(cProfile). É a próxima alavanca, porque também torna cada movimento de
+melhoria mais barato.

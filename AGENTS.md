@@ -197,6 +197,15 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
   demora ~50 s. Mais pesquisa, não menor latência.
 - Decidido em 07/10/2026: a robustez já não consome orçamento do solver nem
   corre dentro de planeamento, melhoria, movimento ou recálculo (§1.6).
+- Decidido em 08/10/2026: no modo `normal`, instâncias com 50 ou mais
+  operações (qualquer ISOP real) saltam a pesquisa de candidatos e o polimento
+  CP-SAT (`advisory_search_max_ops`, `final_source=baseline_search_skipped`);
+  o ciclo de melhoria fica com esse tempo. Medido nas revisões 87 e 90: 0 de
+  47 candidatos terminavam em 60 s e nenhum era aceite em 180 s; com o gate,
+  +8 a +11 s de melhoria, 3 a 7 lotes mais cedo, 0 encomendas piores, setups
+  iguais. O gate é por tamanho (determinístico), nunca por tempo; conta as
+  operações que chegam ao optimizador (no recálculo, depois de filtrar o
+  histórico). `deep`/`max` continuam a pesquisar; `quick` não muda.
 - Um deadline exterior abrange preparação, pesquisa, fecho, validação e escrita.
   Subfases nunca reiniciam o relógio. Preservar a reserva de fecho existente.
 - Guardar o último candidato completo validado fora do solver. Timeout de uma
