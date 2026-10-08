@@ -35,6 +35,41 @@ const riskColor = (level: string) => {
   return T.green;
 };
 
+const RISK_LEVEL_LABELS: Record<string, string> = {
+  critical: "Crítico",
+  high: "Alto",
+  medium: "Médio",
+  low: "Baixo",
+  none: "Sem risco",
+};
+
+const riskLevelLabel = (level: string | null | undefined) =>
+  level ? RISK_LEVEL_LABELS[level] ?? "Sem classificação" : "sem dados";
+
+const RISK_STATUS_LABELS: Record<string, string> = {
+  late: "Atrasado",
+  at_limit: "No limite",
+  short_slack: "Folga curta",
+};
+
+/** Pill colour follows the status label, so "No limite" never looks like "Atrasado". */
+const RISK_STATUS_COLORS: Record<string, string> = {
+  late: T.red,
+  at_limit: T.orange,
+  short_slack: T.yellow,
+};
+
+const plural = (count: number, singular: string, pluralForm: string) =>
+  `${count} ${Math.abs(count) === 1 ? singular : pluralForm}`;
+
+/** Negative slack is lateness: say "N dias de atraso", never "Folga: -N". */
+const slackText = (slack: number | null | undefined) => {
+  const value = Number(slack ?? 0);
+  if (!Number.isFinite(value)) return "Folga: —";
+  if (value < 0) return `${plural(Math.abs(value), "dia", "dias")} de atraso`;
+  return `Folga: ${plural(value, "dia", "dias")}`;
+};
+
 const causeLabel = (cause: string) => {
   const map: Record<string, string> = {
     capacity: "Capacidade",
@@ -150,7 +185,7 @@ export function RiskPage() {
                             title={[
                               `Máquina ${m}`,
                               `Dia ${d}`,
-                              `Risco: ${level ?? "sem dados"}`,
+                              `Risco: ${riskLevelLabel(level)}`,
                               utilPct === null ? "Inconsistência: carga sem capacidade disponível" : `Utilização: ${utilPct}%`,
                               `Carga: ${Math.round(cell?.load_min ?? 0)} min`,
                               `Capacidade: ${Math.round(cell?.capacity_min ?? 0)} min`,
@@ -189,10 +224,14 @@ export function RiskPage() {
               </div>
               {risk.top_risks.map((r, i) => (
                 <div key={i} style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 12 }}>
-                  <Pill color={riskColor(r.risk_level)}>{r.risk_level}</Pill>
+                  {typeof r.status === "string" && RISK_STATUS_LABELS[r.status] ? (
+                    <Pill color={RISK_STATUS_COLORS[r.status]}>{RISK_STATUS_LABELS[r.status]}</Pill>
+                  ) : (
+                    <Pill color={riskColor(r.risk_level)}>{riskLevelLabel(r.risk_level)}</Pill>
+                  )}
                   <span style={{ fontSize: 12, fontFamily: T.mono, color: T.primary, flex: 1 }}>{r.sku}</span>
                   <span style={{ fontSize: 11, color: T.secondary }}>{r.machine_id}</span>
-                  <span style={{ fontSize: 11, color: T.secondary }}>Margem: {r.slack_days ?? 0} dias</span>
+                  <span style={{ fontSize: 11, color: T.secondary }}>{slackText(r.slack_days)}</span>
                 </div>
               ))}
             </Card>

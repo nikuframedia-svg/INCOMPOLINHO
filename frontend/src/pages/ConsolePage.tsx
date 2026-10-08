@@ -10,7 +10,16 @@ import { Dot } from "../components/ui/Dot";
 import { Divider } from "../components/ui/Divider";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { useAppStore } from "../stores/useAppStore";
-import { riskRelevantDay, sortRisksByNearestDate } from "../lib/consoleRisks";
+import {
+  lateOrderRows,
+  longProductionRows,
+  plural,
+  riskCauseLabel,
+  riskStatus,
+  riskStatusLabel,
+  type LongProductionRow,
+  type RiskStatus,
+} from "../lib/consoleRisks";
 
 function formatClock(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") return "";
@@ -61,6 +70,41 @@ function rememberDay(day: number) {
   } catch {
     // Best effort only. Navigation must keep working if storage is unavailable.
   }
+}
+
+function riskStatusColor(status: RiskStatus | null) {
+  return status === "late" ? T.red : status === "at_limit" ? T.orange : T.yellow;
+}
+
+function riskConsequence(status: RiskStatus | null, slackDays: unknown) {
+  const slack = Number(slackDays);
+  if (status === "late") {
+    return Number.isFinite(slack) && slack < 0
+      ? `acaba ${plural(Math.abs(slack), "dia", "dias")} depois do prazo de produção`
+      : "acaba depois do prazo de produção";
+  }
+  if (status === "at_limit") return "acaba no último dia do prazo de produção";
+  if (Number.isFinite(slack)) return `${plural(slack, "dia", "dias")} de folga`;
+  return null;
+}
+
+function formatQty(value: number) {
+  return Math.round(value).toLocaleString("pt-PT");
+}
+
+const LATE_ORDERS_SHOWN = 10;
+
+function consecutiveDays(count: number | null) {
+  return count === null ? "— dias seguidos" : plural(count, "dia seguido", "dias seguidos");
+}
+
+function longProductionText(item: LongProductionRow) {
+  let text = `${consecutiveDays(item.workdays)} · limite: ${consecutiveDays(item.limit_workdays)}`;
+  if (item.total_days !== null && item.consecutive_days !== null && item.total_days > item.consecutive_days) {
+    const extra = item.total_days - item.consecutive_days;
+    text += ` · volta à máquina mais ${plural(extra, "dia", "dias")} depois de uma pausa`;
+  }
+  return text;
 }
 
 function groupLabel(group: string) {
@@ -192,6 +236,7 @@ export function ConsolePage() {
   const error = calendarError ?? queryError;
   const [datePickerError, setDatePickerError] = useState<string | null>(null);
   const score = useDataStore((s) => s.score);
+  const gateReport = useDataStore((s) => s.gateReport);
   const setPage = useAppStore((s) => s.setPage);
 
   useEffect(() => {
@@ -205,7 +250,16 @@ export function ConsolePage() {
   // Keep the operational console usable during rolling deployments where an
   // older backend may not expose the newest optional panels yet.
   const setupsToday = Array.isArray(data.setups_today) ? data.setups_today : [];
-  const topRisks = sortRisksByNearestDate(Array.isArray(data.top_risks) ? data.top_risks : []);
+  // The server already keeps only real risks in the 7-day window, most serious first.
+  const topRisks = Array.isArray(data.top_risks) ? data.top_risks : [];
+  const hasLateOrderInfo = Array.isArray(gateReport?.late_order_detail);
+  const lateOrders = lateOrderRows(gateReport);
+  const ordersLateTotal = Number(gateReport?.metrics?.orders_late);
+  const lateOrdersCount = Number.isFinite(ordersLateTotal) ? Math.max(ordersLateTotal, lateOrders.length) : lateOrders.length;
+  const longProductions = longProductionRows(gateReport);
+  const lateOrdersShown = Math.min(lateOrders.length, LATE_ORDERS_SHOWN);
+  // The report lists at most 50 orders; the remainder comes from the full count.
+  const lateOrdersHidden = Math.max(lateOrdersCount - lateOrdersShown, 0);
   const operational = data.operational_summary;
   const dayOverview = getDayOverview(data);
   const machinesList = Array.isArray(data.machines)
@@ -267,25 +321,10 @@ export function ConsolePage() {
       .reduce((total, setup) => total + setup.count, 0);
     return `${groupLabel(item.group)}: ${count}`;
   }) ?? [];
-  const sevenDayRiskLimit = day + 6;
-  const nearTermRisks = topRisks.filter((risk) => {
-    const relevantDay = riskRelevantDay(risk);
-    return relevantDay !== null && relevantDay >= day && relevantDay <= sevenDayRiskLimit;
-  });
-  const riskBullets = nearTermRisks.slice(0, 5).map((risk) => {
+  const riskBullets = topRisks.map((risk) => {
     const machine = String(risk.planned_machine_id || risk.machine_id || "");
-    const cause = risk.binding_constraint === "capacity"
-      ? "capacidade"
-      : risk.binding_constraint === "crew"
-        ? "equipa"
-        : risk.binding_constraint === "jit_exception"
-          ? "JIT"
-          : risk.binding_constraint === "operator"
-            ? "operadores"
-            : risk.binding_constraint === "calendar"
-              ? "recurso indisponível"
-              : "margem";
-    return `${machine ? `${machine} · ` : ""}${risk.sku} · ${cause}`;
+    const parts = [machine, risk.sku, riskStatusLabel(risk), riskCauseLabel(risk)].filter(Boolean);
+    return parts.join(" · ");
   });
   const trialBullets = operational?.trials.map((trial) => (
     `${trial.machine_id}${trial.tool_id ? ` · ${trial.tool_id}` : ""}`
@@ -608,22 +647,31 @@ export function ConsolePage() {
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "16px 20px 12px" }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Lotes em risco</span>
+              <div style={{ color: T.tertiary, fontSize: 10, marginTop: 4 }}>
+                Próximos 7 dias: atrasados, no limite ou com pouca folga
+              </div>
             </div>
             {topRisks.length === 0 ? (
-              <div style={{ padding: "0 20px 16px", color: T.green, fontSize: 12 }}>Sem lotes críticos no plano atual.</div>
+              <div style={{ padding: "0 20px 16px", color: T.green, fontSize: 12 }}>Sem lotes em risco nos próximos 7 dias.</div>
             ) : topRisks.map((risk, index) => {
-              const color = risk.risk_level === "critical" ? T.red : risk.risk_level === "high" ? T.orange : T.blue;
+              const status = riskStatus(risk);
+              const statusLabel = riskStatusLabel(risk);
+              const cause = riskCauseLabel(risk);
+              const consequence = riskConsequence(status, risk.slack_days);
+              const color = riskStatusColor(status);
+              const details = [consequence, cause ? `Causa: ${cause}` : null].filter(Boolean).join(" · ");
               return (
                 <div key={risk.lot_id} style={{ borderTop: index > 0 ? `1px solid ${T.border}` : undefined, padding: "10px 20px", display: "flex", gap: 12, alignItems: "center" }}>
                   <Dot color={color} size={6} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ color: T.primary, fontSize: 11, fontFamily: T.mono }}>{risk.sku}</div>
-                    <div style={{ color: T.tertiary, fontSize: 10, marginTop: 2 }}>
-                      Causa: {risk.binding_constraint === "capacity" ? "capacidade da máquina" : risk.binding_constraint === "crew" ? "capacidade da equipa" : "margem reduzida"}
-                      {" · "}Consequência: {Number(risk.completion_day ?? risk.edd) > risk.edd
-                        ? `conclusão ${Number(risk.completion_day) - risk.edd} dia(s) depois da entrega`
-                        : `${risk.slack_days ?? 0} dia(s) de margem`}
-                    </div>
+                    {(statusLabel || details) && (
+                      <div style={{ color: T.tertiary, fontSize: 10, marginTop: 2 }}>
+                        {statusLabel && <b style={{ color, fontWeight: 600 }}>{statusLabel}</b>}
+                        {statusLabel && details ? " · " : ""}
+                        {details}
+                      </div>
+                    )}
                     <div style={{ color: T.secondary, fontSize: 10, marginTop: 3, fontFamily: T.mono }}>
                       Produção: {risk.production_date ?? `dia ${risk.production_day ?? "?"}`} · Máquina: {risk.planned_machine_id ?? risk.machine_id ?? "?"}
                       {risk.completion_date ? ` · Conclusão: ${risk.completion_date}` : ""}
@@ -646,6 +694,84 @@ export function ConsolePage() {
               );
             })}
           </Card>
+
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Encomendas atrasadas</span>
+                <div style={{ color: T.tertiary, fontSize: 10, marginTop: 4 }}>
+                  Encomendas que não ficam prontas até ao dia de entrega
+                </div>
+              </div>
+              <span style={{ ...summaryChipStyle, ...(lateOrdersCount > 0 ? { color: T.red, borderColor: T.red } : {}) }}>
+                {hasLateOrderInfo ? lateOrdersCount : "—"}
+              </span>
+            </div>
+            {!hasLateOrderInfo ? (
+              <div style={{ padding: "0 20px 16px", color: T.tertiary, fontSize: 12 }}>—</div>
+            ) : lateOrdersCount === 0 ? (
+              <div style={{ padding: "0 20px 16px", color: T.green, fontSize: 12 }}>Todas as encomendas ficam prontas a tempo.</div>
+            ) : (
+              <>
+                {lateOrders.slice(0, LATE_ORDERS_SHOWN).map((order, index) => (
+                  <div
+                    key={`${order.client}-${order.sku}-${order.due_day}-${index}`}
+                    data-testid="late-order-row"
+                    style={{ borderTop: index > 0 ? `1px solid ${T.border}` : undefined, padding: "10px 20px", display: "flex", gap: 12, alignItems: "center" }}
+                  >
+                    <Dot color={T.red} size={6} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "baseline", minWidth: 0 }}>
+                        <span style={{ color: T.primary, fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.client || "Cliente desconhecido"}</span>
+                        <span style={{ color: T.secondary, fontSize: 11, fontFamily: T.mono }}>{order.sku}</span>
+                        {order.machine_id && <span style={{ color: T.secondary, fontSize: 11 }}>{order.machine_id}</span>}
+                      </div>
+                      <div style={{ color: T.tertiary, fontSize: 10, marginTop: 2 }}>
+                        {`No dia de entrega faltam ${formatQty(order.shortfall_qty)} de ${formatQty(order.order_qty)} pç`}
+                        {order.due_day !== null ? ` · Entrega: dia ${order.due_day}` : ""}
+                        {order.ready_day !== null ? ` · Pronta: dia ${order.ready_day}` : ""}
+                      </div>
+                    </div>
+                    <span style={{ color: T.red, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {order.late_days === null ? "não fica completa no plano" : `${plural(order.late_days, "dia", "dias")} de atraso`}
+                    </span>
+                  </div>
+                ))}
+                {lateOrdersHidden > 0 && (
+                  <div style={{ padding: "8px 20px 14px", color: T.tertiary, fontSize: 11, borderTop: `1px solid ${T.border}` }}>
+                    e mais {plural(lateOrdersHidden, "encomenda atrasada", "encomendas atrasadas")}
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+
+          {longProductions.length > 0 && (
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px 12px" }}>
+                <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Produções longas</span>
+                <div style={{ color: T.tertiary, fontSize: 10, marginTop: 4 }}>
+                  A mesma referência fica na máquina mais dias seguidos do que o limite definido nos Parâmetros
+                </div>
+              </div>
+              {longProductions.map((item, index) => (
+                <div
+                  key={`${item.lot_id}-${index}`}
+                  data-testid="long-production-row"
+                  style={{ borderTop: index > 0 ? `1px solid ${T.border}` : undefined, padding: "10px 20px", display: "flex", gap: 12, alignItems: "center" }}
+                >
+                  <Dot color={T.orange} size={6} />
+                  <div style={{ minWidth: 0, flex: 1, display: "flex", gap: 8, alignItems: "baseline" }}>
+                    <span style={{ color: T.primary, fontSize: 12, fontWeight: 500 }}>{item.machine_id || "?"}</span>
+                    <span style={{ color: T.secondary, fontSize: 11, fontFamily: T.mono }}>{item.sku}</span>
+                  </div>
+                  <span style={{ color: T.secondary, fontSize: 11, textAlign: "right" }}>
+                    {longProductionText(item)}
+                  </span>
+                </div>
+              ))}
+            </Card>
+          )}
         </div>
       </div>
     </div>

@@ -152,7 +152,10 @@ class TestLotRisks:
         risks = compute_lot_risks(segs, lots, engine)
         assert risks[0].risk_level == "critical"
         assert risks[0].slack_days == 0
-        assert risks[0].binding_constraint == "capacity"
+        # Zero slack alone proves nothing about which resource is short.
+        assert risks[0].binding_constraint == "none"
+        assert risks[0].cause is None
+        assert risks[0].status == "at_limit"
 
     def test_negative_slack_is_critical(self):
         """Lot completing after EDD → critical with negative slack."""
@@ -172,7 +175,9 @@ class TestLotRisks:
 
         risks = compute_lot_risks(segs, lots, engine)
         assert risks[0].risk_level == "high"
-        assert risks[0].binding_constraint == "crew"
+        assert risks[0].binding_constraint == "none"
+        assert risks[0].cause is None
+        assert risks[0].status == "short_slack"
 
     def test_risk_score_between_0_and_1(self):
         """Risk score is bounded [0, 1]."""
@@ -466,8 +471,8 @@ class TestComputeRisk:
         assert result.health_score >= 0
         assert result.lot_risks == []
 
-    def test_top_risks_sorted_by_nearest_risk_date(self):
-        """The nearest delivery/rupture risk is shown first."""
+    def test_top_risks_late_first_then_nearest_date(self):
+        """Late lots first, then the nearest due day; lots with room are hidden."""
         engine = _engine()
         lots = [
             _lot(lot_id="L1", edd=10),
@@ -481,5 +486,5 @@ class TestComputeRisk:
         ]
 
         result = compute_risk(segs, lots, engine)
-        dates = [r.edd for r in result.top_risks]
-        assert dates == sorted(dates)
+        assert [r.lot_id for r in result.top_risks] == ["L3", "L2"]
+        assert [r.status for r in result.top_risks] == ["late", "short_slack"]

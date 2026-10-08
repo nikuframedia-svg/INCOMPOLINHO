@@ -282,5 +282,22 @@ it("does not turn legacy robustness reasons into load warnings", () => {
     gate_report: { approval_reasons: ["robustness_not_evaluated", "robustness_below_threshold", "delivery_risk"] },
     result: { state_warnings: [] },
   } as unknown as LoadJob;
-  expect(loadWarnings(job)).toEqual(["Existem entregas em risco de atraso."]);
+  expect(loadWarnings(job)).toEqual(["Há lotes que acabam depois do prazo de produção."]);
+});
+
+it("uses the shared plain dictionary for every load warning, never a raw code", () => {
+  const job = {
+    gate_report: { approval_reasons: [
+      "jit_window_blocked", "material_release_blocked", "long_production", "operational_sequence_review", "novo_motivo",
+    ] },
+    result: { state_warnings: ["Aviso do ISOP."] },
+  } as unknown as LoadJob;
+  expect(loadWarnings(job)).toEqual([
+    "Aviso do ISOP.",
+    "Há produções marcadas antes de o material estar disponível.",
+    "Há mudanças de ferramenta marcadas antes de o material chegar.",
+    "Há produções seguidas acima do limite de dias.",
+    "A ordem de produção tem pontos a rever.",
+    "Existe uma exceção de planeamento a rever.",
+  ]);
 });

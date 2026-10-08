@@ -63,8 +63,8 @@ it("keeps robustness out of the approval dialog, even for legacy reasons", () =>
   } as never);
 
   expect(message).not.toMatch(/robustez/i);
-  expect(message).toContain("Requer decisão do planeador por: existem entregas em risco.");
-  expect(message).toContain("Impacto previsto: 5 entregas com atraso.");
+  expect(message).toContain("Requer decisão do planeador por: há lotes que acabam depois do prazo de produção.");
+  expect(message).toContain("Impacto previsto: 5 lotes acabam depois do prazo de produção.");
 });
 
 async function simulatePreview() {

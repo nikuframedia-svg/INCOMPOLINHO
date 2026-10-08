@@ -76,5 +76,69 @@ describe("RiskPage", () => {
     expect(await screen.findByText("Mapa de risco")).toBeTruthy();
     expect(screen.getByText("75")).toBeTruthy();
     expect(screen.getByTitle(/Carga: 765 min/)).toBeTruthy();
+    expect(screen.getByTitle(/Risco: Médio/)).toBeTruthy();
+    expect(screen.queryByTitle(/medium/)).toBeNull();
+  });
+
+  it("mostra o nível dos riscos principais em português", async () => {
+    endpointMocks.getRisk.mockResolvedValue({
+      health_score: 70,
+      critical_count: 1,
+      bottleneck: null,
+      lot_risks: [],
+      machine_risks: [],
+      top_risks: [
+        { lot_id: "L1", sku: "SKU-A", machine_id: "M1", edd: 3, slack: -1, slack_days: -1, risk_level: "critical", status: "late" },
+        { lot_id: "L2", sku: "SKU-B", machine_id: "M2", edd: 4, slack: 2, slack_days: 2, risk_level: "high" },
+        { lot_id: "L3", sku: "SKU-C", machine_id: "M3", edd: 5, slack: 0, slack_days: 0, risk_level: "critical", status: "at_limit" },
+        { lot_id: "L4", sku: "SKU-D", machine_id: "M4", edd: 6, slack: 1, slack_days: 1, risk_level: "low", status: "short_slack" },
+      ],
+      heatmap: [],
+    });
+    endpointMocks.getLateDeliveries.mockResolvedValue({ analyses: [], by_cause: {}, tardy_count: 0 });
+    endpointMocks.getWorkforce.mockResolvedValue(null);
+
+    render(<RiskPage />);
+
+    expect(await screen.findByText("Riscos principais")).toBeTruthy();
+    expect(screen.getByText("Atrasado")).toBeTruthy();
+    expect(screen.getByText("Alto")).toBeTruthy();
+    expect(screen.queryByText("critical")).toBeNull();
+    expect(screen.queryByText("high")).toBeNull();
+  });
+
+  it("folga negativa aparece como atraso e a cor segue o estado", async () => {
+    endpointMocks.getRisk.mockResolvedValue({
+      health_score: 70,
+      critical_count: 1,
+      bottleneck: null,
+      lot_risks: [],
+      machine_risks: [],
+      top_risks: [
+        { lot_id: "L1", sku: "SKU-A", machine_id: "M1", edd: 3, slack: -1, slack_days: -1, risk_level: "high", status: "late" },
+        { lot_id: "L2", sku: "SKU-B", machine_id: "M2", edd: 4, slack: -3, slack_days: -3, risk_level: "critical", status: "late" },
+        { lot_id: "L3", sku: "SKU-C", machine_id: "M3", edd: 5, slack: 0, slack_days: 0, risk_level: "critical", status: "at_limit" },
+        { lot_id: "L4", sku: "SKU-D", machine_id: "M4", edd: 6, slack: 1, slack_days: 1, risk_level: "critical", status: "short_slack" },
+        { lot_id: "L5", sku: "SKU-E", machine_id: "M5", edd: 6, slack: 2, slack_days: 2, risk_level: "low", status: "short_slack" },
+      ],
+      heatmap: [],
+    });
+    endpointMocks.getLateDeliveries.mockResolvedValue({ analyses: [], by_cause: {}, tardy_count: 0 });
+    endpointMocks.getWorkforce.mockResolvedValue(null);
+
+    render(<RiskPage />);
+
+    expect(await screen.findByText("Riscos principais")).toBeTruthy();
+    expect(screen.getByText("1 dia de atraso")).toBeTruthy();
+    expect(screen.getByText("3 dias de atraso")).toBeTruthy();
+    expect(screen.getByText("Folga: 0 dias")).toBeTruthy();
+    expect(screen.getByText("Folga: 1 dia")).toBeTruthy();
+    expect(screen.getByText("Folga: 2 dias")).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/Folga: -|\(s\)/);
+
+    const late = screen.getAllByText("Atrasado");
+    expect(late.every((node) => node.style.color === "rgb(194, 65, 12)")).toBe(true);
+    expect(screen.getByText("No limite").style.color).toBe("rgb(202, 134, 12)");
+    expect(screen.getAllByText("Folga curta").every((node) => node.style.color === "rgb(161, 98, 7)")).toBe(true);
   });
 });

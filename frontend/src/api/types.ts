@@ -292,6 +292,9 @@ export interface CoverageAudit {
   summary: string;
 }
 
+/** Plain risk band; "ok" lots never reach top_risks (server filters them out). */
+export type LotRiskStatus = "late" | "at_limit" | "short_slack" | "ok";
+
 export interface LotRisk {
   lot_id: string;
   sku: string;
@@ -299,6 +302,10 @@ export interface LotRisk {
   edd: number;
   slack: number;
   slack_days?: number;
+  /** late: slack < 0 · at_limit: slack == 0 · short_slack: 1–2 days. Absent on old servers. */
+  status?: LotRiskStatus;
+  /** Only a cause proven by the binding-constraint analysis; null when none is proven. */
+  cause?: string | null;
   completion_day?: number;
   production_day?: number;
   production_date?: string | null;
@@ -770,6 +777,44 @@ export interface JitWindowViolation {
   campaign_span_workdays: number;
 }
 
+/** Order-level delivery metrics (same criterion as the no-loss improvement). Old reports lack them. */
+export interface GateOrderMetrics {
+  orders_total?: number;
+  orders_on_time?: number;
+  orders_late?: number;
+  /** Percent of orders on time, 1 decimal. */
+  order_otd?: number;
+}
+
+export type GateMetrics = Record<string, number> & GateOrderMetrics;
+
+/** One late customer order; ready_day/late_days are null when it is never fully covered. */
+export interface LateOrderDetail {
+  client: string;
+  sku: string;
+  /** Machine that produces the SKU; absent on reports made before it was sent. */
+  machine_id?: string | null;
+  order_qty: number;
+  covered_qty: number;
+  shortfall_qty: number;
+  due_day: number;
+  ready_day: number | null;
+  late_days: number | null;
+}
+
+/** A lot produced on more consecutive days than max_run_days (a weekend breaks the count). */
+export interface LongProductionDetail {
+  lot_id: string;
+  sku: string;
+  machine_id: string;
+  workdays: number;
+  limit_workdays: number;
+  excess_workdays: number;
+  consecutive?: boolean;
+  days: number[];
+  consecutive_days: number[];
+}
+
 export interface GateReport {
   status: "applicable" | "best_effort" | "invalid_physics" | string;
   apply_decision: "auto_applicable" | "approval_required" | "blocked";
@@ -785,9 +830,11 @@ export interface GateReport {
   /** Legacy: robustness no longer gates plans; old revisions may still carry it. */
   robustness_gate_passed?: boolean | null;
   material_gate_passed: boolean;
-  metrics: Record<string, number>;
+  metrics: GateMetrics;
   violations: Record<string, unknown>[];
   late_detail: Record<string, unknown>[];
+  /** Late orders, max 50, most late first. Old reports lack it. */
+  late_order_detail?: LateOrderDetail[];
   jit_window_detail: JitWindowViolation[];
   subcontract_dispatch_detail?: Array<{
     lot_id: string;
@@ -808,7 +855,7 @@ export interface GateReport {
     late_workdays: number;
   }>;
   setup_overlap_detail: Record<string, unknown>[];
-  long_production_detail?: Record<string, unknown>[];
+  long_production_detail?: LongProductionDetail[];
   proposals: GateProposal[];
   solver_trace?: SolverTrace;
   solver_status?: string;

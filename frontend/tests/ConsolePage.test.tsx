@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConsoleData, Score } from "../src/api/types";
+import type { ConsoleData, GateReport, Score } from "../src/api/types";
 import { useAppStore } from "../src/stores/useAppStore";
 import { useDataStore } from "../src/stores/useDataStore";
 
@@ -43,7 +43,6 @@ vi.mock("../src/pages/RulesPage", () => ({ RulesPage: () => <div>Regras page</di
 vi.mock("../src/pages/CapacityPage", () => ({ CapacityPage: () => <div>Capacidade page</div> }));
 
 import { Shell } from "../src/components/Shell";
-import { sortRisksByNearestDate } from "../src/lib/consoleRisks";
 import { ConsolePage } from "../src/pages/ConsolePage";
 
 const score: Score = {
@@ -265,56 +264,143 @@ describe("ConsolePage", () => {
     expect(screen.getByText("Indisp. 0").style.fontWeight).toBe("");
   });
 
-  it("ordena lotes em risco pela data mais próxima", () => {
-    const risks = sortRisksByNearestDate([
-      {
-        lot_id: "late",
-        sku: "1197914X050",
-        machine_id: "PRM019",
-        planned_machine_id: "PRM019",
-        risk_level: "critical",
-        risk_score: 1,
-        edd: 35,
-        slack: 0,
-        slack_days: 0,
-        production_date: "2026-08-18",
-        completion_day: 32,
-      },
-      {
-        lot_id: "early",
-        sku: "4398644050",
-        machine_id: "PRM039",
-        planned_machine_id: "PRM039",
-        risk_level: "critical",
-        risk_score: 1,
-        edd: 18,
-        slack: 0,
-        slack_days: 0,
-        production_date: "2026-08-17",
-        production_day: 16,
-        completion_day: 18,
-      },
-      {
-        lot_id: "mid",
-        sku: "1064169X100",
-        machine_id: "PRM031",
-        planned_machine_id: "PRM031",
-        risk_level: "critical",
-        risk_score: 0.9,
-        edd: 28,
-        slack: 0,
-        slack_days: 0,
-        production_date: "2026-08-17",
-        production_day: 16,
-        completion_day: 31,
-      },
-    ]);
+  it("mostra os riscos pela ordem do servidor com estado em linguagem simples", async () => {
+    mockConsoleEndpoints();
+    endpointMocks.getConsole.mockResolvedValue({
+      ...consoleData,
+      top_risks: [
+        {
+          lot_id: "late", sku: "SKU-LATE", machine_id: "PRM042", planned_machine_id: "PRM042",
+          risk_level: "critical", risk_score: 1, edd: 5, slack: -2, slack_days: -2,
+          production_day: 3, status: "late", cause: "operator", binding_constraint: "operator",
+        },
+        {
+          lot_id: "limit", sku: "SKU-LIMIT", machine_id: "PRM031", planned_machine_id: "PRM031",
+          risk_level: "critical", risk_score: 0.9, edd: 2, slack: 0, slack_days: 0,
+          production_day: 1, status: "at_limit", cause: null, binding_constraint: "capacity",
+        },
+        {
+          lot_id: "short", sku: "SKU-SHORT", machine_id: "PRM043", planned_machine_id: "PRM043",
+          risk_level: "high", risk_score: 0.5, edd: 1, slack: 1, slack_days: 1,
+          production_day: 0, status: "short_slack", cause: null, binding_constraint: "crew",
+        },
+      ],
+    } as ConsoleData);
 
-    expect(risks.map((risk) => risk.sku)).toEqual([
-      "4398644050",
-      "1064169X100",
-      "1197914X050",
-    ]);
+    render(<ConsolePage />);
+
+    expect(await screen.findByText("Lotes em risco")).toBeTruthy();
+    const skus = screen.getAllByText(/^SKU-(LATE|LIMIT|SHORT)$/).map((node) => node.textContent);
+    expect(skus).toEqual(["SKU-LATE", "SKU-LIMIT", "SKU-SHORT"]);
+    expect(screen.getByText("PRM042 · SKU-LATE · Atrasado · falta de operadores no turno")).toBeTruthy();
+    expect(screen.getByText("PRM031 · SKU-LIMIT · No limite")).toBeTruthy();
+    expect(screen.getByText("PRM043 · SKU-SHORT · Folga curta")).toBeTruthy();
+    expect(screen.getByText(/acaba 2 dias depois do prazo de produção/)).toBeTruthy();
+    expect(screen.getByText(/acaba no último dia do prazo de produção/)).toBeTruthy();
+    expect(screen.getByText(/1 dia de folga/)).toBeTruthy();
+    const text0 = document.body.textContent ?? "";
+    expect(text0).not.toMatch(/\(s\)/);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/equipa|capacidade|margem/i);
+  });
+
+  it("lista encomendas atrasadas e produções longas do plano", async () => {
+    mockConsoleEndpoints();
+    useDataStore.setState({
+      gateReport: {
+        metrics: { orders_total: 709, orders_on_time: 701, orders_late: 8, order_otd: 98.9 },
+        late_order_detail: [
+          { client: "JOAO DEUS", sku: "JDE002", machine_id: "PRM042", order_qty: 5000, covered_qty: 2000, shortfall_qty: 3000, due_day: 26, ready_day: 29, late_days: 3 },
+          { client: "FAURECIA", sku: "FAU001", order_qty: 800, covered_qty: 0, shortfall_qty: 800, due_day: 27, ready_day: 28, late_days: 1 },
+          { client: "HANON", sku: "HAN010", order_qty: 1200, covered_qty: 0, shortfall_qty: 1200, due_day: 30, ready_day: null, late_days: null },
+        ],
+        long_production_detail: [
+          { lot_id: "LOT_JDE002", sku: "JDE002", machine_id: "PRM042", workdays: 5, limit_workdays: 4, excess_workdays: 1, days: [26, 27, 28, 29, 30], consecutive_days: [26, 27, 28, 29, 30] },
+          { lot_id: "LOT_TP", sku: "TP042173", machine_id: "PRM042", workdays: 5, limit_workdays: 4, excess_workdays: 1, days: [33, 34, 35, 36, 37, 40, 41], consecutive_days: [33, 34, 35, 36, 37] },
+        ],
+      } as unknown as GateReport,
+    });
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByText("Encomendas atrasadas")).toBeTruthy();
+    const rows = screen.getAllByTestId("late-order-row");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("JOAO DEUS")).toBeTruthy();
+    expect(within(rows[0]).getByText("PRM042")).toBeTruthy();
+    expect(rows[0].textContent).toMatch(/No dia de entrega faltam 3\s?000 de 5\s?000 pç · Entrega: dia 26 · Pronta: dia 29/);
+    expect(within(rows[0]).getByText("3 dias de atraso")).toBeTruthy();
+    expect(within(rows[1]).getByText("1 dia de atraso")).toBeTruthy();
+    expect(within(rows[2]).getByText("não fica completa no plano")).toBeTruthy();
+    expect(rows[2].textContent).not.toMatch(/Pronta/);
+    expect(screen.getByText("Encomendas que não ficam prontas até ao dia de entrega")).toBeTruthy();
+    expect(screen.getByText("8")).toBeTruthy();
+    // 3 rows shown out of 8 late orders: the rest comes from the total, not the list length.
+    expect(screen.getByText("e mais 5 encomendas atrasadas")).toBeTruthy();
+
+    expect(screen.getByText("Produções longas")).toBeTruthy();
+    expect(screen.getByText(/limite definido nos Parâmetros/)).toBeTruthy();
+    const [longRow, splitRow] = screen.getAllByTestId("long-production-row");
+    expect(within(longRow).getByText("PRM042")).toBeTruthy();
+    expect(within(longRow).getByText("JDE002")).toBeTruthy();
+    expect(within(longRow).getByText("5 dias seguidos · limite: 4 dias seguidos")).toBeTruthy();
+    expect(
+      within(splitRow).getByText("5 dias seguidos · limite: 4 dias seguidos · volta à máquina mais 2 dias depois de uma pausa"),
+    ).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/\(s\)/);
+  });
+
+  it("e mais N usa o total de encomendas atrasadas mesmo com a lista cortada", async () => {
+    mockConsoleEndpoints();
+    const detail = Array.from({ length: 50 }, (_, index) => ({
+      client: `C${index}`, sku: `S${index}`, order_qty: 10, covered_qty: 0, shortfall_qty: 10,
+      due_day: 5, ready_day: 6, late_days: 1,
+    }));
+    useDataStore.setState({
+      gateReport: {
+        metrics: { orders_total: 300, orders_on_time: 180, orders_late: 120, order_otd: 60 },
+        late_order_detail: detail,
+      } as unknown as GateReport,
+    });
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByText("Encomendas atrasadas")).toBeTruthy();
+    expect(screen.getAllByTestId("late-order-row")).toHaveLength(10);
+    expect(screen.getByText("e mais 110 encomendas atrasadas")).toBeTruthy();
+  });
+
+  it("e mais 1 encomenda atrasada no singular", async () => {
+    mockConsoleEndpoints();
+    const detail = Array.from({ length: 11 }, (_, index) => ({
+      client: `C${index}`, sku: `S${index}`, order_qty: 10, covered_qty: 0, shortfall_qty: 10,
+      due_day: 5, ready_day: 6, late_days: 1,
+    }));
+    useDataStore.setState({
+      gateReport: {
+        metrics: { orders_late: 11 },
+        late_order_detail: detail,
+      } as unknown as GateReport,
+    });
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByText("Encomendas atrasadas")).toBeTruthy();
+    expect(screen.getByText("e mais 1 encomenda atrasada")).toBeTruthy();
+  });
+
+  it("plano antigo sem os campos novos mostra — e não falha", async () => {
+    mockConsoleEndpoints();
+    useDataStore.setState({
+      gateReport: { metrics: { tardy_count: 2 }, late_detail: [] } as unknown as GateReport,
+    });
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByText("Encomendas atrasadas")).toBeTruthy();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Produções longas")).toBeNull();
+    expect(screen.queryAllByTestId("late-order-row")).toHaveLength(0);
   });
 
   it("funde operação no resumo e move amanhã para Setups e Expedições", async () => {
@@ -381,7 +467,7 @@ describe("Shell", () => {
 
     render(<Shell />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Entregas a tempo/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Encomendas a tempo/i }));
 
     await waitFor(() => {
       expect(useAppStore.getState().activePage).toBe("deliveries");
@@ -399,5 +485,32 @@ describe("Shell", () => {
     expect(JSON.parse(sessionStorage.getItem("pp1DeliveriesFocus") ?? "{}")).toMatchObject({
       metric: "otd_d",
     });
+  });
+
+  it("mostra Encomendas a tempo em destaque e Lotes no prazo como detalhe", async () => {
+    mockShellEndpoints();
+    const planView = await endpointMocks.getPlanView();
+    endpointMocks.getPlanView.mockResolvedValue({
+      ...planView,
+      gate_report: { metrics: { orders_total: 709, orders_on_time: 701, orders_late: 8, order_otd: 98.9 } },
+    });
+
+    render(<Shell />);
+
+    const orders = await screen.findByRole("button", { name: /Encomendas a tempo/i });
+    await waitFor(() => expect(orders.textContent).toContain("98.9%"));
+    expect(screen.getByRole("button", { name: /Lotes no prazo/i }).textContent).toContain("99.4%");
+    expect(screen.getByRole("button", { name: /Cumprimento diário/i }).textContent).toContain("97.1%");
+    expect(screen.queryByText(/Entregas a tempo/)).toBeNull();
+  });
+
+  it("plano antigo sem métricas de encomendas mostra — no cabeçalho", async () => {
+    mockShellEndpoints();
+
+    render(<Shell />);
+
+    const orders = await screen.findByRole("button", { name: /Encomendas a tempo/i });
+    expect(orders.textContent).toContain("—");
+    expect(screen.getByRole("button", { name: /Lotes no prazo/i }).textContent).toContain("99.4%");
   });
 });

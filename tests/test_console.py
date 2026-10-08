@@ -858,13 +858,13 @@ class TestHasProductionBefore:
 
 
 class TestConsoleAPI:
-    def test_risk_rows_are_sorted_by_nearest_risk_date(self):
+    def test_risk_rows_keep_server_selection_order(self):
         from backend.api.console import _risk_rows
 
         risks = [
-            LotRisk("late", "SKU_LATE", "M1", 20, 20, 0, 0, 1.0, "critical", "capacity"),
-            LotRisk("early", "SKU_EARLY", "M1", 5, 5, 0, 0, 0.8, "high", "capacity"),
-            LotRisk("mid", "SKU_MID", "M1", 10, 10, 0, 0, 0.9, "critical", "capacity"),
+            LotRisk("late", "SKU_LATE", "M1", 20, 20, 0, 0, 1.0, "critical", "none"),
+            LotRisk("early", "SKU_EARLY", "M1", 5, 5, 0, 0, 0.8, "high", "none"),
+            LotRisk("mid", "SKU_MID", "M1", 10, 10, 0, 0, 0.9, "critical", "none"),
         ]
         segments = [
             Segment("late", "OP", 0, "M1", 12, 420, 500, 0, 80, 1, 1, "SKU_LATE", 0, 0, 0, "T1"),
@@ -874,7 +874,59 @@ class TestConsoleAPI:
 
         rows = _risk_rows(risks, segments, [f"2026-03-{day:02d}" for day in range(1, 25)])
 
-        assert [row["sku"] for row in rows] == ["SKU_EARLY", "SKU_MID", "SKU_LATE"]
+        assert [row["sku"] for row in rows] == ["SKU_LATE", "SKU_EARLY", "SKU_MID"]
+        assert rows[1]["production_day"] == 3
+        assert rows[1]["production_date"] == "2026-03-04"
+        assert {row["status"] for row in rows} == {"at_limit"}
+        assert all(row["cause"] is None for row in rows)
+
+    def test_console_top_risks_are_filtered_and_ranked_by_server(self):
+        from backend.copilot.state import state
+        from backend.risk.types import RiskResult
+
+        engine, config, result = _schedule()
+        state.engine_data = engine
+        state.config = config
+        state.update_schedule(result)
+        lot_risks = [
+            LotRisk("ok", "SKU_OK", "M1", 4, 0, 4, 0, 0.0, "low", "none"),
+            LotRisk("short", "SKU_SHORT", "M1", 2, 1, 1, 0, 0.2, "high", "none"),
+            LotRisk("limit", "SKU_LIMIT", "M1", 3, 3, 0, 0, 1.0, "critical", "none"),
+            LotRisk("late", "SKU_LATE", "M1", 6, 8, -2, 0, 1.0, "critical", "setup"),
+            LotRisk("far", "SKU_FAR", "M1", 9, 9, 0, 0, 1.0, "critical", "none"),
+        ]
+        state.risk_result = RiskResult(
+            health_score=50,
+            lot_risks=lot_risks,
+            machine_risks=[],
+            heatmap=[],
+            critical_count=3,
+            top_risks=[],
+            bottleneck="M1",
+            surrogate_otd_prob=None,
+            surrogate_confidence=None,
+            mc_otd_p50=None,
+            mc_otd_p80=None,
+            mc_otd_p95=None,
+            mc_tardy_expected=None,
+            mc_runs=None,
+        )
+
+        try:
+            from backend.api.console import router
+            from fastapi.testclient import TestClient
+            from fastapi import FastAPI
+        except ImportError:
+            pytest.skip("fastapi not installed")
+
+        app = FastAPI()
+        app.include_router(router)
+        rows = TestClient(app).get("/api/console?day_idx=1").json()["top_risks"]
+
+        assert [row["lot_id"] for row in rows] == ["late", "limit", "short"]
+        assert [row["status"] for row in rows] == ["late", "at_limit", "short_slack"]
+        assert [row["slack_days"] for row in rows] == [-2, 0, 1]
+        assert [row["cause"] for row in rows] == ["setup", None, None]
 
     def test_console_structure(self):
         from backend.copilot.state import state

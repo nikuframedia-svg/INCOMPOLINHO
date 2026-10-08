@@ -83,7 +83,7 @@ it("shows a partial complete-plan improvement without creating another apply blo
     } },
   } } });
   const apply = await preview();
-  expect(screen.getByText(/melhoria parcialmente verificada/)).toBeTruthy();
+  expect(screen.getByText(/A melhoria automática parou antes de rever todas as hipóteses/)).toBeTruthy();
   expect(apply.disabled).toBe(false);
 });
 

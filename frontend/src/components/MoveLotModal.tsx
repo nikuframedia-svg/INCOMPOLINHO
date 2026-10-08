@@ -383,7 +383,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
             ) : preview.requires_confirmation ? (
               <div style={{ background: `${T.red}10`, border: `1px solid ${T.red}45`, borderRadius: 9, padding: 12 }}>
                 <div style={{ color: T.red, fontSize: 12, fontWeight: 700 }}>
-                  {deliveryWorsened ? "Este movimento agrava entregas" : "O candidato requer aprovação"}
+                  {deliveryWorsened ? "Este movimento agrava entregas" : "Este movimento precisa de aprovação"}
                 </div>
                 {preview.delivery_warnings.map((warning) => (
                   <div key={warning} style={{ color: T.secondary, fontSize: 11, marginTop: 5 }}>{warning}</div>

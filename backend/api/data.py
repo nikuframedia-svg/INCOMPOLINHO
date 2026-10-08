@@ -999,7 +999,18 @@ async def get_risk():
     _require_data()
     if state.risk_result is None:
         raise HTTPException(503, "Risco não calculado.")
-    return asdict(state.risk_result)
+    from backend.risk.plan_identity import planning_anchor_day
+    from backend.risk.slack_analytics import select_top_risks
+
+    payload = asdict(state.risk_result)
+    # The 7-day window follows today at request time, not the day the risk
+    # result was computed (a plan computed yesterday must not show yesterday's
+    # window).
+    today_idx = planning_anchor_day(state.engine_data, state.config)
+    payload["top_risks"] = [
+        asdict(risk) for risk in select_top_risks(state.risk_result.lot_risks, today_idx)
+    ]
+    return payload
 
 
 @router.get("/stress")

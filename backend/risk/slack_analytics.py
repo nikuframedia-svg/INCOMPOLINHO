@@ -23,7 +23,7 @@ from backend.scheduler.types import Lot, Segment
 from backend.scheduler.validation import validate_plan
 from backend.types import EngineData
 
-from .types import LotRisk, MachineRisk
+from .types import LotRisk, MachineRisk, risk_status
 
 # Risk thresholds (days of slack)
 SLACK_CRITICAL = 0
@@ -35,10 +35,16 @@ CV_PROCESSING = 0.10  # coefficient of variation for processing time
 CV_SETUP = 0.20  # coefficient of variation for setup time
 Z_95 = 1.645  # z-score for 95% confidence
 
+# Top risks shown to planners: 7 calendar days from today, worst status first.
+TOP_RISK_WINDOW_DAYS = 7
+TOP_RISK_LIMIT = 5
+_STATUS_ORDER = {"late": 0, "at_limit": 1, "short_slack": 2}
+
+# Only constraints the analysis below can prove. There is deliberately no
+# fallback from the slack itself: a small slack does not tell which resource
+# is short, so an unproven lot stays "none" and shows no cause.
 _BINDING_PRIORITY = {
     "none": 0,
-    "crew": 10,
-    "capacity": 20,
     "long_run": 35,
     "jit_exception": 40,
     "setup": 45,
@@ -94,14 +100,7 @@ def compute_lot_risks(
         else:
             level = "low"
 
-        binding = bindings.get(lot.id)
-        if binding is None:
-            if slack_days <= 0:
-                binding = "capacity"
-            elif slack_days <= 1:
-                binding = "crew"
-            else:
-                binding = "none"
+        binding = bindings.get(lot.id, "none")
 
         sku = lot.sku
         if not sku and lot.twin_outputs:
@@ -122,10 +121,51 @@ def compute_lot_risks(
                 risk_score=round(risk_score, 3),
                 risk_level=level,
                 binding_constraint=binding,
+                status=risk_status(slack_days),
+                cause=None if binding == "none" else binding,
             )
         )
 
     return risks
+
+
+def select_top_risks(
+    lot_risks: list[LotRisk],
+    today_idx: int,
+    *,
+    window_days: int = TOP_RISK_WINDOW_DAYS,
+    limit: int | None = TOP_RISK_LIMIT,
+) -> list[LotRisk]:
+    """Lots that need attention in the next ``window_days`` calendar days.
+
+    A lot is in the window when its due day falls inside it, or when it is
+    late and still unfinished at the window start (due before, completion
+    on/after today). A lot whose production finished before today is history
+    and never returned, whatever its status (a late order it caused shows in
+    the late-orders list instead). Lots with status ``ok`` are never
+    returned. Order: late, at the limit, short slack; then due day; then
+    highest risk score.
+    """
+    start = int(today_idx)
+    end = start + max(1, int(window_days)) - 1
+    selected = [
+        risk
+        for risk in lot_risks
+        if (risk.status or risk_status(risk.slack_days)) in _STATUS_ORDER
+        and risk.completion_day >= start
+        and risk.edd <= end
+    ]
+    selected.sort(
+        key=lambda risk: (
+            _STATUS_ORDER[risk.status or risk_status(risk.slack_days)],
+            risk.edd,
+            -risk.risk_score,
+            risk.completion_day,
+            risk.sku,
+            risk.lot_id,
+        )
+    )
+    return selected if limit is None else selected[: max(0, int(limit))]
 
 
 def _binding_constraints_by_lot(

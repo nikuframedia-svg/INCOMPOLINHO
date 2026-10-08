@@ -270,7 +270,7 @@ export function RobustnessPanel() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(125px, 1fr))", gap: 8 }}>
             {[
               [relativeResult ? "Cenários sem novos atrasos" : "Cenários a cumprir (anterior)", pct(result.success_probability_pct)],
-              ["Entregas a tempo num cenário mau", pct(result.otd_p95)],
+              ["Lotes no prazo num cenário mau", pct(result.otd_p95)],
               [relativeResult ? "Novos atrasos num cenário mau" : "Atrasos num cenário mau", num(result.additional_tardy_p95 ?? result.tardy_p95)],
               ["Dias de atraso nos piores cenários", num(result.total_tardiness_cvar95, "d")],
             ].map(([label, value]) => (

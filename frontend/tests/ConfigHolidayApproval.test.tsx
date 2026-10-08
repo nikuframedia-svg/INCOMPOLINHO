@@ -110,7 +110,7 @@ it("pede justificação e aplica o candidato apresentado", async () => {
   const dialog = await addDay();
 
   expect(within(dialog).getByText("Aplicar alteração com exceções?")).toBeTruthy();
-  expect(dialog.textContent).toContain("existem entregas em risco");
+  expect(dialog.textContent).toContain("há lotes que acabam depois do prazo de produção");
   expect(mocks.addHoliday).toHaveBeenCalledTimes(1);
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Fecho de Natal acordado" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirmar e aplicar" }));

@@ -22,7 +22,7 @@ import { Divider } from "../components/ui/Divider";
 import { PlanDeltaCards } from "../components/PlanDeltaCards";
 import { GateReportCard } from "../components/GateReportCard";
 import { useConfirm } from "../components/ui/confirmContext";
-import { approvalGateFromError, approvalImpactMessage } from "../lib/gateApproval";
+import { approvalGateFromError, approvalImpactMessage, gateStatusLabel } from "../lib/gateApproval";
 
 // ── Mutation schema ──────────────────────────────────────────
 
@@ -738,7 +738,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
                     {scenario.name}
                   </div>
                   <div style={{ color: T.tertiary, fontSize: 10, marginTop: 2 }}>
-                    OTD {scenario.otd ?? "—"}% · atrasos {scenario.tardy_count ?? "—"} · {scenario.gate_status ?? "sem validação"}
+                    Lotes no prazo {scenario.otd ?? "—"}% · lotes atrasados {scenario.tardy_count ?? "—"} · {gateStatusLabel(scenario.gate_status)}
                   </div>
                 </div>
                 <button

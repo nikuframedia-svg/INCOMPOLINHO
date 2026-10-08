@@ -7,7 +7,7 @@ import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refres
 import { getHealth, getToday, recalculate } from "../api/endpoints";
 import { staleIsopWarning } from "../lib/recalcGuard";
 import { TH } from "../constants/thresholds";
-import { approvalGateFromError, approvalImpactMessage } from "../lib/gateApproval";
+import { approvalGateFromError, approvalImpactMessage, approvalReasonLabel, decisionReasons } from "../lib/gateApproval";
 import { Sidebar } from "./Sidebar";
 import { ChatPanel } from "./ChatPanel";
 import { PageErrorBoundary } from "./PageErrorBoundary";
@@ -95,6 +95,7 @@ export function Shell() {
   const page = useAppStore((s) => s.activePage);
   const setPage = useAppStore((s) => s.setPage);
   const score = useDataStore((s) => s.score);
+  const gateReport = useDataStore((s) => s.gateReport);
   const refreshAll = useDataStore((s) => s.refreshAll);
   const isSimulated = useDataStore((s) => s.isSimulated);
   const activeMutations = useDataStore((s) => s.activeMutations);
@@ -289,7 +290,8 @@ export function Shell() {
       if (gate) {
         const approved = await confirm({
           title: "Aplicar plano com exceções?",
-          message: approvalImpactMessage(gate),
+          // Plain yes/no dialog: it has no text field, so the text must not ask for a justification.
+          message: approvalImpactMessage(gate, "confirm"),
           confirmLabel: "Aplicar plano",
           variant: "danger",
         });
@@ -303,7 +305,7 @@ export function Shell() {
         }
         try {
           await recalculate({
-            reason: `Recalculo confirmado com exceções: ${gate.approval_reasons.join(", ") || "exceções operacionais"}`,
+            reason: `Recálculo confirmado com exceções: ${decisionReasons(gate).map(approvalReasonLabel).join(", ") || "exceções operacionais"}`,
             author: "planeador",
           });
           assertRefreshed(await refreshAfterCommit(refreshAll), true);
@@ -396,13 +398,39 @@ export function Shell() {
           <div className="app-header-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {hasData && score && (
               <div style={{ display: "flex", gap: 12 }}>
+                {(() => {
+                  // Order-level service (same criterion as "no order gets worse"); older plans lack it.
+                  const orderOtd = Number(gateReport?.metrics?.order_otd);
+                  const hasOrderOtd = gateReport?.metrics?.order_otd != null && Number.isFinite(orderOtd);
+                  const ordersLate = Number(gateReport?.metrics?.orders_late);
+                  const ordersTotal = Number(gateReport?.metrics?.orders_total);
+                  // The contract target is 100%: green only when no order is late.
+                  const allOrdersOnTime = Number.isFinite(ordersLate) ? ordersLate === 0 : orderOtd >= 100;
+                  const orderTitle = hasOrderOtd && Number.isFinite(ordersLate) && Number.isFinite(ordersTotal)
+                    ? `Encomendas a tempo: ${ordersTotal - ordersLate} de ${ordersTotal}`
+                    : "Abrir entregas";
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleDeliveriesFocus("otd")}
+                      title={orderTitle}
+                      style={{
+                        ...kpiButtonStyle,
+                        fontSize: 12,
+                        color: !hasOrderOtd ? T.secondary : allOrdersOnTime ? T.green : T.orange,
+                      }}
+                    >
+                      Encomendas a tempo <b style={{ fontFamily: T.mono }}>{hasOrderOtd ? `${orderOtd.toFixed(1)}%` : "—"}</b>
+                    </button>
+                  );
+                })()}
                 <button
                   type="button"
                   onClick={() => handleDeliveriesFocus("otd")}
-                  title="Abrir entregas a tempo"
-                  style={{ ...kpiButtonStyle, color: (score.otd ?? 0) >= TH.OTD_GREEN ? T.green : T.orange }}
+                  title="Um lote pode acabar depois do prazo de produção e a encomenda ainda sair a tempo."
+                  style={{ ...kpiButtonStyle, color: T.secondary, fontWeight: 500 }}
                 >
-                  Entregas a tempo <b style={{ fontFamily: T.mono }}>{score.otd?.toFixed(1)}%</b>
+                  Lotes no prazo <b style={{ fontFamily: T.mono }}>{score.otd != null ? `${score.otd.toFixed(1)}%` : "—"}</b>
                 </button>
                 <button
                   type="button"

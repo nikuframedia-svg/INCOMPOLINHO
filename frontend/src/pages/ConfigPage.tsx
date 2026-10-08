@@ -38,6 +38,7 @@ import {
   approvalReasonLabel,
   sendWithGateApproval,
   type GateApproval,
+  gateStatusLabel,
 } from "../lib/gateApproval";
 import { getReadIdentity } from "../lib/planRevision";
 
@@ -345,10 +346,10 @@ function ScoreDelta({ prev, curr, onClear }: { prev: Score; curr: Score; onClear
 
   const fmt = (v: unknown) => typeof v === "number" ? (v % 1 === 0 ? String(v) : (v as number).toFixed(1)) : String(v);
   const items = [
-    { l: "Entregas a tempo", p: prev.otd, c: curr.otd, u: "%" },
+    { l: "Lotes no prazo", p: prev.otd, c: curr.otd, u: "%" },
     { l: "Cumprimento diário", p: prev.otd_d, c: curr.otd_d, u: "%" },
     { l: "Setups", p: prev.setups, c: curr.setups },
-    { l: "Atrasos", p: prev.tardy_count, c: curr.tardy_count },
+    { l: "Lotes atrasados", p: prev.tardy_count, c: curr.tardy_count },
   ];
 
   return (
@@ -627,7 +628,7 @@ function cleanRule(rule: SkuPlanningRule): SkuPlanningRule {
 function metricDelta(res: { delta?: PlanningDelta } | null) {
   if (!res?.delta) return null;
   const d = res.delta;
-  return `OTD ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Envios sub. ${d.subcontract_dispatch_misses >= 0 ? "+" : ""}${d.subcontract_dispatch_misses} · Atraso sub. ${d.subcontract_dispatch_late_workdays >= 0 ? "+" : ""}${d.subcontract_dispatch_late_workdays}du · Setups ${d.setups >= 0 ? "+" : ""}${d.setups} · Penalização ${d.planning_penalty >= 0 ? "+" : ""}${d.planning_penalty.toFixed(1)}`;
+  return `Lotes no prazo ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Envios a subcontratado falhados ${d.subcontract_dispatch_misses >= 0 ? "+" : ""}${d.subcontract_dispatch_misses} · Dias úteis de atraso no subcontratado ${d.subcontract_dispatch_late_workdays >= 0 ? "+" : ""}${d.subcontract_dispatch_late_workdays} · Setups ${d.setups >= 0 ? "+" : ""}${d.setups}`;
 }
 
 const NOT_APPLIED = "Alteração não aplicada. O plano não mudou.";
@@ -1468,7 +1469,7 @@ export function ConfigPage() {
       return;
     }
     if (job.status !== "ready") {
-      setReplanMessage("Erro: o candidato não ficou pronto para aplicação.");
+      setReplanMessage("Erro: o plano proposto não ficou pronto para aplicar.");
       return;
     }
     setPendingReplan({ job, ...followup });
@@ -1616,17 +1617,16 @@ export function ConfigPage() {
     if (gateReport?.requires_approval) {
       const reasons = gateReport.approval_reasons?.length
         ? gateReport.approval_reasons.map((reason) => `• ${approvalReasonLabel(reason)}`).join("\n")
-        : "• O candidato contém exceções que exigem validação do planeador.";
+        : "• O plano proposto tem exceções que precisam da aprovação do planeador.";
       const score = pendingReplan.job.result?.score;
       const impact = [
-        `OTD: ${score?.otd?.toFixed?.(1) ?? score?.otd ?? "-"}%`,
-        `Atrasos: ${score?.tardy_count ?? 0}`,
-        `Segmentos: ${pendingReplan.job.result?.n_segments ?? 0}`,
+        `Lotes no prazo: ${score?.otd?.toFixed?.(1) ?? score?.otd ?? "-"}%`,
+        `Lotes atrasados: ${score?.tardy_count ?? 0}`,
         `Avisos: ${pendingReplan.job.warnings.length}`,
       ].join(" · ");
       const justification = await prompt({
-        title: "Aplicar candidato com exceções?",
-        message: `Motivos para aprovação:\n${reasons}\n\nImpacto previsto:\n${impact}\n\nIndica a justificação para aplicar este candidato.`,
+        title: "Aplicar plano com exceções?",
+        message: `Motivos para aprovação:\n${reasons}\n\nImpacto previsto:\n${impact}\n\nIndica a justificação para aplicar este plano.`,
         inputLabel: "Justificação obrigatória",
         placeholder: "Explica por que motivo este impacto é aceite…",
         confirmLabel: "Confirmar e aplicar",
@@ -2219,13 +2219,12 @@ export function ConfigPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 20, flexWrap: "wrap", color: T.secondary, fontSize: 12 }}>
-                  <span>OTD: {pendingReplan.job.result?.score.otd?.toFixed?.(1) ?? pendingReplan.job.result?.score.otd}%</span>
-                  <span>Atrasos: {pendingReplan.job.result?.score.tardy_count ?? 0}</span>
-                  <span>Segmentos: {pendingReplan.job.result?.n_segments ?? 0}</span>
+                  <span>Lotes no prazo: {pendingReplan.job.result?.score.otd?.toFixed?.(1) ?? pendingReplan.job.result?.score.otd}%</span>
+                  <span>Lotes atrasados: {pendingReplan.job.result?.score.tardy_count ?? 0}</span>
                   <span>
-                    Estado: {pendingReplan.job.result?.gate_report.status ?? "sem gate"}
+                    Estado: {gateStatusLabel(pendingReplan.job.result?.gate_report.status)}
                     {pendingReplan.job.result?.gate_report.improvement?.status === "partial"
-                      ? " · melhoria parcialmente verificada" : ""}
+                      ? " · a melhoria automática parou antes de rever todas as hipóteses" : ""}
                   </span>
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 18, color: T.primary, fontSize: 12 }}>

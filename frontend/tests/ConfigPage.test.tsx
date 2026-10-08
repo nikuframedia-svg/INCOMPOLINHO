@@ -204,7 +204,7 @@ describe("Configuração", () => {
       } },
     } }] });
     render(<ConfigPage />);
-    expect(await screen.findByText(/melhoria parcialmente verificada/)).toBeTruthy();
+    expect(await screen.findByText(/a melhoria automática parou antes de rever todas as hipóteses/)).toBeTruthy();
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Aplicar e guardar" }).disabled).toBe(false);
   });
 
@@ -316,10 +316,10 @@ describe("Configuração", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Aplicar e guardar" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Aplicar candidato com exceções?")).toBeTruthy();
+    expect(within(dialog).getByText("Aplicar plano com exceções?")).toBeTruthy();
     expect(dialog.textContent).toContain("Existe 1 interrupção de campanha evitável.");
-    expect(dialog.textContent).toContain("OTD: 96.5%");
-    expect(dialog.textContent).toContain("Atrasos: 9");
+    expect(dialog.textContent).toContain("Lotes no prazo: 96.5%");
+    expect(dialog.textContent).toContain("Lotes atrasados: 9");
     expect(endpointMocks.applyReplan).not.toHaveBeenCalled();
 
     const confirmApply = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Confirmar e aplicar" });

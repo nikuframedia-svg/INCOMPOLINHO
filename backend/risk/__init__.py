@@ -13,10 +13,12 @@ from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 from .heatmap import compute_heatmap
+from .plan_identity import planning_anchor_day
 from .slack_analytics import (
     compute_health_score,
     compute_lot_risks,
     compute_machine_risks,
+    select_top_risks,
 )
 from .surrogate import extract_features, predict_risk
 from .types import RiskResult
@@ -58,15 +60,7 @@ def compute_risk(
     heatmap = compute_heatmap(segments, lot_risks, engine_data, config=config)
 
     critical_count = sum(1 for lr in lot_risks if lr.risk_level == "critical")
-    top_risks = sorted(
-        lot_risks,
-        key=lambda lr: (
-            lr.edd,
-            -lr.risk_score,
-            lr.completion_day,
-            lr.sku,
-        ),
-    )[:5]
+    top_risks = select_top_risks(lot_risks, planning_anchor_day(engine_data, config))
     bottleneck = (
         max(
             machine_risks, key=lambda mr: (mr.peak_utilization is None, mr.peak_utilization or 0)

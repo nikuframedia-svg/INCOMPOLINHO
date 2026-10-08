@@ -18,6 +18,7 @@ from backend.console.machines_today import compute_machines_today
 from backend.console.state_phrase import compute_state_phrase
 from backend.console.tomorrow_prep import compute_day_setups, compute_tomorrow_prep
 from backend.copilot.state import state
+from backend.risk.slack_analytics import select_top_risks
 
 router = APIRouter(route_class=PlanReadRoute)
 
@@ -47,6 +48,7 @@ def _interval_overlaps_date(entry: dict, current_date: str | None) -> bool:
 
 
 def _risk_rows(top_risks, segments, workdays: list[str]) -> list[dict]:
+    """Serialise risks in the given order (already filtered and sorted)."""
     rows = []
     segments_by_lot = {}
     for segment in segments:
@@ -72,22 +74,7 @@ def _risk_rows(top_risks, segments, workdays: list[str]) -> list[dict]:
                 workdays[last.day_idx] if 0 <= last.day_idx < len(workdays) else None
             )
         rows.append(row)
-    return sorted(
-        rows,
-        key=lambda row: (
-            min(
-                int(value)
-                for value in (
-                    row.get("production_day"),
-                    row.get("completion_day"),
-                    row.get("edd"),
-                )
-                if value is not None
-            ),
-            -float(row.get("risk_score") or 0.0),
-            str(row.get("sku") or ""),
-        ),
-    )
+    return rows
 
 
 @router.get("/api/console")
@@ -298,10 +285,13 @@ async def get_console(day_idx: int = 0):
         "machines": machines_list,
         "setups_today": setups_today,
         "top_risks": _risk_rows(
-            state.risk_result.lot_risks if state.risk_result else [],
+            select_top_risks(
+                state.risk_result.lot_risks if state.risk_result else [],
+                day_idx,
+            ),
             state.segments,
             state.engine_data.workdays,
-        )[:5],
+        ),
         "expedition": expedition_list,
         "tomorrow": tomorrow,
         "summary": summary,

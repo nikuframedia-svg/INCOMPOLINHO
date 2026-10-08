@@ -213,9 +213,9 @@ export function PlansDrawer({ onClose }: Props) {
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, color: T.secondary, fontFamily: T.mono, fontSize: 10 }}>
-                  <span>OTD {plan.otd?.toFixed(1) ?? "—"}%</span>
-                  <span>OTD-D {plan.otd_d?.toFixed(1) ?? "—"}%</span>
-                  <span>{plan.tardy_count ?? "—"} atrasos</span>
+                  <span>Lotes no prazo {plan.otd?.toFixed(1) ?? "—"}%</span>
+                  <span>Cumprimento diário {plan.otd_d?.toFixed(1) ?? "—"}%</span>
+                  <span>{plan.tardy_count == null ? "—" : plan.tardy_count === 1 ? "1 lote atrasado" : `${plan.tardy_count} lotes atrasados`}</span>
                   <span>{plan.setups ?? "—"} setups</span>
                 </div>
                 {plan.origin && <div title={plan.origin} style={{ color: T.tertiary, fontSize: 10, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Origem: {plan.origin}</div>}

@@ -176,9 +176,13 @@ def build_gate_report(
             "released_tool_priority_inversions",
         )
     }
+    order_metrics, late_order_detail = (
+        _order_delivery(segments, lots, data) if data is not None else ({}, [])
+    )
     metrics = {
         **physical_metrics,
         **delivery_metrics,
+        **order_metrics,
         **window_metrics,
         **long_metrics,
         **operational_metrics,
@@ -306,6 +310,7 @@ def build_gate_report(
         "metrics": metrics,
         "violations": violations,
         "late_detail": late_detail,
+        "late_order_detail": late_order_detail,
         "jit_window_detail": jit_window_detail,
         "subcontract_dispatch_detail": subcontract_dispatch_detail,
         "long_production_detail": long_production_detail,
@@ -423,6 +428,105 @@ def authorize_application(
         "reason": approval_reason.strip(),
         "approval_reasons": list(report.get("approval_reasons", [])),
     }
+
+
+LATE_ORDER_DETAIL_LIMIT = 50
+
+
+def _order_delivery(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Order-level service, from the same allocation as the no-loss criterion.
+
+    Every demand entry counts, including ones already past due. An order is
+    late when it is not fully covered by its due day (``tardiness > 0``); one
+    that is never fully covered has no ready day (``None`` instead of inf).
+    Informational only: ``score['otd']`` and ``delivery_risk`` stay lot-based.
+    """
+
+    # Local import: improvement must stay free to import gate helpers later.
+    from backend.scheduler.improvement import order_service
+
+    service = order_service(segments, lots, data)
+    produced_by_sku = _production_by_sku(segments)
+    planned_machine = {op.sku: op.m for op in data.ops if getattr(op, "m", None)}
+    late: list[dict[str, Any]] = []
+    for (sku, client, due_day, order_qty, _np, _occ), item in service.items():
+        if item.tardiness <= 0:
+            continue
+        never = item.tardiness == float("inf")
+        late_days = None if never else int(item.tardiness)
+        late.append(
+            {
+                "client": client,
+                "sku": sku,
+                "machine_id": _order_machine(
+                    produced_by_sku.get(sku, []),
+                    None if never else int(due_day) + late_days,
+                    planned_machine.get(sku),
+                ),
+                "order_qty": int(order_qty),
+                "covered_qty": int(item.covered_qty),
+                "shortfall_qty": max(0, int(order_qty) - int(item.covered_qty)),
+                "due_day": int(due_day),
+                "ready_day": None if never else int(due_day) + late_days,
+                "late_days": late_days,
+            }
+        )
+    late.sort(
+        key=lambda row: (
+            row["late_days"] is not None,
+            -(row["late_days"] or 0),
+            row["due_day"],
+            row["client"],
+            row["sku"],
+        )
+    )
+    total = len(service)
+    on_time = total - len(late)
+    metrics = {
+        "orders_total": total,
+        "orders_on_time": on_time,
+        "orders_late": len(late),
+        "order_otd": round(100.0 * on_time / total, 1) if total else 100.0,
+    }
+    return metrics, late[:LATE_ORDER_DETAIL_LIMIT]
+
+
+def _production_by_sku(segments: list[Segment]) -> dict[str, list[tuple[int, str, int]]]:
+    """(day, machine, qty) produced per SKU, twin outputs included."""
+
+    produced: dict[str, list[tuple[int, str, int]]] = {}
+    for segment in segments:
+        outputs = segment.twin_outputs or [("", segment.sku, segment.qty)]
+        for _op_id, sku, qty in outputs:
+            if int(qty or 0) > 0 and sku:
+                produced.setdefault(sku, []).append(
+                    (int(segment.day_idx), str(segment.machine_id), int(qty))
+                )
+    return produced
+
+
+def _order_machine(
+    production: list[tuple[int, str, int]],
+    ready_day: int | None,
+    fallback: str | None,
+) -> str | None:
+    """Machine that produces the order: the one with most of the SKU's output.
+
+    Counts production up to the order's ready day (all of it when the order is
+    never covered). With no production at all, the SKU's planned machine.
+    """
+
+    by_machine: dict[str, int] = {}
+    for day, machine, qty in production:
+        if ready_day is None or day <= ready_day:
+            by_machine[machine] = by_machine.get(machine, 0) + qty
+    if not by_machine:
+        return fallback
+    return min(by_machine, key=lambda machine: (-by_machine[machine], machine))
 
 
 def _long_production_detail(

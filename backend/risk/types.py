@@ -16,7 +16,35 @@ class LotRisk:
     slack_min: float
     risk_score: float  # 0.0 (safe) to 1.0 (critical)
     risk_level: str  # "low" | "medium" | "high" | "critical"
-    binding_constraint: str  # capacity|crew|jit_exception|long_run|operator|setup|calendar|none
+    # Only constraints proven by the plan analysis: jit_exception|long_run|
+    # operator|setup|calendar, else "none". Never a guess from the slack.
+    binding_constraint: str
+    # Plain planner level, independent from risk_level (which feeds the health
+    # score and the surrogate and keeps its meaning): late (slack < 0),
+    # at_limit (slack == 0), short_slack (slack 1-2) or ok.
+    status: str = ""
+    # Proven cause (same code as binding_constraint) or None when unproven.
+    cause: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.status:
+            self.status = risk_status(self.slack_days)
+        if self.cause is None and self.binding_constraint not in ("", "none"):
+            self.cause = self.binding_constraint
+
+
+SHORT_SLACK_MAX_DAYS = 2
+
+
+def risk_status(slack_days: int) -> str:
+    """Plain level shown to planners; slack in the same days as ``slack_days``."""
+    if slack_days < 0:
+        return "late"
+    if slack_days == 0:
+        return "at_limit"
+    if slack_days <= SHORT_SLACK_MAX_DAYS:
+        return "short_slack"
+    return "ok"
 
 
 @dataclass(slots=True)
