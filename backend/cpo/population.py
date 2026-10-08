@@ -1,4 +1,4 @@
-"""Population management for CPO v3.0.
+"""Offline population management for CPO v4 tuning helpers.
 
 Components:
   - FRRMAB: Fitness-Rate-Rank Multi-Armed Bandit (adaptive operator selection)
@@ -12,10 +12,9 @@ from __future__ import annotations
 import math
 import random
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from backend.cpo.chromosome import Chromosome
-
 
 # ─── FRRMAB ────────────────────────────────────────────────────────────
 
@@ -30,9 +29,7 @@ class FRRMAB:
         self.operators = operators
         self.window = window
         self.c = c
-        self.rewards: dict[str, deque] = {
-            op: deque(maxlen=window) for op in operators
-        }
+        self.rewards: dict[str, deque] = {op: deque(maxlen=window) for op in operators}
         self.counts: dict[str, int] = {op: 0 for op in operators}
         self.total: int = 0
 
@@ -44,22 +41,12 @@ class FRRMAB:
 
         scores = []
         for op in self.operators:
-            avg_reward = (
-                sum(self.rewards[op]) / len(self.rewards[op])
-                if self.rewards[op]
-                else 0.0
-            )
-            explore = self.c * math.sqrt(
-                math.log(self.total + 1) / max(self.counts[op], 1)
-            )
+            avg_reward = sum(self.rewards[op]) / len(self.rewards[op]) if self.rewards[op] else 0.0
+            explore = self.c * math.sqrt(math.log(self.total + 1) / max(self.counts[op], 1))
             scores.append(avg_reward + explore)
 
         best_score = max(scores)
-        best_ops = [
-            self.operators[i]
-            for i, s in enumerate(scores)
-            if abs(s - best_score) < 1e-9
-        ]
+        best_ops = [self.operators[i] for i, s in enumerate(scores) if abs(s - best_score) < 1e-9]
         return rng.choice(best_ops)
 
     def update(self, operator: str, reward: float) -> None:
@@ -125,23 +112,18 @@ class MAPElitesArchive:
                     self.grid[cell] = entry
 
     def _to_cell(self, setups: int, earliness: float) -> tuple[int, int]:
-        si = int(
-            (setups - self.setups_lo) / max(self.setups_hi - self.setups_lo, 1) * self.bins
-        )
+        si = int((setups - self.setups_lo) / max(self.setups_hi - self.setups_lo, 1) * self.bins)
         si = max(0, min(self.bins - 1, si))
-        ei = int(
-            (earliness - self.earl_lo)
-            / max(self.earl_hi - self.earl_lo, 0.1)
-            * self.bins
-        )
+        ei = int((earliness - self.earl_lo) / max(self.earl_hi - self.earl_lo, 0.1) * self.bins)
         ei = max(0, min(self.bins - 1, ei))
         return (si, ei)
 
-    def try_insert(
-        self, chrom: Chromosome, score: dict, cost: float
-    ) -> bool:
+    def try_insert(self, chrom: Chromosome, score: dict, cost: float) -> bool:
         # Only feasible solutions
-        if score.get("tardy_count", 1) > 0:
+        if (
+            score.get("tardy_count", 1) > 0
+            or score.get("subcontract_dispatch_misses", 0) > 0
+        ):
             return False
 
         setups = score.get("setups", 100)

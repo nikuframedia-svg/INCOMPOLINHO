@@ -13,7 +13,6 @@ from backend.config.types import FactoryConfig
 from backend.scheduler.types import Segment
 from backend.types import EngineData
 
-
 DEFAULT_OEE = 0.66
 
 
@@ -34,7 +33,8 @@ class GuardianResult:
 
 
 def validate_input(
-    data: EngineData, config: FactoryConfig | None = None,
+    data: EngineData,
+    config: FactoryConfig | None = None,
 ) -> GuardianResult:
     """Validate EngineData before scheduling. Returns cleaned copy + issues."""
     issues: list[GuardianIssue] = []
@@ -71,10 +71,14 @@ def validate_input(
 
         # demand array length mismatch → fix
         if len(op.d) != data.n_days:
-            issues.append(GuardianIssue(
-                op.id, "d", "fix",
-                f"len(d)={len(op.d)} != n_days={data.n_days}",
-            ))
+            issues.append(
+                GuardianIssue(
+                    op.id,
+                    "d",
+                    "fix",
+                    f"len(d)={len(op.d)} != n_days={data.n_days}",
+                )
+            )
 
         # OEE out of range → fix
         if op.oee <= 0 or op.oee > 1.0:
@@ -93,10 +97,14 @@ def validate_input(
     drop_twin_indices: set[int] = set()
     for i, tg in enumerate(data.twin_groups):
         if tg.op_id_1 not in op_id_set or tg.op_id_2 not in op_id_set:
-            issues.append(GuardianIssue(
-                f"twin:{tg.tool_id}", "twin_group", "drop",
-                f"Twin referencia op inexistente ({tg.op_id_1}, {tg.op_id_2})",
-            ))
+            issues.append(
+                GuardianIssue(
+                    f"twin:{tg.tool_id}",
+                    "twin_group",
+                    "drop",
+                    f"Twin referencia op inexistente ({tg.op_id_1}, {tg.op_id_2})",
+                )
+            )
             drop_twin_indices.add(i)
             continue
 
@@ -104,15 +112,22 @@ def validate_input(
         op1 = next((o for o in data.ops if o.id == tg.op_id_1), None)
         op2 = next((o for o in data.ops if o.id == tg.op_id_2), None)
         if op1 and op2 and op1.m != op2.m:
-            issues.append(GuardianIssue(
-                f"twin:{tg.tool_id}", "twin_group", "warn",
-                f"Twin com máquinas diferentes: {op1.m} vs {op2.m}",
-            ))
+            issues.append(
+                GuardianIssue(
+                    f"twin:{tg.tool_id}",
+                    "twin_group",
+                    "warn",
+                    f"Twin com máquinas diferentes: {op1.m} vs {op2.m}",
+                )
+            )
 
     # Build cleaned EngineData
     if not issues:
         return GuardianResult(
-            cleaned=data, dropped_ops=[], issues=[], is_clean=True,
+            cleaned=data,
+            dropped_ops=[],
+            issues=[],
+            is_clean=True,
         )
 
     cleaned = copy.copy(data)
@@ -128,7 +143,7 @@ def validate_input(
             if len(op.d) < data.n_days:
                 op.d = list(op.d) + [0] * (data.n_days - len(op.d))
             else:
-                op.d = list(op.d[:data.n_days])
+                op.d = list(op.d[: data.n_days])
         if op.oee <= 0 or op.oee > 1.0:
             op.oee = DEFAULT_OEE
         if op.sH < 0:
@@ -137,8 +152,7 @@ def validate_input(
     # Filter twin groups
     if drop_twin_indices:
         cleaned.twin_groups = [
-            tg for i, tg in enumerate(data.twin_groups)
-            if i not in drop_twin_indices
+            tg for i, tg in enumerate(data.twin_groups) if i not in drop_twin_indices
         ]
 
     return GuardianResult(
@@ -150,7 +164,8 @@ def validate_input(
 
 
 def validate_output(
-    segments: list[Segment], data: EngineData,
+    segments: list[Segment],
+    data: EngineData,
 ) -> list[GuardianIssue]:
     """Post-schedule sanity checks on segments."""
     issues: list[GuardianIssue] = []
@@ -162,31 +177,47 @@ def validate_output(
     for seg in segments:
         # Out of horizon
         if seg.day_idx >= data.n_days:
-            issues.append(GuardianIssue(
-                seg.lot_id, "day_idx", "warn",
-                f"Segment dia {seg.day_idx} >= horizonte {data.n_days}",
-            ))
+            issues.append(
+                GuardianIssue(
+                    seg.lot_id,
+                    "day_idx",
+                    "warn",
+                    f"Segment dia {seg.day_idx} >= horizonte {data.n_days}",
+                )
+            )
 
         # Outside shift bounds (420=07:00, 1440=00:00)
         if seg.start_min < 420 or seg.end_min > 1440:
-            issues.append(GuardianIssue(
-                seg.lot_id, "time", "warn",
-                f"Segment fora dos turnos: {seg.start_min}-{seg.end_min}",
-            ))
+            issues.append(
+                GuardianIssue(
+                    seg.lot_id,
+                    "time",
+                    "warn",
+                    f"Segment fora dos turnos: {seg.start_min}-{seg.end_min}",
+                )
+            )
 
         # Orphan machine
         if seg.machine_id not in machine_ids:
-            issues.append(GuardianIssue(
-                seg.lot_id, "machine_id", "warn",
-                f"Máquina {seg.machine_id!r} não existe",
-            ))
+            issues.append(
+                GuardianIssue(
+                    seg.lot_id,
+                    "machine_id",
+                    "warn",
+                    f"Máquina {seg.machine_id!r} não existe",
+                )
+            )
 
         # Negative qty
         if seg.qty < 0:
-            issues.append(GuardianIssue(
-                seg.lot_id, "qty", "warn",
-                f"Produção negativa: {seg.qty}",
-            ))
+            issues.append(
+                GuardianIssue(
+                    seg.lot_id,
+                    "qty",
+                    "warn",
+                    f"Produção negativa: {seg.qty}",
+                )
+            )
 
         key = (seg.machine_id, seg.day_idx)
         by_machine_day.setdefault(key, []).append(seg)
@@ -196,10 +227,14 @@ def validate_output(
         sorted_segs = sorted(segs, key=lambda s: s.start_min)
         for i in range(len(sorted_segs) - 1):
             if sorted_segs[i].end_min > sorted_segs[i + 1].start_min:
-                issues.append(GuardianIssue(
-                    sorted_segs[i].lot_id, "overlap", "warn",
-                    f"Sobreposição {machine} dia {day}: "
-                    f"{sorted_segs[i].end_min} > {sorted_segs[i + 1].start_min}",
-                ))
+                issues.append(
+                    GuardianIssue(
+                        sorted_segs[i].lot_id,
+                        "overlap",
+                        "warn",
+                        f"Sobreposição {machine} dia {day}: "
+                        f"{sorted_segs[i].end_min} > {sorted_segs[i + 1].start_min}",
+                    )
+                )
 
     return issues

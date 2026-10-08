@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import statistics
 from pathlib import Path
 
-from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 from .types import LotRisk, MachineRisk
@@ -51,8 +49,13 @@ def extract_features(
     critical_pct = sum(1 for lr in lot_risks if lr.risk_level == "critical") / n_lots
     high_pct = sum(1 for lr in lot_risks if lr.risk_level == "high") / n_lots
 
-    max_util = max((mr.peak_utilization for mr in machine_risks), default=0.0)
-    utils = [mr.avg_utilization for mr in machine_risks] or [0.0]
+    max_util = max(
+        (mr.peak_utilization if mr.peak_utilization is not None else 1.0 for mr in machine_risks),
+        default=0.0,
+    )
+    utils = [
+        mr.avg_utilization if mr.avg_utilization is not None else 1.0 for mr in machine_risks
+    ] or [0.0]
     util_sd = statistics.stdev(utils) if len(utils) > 1 else 0.0
 
     oees = [op.oee for op in engine_data.ops] or [0.66]
@@ -95,7 +98,8 @@ def predict_risk(features: list[float]) -> tuple[float, str] | None:
     if len(weights) != len(features):
         logger.warning(
             "Feature mismatch: model expects %d, got %d",
-            len(weights), len(features),
+            len(weights),
+            len(features),
         )
         return None
 
@@ -125,9 +129,7 @@ def train_surrogate(
     try:
         import numpy as np
     except ImportError as exc:
-        raise ImportError(
-            "Training requires numpy: pip install numpy"
-        ) from exc
+        raise ImportError("Training requires numpy: pip install numpy") from exc
 
     save_path = path or _SURROGATE_PATH
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -176,4 +178,5 @@ def _safe_exp(x: float) -> float:
     if x < -500:
         return 0.0
     import math
+
     return math.exp(x)

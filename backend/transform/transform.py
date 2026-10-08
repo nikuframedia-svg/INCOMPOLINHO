@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from backend.config.types import OUT_OF_SCOPE_MACHINES
 from backend.parser.isop_reader import extract_stock_and_demand
 from backend.transform.client_demands import extract_client_demands
 from backend.transform.merge import merge_multi_client
@@ -39,6 +40,13 @@ def transform(
         has_twin_col: whether ISOP has "Peça Gémea" column
         master_data: contents of incompol.yaml (or None)
     """
+    excluded = [row for row in rows if row.machine_id.upper() in OUT_OF_SCOPE_MACHINES]
+    if excluded:
+        raise ValueError(
+            "PRM020 fora do âmbito da análise: "
+            f"{len(excluded)} linha(s) do ISOP, incluindo {excluded[0].sku}. "
+            "Corrija a máquina no ISOP; a procura não foi descartada."
+        )
     # 1. Extract client demands BEFORE merge (for expedição view)
     client_demands = extract_client_demands(rows, workdays)
 
@@ -53,7 +61,25 @@ def transform(
 
     # 3. Merge multi-client (same sku+machine+tool)
     ops = merge_multi_client(ops)
+    routes_by_sku: dict[str, list[EOp]] = {}
+    for op in ops:
+        routes_by_sku.setdefault(op.sku, []).append(op)
+    ambiguous = {
+        sku: routes
+        for sku, routes in routes_by_sku.items()
+        if len(routes) > 1
+    }
+    if ambiguous:
+        details = "; ".join(
+            f"{sku}: " + ", ".join(f"{op.m}/{op.t}" for op in routes)
+            for sku, routes in sorted(ambiguous.items())
+        )
+        raise ValueError(
+            "Cada SKU deve ter uma única rota de produção; rotas ambíguas: "
+            + details
+        )
 
+    input_warnings = [warning for row in rows for warning in row.warnings]
     # 4. Twin detection — priority: YAML > column > tool+machine
     if master_data and "twins" in master_data:
         twin_groups = identify_twins_from_master(ops, master_data["twins"])
@@ -63,6 +89,7 @@ def transform(
         logger.info("Twins from ISOP column: %d groups", len(twin_groups))
     else:
         twin_groups, warnings = identify_twins_from_tool_machine(ops)
+        input_warnings.extend(warnings)
         logger.info("Twins auto-detected: %d groups, %d warnings", len(twin_groups), len(warnings))
 
     # 5. Build machine list
@@ -70,6 +97,7 @@ def transform(
 
     # 6. Holidays — convert date strings to workday indices
     holidays = _resolve_holidays(workdays, master_data)
+    explicit_holidays = _resolve_explicit_holidays(workdays, master_data)
 
     return EngineData(
         ops=ops,
@@ -79,11 +107,16 @@ def transform(
         workdays=workdays,
         n_days=len(workdays),
         holidays=holidays,
+        calendar_base_holidays=list(holidays),
+        calendar_explicit_holidays=explicit_holidays,
+        input_warnings=input_warnings,
     )
 
 
 def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
     """Convert a single RawRow to EOp with master data enrichment."""
+    if raw.pieces_per_hour <= 0 or raw.operators < 1:
+        raise ValueError(f"{raw.sku}: cadencia e numero de operadores devem ser positivos.")
     stk, demand = extract_stock_and_demand(raw.np_values)
 
     # Setup hours: from YAML (not ISOP)
@@ -98,6 +131,10 @@ def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
         alt_map = master_data.get("alt_machines", {})
     alt_info = alt_map.get(raw.tool_id)
     alt = alt_info["alt"] if alt_info else None
+    if alt in OUT_OF_SCOPE_MACHINES:
+        raise ValueError(
+            f"{raw.tool_id}: PRM020 fora do âmbito como máquina alternativa."
+        )
 
     # OEE default
     oee = 0.66
@@ -111,9 +148,9 @@ def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
         designation=raw.designation,
         m=raw.machine_id,
         t=raw.tool_id,
-        pH=raw.pieces_per_hour if raw.pieces_per_hour > 0 else 1.0,
+        pH=raw.pieces_per_hour,
         sH=sH,
-        operators=raw.operators if raw.operators > 0 else 1,
+        operators=raw.operators,
         eco_lot=raw.eco_lot,
         alt=alt,
         stk=stk,
@@ -124,9 +161,7 @@ def _raw_to_eop(raw: RawRow, master_data: dict[str, Any] | None) -> EOp:
     )
 
 
-def _resolve_holidays(
-    workdays: list[str], master_data: dict[str, Any] | None
-) -> list[int]:
+def _resolve_holidays(workdays: list[str], master_data: dict[str, Any] | None) -> list[int]:
     """Convert holiday date strings from YAML to workday indices.
 
     Also auto-detects weekends (Saturday=5, Sunday=6) as holidays.
@@ -143,21 +178,28 @@ def _resolve_holidays(
         except ValueError:
             pass
 
-    # Explicit holidays from YAML
-    if master_data:
-        holiday_dates = master_data.get("holidays", [])
-        workday_set = {d: i for i, d in enumerate(workdays)}
-        for h in holiday_dates:
-            date_str = str(h)
-            if date_str in workday_set:
-                indices_set.add(workday_set[date_str])
+    indices_set.update(_resolve_explicit_holidays(workdays, master_data))
 
     return sorted(indices_set)
 
 
-def _build_machines(
-    ops: list[EOp], master_data: dict[str, Any] | None
-) -> list[MachineInfo]:
+def _resolve_explicit_holidays(
+    workdays: list[str], master_data: dict[str, Any] | None
+) -> list[int]:
+    """Convert only explicit master-data holidays to workday indices."""
+    if not master_data:
+        return []
+    workday_set = {d: i for i, d in enumerate(workdays)}
+    return sorted(
+        {
+            workday_set[str(holiday)]
+            for holiday in master_data.get("holidays", [])
+            if str(holiday) in workday_set
+        }
+    )
+
+
+def _build_machines(ops: list[EOp], master_data: dict[str, Any] | None) -> list[MachineInfo]:
     """Build machine list from ops + YAML machine config."""
     machine_config: dict[str, dict[str, Any]] = {}
     if master_data:
@@ -171,9 +213,9 @@ def _build_machines(
             seen.add(op.m)
             cfg = machine_config.get(op.m, {})
             group = cfg.get("group", _DEFAULT_GROUP)
-            capacity = cfg.get("day_capacity_min", _DEFAULT_DAY_CAPACITY)
-            machines.append(
-                MachineInfo(id=op.m, group=group, day_capacity=capacity)
-            )
+            capacity = cfg.get("day_capacity_min")
+            if capacity is None:
+                capacity = _DEFAULT_DAY_CAPACITY
+            machines.append(MachineInfo(id=op.m, group=group, day_capacity=capacity))
 
     return machines

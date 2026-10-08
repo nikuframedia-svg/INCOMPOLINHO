@@ -10,10 +10,10 @@ class SchedulerParams:
     """Tunable scheduler parameters. Defaults match current constants."""
 
     max_edd_gap: int = 10
-    max_run_days: int = 5
+    max_run_days: int = 4
     edd_swap_tolerance: int = 5
     edd_assign_threshold: int = 5
-    campaign_window: int = 15         # EDD_SWAP_TOLERANCE + 10
+    campaign_window: int = 15  # EDD_SWAP_TOLERANCE + 10
     backward_buffer_pct: float = 0.05
     jit_threshold: float = 95.0
     interleave_enabled: bool = True
@@ -36,10 +36,11 @@ class ISContext:
     n_days: int
     total_demand: int
     avg_oee: float
-    twin_pct: float        # fraction of ops with twins
-    alt_pct: float         # fraction of ops with alt machines
+    twin_pct: float  # fraction of ops with twins
+    alt_pct: float  # fraction of ops with alt machines
     avg_edd: float
     demand_density: float  # total_load_min / total_capacity_min
+    planning_policy_version: str = "twin-shared-material-v2"
 
 
 @dataclass(slots=True)
@@ -53,4 +54,4 @@ class StudyResult:
     improvement: dict
     n_trials: int
     total_time_ms: float
-    confidence: str   # "high" | "medium" | "low" | "cold_start"
+    confidence: str  # "high" | "medium" | "low" | "cold_start"

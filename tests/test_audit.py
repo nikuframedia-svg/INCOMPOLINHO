@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from backend.audit import (
     AuditLogger,
@@ -15,11 +16,12 @@ from backend.audit.templates import TEMPLATES, render_decision
 from backend.audit.types import Alternative, DecisionRecord
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.scheduler import schedule_all
-from backend.scheduler.types import Lot, Segment
+from backend.scheduler.types import Segment
 from backend.types import EngineData, EOp, MachineInfo
 
 
 # --- Fixtures ---
+
 
 def _eop(
     op_id: str = "T1_M1_SKU1",
@@ -33,10 +35,22 @@ def _eop(
     alt: str | None = None,
 ) -> EOp:
     return EOp(
-        id=op_id, sku=sku, client="CLIENT", designation="Test",
-        m=machine, t=tool, pH=pH, sH=sH, operators=1,
-        eco_lot=0, alt=alt, stk=0, backlog=0,
-        d=d or [0, 500, 0, 300, 0], oee=oee, wip=0,
+        id=op_id,
+        sku=sku,
+        client="CLIENT",
+        designation="Test",
+        m=machine,
+        t=tool,
+        pH=pH,
+        sH=sH,
+        operators=1,
+        eco_lot=0,
+        alt=alt,
+        stk=0,
+        backlog=0,
+        d=d or [0, 500, 0, 300, 0],
+        oee=oee,
+        wip=0,
     )
 
 
@@ -53,9 +67,13 @@ def _engine(
                 machine_ids.append(op.alt)
     machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machine_ids]
     return EngineData(
-        ops=ops, machines=machines, twin_groups=[], client_demands={},
-        workdays=[f"2026-03-{i+5:02d}" for i in range(n_days)],
-        n_days=n_days, holidays=[],
+        ops=ops,
+        machines=machines,
+        twin_groups=[],
+        client_demands={},
+        workdays=[f"2026-03-{i + 5:02d}" for i in range(n_days)],
+        n_days=n_days,
+        holidays=[],
     )
 
 
@@ -71,19 +89,30 @@ def _seg(
     setup_min: float = 30.0,
 ) -> Segment:
     return Segment(
-        lot_id=lot_id, run_id="R1", machine_id=machine, tool_id=tool,
-        day_idx=day, start_min=start, end_min=end, shift="A", qty=qty,
-        prod_min=prod_min, setup_min=setup_min,
+        lot_id=lot_id,
+        run_id="R1",
+        machine_id=machine,
+        tool_id=tool,
+        day_idx=day,
+        start_min=start,
+        end_min=end,
+        shift="A",
+        qty=qty,
+        prod_min=prod_min,
+        setup_min=setup_min,
     )
 
 
 # --- Logger Tests ---
 
+
 class TestAuditLogger:
     def test_log_assign_records_decision(self):
         logger = AuditLogger()
         logger.log_assign(
-            "run_BFP079", "BFP079", "PRM031",
+            "run_BFP079",
+            "BFP079",
+            "PRM031",
             [("PRM031", 350), ("PRM039", 520)],
             "assign_load_balance",
         )
@@ -94,7 +123,9 @@ class TestAuditLogger:
     def test_log_assign_no_alt(self):
         logger = AuditLogger()
         logger.log_assign(
-            "run_BFP079", "BFP079", "PRM031",
+            "run_BFP079",
+            "BFP079",
+            "PRM031",
             [("PRM031", 350)],
             "assign_no_alt",
         )
@@ -104,7 +135,9 @@ class TestAuditLogger:
     def test_log_assign_alternatives_captured(self):
         logger = AuditLogger()
         logger.log_assign(
-            "run_BFP079", "BFP079", "PRM031",
+            "run_BFP079",
+            "BFP079",
+            "PRM031",
             [("PRM031", 350), ("PRM039", 520)],
             "assign_load_balance",
         )
@@ -154,18 +187,25 @@ class TestAuditLogger:
 
 # --- Template Tests ---
 
+
 class TestTemplates:
     def test_all_templates_have_content(self):
         assert len(TEMPLATES) >= 10
 
     def test_assign_template_renders(self):
         record = DecisionRecord(
-            id="D0000", phase="assign", subject_id="run_BFP079",
-            subject_type="run", action="assign_machine", chosen="PRM031",
-            rule="assign_load_balance", binding_constraint="LOAD_BALANCE",
+            id="D0000",
+            phase="assign",
+            subject_id="run_BFP079",
+            subject_type="run",
+            action="assign_machine",
+            chosen="PRM031",
+            rule="assign_load_balance",
+            binding_constraint="LOAD_BALANCE",
             alternatives=[Alternative("PRM039", 520, "LOAD_BALANCE", "Carga 520min")],
             state_snapshot={"chosen_load": 350, "alt_load": 520, "tool_id": "BFP079", "edd": 0},
-            explanation_pt="", timestamp_ms=0.1,
+            explanation_pt="",
+            timestamp_ms=0.1,
         )
         text = render_decision(record)
         assert "PRM031" in text
@@ -173,11 +213,18 @@ class TestTemplates:
 
     def test_unknown_rule_fallback(self):
         record = DecisionRecord(
-            id="D0000", phase="assign", subject_id="run1",
-            subject_type="run", action="test", chosen="X",
-            rule="UNKNOWN_RULE", binding_constraint="NONE",
-            alternatives=[], state_snapshot={},
-            explanation_pt="", timestamp_ms=0.0,
+            id="D0000",
+            phase="assign",
+            subject_id="run1",
+            subject_type="run",
+            action="test",
+            chosen="X",
+            rule="UNKNOWN_RULE",
+            binding_constraint="NONE",
+            alternatives=[],
+            state_snapshot={},
+            explanation_pt="",
+            timestamp_ms=0.0,
         )
         text = render_decision(record)
         assert "assign" in text
@@ -186,7 +233,9 @@ class TestTemplates:
     def test_explanation_in_portuguese(self):
         logger = AuditLogger()
         logger.log_assign(
-            "run_BFP079", "BFP079", "PRM031",
+            "run_BFP079",
+            "BFP079",
+            "PRM031",
             [("PRM031", 350), ("PRM039", 520)],
             "assign_load_balance",
         )
@@ -195,6 +244,7 @@ class TestTemplates:
 
 
 # --- Integration Tests ---
+
 
 class TestScheduleAllAudit:
     def test_audit_false_no_trail(self):
@@ -222,9 +272,7 @@ class TestScheduleAllAudit:
         ]
         engine = _engine(ops=ops)
         result = schedule_all(engine, audit=True)
-        assign_decisions = [
-            d for d in result.audit_trail.decisions if d.phase == "assign"
-        ]
+        assign_decisions = [d for d in result.audit_trail.decisions if d.phase == "assign"]
         assert len(assign_decisions) >= 2
 
     def test_audit_no_performance_regression(self):
@@ -251,6 +299,7 @@ class TestScheduleAllAudit:
 
 
 # --- Diff Tests ---
+
 
 class TestDiff:
     def test_identical_schedules(self):
@@ -290,6 +339,7 @@ class TestDiff:
 
 # --- Store Tests ---
 
+
 class TestAuditStore:
     def test_save_load_roundtrip(self):
         store = AuditStore(db_path=":memory:")
@@ -326,14 +376,46 @@ class TestAuditStore:
         assert loaded[0]["subject_id"] == "r1"
         store.close()
 
+    def test_store_can_be_reused_from_a_worker_thread(self):
+        store = AuditStore(db_path=":memory:")
+        logger = AuditLogger()
+        logger.log_assign("r1", "T1", "M1", [("M1", 100)], "assign_no_alt")
+        trail = logger.get_trail("threaded")
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            saved_id = executor.submit(store.save_trail, trail, {"otd": 100}).result()
+            loaded = executor.submit(store.load_decisions, saved_id).result()
+
+        assert len(loaded) == 1
+        assert loaded[0]["chosen"] == "M1"
+        store.close()
+
+    def test_resaving_schedule_replaces_decisions(self):
+        store = AuditStore(db_path=":memory:")
+        logger = AuditLogger()
+        logger.log_assign("r1", "T1", "M1", [("M1", 100)], "assign_no_alt")
+        trail = logger.get_trail("same-schedule")
+
+        store.save_trail(trail, {"otd": 100})
+        store.save_trail(trail, {"otd": 100})
+
+        assert len(store.load_decisions("same-schedule")) == 1
+        store.close()
+
 
 # --- Counterfactual Tests ---
+
 
 class TestCounterfactual:
     def test_force_machine(self):
         ops = [
-            _eop(op_id="T1_M1_SKU1", machine="M1", tool="T1", alt="M2",
-                 d=[0, 500, 0, 300, 0, 0, 0, 0, 0, 0]),
+            _eop(
+                op_id="T1_M1_SKU1",
+                machine="M1",
+                tool="T1",
+                alt="M2",
+                d=[0, 500, 0, 300, 0, 0, 0, 0, 0, 0],
+            ),
         ]
         engine = _engine(ops=ops)
         result = schedule_all(engine)

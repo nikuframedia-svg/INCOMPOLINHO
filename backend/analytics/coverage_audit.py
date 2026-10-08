@@ -45,9 +45,15 @@ def compute_coverage_audit(
     projs = compute_stock_projections(segments, lots, engine_data)
 
     # Per-client expedition aggregation
-    client_data: dict[str, dict] = defaultdict(lambda: {
-        "total": 0, "ready": 0, "at_risk": 0, "worst_sku": None, "worst_cov": 100.0,
-    })
+    client_data: dict[str, dict] = defaultdict(
+        lambda: {
+            "total": 0,
+            "ready": 0,
+            "at_risk": 0,
+            "worst_sku": None,
+            "worst_cov": 100.0,
+        }
+    )
 
     for day in exp.days:
         for entry in day.entries:
@@ -70,15 +76,17 @@ def compute_coverage_audit(
         total_all += cd["total"]
         ready_all += cd["ready"]
         cov_pct = (cd["ready"] / cd["total"] * 100) if cd["total"] > 0 else 100.0
-        clients.append(ClientCoverage(
-            client=client,
-            total_orders=cd["total"],
-            covered_orders=cd["ready"],
-            coverage_pct=round(cov_pct, 1),
-            at_risk_orders=cd["at_risk"],
-            avg_days_early=0.0,  # could be computed from order_tracking
-            worst_sku=cd["worst_sku"],
-        ))
+        clients.append(
+            ClientCoverage(
+                client=client,
+                total_orders=cd["total"],
+                covered_orders=cd["ready"],
+                coverage_pct=round(cov_pct, 1),
+                at_risk_orders=cd["at_risk"],
+                avg_days_early=0.0,  # could be computed from order_tracking
+                worst_sku=cd["worst_sku"],
+            )
+        )
 
     overall_cov = (ready_all / total_all * 100) if total_all > 0 else 100.0
 
@@ -91,16 +99,16 @@ def compute_coverage_audit(
 
     # Summary
     if health >= 90:
-        summary = f"Cobertura excelente: {overall_cov:.0f}%. {total_all} encomendas, {ready_all} prontas."
+        summary = (
+            f"Cobertura excelente: {overall_cov:.0f}%. {total_all} encomendas, {ready_all} prontas."
+        )
     elif health >= 70:
         at_risk = sum(c.at_risk_orders for c in clients)
         summary = f"Cobertura boa ({overall_cov:.0f}%) mas {at_risk} encomendas em risco."
     else:
         worst = min(clients, key=lambda c: c.coverage_pct) if clients else None
-        summary = (
-            f"Cobertura insuficiente: {overall_cov:.0f}%. "
-            f"{'Cliente ' + worst.client + ' com ' + str(round(worst.coverage_pct)) + '%.' if worst else ''}"
-        )
+        worst_summary = f"Cliente {worst.client} com {round(worst.coverage_pct)}%." if worst else ""
+        summary = f"Cobertura insuficiente: {overall_cov:.0f}%. {worst_summary}"
 
     return CoverageAudit(
         overall_coverage_pct=round(overall_cov, 1),

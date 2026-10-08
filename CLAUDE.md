@@ -1,5 +1,9 @@
 # ProdPlan PP1 — Industrial APS Scheduler
 
+> **`AGENTS.md` prevalece sobre este ficheiro.** Define o contrato de planeamento
+> (física → entregas por encomenda → antecipação → setups/transferências) e as
+> decisões confirmadas. O que aqui contradiga o AGENTS.md é histórico.
+
 Scheduler de produção para fábricas de estampagem.
 Fábrica: Incompol (5 prensas, 59 ferramentas, ~94 SKUs, 14 clientes).
 Empresa: NIKUFRA.AI (Portugal).
@@ -10,7 +14,7 @@ Empresa: NIKUFRA.AI (Portugal).
 - `frontend/` — React 19 + TypeScript + Vite + Zustand (UI: Console, Gantt, Stock, Risk, Expedition, Simulator, Config, Journal, Rules)
 - `config/incompol.yaml` — Master data (máquinas, setups, twins, holidays)
 - `docker/` + `Dockerfile` + `docker-compose.yml` — Orquestração multi-stage (Node build → Python slim + Nginx + Supervisor)
-- `tests/` — 414 testes (backend Python)
+- `tests/` — ~2780 testes (backend Python); casos reais congelados em `tests/fixtures/private/` (fora do git)
 
 ## Comandos
 ```bash
@@ -32,22 +36,26 @@ ScheduleResult { segments, lots, score, warnings, operator_alerts }
 ## ═══ CPO v3.0 — Cascading Pipeline Optimizer ═══
 
 Entry point: `from backend.cpo import optimize`
-Modos: quick (greedy passthrough), normal (GA 20×30 + CP-SAT), deep (GA 40×100 + surrogate), max (GA 60×300)
+Modos: quick (greedy passthrough), normal (num ISOP real, ≥50 operações: greedy + ciclo de melhoria sem perdas; em instâncias pequenas também pesquisa candidatos e CP-SAT local), deep/max (pesquisa de candidatos + CP-SAT local + ciclo de melhoria; diferem no orçamento). O GA não é operacional: vive em `backend/cpo/offline_ga.py` só para experiências offline.
 
 - `optimize(data, mode="quick")` — mesmo que schedule_all(), <500ms
-- `optimize(data, mode="normal")` — GA optimiza 7 genes sobre o greedy, ~5-15s
+- `optimize(data, mode="normal")` — melhoria limitada e validada sobre o greedy (critério canónico em `backend/scheduler/policy.py`, ver `AGENTS.md`)
 - `schedule_all()` — pipeline greedy interno (5 fases), chamado pelo CPO internamente
 
 Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
 
-## ═══ PRIORIDADE Nº1 ═══
-ENTREGAR TUDO A TEMPO. Sem excepção.
+## ═══ ENTREGAS ═══
+Entregar a tempo é o primeiro objetivo **depois das leis físicas** (máquina,
+ferramenta, equipa, calendário, material). Quando há capacidade, o alvo é
+OTD = OTD-D = 100%.
 
-## ═══ OTD-DELIVERY = 100% (OBRIGATÓRIO) ═══
-
-- **OTD** (global) = total produzido >= total procura → 100%
-- **OTD-D** (por dia) = em CADA dia com procura, produção acumulada >= procura acumulada → 100%
-- Qualquer regressão abaixo de 100% é um BUG
+- **OTD** (global) = total produzido >= total procura
+- **OTD-D** (por dia) = em cada dia com procura, produção acumulada >= procura acumulada
+- Uma melhoria automática nunca pode piorar **nenhuma** encomenda individual.
+- Se não há capacidade dentro da janela de material, o plano mantém e reporta
+  os atrasos: nunca relaxar a janela, inventar stock ou violar física para
+  mostrar 100%. Ex.: revisão 90 tem OTD 96,5% por falta real de capacidade
+  na PRM042 (sem alternativa).
 
 ## ═══ DADOS ISOP ═══
 
@@ -75,7 +83,7 @@ Surplus carry-forward independente por SKU.
 ## ═══ MÁQUINAS ═══
 PRM019(Grandes,21SKUs) PRM031(Grandes,20,Faurecia) PRM039(Grandes,28,+variedade)
 PRM042(Médias,11,SEM ALTERNATIVA) PRM043(Grandes,14)
-PRM020 — FORA DE USO. IGNORAR.
+PRM020 — fora do âmbito da análise; não importar procura nem criar capacidade nesta máquina.
 
 ## ═══ TURNOS ═══
 Turno A: 07:00-15:30 (510 min) | Turno B: 15:30-00:00 (510 min)
@@ -86,7 +94,7 @@ DAY_CAP = 1020 min. Noite: SÓ EMERGÊNCIA.
 1. **Lot Sizing** (lot_sizing.py): EOps → Lots. Eco lot HARD + carry-forward + twins.
 2. **Tool Grouping** (tool_grouping.py): Lots → ToolRuns. Split por EDD gap e infeasibilidade.
 3. **Dispatch** (dispatch.py): Assign machines (EDD-aware) + Sequence (campaign + interleave urgent + 2-opt) + Allocate segments.
-4. **JIT** (jit.py): Backward scheduling. Produzir o mais tarde possível (2-5 dias antes EDD). Safety net: fallback se tardy piora.
+4. **JIT** (jit.py): Histórico. O objetivo atual é o oposto: produzir o mais cedo possível após a libertação de material (5 dias úteis); ver `AGENTS.md`, que prevalece sobre este ficheiro. Setups extra desempatam, não vetam (decisão 02/10/2026).
 5. **Scoring** (scoring.py): OTD, OTD-D, earliness, setups, utilisation.
 
 ## ═══ CONSTANTES ═══
@@ -119,8 +127,12 @@ Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamen
 **Bug**: `_fix_day_overlaps` marcava `is_continuation=True` incondicionalmente ao empurrar segmentos, mesmo quando o segmento era o primeiro do lot. 25 segmentos ficavam como "continuação" sem precedente visível no Gantt.
 **Fix**: `_fix_orphan_continuations` identifica o primeiro segmento de cada lot (ordenado por day_idx, start_min) e reseta a flag.
 
-## ═══ RESULTADOS VALIDADOS ═══
-ISOP 27/02: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.4d, 125 setups
-ISOP 17/03: OTD=100%, OTD-D=100%, 0 tardy, earliness=5.9d, 136 setups
-414 testes passam. Pipeline determinístico. <500ms para ~60 ops.
-0 violações de capacidade. 0 ghost segments. 0 orphan continuations.
+## ═══ RESULTADOS ═══
+Históricos (política antiga JIT, não comparáveis): ISOP 27/02 e 17/03 com
+OTD=100%, 125/136 setups, <500ms no modo quick.
+
+Atuais (revisão 90, ISOP 17/09, recálculo a 02/10, 1 núcleo): 0 violações
+físicas; OTD 96,5%, OTD-D 99,1%, 7 atrasados (capacidade PRM042); ciclo de
+melhoria ~11,5 s p50, 128 MiB. Com corte por tempo o resultado **não é
+garantidamente determinístico** (AGENTS §6). Ver
+`docs/plano-solver-2026-10-02.md` §10–12.

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "scope": "Reduced reproductions, not a reconstruction of the private ISOP",
+  "clock": "2026-09-17T07:00:00+01:00",
+  "first_day": "2026-09-17",
+  "n_days": 16,
+  "cases": {
+    "bfp112_previous_day": {
+      "machines": {"PRM039": 1.0},
+      "operators": {"A": 1, "B": 1},
+      "ops": [{"sku": "1197914X050", "tool": "BFP112", "machine": "PRM039", "demand": {"11": 100}}],
+      "operator_unavailability": [{"id": "absence-A", "group": "Grandes", "shift": "A", "count": 1, "start_at": "2026-09-21T07:00:00+01:00", "end_at": "2026-09-21T12:20:00+01:00"}],
+      "crew_reservations": [{"id": "setup-elsewhere", "group": "Grandes", "machine_id": "OUTSIDE", "tool_id": "OUTSIDE", "start_day": 4, "end_day": 4, "start_min": 420, "end_min": 710}],
+      "segments": [{"sku": "1197914X050", "due": 11, "day": 5, "start": 420, "setup": 30, "qty": 100}],
+      "expected": {"sku": "1197914X050", "first_day": 4, "production_start": 740}
+    },
+    "bfp082_initial_priority": {
+      "machines": {"PRM019": 1.0},
+      "operators": {"A": 6, "B": 5},
+      "ops": [
+        {"sku": "1092262X100", "tool": "BFP082", "machine": "PRM019", "demand": {"0": 200}},
+        {"sku": "1065170X100", "tool": "BFP080", "machine": "PRM019", "demand": {"1": 100}}
+      ],
+      "segments": [
+        {"sku": "1065170X100", "due": 1, "day": 0, "start": 420, "setup": 30, "qty": 100},
+        {"sku": "1092262X100", "due": 0, "day": 1, "start": 420, "setup": 30, "qty": 100},
+        {"sku": "1092262X100", "due": 0, "day": 4, "start": 420, "setup": 0, "qty": 100}
+      ],
+      "expected": {"sku": "1092262X100", "first_day": 0, "production_start": 450, "complete_day": 0}
+    },
+    "bfp079_equivalent_machines": {
+      "machines": {"PRM031": 1.0, "PRM039": 1.0},
+      "operators": {"A": 6, "B": 5},
+      "ops": [
+        {"sku": "1064169X100", "tool": "BFP079", "machine": "PRM031", "alt": "PRM039", "demand": {"0": 100, "1": 100, "4": 100}},
+        {"sku": "1064186X100", "tool": "BFP079", "machine": "PRM031", "alt": "PRM039", "demand": {"0": 100, "1": 100, "4": 100}},
+        {"sku": "OTHER", "tool": "OTHER", "machine": "PRM031", "alt": "PRM039", "demand": {"4": 100}}
+      ],
+      "twins": [["1064169X100", "1064186X100"]],
+      "segments": [
+        {"sku": "1064169X100", "due": 0, "day": 0, "start": 420, "setup": 30, "qty": 100, "machine": "PRM031"},
+        {"sku": "OTHER", "due": 4, "day": 0, "start": 510, "setup": 30, "qty": 100, "machine": "PRM031"},
+        {"sku": "1064169X100", "due": 1, "day": 1, "start": 420, "setup": 30, "qty": 100, "machine": "PRM039"},
+        {"sku": "1064169X100", "due": 4, "day": 4, "start": 420, "setup": 30, "qty": 100, "machine": "PRM031"}
+      ],
+      "expected": {"transfers": 0, "max_setups": 2}
+    }
+  }
+}

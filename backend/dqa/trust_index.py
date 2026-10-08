@@ -6,7 +6,7 @@ Data quality scoring with automation gate recommendation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from backend.config.types import FactoryConfig
 from backend.types import EngineData
@@ -14,15 +14,15 @@ from backend.types import EngineData
 
 @dataclass(slots=True)
 class DQADimension:
-    name: str       # "completeness" | "validity" | "consistency" | "richness"
-    score: float    # 0-100
+    name: str  # "completeness" | "validity" | "consistency" | "richness"
+    score: float  # 0-100
     details: list[str]
 
 
 @dataclass(slots=True)
 class TrustResult:
-    score: int           # 0-100
-    gate: str            # "full_auto" | "monitoring" | "suggestion" | "manual"
+    score: int  # 0-100
+    gate: str  # "full_auto" | "monitoring" | "suggestion" | "manual"
     dimensions: list[DQADimension]
     n_ops: int
     n_issues: int
@@ -208,13 +208,16 @@ def _score_richness(data: EngineData) -> DQADimension:
 
 
 def compute_trust_index(
-    data: EngineData, config: FactoryConfig | None = None,
+    data: EngineData,
+    config: FactoryConfig | None = None,
 ) -> TrustResult:
     """Score data quality. Returns 0-100 score + gate recommendation."""
     completeness = _score_completeness(data)
     validity = _score_validity(data)
     consistency = _score_consistency(data)
     richness = _score_richness(data)
+    consistency.details.extend(warning for warning in data.input_warnings
+                               if warning not in consistency.details)
 
     # Weighted score
     weighted = (

@@ -11,6 +11,9 @@ import time
 
 import optuna
 
+from backend.config.types import FactoryConfig
+from backend.scheduler.priority import delivery_not_worse
+
 from .reward import compute_reward
 from .types import SchedulerParams, StudyResult
 
@@ -34,7 +37,8 @@ class OptunaTuner:
         self._config = config
 
     def optimize(
-        self, warm_start: SchedulerParams | None = None,
+        self,
+        warm_start: SchedulerParams | None = None,
     ) -> StudyResult:
         """Run Bayesian optimization. Returns StudyResult."""
         from backend.cpo import optimize
@@ -53,6 +57,13 @@ class OptunaTuner:
         if warm_start:
             study.enqueue_trial(warm_start.to_dict())
 
+        def config_with_params(params: SchedulerParams) -> FactoryConfig:
+            cfg = copy.deepcopy(self._config) if self._config is not None else FactoryConfig()
+            for key, value in params.to_dict().items():
+                if key != "jit_threshold" and hasattr(cfg, key):
+                    setattr(cfg, key, value)
+            return cfg
+
         def objective(trial: optuna.Trial) -> float:
             params = SchedulerParams(
                 max_edd_gap=trial.suggest_int("max_edd_gap", 5, 20),
@@ -63,10 +74,13 @@ class OptunaTuner:
                 backward_buffer_pct=trial.suggest_float("backward_buffer_pct", 0.01, 0.15),
                 jit_threshold=trial.suggest_float("jit_threshold", 85.0, 100.0),
                 interleave_enabled=trial.suggest_categorical(
-                    "interleave_enabled", [True, False],
+                    "interleave_enabled",
+                    [True, False],
                 ),
             )
-            result = optimize(copy.deepcopy(self._data), mode="quick", config=self._config)
+            result = optimize(
+                copy.deepcopy(self._data), mode="quick", config=config_with_params(params)
+            )
             return compute_reward(result.score)
 
         study.optimize(
@@ -78,8 +92,23 @@ class OptunaTuner:
         # Best result
         best_trial = study.best_trial
         best_params = SchedulerParams.from_dict(best_trial.params)
-        best_result = optimize(copy.deepcopy(self._data), mode="normal", config=self._config)
+        best_result = optimize(
+            copy.deepcopy(self._data),
+            mode="normal",
+            config=config_with_params(best_params),
+        )
         best_reward = compute_reward(best_result.score)
+        if (
+            not delivery_not_worse(best_result.score, baseline_result.score)
+            or best_reward < baseline_reward
+        ):
+            # A trial is ranked in quick mode and is then revalidated in normal
+            # mode. The second pass may expose a worse physical or delivery
+            # sequence; the tuner must never publish that regression as its
+            # best result.
+            best_params = SchedulerParams()
+            best_result = baseline_result
+            best_reward = baseline_reward
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
@@ -103,14 +132,17 @@ class OptunaTuner:
                 1,
             ),
             "setups_delta": (
-                best_result.score.get("setups", 0)
-                - baseline_result.score.get("setups", 0)
+                best_result.score.get("setups", 0) - baseline_result.score.get("setups", 0)
             ),
         }
 
         logger.info(
             "BO: %d trials in %.1fs, reward %.4f → %.4f (%s)",
-            n, elapsed_ms / 1000, baseline_reward, best_reward, confidence,
+            n,
+            elapsed_ms / 1000,
+            baseline_reward,
+            best_reward,
+            confidence,
         )
 
         return StudyResult(

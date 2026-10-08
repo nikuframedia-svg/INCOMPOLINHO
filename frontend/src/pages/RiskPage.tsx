@@ -1,19 +1,19 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { T } from "../theme/tokens";
 import { getRisk, getLateDeliveries, getWorkforce } from "../api/endpoints";
-import type { RiskResult, LateDeliveryReport, WorkforceForecast } from "../api/types";
+import type { HeatmapCell } from "../api/types";
+import { usePlanQuery } from "../hooks/usePlanQuery";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
 import { Num } from "../components/ui/Num";
 import { Pill } from "../components/ui/Pill";
 
-type Tab = "overview" | "late" | "workforce" | "proposals";
+type Tab = "overview" | "late" | "workforce";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "overview", label: "Visao Geral" },
+  { id: "overview", label: "Visão geral" },
   { id: "late", label: "Atrasos" },
-  { id: "workforce", label: "Mao de Obra" },
-  { id: "proposals", label: "Propostas" },
+  { id: "workforce", label: "Equipa" },
 ];
 
 const thStyle: React.CSSProperties = {
@@ -35,39 +35,68 @@ const riskColor = (level: string) => {
   return T.green;
 };
 
+const RISK_LEVEL_LABELS: Record<string, string> = {
+  critical: "Crítico",
+  high: "Alto",
+  medium: "Médio",
+  low: "Baixo",
+  none: "Sem risco",
+};
+
+const riskLevelLabel = (level: string | null | undefined) =>
+  level ? RISK_LEVEL_LABELS[level] ?? "Sem classificação" : "sem dados";
+
+const RISK_STATUS_LABELS: Record<string, string> = {
+  late: "Atrasado",
+  at_limit: "No limite",
+  short_slack: "Folga curta",
+};
+
+/** Pill colour follows the status label, so "No limite" never looks like "Atrasado". */
+const RISK_STATUS_COLORS: Record<string, string> = {
+  late: T.red,
+  at_limit: T.orange,
+  short_slack: T.yellow,
+};
+
+const plural = (count: number, singular: string, pluralForm: string) =>
+  `${count} ${Math.abs(count) === 1 ? singular : pluralForm}`;
+
+/** Negative slack is lateness: say "N dias de atraso", never "Folga: -N". */
+const slackText = (slack: number | null | undefined) => {
+  const value = Number(slack ?? 0);
+  if (!Number.isFinite(value)) return "Folga: —";
+  if (value < 0) return `${plural(Math.abs(value), "dia", "dias")} de atraso`;
+  return `Folga: ${plural(value, "dia", "dias")}`;
+};
+
 const causeLabel = (cause: string) => {
   const map: Record<string, string> = {
     capacity: "Capacidade",
     setup_overhead: "Setup",
     priority_conflict: "Prioridade",
-    lead_time: "Lead Time",
-    tool_contention: "Contencao Ferramenta",
+    lead_time: "Antecedência",
+    tool_contention: "Conflito de ferramenta",
   };
   return map[cause] ?? cause;
 };
 
+const loadRisk = () => Promise.all([getRisk(), getLateDeliveries(), getWorkforce()]);
+
 export function RiskPage() {
   const [tab, setTab] = useState<Tab>("overview");
-  const [risk, setRisk] = useState<RiskResult | null>(null);
-  const [late, setLate] = useState<LateDeliveryReport | null>(null);
-  const [workforce, setWorkforce] = useState<WorkforceForecast | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: response, error } = usePlanQuery("risk", loadRisk);
+  const [risk, late, workforce] = response ?? [null, null, null];
   const [causeFilter, setCauseFilter] = useState<string | null>(null);
-
-  useEffect(() => {
-    Promise.all([getRisk(), getLateDeliveries(), getWorkforce()])
-      .then(([r, l, w]) => { setRisk(r); setLate(l); setWorkforce(w); })
-      .catch((e) => setError(String(e)));
-  }, []);
 
   // Heatmap data
   const heatmapData = useMemo(() => {
-    if (!risk) return { machines: [] as string[], days: [] as number[], cells: new Map<string, string>() };
+    if (!risk) return { machines: [] as string[], days: [] as number[], cells: new Map<string, HeatmapCell>() };
     const heatmap = risk.heatmap ?? [];
     const machines = [...new Set(heatmap.map((c) => c.machine_id))].sort();
     const days = [...new Set(heatmap.map((c) => c.day_idx))].sort((a, b) => a - b);
-    const cells = new Map<string, string>();
-    for (const c of heatmap) cells.set(`${c.machine_id}-${c.day_idx}`, c.risk_level);
+    const cells = new Map<string, HeatmapCell>();
+    for (const c of heatmap) cells.set(`${c.machine_id}-${c.day_idx}`, c);
     return { machines, days, cells };
   }, [risk]);
 
@@ -108,15 +137,18 @@ export function RiskPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
             <Card style={{ textAlign: "center" }}>
-              <Label>Health Score</Label>
+              <Label>Saúde do plano</Label>
               <Num size={48} color={healthColor}>{risk.health_score}</Num>
+              <div style={{ marginTop: 4, color: T.tertiary, fontSize: 10 }}>
+                80–100 estável · 50–79 atenção · &lt;50 crítico
+              </div>
             </Card>
             <Card style={{ textAlign: "center" }}>
-              <Label>Riscos Criticos</Label>
+              <Label>Riscos críticos</Label>
               <Num size={36} color={risk.critical_count > 0 ? T.red : T.green}>{risk.critical_count}</Num>
             </Card>
             <Card style={{ textAlign: "center" }}>
-              <Label>Bottleneck</Label>
+              <Label>Recurso limitante</Label>
               <div style={{ marginTop: 8 }}>
                 {risk.bottleneck ? <Pill color={T.red}>{risk.bottleneck}</Pill> : <span style={{ color: T.secondary, fontSize: 13 }}>Nenhum</span>}
               </div>
@@ -127,10 +159,10 @@ export function RiskPage() {
           {heatmapData.machines.length > 0 && (
             <Card style={{ padding: 0, overflow: "auto" }}>
               <div style={{ padding: "12px 16px 4px" }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>Heatmap de Risco</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>Mapa de risco</span>
               </div>
               <div style={{ padding: "8px 16px 16px", overflowX: "auto" }}>
-                <div style={{ display: "grid", gridTemplateColumns: `80px repeat(${heatmapData.days.length}, 24px)`, gap: 2 }}>
+                <div style={{ display: "grid", gridTemplateColumns: `80px repeat(${heatmapData.days.length}, 28px)`, gap: 2 }}>
                   {/* Header row */}
                   <div />
                   {heatmapData.days.map((d) => (
@@ -143,9 +175,39 @@ export function RiskPage() {
                     <Fragment key={m}>
                       <div style={{ fontSize: 10, color: T.secondary, fontFamily: T.mono, display: "flex", alignItems: "center" }}>{m}</div>
                       {heatmapData.days.map((d) => {
-                        const level = heatmapData.cells.get(`${m}-${d}`);
+                        const cell = heatmapData.cells.get(`${m}-${d}`);
+                        const level = cell?.risk_level;
                         const bg = level ? `${riskColor(level)}${level === "critical" ? "88" : level === "high" ? "55" : level === "medium" ? "33" : "18"}` : `${T.border}`;
-                        return <div key={d} style={{ width: 22, height: 22, borderRadius: 3, background: bg }} />;
+                        const utilPct = cell?.utilization === null ? null : Math.round((cell?.utilization ?? 0) * 100);
+                        return (
+                          <div
+                            key={d}
+                            title={[
+                              `Máquina ${m}`,
+                              `Dia ${d}`,
+                              `Risco: ${riskLevelLabel(level)}`,
+                              utilPct === null ? "Inconsistência: carga sem capacidade disponível" : `Utilização: ${utilPct}%`,
+                              `Carga: ${Math.round(cell?.load_min ?? 0)} min`,
+                              `Capacidade: ${Math.round(cell?.capacity_min ?? 0)} min`,
+                              cell?.min_slack_min != null && cell.min_slack_min >= 0 ? `Margem mínima: ${Math.round(cell.min_slack_min)} min` : "",
+                            ].filter(Boolean).join(" · ")}
+                            style={{
+                              width: 26,
+                              height: 22,
+                              borderRadius: 3,
+                              background: bg,
+                              color: T.primary,
+                              fontSize: 8,
+                              fontFamily: T.mono,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              border: `1px solid ${T.card}`,
+                            }}
+                          >
+                            {utilPct === null ? "!" : utilPct > 0 ? utilPct : ""}
+                          </div>
+                        );
                       })}
                     </Fragment>
                   ))}
@@ -158,14 +220,18 @@ export function RiskPage() {
           {risk.top_risks.length > 0 && (
             <Card style={{ padding: 0 }}>
               <div style={{ padding: "12px 16px 8px" }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>Top Riscos</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>Riscos principais</span>
               </div>
               {risk.top_risks.map((r, i) => (
                 <div key={i} style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 12 }}>
-                  <Pill color={riskColor(r.risk_level)}>{r.risk_level}</Pill>
+                  {typeof r.status === "string" && RISK_STATUS_LABELS[r.status] ? (
+                    <Pill color={RISK_STATUS_COLORS[r.status]}>{RISK_STATUS_LABELS[r.status]}</Pill>
+                  ) : (
+                    <Pill color={riskColor(r.risk_level)}>{riskLevelLabel(r.risk_level)}</Pill>
+                  )}
                   <span style={{ fontSize: 12, fontFamily: T.mono, color: T.primary, flex: 1 }}>{r.sku}</span>
                   <span style={{ fontSize: 11, color: T.secondary }}>{r.machine_id}</span>
-                  <span style={{ fontSize: 11, color: T.secondary }}>Slack: {r.slack}d</span>
+                  <span style={{ fontSize: 11, color: T.secondary }}>{slackText(r.slack_days)}</span>
                 </div>
               ))}
             </Card>
@@ -178,20 +244,25 @@ export function RiskPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
             <Card>
-              <Label>Total Atrasos</Label>
+              <Label>Total de atrasos</Label>
               <Num size={36} color={late.tardy_count > 0 ? T.red : T.green}>{late.tardy_count}</Num>
             </Card>
             <Card>
-              <Label>Atraso Medio (dias)</Label>
+              <Label>Atraso médio (dias)</Label>
               <Num size={36}>{late.avg_delay?.toFixed(1) ?? "0"}</Num>
             </Card>
             <Card>
-              <Label>Pior Maquina</Label>
+              <Label>Máquina com mais atraso</Label>
               <div style={{ marginTop: 8 }}>
                 {late.worst_machine ? <Pill color={T.red}>{late.worst_machine}</Pill> : <span style={{ color: T.secondary, fontSize: 13 }}>-</span>}
               </div>
             </Card>
           </div>
+
+          <Card>
+            <Label style={{ marginBottom: 8 }}>Recomendação</Label>
+            <div style={{ fontSize: 13, color: T.primary, lineHeight: 1.6 }}>{late.suggestion}</div>
+          </Card>
 
           {/* Cause filter chips */}
           {Object.keys(late.by_cause).length > 0 && (
@@ -225,16 +296,17 @@ export function RiskPage() {
           )}
 
           <Card style={{ padding: 0, overflow: "auto", maxHeight: 500 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={thStyle}>SKU</th>
-                  <th style={thStyle}>Maquina</th>
-                  <th style={thStyle}>EDD</th>
-                  <th style={thStyle}>Conclusao</th>
+                  <th style={thStyle}>Referência</th>
+                  <th style={thStyle}>Máquina</th>
+                  <th style={thStyle}>Entrega cliente</th>
+                  <th style={thStyle}>Saída fábrica</th>
+                  <th style={thStyle}>Pronto cliente</th>
                   <th style={thStyle}>Atraso (d)</th>
                   <th style={thStyle}>Causa</th>
-                  <th style={thStyle}>Sugestao</th>
+                  <th style={thStyle}>Explicação</th>
                 </tr>
               </thead>
               <tbody>
@@ -244,9 +316,10 @@ export function RiskPage() {
                     <td style={tdStyle}>{a.machine_id}</td>
                     <td style={tdStyle}>{a.edd}</td>
                     <td style={tdStyle}>{a.completion_day}</td>
+                    <td style={tdStyle}>{a.customer_ready_day ?? a.completion_day}</td>
                     <td style={{ ...tdStyle, color: T.red }}>{a.delay_days}</td>
                     <td style={tdStyle}><Pill color={T.orange}>{causeLabel(a.root_cause)}</Pill></td>
-                    <td style={{ ...tdStyle, fontFamily: T.sans, fontSize: 11, color: T.secondary, maxWidth: 250 }}>{a.suggestion}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.sans, fontSize: 11, color: T.secondary, maxWidth: 250 }}>{a.explanation}</td>
                   </tr>
                 ))}
               </tbody>
@@ -260,27 +333,27 @@ export function RiskPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
             <Card>
-              <Label>Dia Pico</Label>
+              <Label>Dia de pico</Label>
               <Num size={28}>D{workforce.peak_day}</Num>
             </Card>
             <Card>
-              <Label>Pico Operadores</Label>
+              <Label>Pico de operadores</Label>
               <Num size={28}>{workforce.peak_required}</Num>
             </Card>
             <Card>
-              <Label>Media</Label>
+              <Label>Média</Label>
               <Num size={28}>{workforce.avg_required.toFixed(1)}</Num>
             </Card>
             <Card>
-              <Label>Dias com Deficit</Label>
+              <Label>Dias com défice</Label>
               <Num size={28} color={workforce.deficit_days > 0 ? T.red : T.green}>{workforce.deficit_days}</Num>
             </Card>
           </div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Label>Tendencia:</Label>
+            <Label>Tendência:</Label>
             <Pill color={workforce.trend === "increasing" ? T.orange : workforce.trend === "decreasing" ? T.green : T.blue}>
-              {workforce.trend === "increasing" ? "Crescente" : workforce.trend === "decreasing" ? "Decrescente" : "Estavel"}
+              {workforce.trend === "increasing" ? "Crescente" : workforce.trend === "decreasing" ? "Decrescente" : "Estável"}
             </Pill>
           </div>
 
@@ -291,8 +364,8 @@ export function RiskPage() {
                   <th style={thStyle}>Dia</th>
                   <th style={thStyle}>Turno</th>
                   <th style={thStyle}>Grupo</th>
-                  <th style={thStyle}>Necessarios</th>
-                  <th style={thStyle}>Disponiveis</th>
+                  <th style={thStyle}>Necessários</th>
+                  <th style={thStyle}>Disponíveis</th>
                   <th style={thStyle}>Saldo</th>
                 </tr>
               </thead>
@@ -315,31 +388,6 @@ export function RiskPage() {
         </>
       )}
 
-      {/* ── Proposals ── */}
-      {tab === "proposals" && late && (
-        <>
-          <Card>
-            <Label style={{ marginBottom: 8 }}>Recomendacao Geral</Label>
-            <div style={{ fontSize: 13, color: T.primary, lineHeight: 1.6 }}>{late.suggestion}</div>
-          </Card>
-
-          {late.analyses.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <Label>Sugestoes por Atraso</Label>
-              {late.analyses.map((a, i) => (
-                <Card key={i} style={{ padding: "12px 16px" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontSize: 12, fontFamily: T.mono, fontWeight: 600, color: T.primary }}>{a.sku}</span>
-                    <Pill color={T.orange}>{causeLabel(a.root_cause)}</Pill>
-                    <span style={{ fontSize: 11, color: T.secondary }}>{a.machine_id} | +{a.delay_days}d</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: T.secondary, lineHeight: 1.5 }}>{a.suggestion}</div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }

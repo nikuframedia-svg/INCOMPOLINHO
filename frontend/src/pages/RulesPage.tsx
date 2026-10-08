@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { T } from "../theme/tokens";
 import { getConfig } from "../api/endpoints";
 import type { FactoryConfig } from "../api/types";
+import { usePlanQuery } from "../hooks/usePlanQuery";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
 import { Dot } from "../components/ui/Dot";
@@ -16,21 +16,26 @@ interface SchedulerRule {
 
 function buildRules(config: FactoryConfig): SchedulerRule[] {
   return [
-    { id: "R01", categoria: "Lotes", descricao: "Modo eco lot — arredondamento ao lote economico", valor: String(config.eco_lot_mode), activo: true },
-    { id: "R02", categoria: "JIT", descricao: "Backward scheduling — produzir o mais tarde possivel", valor: config.jit_enabled ? "Activo" : "Inactivo", activo: config.jit_enabled },
-    { id: "R03", categoria: "JIT", descricao: "Buffer JIT — margem de seguranca", valor: `${(config.jit_buffer_pct * 100).toFixed(0)}%`, activo: config.jit_enabled },
-    { id: "R04", categoria: "JIT", descricao: "Threshold JIT — limite para activar", valor: `${config.jit_threshold}%`, activo: config.jit_enabled },
-    { id: "R05", categoria: "Dispatch", descricao: "Max dias consecutivos por run", valor: `${config.max_run_days} dias`, activo: true },
-    { id: "R06", categoria: "Dispatch", descricao: "Gap maximo entre EDDs no mesmo run", valor: `${config.max_edd_gap} dias`, activo: true },
-    { id: "R07", categoria: "Dispatch", descricao: "Tolerancia para swap de EDD", valor: `${config.edd_swap_tolerance} dias`, activo: true },
-    { id: "R08", categoria: "Dispatch", descricao: "Janela de campanha (agrupamento ferramentas)", valor: `${config.campaign_window} dias`, activo: true },
-    { id: "R09", categoria: "Dispatch", descricao: "Threshold de urgencia", valor: `${config.urgency_threshold} dias`, activo: true },
-    { id: "R10", categoria: "Dispatch", descricao: "Interleave de urgentes entre runs", valor: config.interleave_enabled ? "Activo" : "Inactivo", activo: config.interleave_enabled },
-    { id: "R11", categoria: "Scoring", descricao: "Peso earliness na funcao objectivo", valor: String(config.weight_earliness), activo: true },
-    { id: "R12", categoria: "Scoring", descricao: "Peso setups na funcao objectivo", valor: String(config.weight_setups), activo: true },
-    { id: "R13", categoria: "Scoring", descricao: "Peso balance na funcao objectivo", valor: String(config.weight_balance), activo: true },
-    { id: "R14", categoria: "Capacidade", descricao: "OEE default aplicado a todas as operacoes", valor: String(config.oee_default), activo: true },
-    { id: "R15", categoria: "Capacidade", descricao: "Capacidade diaria por maquina", valor: `${config.day_capacity_min} min`, activo: true },
+    { id: "F01", categoria: "Leis físicas", descricao: "Máquina não produz dois segmentos ao mesmo tempo", valor: "machine_overlaps = 0", activo: true },
+    { id: "F02", categoria: "Leis físicas", descricao: "Ferramenta não está em duas máquinas ao mesmo tempo", valor: "tool_conflicts = 0", activo: true },
+    { id: "F03", categoria: "Leis físicas", descricao: "Cada grupo tem a sua equipa de setup; dentro do grupo não há sobreposição", valor: Object.entries(config.setup_crews_by_group).map(([group, count]) => `${group}=${count}`).join(" · "), activo: Object.values(config.setup_crews_by_group).every((count) => count >= 1) },
+    { id: "F04", categoria: "Leis físicas", descricao: "Máquina ou ferramenta bloqueada não produz", valor: "blocked = 0", activo: true },
+    { id: "F05", categoria: "Leis físicas", descricao: "Capacidade diária por máquina não é excedida", valor: `${config.day_capacity_min} min`, activo: true },
+    { id: "E01", categoria: "Objetivos", descricao: "Maximizar primeiro o número de encomendas entregues a tempo", valor: "Prioridade 1", activo: true },
+    { id: "E02", categoria: "Objetivos", descricao: "Depois maximizar a quantidade entregue a tempo e minimizar o atraso", valor: "Prioridade 2", activo: true },
+    { id: "J01", categoria: "Material", descricao: "Libertar material cinco dias úteis antes da entrega ao cliente; nos artigos subcontratados, cinco dias úteis antes do envio ao fornecedor", valor: "Obrigatório", activo: true },
+    { id: "J02", categoria: "Material", descricao: "Bloquear qualquer produção iniciada antes da respetiva libertação simulada", valor: "Gate bloqueante", activo: true },
+    { id: "J03", categoria: "Antecipação", descricao: "Produzir no primeiro intervalo viável depois da libertação de material, em qualquer máquina elegível", valor: "O mais cedo possível", activo: true },
+    { id: "J04", categoria: "Antecipação (alerta)", descricao: `Tentar limitar cada produção a ${config.max_run_days} dias úteis; permitir exceção necessária`, valor: `≤ ${config.max_run_days} dias`, activo: true },
+    { id: "S01", categoria: "Subcontratação", descricao: "Concluir a produção antes da data planeada de envio ao subcontratante", valor: "Gate de aprovação", activo: true },
+    { id: "S02", categoria: "Subcontratação", descricao: "Manter a entrega ao cliente como compromisso e KPI, acrescentando o prazo externo do fornecedor à conclusão na fábrica", valor: "OTD cliente", activo: true },
+    { id: "B01", categoria: "Negócio", descricao: "Eco lot hard", valor: String(config.eco_lot_mode), activo: true },
+    { id: "B02", categoria: "Negócio", descricao: "Gémeas produzem em simultâneo", valor: `${config.twins.length} regras`, activo: true },
+    { id: "P01", categoria: "Preferências", descricao: "Sem perdas de entrega, preferir o início de produção mais cedo, lote a lote pela prioridade comercial (prazo, rutura, prioridade)", valor: "Antecipação primeiro", activo: true },
+    { id: "P02", categoria: "Preferências", descricao: "Com a mesma antecipação, preferir menos setups e menos minutos de setup; um setup extra nunca impede uma antecipação", valor: "Desempate", activo: true },
+    { id: "P03", categoria: "Preferências", descricao: "Depois, preferir menos transferências de ferramenta e menos alterações ao plano", valor: "Desempate", activo: true },
+    { id: "P04", categoria: "Sequenciação", descricao: "No plano inicial, agrupar campanhas da mesma ferramenta com prazos dentro da janela", valor: `${config.campaign_window} dias de prazo`, activo: true },
+    { id: "P05", categoria: "Alerta", descricao: "Avisar quando a antecipação média excede o alvo; é só um aviso, não limita o plano", valor: `${config.jit_earliness_target ?? 5.5} dias`, activo: true },
   ];
 }
 
@@ -46,14 +51,7 @@ const tdStyle: React.CSSProperties = {
 };
 
 export function RulesPage() {
-  const [config, setConfig] = useState<FactoryConfig | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getConfig()
-      .then(setConfig)
-      .catch((e) => setError(String(e)));
-  }, []);
+  const { data: config, error } = usePlanQuery("rules", getConfig);
 
   if (error) return <div style={{ color: T.red, padding: 24 }}>{error}</div>;
   if (!config) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;
@@ -64,7 +62,7 @@ export function RulesPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: 13, color: T.secondary }}>
-        {rules.length} regras activas do scheduler. Editaveis em Configuracao → Parametros.
+        {rules.length} regras ativas. Conflitos físicos, quantidades inválidas e produção antes da libertação de material bloqueiam; atrasos de entrega ou de envio exigem aprovação explícita.
       </div>
 
       {categorias.map((cat) => (

@@ -15,10 +15,51 @@ interface Message {
   widgets?: Widget[];
 }
 
+function widgetValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (Array.isArray(value)) return `${value.length} itens`;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).join(", ");
+  return String(value);
+}
+
+function WidgetView({ data }: { data: unknown }) {
+  if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object") {
+    const rows = data.slice(0, 8) as Record<string, unknown>[];
+    const columns = Object.keys(rows[0]).slice(0, 5);
+    return (
+      <div style={{ overflow: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+          <thead>
+            <tr>{columns.map((column) => <th key={column} style={{ padding: "4px 6px", textAlign: "left", color: T.tertiary, borderBottom: `1px solid ${T.border}` }}>{column}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={index}>{columns.map((column) => <td key={column} style={{ padding: "4px 6px", color: T.secondary, borderBottom: `1px solid ${T.border}` }}>{widgetValue(row[column])}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  if (data && typeof data === "object") {
+    return (
+      <div style={{ display: "grid", gap: 4 }}>
+        {Object.entries(data as Record<string, unknown>).slice(0, 12).map(([key, value]) => (
+          <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 10 }}>
+            <span style={{ color: T.tertiary }}>{key}</span>
+            <span style={{ color: T.secondary, textAlign: "right" }}>{widgetValue(value)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <span style={{ fontSize: 11, color: T.secondary }}>{widgetValue(data)}</span>;
+}
+
 export function ChatPanel() {
   const toggleChat = useAppStore((s) => s.toggleChat);
   const [messages, setMessages] = useState<Message[]>([
-    { id: crypto.randomUUID(), role: "assistant", content: "Olá, João. Posso ajudar com análise de produção, simulações, ou perguntas sobre o plano." },
+    { id: crypto.randomUUID(), role: "assistant", content: "Olá. Posso ajudar a analisar a produção, testar cenários ou explicar o plano." },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -109,9 +150,7 @@ export function ChatPanel() {
                 <div style={{ fontSize: 10, color: T.tertiary, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>
                   {w.type}
                 </div>
-                <pre style={{ fontSize: 11, color: T.secondary, overflow: "auto", maxHeight: 200, margin: 0, whiteSpace: "pre-wrap", fontFamily: T.mono }}>
-                  {JSON.stringify(w.data, null, 2)}
-                </pre>
+                <WidgetView data={w.data} />
               </div>
             ))}
           </div>

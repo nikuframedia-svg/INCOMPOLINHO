@@ -33,7 +33,8 @@ def identify_twins_from_master(
         if len(sku_pair) != 2:
             logger.warning(
                 "Twin config for %s has %d SKUs (expected 2), skipping",
-                tool_id, len(sku_pair),
+                tool_id,
+                len(sku_pair),
             )
             continue
 

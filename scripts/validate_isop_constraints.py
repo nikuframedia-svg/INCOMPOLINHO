@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import os
 import time
+import argparse
 from collections import defaultdict
 from pathlib import Path
 
@@ -16,12 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import yaml
 
 from backend.config.loader import load_config
-from backend.config.types import FactoryConfig
+from backend.config.planning import apply_effective_planning_config
 from backend.parser.isop_reader import read_isop
 from backend.scheduler.constants import DAY_CAP
 from backend.cpo import optimize
-from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import ScheduleResult
+from backend.scheduler.gates import build_gate_report
+from backend.transform.calendars import apply_calendars
 from backend.transform.transform import transform
 from backend.analytics.expedition import compute_expedition
 from backend.types import EngineData
@@ -29,20 +31,25 @@ from backend.types import EngineData
 
 # ─── Data loading ──────────────────────────────────────────────────────
 
-def load_isop(path: str) -> EngineData:
-    config = load_config()
+
+def load_isop(path: str, master_path: str = "config/incompol.yaml", config=None) -> EngineData:
     raw_rows, workdays, has_twin_col = read_isop(path)
     master_data = None
-    yaml_path = Path("config/factory.yaml")
+    yaml_path = Path(master_path)
     if yaml_path.exists():
         with open(yaml_path) as f:
             master_data = yaml.safe_load(f)
-    return transform(raw_rows, workdays, has_twin_col, master_data)
+    data = transform(raw_rows, workdays, has_twin_col, master_data)
+    if config is not None:
+        apply_effective_planning_config(data, config)
+        apply_calendars(data, config)
+    return data
 
 
 # ─── Constraint checks ────────────────────────────────────────────────
 
-def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
+
+def validate_all(result: ScheduleResult, data: EngineData, label: str, config=None) -> dict:
     """Run ALL constraints. Returns dict of {name: (passed, detail)}."""
     segs = result.segments
     lots = result.lots
@@ -50,25 +57,29 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
     holidays = set(data.holidays) if data.holidays else set()
 
     results = {}
+    gate_report = result.gate_report or build_gate_report(
+        segs,
+        lots,
+        score,
+        data,
+        config,
+    )
 
     # ═══ HARD CONSTRAINTS ═══
 
     # 1. OTD = 100%
-    results["OTD = 100%"] = (
-        score["otd"] == 100.0,
-        f"OTD={score['otd']}%"
-    )
+    results["OTD = 100%"] = (score["otd"] == 100.0, f"OTD={score['otd']}%")
 
     # 2. OTD-D = 100%
     results["OTD-D = 100%"] = (
         score["otd_d"] == 100.0 and score["otd_d_failures"] == 0,
-        f"OTD-D={score['otd_d']}%, failures={score['otd_d_failures']}"
+        f"OTD-D={score['otd_d']}%, failures={score['otd_d_failures']}",
     )
 
     # 3. Tardy = 0
     results["Tardy = 0"] = (
         score["tardy_count"] == 0,
-        f"tardy={score['tardy_count']}, max_tardiness={score['max_tardiness']}"
+        f"tardy={score['tardy_count']}, max_tardiness={score['max_tardiness']}",
     )
 
     # 4. Shift bounds [420, 1440]
@@ -80,114 +91,156 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
             shift_violations.append(f"{seg.lot_id} day={seg.day_idx} end={seg.end_min}>1440")
     results["Shift bounds [420,1440]"] = (
         len(shift_violations) == 0,
-        f"{len(shift_violations)} violations" + (f": {shift_violations[:3]}" if shift_violations else "")
+        f"{len(shift_violations)} violations"
+        + (f": {shift_violations[:3]}" if shift_violations else ""),
     )
 
     # 5. Feriados — nenhum segmento em dias feriados
     holiday_violations = [
-        f"{seg.lot_id} on day {seg.day_idx}"
-        for seg in segs if seg.day_idx in holidays
+        f"{seg.lot_id} on day {seg.day_idx}" for seg in segs if seg.day_idx in holidays
     ]
     results["Feriados respeitados"] = (
         len(holiday_violations) == 0,
-        f"{len(holiday_violations)} violations" + (f": {holiday_violations[:3]}" if holiday_violations else "")
+        f"{len(holiday_violations)} violations"
+        + (f": {holiday_violations[:3]}" if holiday_violations else ""),
     )
 
-    # 6. PRM020 inactivo
+    # 6. PRM020 is outside the analysis scope.
     prm020_segs = [seg for seg in segs if seg.machine_id == "PRM020"]
-    results["PRM020 inactivo"] = (
-        len(prm020_segs) == 0,
-        f"{len(prm020_segs)} segments on PRM020"
+    prm020_ops = [op for op in data.ops if op.m == "PRM020" or op.alt == "PRM020"]
+    prm020_machines = [machine for machine in data.machines if machine.id == "PRM020"]
+    prm020_ok = not (prm020_ops or prm020_segs or prm020_machines)
+    results["PRM020 excluída"] = (
+        prm020_ok,
+        f"operations={len(prm020_ops)}, machines={len(prm020_machines)}, segments={len(prm020_segs)}",
     )
 
     # 7. Tool contention — mesma ferramenta nunca em 2 máquinas ao mesmo tempo
     tool_contention_violations = _check_tool_contention(segs)
     results["Tool contention"] = (
         len(tool_contention_violations) == 0,
-        f"{len(tool_contention_violations)} violations" + (f": {tool_contention_violations[:3]}" if tool_contention_violations else "")
+        f"{len(tool_contention_violations)} violations"
+        + (f": {tool_contention_violations[:3]}" if tool_contention_violations else ""),
     )
 
     # 8. Crew mutex — nenhum setup simultâneo entre máquinas
-    crew_violations = _check_crew_mutex(segs)
+    crew_violations = [
+        item.get("message", "setup overlap")
+        for item in gate_report.get("violations", [])
+        if item.get("kind") == "setup_crew_overlap"
+    ]
     results["Crew mutex"] = (
         len(crew_violations) == 0,
-        f"{len(crew_violations)} violations" + (f": {crew_violations[:3]}" if crew_violations else "")
+        f"{len(crew_violations)} violations"
+        + (f": {crew_violations[:3]}" if crew_violations else ""),
     )
 
     # 9. Day capacity — used_per_day ≤ 1020 min por máquina
     cap_violations = _check_day_capacity(segs)
     results["Day capacity <= 1020"] = (
         len(cap_violations) == 0,
-        f"{len(cap_violations)} violations" + (f": {cap_violations[:3]}" if cap_violations else "")
+        f"{len(cap_violations)} violations" + (f": {cap_violations[:3]}" if cap_violations else ""),
     )
 
     # 10. Eco lot — quantidades arredondadas para cima ao lote económico
     eco_violations = _check_eco_lot(lots, data)
     results["Eco lot"] = (
         len(eco_violations) == 0,
-        f"{len(eco_violations)} violations" + (f": {eco_violations[:3]}" if eco_violations else "")
+        f"{len(eco_violations)} violations" + (f": {eco_violations[:3]}" if eco_violations else ""),
     )
 
-    # 11. Demand conservation — sum(produced) ≥ sum(demanded) por operação
-    demand_violations = _check_demand_conservation(segs, lots, data)
+    # 11. Quantity conservation is taken from the same lot-level coverage gate
+    # used by runtime. This correctly accounts for committed in-progress supply.
+    coverage_missing = int(gate_report.get("metrics", {}).get("missing_qty", 0))
+    coverage_extra = int(gate_report.get("metrics", {}).get("overproduced_qty", 0))
     results["Demand conservation"] = (
-        len(demand_violations) == 0,
-        f"{len(demand_violations)} violations" + (f": {demand_violations[:3]}" if demand_violations else "")
+        bool(gate_report.get("coverage_gate_passed")),
+        f"missing_qty={coverage_missing}, overproduced_qty={coverage_extra}",
+    )
+
+    # 12. Reuse the exact runtime gates and approval contract.
+    window_violations = int(score.get("early_window_violations", 0) or 0)
+    results["Janela de materiais"] = (
+        bool(gate_report.get("jit_window_gate_passed")),
+        (
+            f"{window_violations} violations; "
+            f"apply_decision={gate_report.get('apply_decision')}"
+        ),
+    )
+    results["Gates físicos do runtime"] = (
+        bool(gate_report.get("physical_gate_passed"))
+        and bool(gate_report.get("coverage_gate_passed")),
+        f"apply_decision={gate_report.get('apply_decision')}",
+    )
+    results["Contrato de aplicação runtime"] = (
+        gate_report.get("apply_decision") != "blocked",
+        (
+            f"apply_decision={gate_report.get('apply_decision')}; "
+            f"approval_reasons={gate_report.get('approval_reasons', [])}"
+        ),
+    )
+    results["Robustez >= 95%"] = (
+        gate_report.get("robustness_gate_passed") is True,
+        (
+            f"evaluated={score.get('robustness_evaluated_samples', 0)}, "
+            f"success={score.get('robustness_success_probability_pct', 0)}%"
+        ),
     )
 
     # ═══ SOFT CONSTRAINTS ═══
 
-    # 12. Earliness ≤ 6.5d
+    # 12. Earliness ≤ tecto de produtividade (policy-aware: janela de
+    # materiais mede-se em dias úteis, esta métrica em índices de dia)
+    from backend.scheduler.window import effective_earliness_target
+
+    ceiling = effective_earliness_target(config) if config is not None else 6.5
     earliness = score["earliness_avg_days"]
-    results["Earliness <= 6.5d"] = (
-        earliness <= 6.5,
-        f"earliness={earliness:.1f}d"
+    results["Earliness <= tecto"] = (
+        earliness <= ceiling,
+        f"earliness={earliness:.1f}d (tecto {ceiling:.1f}d)",
     )
 
     # 13. Setups — não regride (referência: 134 para 17/03, 125 para 27/02)
     setups = score["setups"]
     results["Setups razoáveis"] = (
         setups <= 140,  # reasonable upper bound
-        f"setups={setups}"
+        f"setups={setups}",
     )
 
     # 14. Segment overlaps — 0 overlaps intra-máquina/dia
     overlap_count = _check_segment_overlaps(segs)
-    results["0 overlaps intra-máquina"] = (
-        overlap_count == 0,
-        f"{overlap_count} overlaps"
-    )
+    results["0 overlaps intra-máquina"] = (overlap_count == 0, f"{overlap_count} overlaps")
 
     # ═══ STRUCTURAL ═══
 
     # 15. Segment start < end (= OK para markers)
     inverted = [
         f"{seg.lot_id} day={seg.day_idx} start={seg.start_min} >= end={seg.end_min}"
-        for seg in segs if seg.start_min > seg.end_min
+        for seg in segs
+        if seg.start_min > seg.end_min
     ]
     results["Segment start <= end"] = (
         len(inverted) == 0,
-        f"{len(inverted)} inverted" + (f": {inverted[:3]}" if inverted else "")
+        f"{len(inverted)} inverted" + (f": {inverted[:3]}" if inverted else ""),
     )
 
     # 16. Segment qty >= 0
-    neg_qty = [
-        f"{seg.lot_id} qty={seg.qty}"
-        for seg in segs if seg.qty < 0
-    ]
+    neg_qty = [f"{seg.lot_id} qty={seg.qty}" for seg in segs if seg.qty < 0]
     results["Segment qty >= 0"] = (
         len(neg_qty) == 0,
-        f"{len(neg_qty)} negative" + (f": {neg_qty[:3]}" if neg_qty else "")
+        f"{len(neg_qty)} negative" + (f": {neg_qty[:3]}" if neg_qty else ""),
     )
 
     # 17. Min prod_min — todos os lotes com prod_min >= 1.0 ou qty > 0
     min_prod_violations = [
         f"{lot.id} prod_min={lot.prod_min:.2f} qty={lot.qty}"
-        for lot in lots if lot.qty > 0 and lot.prod_min < 1.0
+        for lot in lots
+        if lot.qty > 0 and lot.prod_min < 1.0
     ]
     results["Min prod_min >= 1.0"] = (
         len(min_prod_violations) == 0,
-        f"{len(min_prod_violations)} violations" + (f": {min_prod_violations[:3]}" if min_prod_violations else "")
+        f"{len(min_prod_violations)} violations"
+        + (f": {min_prod_violations[:3]}" if min_prod_violations else ""),
     )
 
     # 18. Per-client order coverage — every individual order must be "ready"
@@ -196,18 +249,17 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str) -> dict:
     for day in exp.days:
         for e in day.entries:
             if e.status != "ready":
-                not_ready.append(
-                    f"{e.client}/{e.sku} day={e.day_idx} shortfall={e.shortfall:,}"
-                )
+                not_ready.append(f"{e.client}/{e.sku} day={e.day_idx} shortfall={e.shortfall:,}")
     results["Encomendas individuais cobertas"] = (
         len(not_ready) == 0,
-        f"{len(not_ready)} não cobertas" + (f": {not_ready[:3]}" if not_ready else "")
+        f"{len(not_ready)} não cobertas" + (f": {not_ready[:3]}" if not_ready else ""),
     )
 
     return results
 
 
 # ─── Individual check functions ───────────────────────────────────────
+
 
 def _check_tool_contention(segs: list) -> list[str]:
     """Check same tool never on 2 machines at same time."""
@@ -339,64 +391,108 @@ def _check_segment_overlaps(segs: list) -> int:
 
 # ─── Main ─────────────────────────────────────────────────────────────
 
-def main():
-    isop_files = [
-        "ISOP_ Nikufra_27_2.xlsx",
-        "ISOP_ Nikufra_17_3.xlsx",
-    ]
 
-    config = load_config()
+def main():
+    parser = argparse.ArgumentParser(description="Validate APS hard gates on real ISOP files.")
+    parser.add_argument(
+        "isop_files",
+        nargs="*",
+        default=[
+            "ISOP_ Nikufra_27_2.xlsx",
+            "ISOP_ Nikufra_17_3.xlsx",
+        ],
+    )
+    parser.add_argument("--config", default="config/factory.yaml")
+    parser.add_argument("--master", default="config/incompol.yaml")
+    args = parser.parse_args()
+
+    isop_files = args.isop_files
+    config = load_config(args.config)
     all_passed = True
+    processed = 0
 
     for isop_file in isop_files:
         if not Path(isop_file).exists():
             print(f"  SKIP: {isop_file} not found")
             continue
+        processed += 1
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"  ISOP: {isop_file}")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
-        data = load_isop(isop_file)
+        data = load_isop(isop_file, master_path=args.master, config=config)
         print(f"  {len(data.ops)} ops, {len(data.machines)} machines, {data.n_days} days")
         print(f"  {len(data.twin_groups)} twin groups, {len(data.holidays)} holidays")
 
         # Run CPO optimizer
-        print(f"\n  Running CPO normal mode...")
+        print("\n  Running CPO normal mode...")
         t0 = time.perf_counter()
         result = optimize(data, mode="normal", config=config, seed=42)
         elapsed = time.perf_counter() - t0
 
         score = result.score
         print(f"  Done in {elapsed:.1f}s")
-        print(f"  OTD={score['otd']}%, OTD-D={score['otd_d']}%, "
-              f"tardy={score['tardy_count']}, setups={score['setups']}, "
-              f"earliness={score['earliness_avg_days']:.1f}d")
+        print(
+            f"  OTD={score['otd']}%, OTD-D={score['otd_d']}%, "
+            f"tardy={score['tardy_count']}, setups={score['setups']}, "
+            f"earliness={score['earliness_avg_days']:.1f}d"
+        )
 
         # Run ALL constraint checks
-        print(f"\n  {'─'*66}")
+        print(f"\n  {'─' * 66}")
         print(f"  {'CONSTRAINT':40s} {'STATUS':8s} DETAIL")
-        print(f"  {'─'*66}")
+        print(f"  {'─' * 66}")
 
-        checks = validate_all(result, data, isop_file)
+        checks = validate_all(result, data, isop_file, config=config)
 
         n_pass = 0
         n_fail = 0
         hard_fail = False
 
         sections = [
-            ("HARD", [
-                "OTD = 100%", "OTD-D = 100%", "Tardy = 0",
-                "Shift bounds [420,1440]", "Feriados respeitados", "PRM020 inactivo",
-                "Tool contention", "Crew mutex", "Day capacity <= 1020",
-                "Eco lot", "Demand conservation", "Encomendas individuais cobertas",
-            ]),
-            ("SOFT", [
-                "Earliness <= 6.5d", "Setups razoáveis", "0 overlaps intra-máquina",
-            ]),
-            ("STRUCTURAL", [
-                "Segment start <= end", "Segment qty >= 0", "Min prod_min >= 1.0",
-            ]),
+            (
+                "HARD",
+                [
+                    "Shift bounds [420,1440]",
+                    "Feriados respeitados",
+                    "PRM020 excluída",
+                    "Tool contention",
+                    "Crew mutex",
+                    "Day capacity <= 1020",
+                    "Eco lot",
+                    "Demand conservation",
+                    "Gates físicos do runtime",
+                    "Contrato de aplicação runtime",
+                ],
+            ),
+            (
+                "APPROVAL",
+                [
+                    "OTD = 100%",
+                    "OTD-D = 100%",
+                    "Tardy = 0",
+                    "Janela de materiais",
+                    "Robustez >= 95%",
+                    "Encomendas individuais cobertas",
+                ],
+            ),
+            (
+                "SOFT",
+                [
+                    "Earliness <= tecto",
+                    "Setups razoáveis",
+                    "0 overlaps intra-máquina",
+                ],
+            ),
+            (
+                "STRUCTURAL",
+                [
+                    "Segment start <= end",
+                    "Segment qty >= 0",
+                    "Min prod_min >= 1.0",
+                ],
+            ),
         ]
 
         for section_name, constraint_names in sections:
@@ -413,22 +509,24 @@ def main():
                     if section_name == "HARD":
                         hard_fail = True
 
-        print(f"\n  {'─'*66}")
+        print(f"\n  {'─' * 66}")
         print(f"  TOTAL: {n_pass} PASS, {n_fail} FAIL")
         if hard_fail:
-            print(f"  *** HARD CONSTRAINT FAILURE ***")
+            print("  *** HARD CONSTRAINT FAILURE ***")
             all_passed = False
         elif n_fail > 0:
-            print(f"  (all HARD pass, {n_fail} soft/structural fail)")
+            print(f"  (all HARD pass, {n_fail} approval/soft/structural checks need attention)")
         else:
-            print(f"  ALL CONSTRAINTS PASS")
+            print("  ALL CONSTRAINTS PASS")
 
-    print(f"\n{'='*70}")
-    if all_passed:
+    print(f"\n{'=' * 70}")
+    if processed == 0:
+        print("  OVERALL: NO ISOP FILES FOUND")
+    elif all_passed:
         print("  OVERALL: ALL HARD CONSTRAINTS PASS ON ALL ISOPs")
     else:
         print("  OVERALL: HARD CONSTRAINT FAILURES DETECTED")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
 if __name__ == "__main__":

@@ -23,11 +23,20 @@ class ThompsonTransfer:
         if not history:
             return None
 
+        compatible = [
+            item
+            for item in history
+            if item["context"].get("planning_policy_version")
+            == context.planning_policy_version
+        ]
+        if not compatible:
+            return None
+
         # Filter by similarity
-        similar = [h for h in history if _is_similar(h["context"], context)]
+        similar = [h for h in compatible if _is_similar(h["context"], context)]
         if not similar:
-            # Fallback: best ever
-            return SchedulerParams.from_dict(history[0]["best_params"])
+            # Fallback: best result under the same planning semantics.
+            return SchedulerParams.from_dict(compatible[0]["best_params"])
 
         # Thompson: sample Normal(reward, std) per entry, pick highest sample
         best_sample = -float("inf")
@@ -58,7 +67,4 @@ def _is_similar(ctx_dict: dict, ctx: ISContext) -> bool:
     dd_threshold = 0.3 * max(dd, ctx.demand_density, 0.01)
     n_threshold = 0.5 * max(n, ctx.n_ops, 1)
 
-    return (
-        abs(dd - ctx.demand_density) < dd_threshold
-        and abs(n - ctx.n_ops) < n_threshold
-    )
+    return abs(dd - ctx.demand_density) < dd_threshold and abs(n - ctx.n_ops) < n_threshold

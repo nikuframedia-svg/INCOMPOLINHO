@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { T } from "../theme/tokens";
 import { getStockSummary, getStockDetail } from "../api/endpoints";
-import type { StockSummary, StockProjection, StockDayCompact } from "../api/types";
+import type { StockDayCompact } from "../api/types";
+import { usePlanQuery } from "../hooks/usePlanQuery";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
 import { Dot } from "../components/ui/Dot";
 import { Pill } from "../components/ui/Pill";
+import { formatStockoutLabel, parseStockDate } from "../lib/stockDates";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -20,17 +22,7 @@ function fmtStock(v: number): string {
 
 function fmtDate(iso: string): { short: string; dow: string } {
   // "2026-03-05" → "05-Mar", "Qua"
-  const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  const DOWS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
-  try {
-    const d = new Date(iso + "T12:00:00");
-    return {
-      short: `${String(d.getDate()).padStart(2, "0")}-${MONTHS[d.getMonth()]}`,
-      dow: DOWS[d.getDay()],
-    };
-  } catch {
-    return { short: iso, dow: "" };
-  }
+  return parseStockDate(iso) ?? { short: iso, dow: "" };
 }
 
 function cellBg(day: StockDayCompact, coverageDays: number): string {
@@ -81,20 +73,15 @@ const LABEL_W = 180;
 // ── Main Component ───────────────────────────────────────────
 
 export function StockPage() {
-  const [data, setData] = useState<StockSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error } = usePlanQuery("stock", getStockSummary);
   const [clientFilter, setClientFilter] = useState<string>("");
   const [machineFilter, setMachineFilter] = useState<string>("");
   const [riskOnly, setRiskOnly] = useState(false);
   const [hideNoDemand, setHideNoDemand] = useState(true);
-  const [detail, setDetail] = useState<StockProjection | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  useEffect(() => {
-    getStockSummary()
-      .then(setData)
-      .catch((e) => setError(String(e)));
-  }, []);
+  const [detailSku, setDetailSku] = useState<string | null>(null);
+  const loadDetail = useCallback(() => detailSku ? getStockDetail(detailSku) : Promise.resolve(null), [detailSku]);
+  const { data: detail, error: detailError } = usePlanQuery(JSON.stringify(detailSku), loadDetail);
+  const detailLoading = Boolean(detailSku && !detail && !detailError);
 
   // Unique filter options
   const clients = useMemo(() => {
@@ -106,13 +93,15 @@ export function StockPage() {
     if (!data) return [];
     return [...new Set(data.map((s) => s.machine).filter(Boolean))].sort();
   }, [data]);
+  const selectedClient = clients.includes(clientFilter) ? clientFilter : "";
+  const selectedMachine = machines.includes(machineFilter) ? machineFilter : "";
 
   // Filtered & sorted rows
   const rows = useMemo(() => {
     if (!data) return [];
     let list = data;
-    if (clientFilter) list = list.filter((s) => s.client === clientFilter);
-    if (machineFilter) list = list.filter((s) => s.machine === machineFilter);
+    if (selectedClient) list = list.filter((s) => s.client === selectedClient);
+    if (selectedMachine) list = list.filter((s) => s.machine === selectedMachine);
     if (riskOnly) list = list.filter((s) => s.stockout_day !== null);
     if (hideNoDemand) list = list.filter((s) => s.total_demand > 0);
     // Sort: rupturas first (by stockout_day ASC), then by SKU
@@ -122,7 +111,7 @@ export function StockPage() {
       if (aRisk !== bRisk) return aRisk - bRisk;
       return a.sku.localeCompare(b.sku);
     });
-  }, [data, clientFilter, machineFilter, riskOnly, hideNoDemand]);
+  }, [data, selectedClient, selectedMachine, riskOnly, hideNoDemand]);
 
   // Day columns from first row (all rows have same days structure)
   const dayColumns = useMemo(() => {
@@ -140,18 +129,11 @@ export function StockPage() {
     return data.filter((s) => s.stockout_day !== null).length;
   }, [data]);
 
-  const openDetail = async (sku: string) => {
-    setDetailLoading(true);
-    try {
-      const res = await getStockDetail(sku);
-      setDetail(res);
-    } catch { /* ignore */ }
-    setDetailLoading(false);
-  };
+  const openDetail = (sku: string) => setDetailSku(sku);
 
   if (error) return <div style={{ color: T.red, padding: 24 }}>{error}</div>;
   if (!data) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;
-  if (data.length === 0) return <div style={{ color: T.secondary, padding: 24 }}>Sem dados de stock. Carrega um ISOP primeiro.</div>;
+  if (data.length === 0) return <div style={{ color: T.secondary, padding: 24 }}>Sem referências com stock neste plano.</div>;
 
   const totalCount = hideNoDemand ? data.filter((s) => s.total_demand > 0).length : data.length;
 
@@ -172,11 +154,11 @@ export function StockPage() {
 
       {/* Filter bar */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} style={selectStyle}>
+        <select value={selectedClient} onChange={(e) => setClientFilter(e.target.value)} style={selectStyle}>
           <option value="">Todos os clientes</option>
           {clients.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)} style={selectStyle}>
+        <select value={selectedMachine} onChange={(e) => setMachineFilter(e.target.value)} style={selectStyle}>
           <option value="">Todas as maquinas</option>
           {machines.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
@@ -247,6 +229,7 @@ export function StockPage() {
           {/* ── Data rows ── */}
           {rows.map((row) => {
             const hasRisk = row.stockout_day !== null;
+            const stockoutLabel = formatStockoutLabel(row.stockout_day, row.days ?? []);
             return (
               <div key={row.op_id} style={{ display: "contents" }}>
                 {/* SKU label cell (sticky left) */}
@@ -274,7 +257,7 @@ export function StockPage() {
                     {row.machine && <span style={{ marginLeft: 6, color: T.tertiary }}>{row.machine}</span>}
                   </div>
                   {hasRisk && (
-                    <Pill color={T.red}>esgota dia {row.stockout_day}</Pill>
+                    <Pill color={T.red}>{stockoutLabel}</Pill>
                   )}
                 </div>
 
@@ -318,6 +301,14 @@ export function StockPage() {
                               +{fmtStock(day.produced)}
                             </span>
                           )}
+                          {day.demand > 0 && (
+                            <span
+                              aria-label={`Saída de stock: ${day.demand.toLocaleString()}`}
+                              style={{ fontSize: 8, color: T.blue, marginTop: 1 }}
+                            >
+                              -{fmtStock(day.demand)}
+                            </span>
+                          )}
                         </>
                       )}
                     </div>
@@ -351,12 +342,16 @@ export function StockPage() {
           <span style={{ fontSize: 10, color: T.green }}>+N</span>
           <span style={{ fontSize: 10, color: T.tertiary }}>Producao</span>
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 10, color: T.blue }}>-N</span>
+          <span style={{ fontSize: 10, color: T.tertiary }}>Saída de stock</span>
+        </div>
       </div>
 
       {/* Detail Modal */}
-      {(detail || detailLoading) && (
+      {detailSku && (
         <div
-          onClick={() => { setDetail(null); setDetailLoading(false); }}
+          onClick={() => setDetailSku(null)}
           style={{
             position: "fixed", inset: 0, zIndex: 100,
             background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center",
@@ -366,7 +361,7 @@ export function StockPage() {
             onClick={() => {}}
             style={{ width: 600, maxHeight: "80vh", overflow: "auto", padding: 20 }}
           >
-            {detailLoading && !detail ? (
+            {detailError ? <div role="alert" style={{ color: T.red }}>{detailError}</div> : detailLoading && !detail ? (
               <div style={{ color: T.secondary, fontSize: 13 }}>A carregar...</div>
             ) : detail ? (
               <>
@@ -375,13 +370,13 @@ export function StockPage() {
                     <span style={{ fontSize: 16, fontWeight: 700, fontFamily: T.mono, color: T.primary }}>{detail.sku}</span>
                     <span style={{ fontSize: 12, color: T.secondary, marginLeft: 12 }}>{detail.client} | {detail.machine}</span>
                   </div>
-                  <button onClick={() => setDetail(null)} style={{ background: "none", border: "none", color: T.secondary, cursor: "pointer", fontSize: 18 }}>x</button>
+                  <button onClick={() => setDetailSku(null)} style={{ background: "none", border: "none", color: T.secondary, cursor: "pointer", fontSize: 18 }}>x</button>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
                   <div><Label>Total Demand</Label><div style={{ fontFamily: T.mono, fontSize: 14, color: T.primary, marginTop: 2 }}>{detail.total_demand.toLocaleString()}</div></div>
                   <div><Label>Stock Inicial</Label><div style={{ fontFamily: T.mono, fontSize: 14, color: T.primary, marginTop: 2 }}>{detail.initial_stock.toLocaleString()}</div></div>
                   <div><Label>Cobertura</Label><div style={{ fontFamily: T.mono, fontSize: 14, color: T.primary, marginTop: 2 }}>{detail.coverage_days}d</div></div>
-                  <div><Label>Ruptura</Label><div style={{ fontFamily: T.mono, fontSize: 14, color: detail.stockout_day !== null ? T.red : T.green, marginTop: 2 }}>{detail.stockout_day !== null ? `D${detail.stockout_day}` : "Nao"}</div></div>
+                  <div><Label>Ruptura</Label><div style={{ fontFamily: T.mono, fontSize: 14, color: detail.stockout_day !== null ? T.red : T.green, marginTop: 2 }}>{detail.stockout_day !== null ? formatStockoutLabel(detail.stockout_day, detail.days) : "Nao"}</div></div>
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                   <thead>

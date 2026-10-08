@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from backend.types import EOp, RawRow
+import pytest
+
 from backend.transform.client_demands import extract_client_demands
 from backend.transform.merge import merge_multi_client
 from backend.transform.twins import (
@@ -11,6 +12,7 @@ from backend.transform.twins import (
     identify_twins_from_tool_machine,
 )
 from backend.transform.transform import transform, _raw_to_eop, _resolve_holidays
+from backend.types import EOp, MachineInfo, RawRow
 
 
 # --- Fixtures ---
@@ -96,6 +98,20 @@ class TestMerge:
         assert "FAUR-SIEGE" in merged[0].client
         assert "FAURECIA" in merged[0].client
 
+    def test_transform_rejects_same_sku_with_two_production_routes(self):
+        rows = [
+            _make_raw(sku="SKU-A", machine="M1", tool="T1"),
+            _make_raw(sku="SKU-A", machine="M2", tool="T2"),
+        ]
+
+        with pytest.raises(ValueError, match="rotas ambíguas") as exc_info:
+            transform(rows, WORKDAYS, has_twin_col=False, master_data=None)
+
+        message = str(exc_info.value)
+        assert "SKU-A" in message
+        assert "M1/T1" in message
+        assert "M2/T2" in message
+
     def test_merge_demand_sum(self):
         """Demand is summed across clients."""
         op1 = _make_eop(d=[100, 200, 300])
@@ -112,9 +128,19 @@ class TestMerge:
     def test_merge_ph_min(self):
         """pH = min (conservative)."""
         op1 = _make_eop()
-        op1 = EOp(**{**{f.name: getattr(op1, f.name) for f in op1.__dataclass_fields__.values()}, "pH": 1000})
+        op1 = EOp(
+            **{
+                **{f.name: getattr(op1, f.name) for f in op1.__dataclass_fields__.values()},
+                "pH": 1000,
+            }
+        )
         op2 = _make_eop()
-        op2 = EOp(**{**{f.name: getattr(op2, f.name) for f in op2.__dataclass_fields__.values()}, "pH": 500})
+        op2 = EOp(
+            **{
+                **{f.name: getattr(op2, f.name) for f in op2.__dataclass_fields__.values()},
+                "pH": 500,
+            }
+        )
         merged = merge_multi_client([op1, op2])
         assert merged[0].pH == 500
 
@@ -228,10 +254,10 @@ class TestRawToEop:
         assert eop.stk == 2751
         assert eop.d == [0, 0, 0, 15600, 0, 10400]
 
-    def test_ph_zero_defaults_to_one(self):
+    def test_explicit_zero_cadence_is_not_replaced(self):
         raw = _make_raw(pH=0)
-        eop = _raw_to_eop(raw, None)
-        assert eop.pH == 1.0
+        with pytest.raises(ValueError, match="cadencia"):
+            _raw_to_eop(raw, None)
 
     def test_master_data_setup_hours(self):
         raw = _make_raw()
@@ -300,4 +326,41 @@ class TestTransformPipeline:
         assert result.ops[0].alt == "PRM039"
         assert result.machines[0].group == "Grandes"
         assert result.machines[0].day_capacity == 1020
-        assert result.holidays == [1, 2]  # "2026-03-06" is holiday (index 1), "2026-03-07" is Saturday (index 2)
+        assert result.holidays == [
+            1,
+            2,
+        ]  # "2026-03-06" is holiday (index 1), "2026-03-07" is Saturday (index 2)
+
+    def test_null_machine_capacity_inherits_common_1020_minutes(self):
+        rows = [
+            _make_raw(
+                machine="M20",
+                np=[0, -5000, 0, 0, 0, 0],
+            )
+        ]
+        master = {
+            "machines": {
+                "M20": {
+                    "group": "Grandes",
+                    "day_capacity_min": None,
+                }
+            }
+        }
+
+        result = transform(rows, WORKDAYS, has_twin_col=False, master_data=master)
+
+        assert result.machines == [
+            MachineInfo(id="M20", group="Grandes", day_capacity=1020)
+        ]
+
+    def test_prm020_isop_demand_is_rejected_not_dropped(self):
+        rows = [_make_raw(sku="SKU-OUT", machine="PRM020", np=[0, -500, 0])]
+        with pytest.raises(ValueError, match="PRM020 fora do âmbito") as error:
+            transform(rows, WORKDAYS, has_twin_col=False, master_data=None)
+        assert "SKU-OUT" in str(error.value)
+
+    def test_prm020_alternative_is_rejected(self):
+        rows = [_make_raw(machine="PRM031", tool="T-OUT")]
+        master = {"alt_machines": {"T-OUT": {"primary": "PRM031", "alt": "PRM020"}}}
+        with pytest.raises(ValueError, match="PRM020 fora do âmbito"):
+            transform(rows, WORKDAYS, has_twin_col=False, master_data=master)

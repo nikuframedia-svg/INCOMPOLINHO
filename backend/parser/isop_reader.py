@@ -9,10 +9,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 from backend.types import RawRow
+from backend.validation import finite_float, strict_int
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +59,7 @@ def _find_header_row(ws) -> int:
 # --- Dynamic column mapping ---
 
 
-def _build_column_map(
-    ws, header_row: int
-) -> tuple[dict[str, int], int | None, bool]:
+def _build_column_map(ws, header_row: int) -> tuple[dict[str, int], int | None, bool]:
     """Build column index map from header names.
 
     Returns:
@@ -113,19 +114,13 @@ def _extract_dates(ws, header_row: int, first_date_col: int) -> list[str]:
 def _safe_int(val) -> int:
     if val is None or val == "":
         return 0
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return 0
+    return strict_int(val)
 
 
 def _safe_float(val) -> float:
     if val is None or val == "":
         return 0.0
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return 0.0
+    return finite_float(val)
 
 
 def _get(ws, row: int, col_map: dict[str, int], field: str, default=None):
@@ -174,80 +169,122 @@ def read_isop(path: str | Path) -> tuple[list[RawRow], list[str], bool]:
 
     Returns:
         (rows, workdays, has_twin_column)
-        - rows: list of RawRow (one per ISOP line, PRM020 filtered)
+        - rows: list of RawRow (one per ISOP line)
         - workdays: list of date strings ("2026-03-05")
         - has_twin_column: whether "Peça Gémea" column exists
     """
-    wb = load_workbook(str(path), data_only=True)
-    ws = wb.active
+    try:
+        wb = load_workbook(str(path), data_only=True)
+    except (BadZipFile, InvalidFileException, OSError) as exc:
+        raise ValueError(
+            "O ficheiro não é um Excel .xlsx válido ou está corrompido."
+        ) from exc
+    try:
+        ws = wb.active
 
-    header_row = _find_header_row(ws)
-    col_map, first_date_col, has_twin = _build_column_map(ws, header_row)
+        header_row = _find_header_row(ws)
+        col_map, first_date_col, has_twin = _build_column_map(ws, header_row)
 
-    if first_date_col is None:
-        wb.close()
-        raise ValueError("No date columns found in ISOP header")
+        if first_date_col is None:
+            raise ValueError("No date columns found in ISOP header")
 
-    workdays = _extract_dates(ws, header_row, first_date_col)
-    n_dates = len(workdays)
+        workdays = _extract_dates(ws, header_row, first_date_col)
+        n_dates = len(workdays)
 
-    if n_dates == 0:
-        wb.close()
-        raise ValueError("No workdays extracted from ISOP header")
+        if n_dates == 0:
+            raise ValueError("No workdays extracted from ISOP header")
 
-    rows: list[RawRow] = []
+        # data_only loses the distinction between an empty cell and an
+        # unevaluated formula. Stream the formula view once, retaining only
+        # coordinates, never an additional materialized workbook.
+        formulas: set[str] = set()
+        source = load_workbook(str(path), data_only=False, read_only=True)
+        try:
+            for cells in source[ws.title].iter_rows(min_row=header_row + 1):
+                for cell in cells:
+                    if cell.data_type == "f":
+                        formulas.add(cell.coordinate)
+        finally:
+            source.close()
 
-    for row_idx in range(header_row + 1, ws.max_row + 1):
-        sku = _get(ws, row_idx, col_map, "sku")
-        if not sku or str(sku).strip() == "":
-            break
+        def number(row: int, col: int | None, field: str, default=0, *, fractional=False):
+            if col is None:
+                return default
+            cell = ws.cell(row=row, column=col)
+            value = cell.value
+            origin = f"{ws.title}!{cell.coordinate} ({field})"
+            if value is None or value == "":
+                if cell.coordinate in formulas:
+                    raise ValueError(
+                        f"{origin}: formula sem valor calculado. Recalcule e guarde o Excel."
+                    )
+                return default
+            return finite_float(value, origin) if fractional else strict_int(value, origin)
 
-        machine = str(_get(ws, row_idx, col_map, "machine_id", "")).strip()
+        rows: list[RawRow] = []
 
-        # PRM020 — FORA DE USO. IGNORAR SEMPRE.
-        if machine == "PRM020":
-            continue
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            sku = _get(ws, row_idx, col_map, "sku")
+            if not sku or str(sku).strip() == "":
+                continue
 
-        # Extract NP values from date columns
-        np_values: list[int] = []
-        for col in range(first_date_col, first_date_col + n_dates):
-            v = ws.cell(row=row_idx, column=col).value
-            np_values.append(_safe_int(v))
+            machine = str(_get(ws, row_idx, col_map, "machine_id", "")).strip()
 
-        # pH warning
-        ph = _safe_float(_get(ws, row_idx, col_map, "pieces_per_hour", 0))
-        if ph <= 0:
-            logger.warning("pH=0 for SKU %s on %s, defaulting to 1.0", str(sku).strip(), machine)
+            # Extract NP values from date columns
+            np_values: list[int] = []
+            for col in range(first_date_col, first_date_col + n_dates):
+                np_values.append(number(row_idx, col, "stock/procura"))
 
-        rows.append(
-            RawRow(
-                client_id=str(_get(ws, row_idx, col_map, "client_id", "")).strip(),
-                client_name=str(_get(ws, row_idx, col_map, "client_name", "")).strip(),
-                sku=str(sku).strip(),
-                designation=str(_get(ws, row_idx, col_map, "designation", "")).strip(),
-                eco_lot=_safe_int(_get(ws, row_idx, col_map, "eco_lot", 0)),
-                machine_id=machine,
-                tool_id=str(_get(ws, row_idx, col_map, "tool_id", "")).strip(),
-                pieces_per_hour=ph,
-                operators=_safe_int(_get(ws, row_idx, col_map, "operators", 1)),
-                wip=_safe_int(_get(ws, row_idx, col_map, "wip", 0)),
-                backlog=_safe_int(_get(ws, row_idx, col_map, "backlog", 0)),
-                twin_ref=(
-                    str(_get(ws, row_idx, col_map, "twin_ref", "")).strip()
-                    if has_twin
-                    else ""
-                ),
-                np_values=np_values,
+            # Defaults belong only to empty cells, never to indeterminate or
+            # explicitly invalid cadence. Preserve their source in the DQA.
+            ph_col = col_map.get("pieces_per_hour")
+            ph = number(row_idx, ph_col, "pieces_per_hour", 1.0, fractional=True)
+            origin = (
+                f"{ws.title}!{ws.cell(row=row_idx, column=ph_col).coordinate}"
+                if ph_col
+                else ws.title
             )
+            warnings = []
+            if ph <= 0:
+                raise ValueError(f"{origin} (pieces_per_hour): a cadencia deve ser positiva.")
+            if ph_col is None or ws.cell(row=row_idx, column=ph_col).value in (None, ""):
+                warnings.append(f"{origin} (pieces_per_hour): vazio; valor por omissao 1.0.")
+            operators = number(row_idx, col_map.get("operators"), "operators", 1)
+            if operators < 1:
+                column = col_map.get("operators")
+                coordinate = ws.cell(row=row_idx, column=column).coordinate if column else ""
+                raise ValueError(f"{ws.title}!{coordinate} (operators): deve ser >= 1.")
+
+            rows.append(
+                RawRow(
+                    client_id=str(_get(ws, row_idx, col_map, "client_id", "")).strip(),
+                    client_name=str(_get(ws, row_idx, col_map, "client_name", "")).strip(),
+                    sku=str(sku).strip(),
+                    designation=str(_get(ws, row_idx, col_map, "designation", "")).strip(),
+                    eco_lot=number(row_idx, col_map.get("eco_lot"), "eco_lot"),
+                    machine_id=machine,
+                    tool_id=str(_get(ws, row_idx, col_map, "tool_id", "")).strip(),
+                    pieces_per_hour=ph,
+                    operators=operators,
+                    wip=number(row_idx, col_map.get("wip"), "wip"),
+                    backlog=number(row_idx, col_map.get("backlog"), "backlog"),
+                    twin_ref=(
+                        str(_get(ws, row_idx, col_map, "twin_ref", "")).strip()
+                        if has_twin
+                        else ""
+                    ),
+                    np_values=np_values,
+                    warnings=warnings,
+                )
+            )
+
+        logger.info(
+            "Parsed ISOP: %d rows, %d workdays, twin_col=%s",
+            len(rows),
+            n_dates,
+            has_twin,
         )
 
-    wb.close()
-
-    logger.info(
-        "Parsed ISOP: %d rows, %d workdays, twin_col=%s",
-        len(rows),
-        n_dates,
-        has_twin,
-    )
-
-    return rows, workdays, has_twin
+        return rows, workdays, has_twin
+    finally:
+        wb.close()

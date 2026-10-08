@@ -1,4 +1,4 @@
-"""CLI runner for CPO v3.0 — Load ISOP, run optimizer, print comparison.
+"""CLI runner for CPO v4 — Load ISOP, run optimizer, print comparison.
 
 Usage:
   python scripts/run_cpo.py --mode normal
@@ -21,10 +21,12 @@ from backend.cpo import optimize
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CPO v3.0 — Super Scheduler")
+    parser = argparse.ArgumentParser(description="CPO v4 — APS Trust Loop")
     parser.add_argument("--isop", type=str, help="Path to ISOP Excel file")
     parser.add_argument(
-        "--mode", type=str, default="normal",
+        "--mode",
+        type=str,
+        default="normal",
         choices=["quick", "normal", "deep", "max"],
     )
     parser.add_argument("--seed", type=int, default=42)
@@ -38,6 +40,7 @@ def main():
 
     try:
         from backend.config.loader import load_config
+
         config = load_config()
     except Exception:
         config = FactoryConfig()
@@ -48,9 +51,11 @@ def main():
     else:
         engine_data = _build_demo_data()
 
-    print(f"\n{'='*60}")
-    print(f"CPO v3.0 — {len(engine_data.ops)} ops, {len(engine_data.machines)} machines, {engine_data.n_days} days")
-    print(f"{'='*60}\n")
+    print(f"\n{'=' * 60}")
+    print(
+        f"CPO v4 — {len(engine_data.ops)} ops, {len(engine_data.machines)} machines, {engine_data.n_days} days"
+    )
+    print(f"{'=' * 60}\n")
 
     # Baseline
     print("Running baseline (greedy)...")
@@ -63,14 +68,16 @@ def main():
     cpo_result = optimize(engine_data, mode=args.mode, config=config, seed=args.seed)
 
     # Print comparison
-    print(f"\n{'─'*60}")
-    print(f"{'':20s} {'Setups':>8s} {'Earliness':>10s} {'Tardy':>7s} {'OTD':>6s} {'OTD-D':>7s} {'Time':>8s}")
-    print(f"{'─'*60}")
+    print(f"\n{'─' * 60}")
+    print(
+        f"{'':20s} {'Setups':>8s} {'Earliness':>10s} {'Tardy':>7s} {'OTD':>6s} {'OTD-D':>7s} {'Time':>8s}"
+    )
+    print(f"{'─' * 60}")
 
     _print_row("Baseline", baseline.score, baseline_time)
     _print_row(f"CPO {args.mode}", cpo_result.score, cpo_result.time_ms)
 
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     # Improvement summary
     b_setups = baseline.score.get("setups", 0)
@@ -85,10 +92,21 @@ def main():
         earl_pct = (b_earl - c_earl) / b_earl * 100
         print(f"Earliness: {b_earl:.1f}d -> {c_earl:.1f}d ({earl_pct:+.1f}%)")
 
+    trace = (cpo_result.gate_report or {}).get("solver_trace") or {}
+    search = trace.get("candidate_search") or {}
+    if trace:
+        print(
+            "\nSolver trace: "
+            f"source={trace.get('final_source', 'unknown')}, "
+            f"evaluated={search.get('evaluated', 0)}, "
+            f"accepted={search.get('accepted', 0)}, "
+            f"budget={search.get('budget', 0)}"
+        )
+
     # Constraint validation
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("CONSTRAINT VALIDATION")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     score = cpo_result.score
     _check("OTD = 100%", score.get("otd", 0) == 100.0)
     _check("OTD-D = 100%", score.get("otd_d", 0) == 100.0)
@@ -103,8 +121,12 @@ def main():
     holiday_ok = all(s.day_idx not in holidays for s in cpo_result.segments)
     _check("No holidays", holiday_ok)
 
-    prm020_ok = all(s.machine_id != "PRM020" for s in cpo_result.segments)
-    _check("PRM020 inactive", prm020_ok)
+    prm020_ok = (
+        all(op.m != "PRM020" and op.alt != "PRM020" for op in engine_data.ops)
+        and all(machine.id != "PRM020" for machine in engine_data.machines)
+        and all(s.machine_id != "PRM020" for s in cpo_result.segments)
+    )
+    _check("PRM020 excluded", prm020_ok)
 
     start_end_ok = all(s.start_min <= s.end_min for s in cpo_result.segments)
     _check("Segment start <= end", start_end_ok)
@@ -120,7 +142,7 @@ def _print_row(label: str, score: dict, time_ms: float):
         f"{score.get('tardy_count', 0):>7d} "
         f"{score.get('otd', 0):>5.1f}% "
         f"{score.get('otd_d', 0):>6.1f}% "
-        f"{time_ms/1000:>7.1f}s"
+        f"{time_ms / 1000:>7.1f}s"
     )
 
 
@@ -150,12 +172,26 @@ def _build_demo_data():
         d = [0] * 80
         for day in range(5, 80, 12):
             d[day] = 2000
-        ops.append(EOp(
-            id=f"{tool}_{machine}_{sku}",
-            sku=sku, client="DEMO", designation="Demo part",
-            m=machine, t=tool, pH=pH, sH=0.5, operators=1,
-            eco_lot=1000, alt=alt, stk=0, backlog=0, d=d, oee=0.66, wip=0,
-        ))
+        ops.append(
+            EOp(
+                id=f"{tool}_{machine}_{sku}",
+                sku=sku,
+                client="DEMO",
+                designation="Demo part",
+                m=machine,
+                t=tool,
+                pH=pH,
+                sH=0.5,
+                operators=1,
+                eco_lot=1000,
+                alt=alt,
+                stk=0,
+                backlog=0,
+                d=d,
+                oee=0.66,
+                wip=0,
+            )
+        )
 
     machines = [
         MachineInfo(id="PRM019", group="Grandes", day_capacity=DAY_CAP),
@@ -166,18 +202,24 @@ def _build_demo_data():
     ]
 
     from backend.types import EngineData
+
     return EngineData(
-        ops=ops, machines=machines, twin_groups=[], client_demands={},
-        workdays=[f"2026-03-{d:02d}" for d in range(5, 31)] +
-                 [f"2026-04-{d:02d}" for d in range(1, 30)] +
-                 [f"2026-05-{d:02d}" for d in range(1, 31)],
-        n_days=80, holidays=[10, 25, 40, 55, 70],
+        ops=ops,
+        machines=machines,
+        twin_groups=[],
+        client_demands={},
+        workdays=[f"2026-03-{d:02d}" for d in range(5, 31)]
+        + [f"2026-04-{d:02d}" for d in range(1, 30)]
+        + [f"2026-05-{d:02d}" for d in range(1, 31)],
+        n_days=80,
+        holidays=[10, 25, 40, 55, 70],
     )
 
 
 def _load_isop(path: str, config: FactoryConfig):
     """Load ISOP Excel and transform to EngineData."""
     try:
+        from backend.config.planning import apply_effective_planning_config
         from backend.parser.isop_reader import read_isop
         from backend.transform.transform import transform
         from pathlib import Path
@@ -185,14 +227,17 @@ def _load_isop(path: str, config: FactoryConfig):
 
         raw_rows, workdays, has_twin_col = read_isop(path)
 
-        # Load master data from factory.yaml
+        # Keep this path aligned with validate_isop_constraints.py so CLI and
+        # regression validation exercise the same planning model.
         master_data = None
-        yaml_path = Path("config/factory.yaml")
+        yaml_path = Path("config/incompol.yaml")
         if yaml_path.exists():
             with open(yaml_path) as f:
                 master_data = yaml.safe_load(f)
 
-        return transform(raw_rows, workdays, has_twin_col, master_data)
+        data = transform(raw_rows, workdays, has_twin_col, master_data)
+        apply_effective_planning_config(data, config)
+        return data
     except ImportError as e:
         print(f"Warning: parser/transform not available ({e}). Using demo data.")
         return _build_demo_data()

@@ -21,10 +21,19 @@ REGRAS:
 7. Se não tiveres dados carregados, diz ao João para carregar o ISOP primeiro.
 
 FERRAMENTAS DISPONÍVEIS:
-- Consulta: ver_producao_dia, ver_carga_maquinas, ver_alertas, ver_score, ver_config, explicar_referencia, explicar_decisao, explicar_logica, ver_encomendas, ver_historico, ver_stress, e_se
-- Acção: recalcular_plano, mover_referencia, adicionar_regra, remover_regra, alterar_config, simular_cenario, simular_overtime, check_ctp, simular_avaria, monte_carlo
-- Master Data: adicionar_maquina, editar_maquina, adicionar_ferramenta, editar_ferramenta, adicionar_twin, remover_twin, adicionar_feriado, remover_feriado, editar_turno, adicionar_turno
-- Visualização: visualizar_stock, visualizar_carga_temporal, visualizar_risco_heatmap, visualizar_encomendas, visualizar_expedicao, visualizar_gantt, visualizar_comparacao, visualizar_learning, visualizar_atrasos, visualizar_workforce, visualizar_cobertura, visualizar_propostas
+- Consulta: ver_producao_dia, ver_carga_maquinas, ver_alertas, ver_score,
+  ver_config, explicar_referencia, explicar_decisao, explicar_logica,
+  ver_encomendas, ver_historico, ver_stress, e_se
+- Acção: recalcular_plano, mover_referencia, adicionar_regra, remover_regra,
+  alterar_config, simular_cenario, simular_overtime, check_ctp, simular_avaria,
+  monte_carlo
+- Master Data: adicionar_maquina, editar_maquina, adicionar_ferramenta,
+  editar_ferramenta, adicionar_twin, remover_twin, adicionar_feriado,
+  remover_feriado, editar_turno, adicionar_turno
+- Visualização: visualizar_stock, visualizar_carga_temporal, visualizar_risco_heatmap,
+  visualizar_encomendas, visualizar_expedicao, visualizar_gantt,
+  visualizar_comparacao, visualizar_learning, visualizar_atrasos,
+  visualizar_workforce, visualizar_cobertura, visualizar_propostas
 """
 
 
@@ -33,7 +42,7 @@ def build_system_prompt(state: CopilotState) -> str:
     parts = [SYSTEM_BASE]
 
     if state.engine_data is not None:
-        parts.append(f"\nESTADO ACTUAL:")
+        parts.append("\nESTADO ACTUAL:")
         parts.append(f"- {len(state.engine_data.ops)} operações carregadas")
         parts.append(f"- {len(state.segments)} segmentos planeados")
         parts.append(f"- {len(state.lots)} lots")
@@ -48,15 +57,17 @@ def build_system_prompt(state: CopilotState) -> str:
 
         if state.trust_index:
             t = state.trust_index
-            t_score = getattr(t, 'score', None)
-            t_gate = getattr(t, 'gate', None)
+            t_score = getattr(t, "score", None)
+            t_gate = getattr(t, "gate", None)
             if t_score is not None:
                 parts.append(f"- Trust Index: {t_score}/100 (gate: {t_gate})")
                 if t_score < 70:
                     parts.append("  ⚠ DADOS COM PROBLEMAS — confiança baixa. Alerta o João.")
 
         if state.journal_entries:
-            n_warns = len([e for e in state.journal_entries if e.get("severity") in ("warn", "error")])
+            n_warns = len(
+                [e for e in state.journal_entries if e.get("severity") in ("warn", "error")]
+            )
             if n_warns:
                 parts.append(f"- {n_warns} journal warnings")
             parts.append(f"- {len(state.journal_entries)} journal entries")

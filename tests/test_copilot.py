@@ -10,17 +10,17 @@ from unittest.mock import patch
 import pytest
 
 from backend.config.loader import _min_to_time, load_config, save_config
-from backend.config.types import FactoryConfig, MachineConfig, ShiftConfig
+from backend.config.types import FactoryConfig, MachineConfig
 from backend.copilot.engine import EXECUTORS, WIDGET_TOOLS, execute_tool
 from backend.copilot.state import CopilotState, state
 from backend.copilot.tools import TOOLS
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.scheduler import schedule_all
-from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData, EOp, MachineInfo, TwinGroup
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────
+
 
 def _eop(
     op_id: str = "T1_M1_SKU1",
@@ -35,10 +35,22 @@ def _eop(
     eco_lot: int = 0,
 ) -> EOp:
     return EOp(
-        id=op_id, sku=sku, client="CLIENTE", designation="Peça teste",
-        m=machine, t=tool, pH=pH, sH=sH, operators=1,
-        eco_lot=eco_lot, alt=alt, stk=0, backlog=0,
-        d=d or [0, 500, 0, 300, 0, 200, 0, 0, 0, 0], oee=oee, wip=0,
+        id=op_id,
+        sku=sku,
+        client="CLIENTE",
+        designation="Peça teste",
+        m=machine,
+        t=tool,
+        pH=pH,
+        sH=sH,
+        operators=1,
+        eco_lot=eco_lot,
+        alt=alt,
+        stk=0,
+        backlog=0,
+        d=d or [0, 500, 0, 300, 0, 200, 0, 0, 0, 0],
+        oee=oee,
+        wip=0,
     )
 
 
@@ -59,10 +71,13 @@ def _engine(
             machine_ids.append(op.alt)
     machines = [MachineInfo(id=m, group="Grandes", day_capacity=DAY_CAP) for m in machine_ids]
     return EngineData(
-        ops=ops, machines=machines, twin_groups=twin_groups or [],
+        ops=ops,
+        machines=machines,
+        twin_groups=twin_groups or [],
         client_demands={},
-        workdays=[f"2026-03-{i+5:02d}" for i in range(n_days)],
-        n_days=n_days, holidays=[],
+        workdays=[f"2026-03-{i + 5:02d}" for i in range(n_days)],
+        n_days=n_days,
+        holidays=[],
     )
 
 
@@ -90,6 +105,7 @@ def _setup_state():
 
 # ─── TestSaveConfig ───────────────────────────────────────────────────────
 
+
 class TestSaveConfig:
     def test_min_to_time(self):
         assert _min_to_time(420) == "07:00"
@@ -97,6 +113,7 @@ class TestSaveConfig:
         assert _min_to_time(1440) == "00:00"
         assert _min_to_time(0) == "00:00"
         assert _min_to_time(60) == "01:00"
+        assert _min_to_time(451.89262507097345) == "07:32"
 
     def test_roundtrip(self):
         """load → save → load produces equivalent config."""
@@ -128,6 +145,7 @@ class TestSaveConfig:
 
 # ─── TestToolSchemas ──────────────────────────────────────────────────────
 
+
 class TestToolSchemas:
     def test_tool_count(self):
         assert len(TOOLS) == 44
@@ -139,6 +157,7 @@ class TestToolSchemas:
 
 
 # ─── TestQueryExecutors ───────────────────────────────────────────────────
+
 
 class TestQueryExecutors:
     def setup_method(self):
@@ -200,56 +219,158 @@ class TestQueryExecutors:
 
 # ─── TestActionExecutors ──────────────────────────────────────────────────
 
+
 class TestActionExecutors:
     def setup_method(self):
         _setup_state()
 
+    @staticmethod
+    def _approved(**values):
+        return {
+            "expected_revision": state.plan_revision,
+            "approve_exceptions": True,
+            "approval_reason": "teste de ação copilot",
+            "approval_author": "pytest",
+            **values,
+        }
+
     def test_recalcular_plano(self):
-        result, _ = execute_tool("recalcular_plano", "{}")
+        result, _ = execute_tool(
+            "recalcular_plano",
+            json.dumps(self._approved()),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
         assert "score" in data
         assert "score_anterior" in data
 
     def test_check_ctp(self):
-        result, _ = execute_tool("check_ctp", json.dumps({
-            "sku": "SKU1", "quantidade": 100, "dia_deadline": 5,
-        }))
+        result, _ = execute_tool(
+            "check_ctp",
+            json.dumps(
+                {
+                    "sku": "SKU1",
+                    "quantidade": 100,
+                    "dia_deadline": 5,
+                }
+            ),
+        )
         data = json.loads(result)
         assert "feasible" in data
         assert "sku" in data
+        assert "entrega_cliente_dia" in data
+        assert "ultimo_envio_subcontratado_dia" in data
+        assert "prazo_producao_dia" in data
+        assert "referencia_material_dia" in data
+        assert "libertacao_material_dia" in data
 
     def test_alterar_config(self):
-        result, _ = execute_tool("alterar_config", json.dumps({
-            "chave": "oee_default", "valor": 0.75,
-        }))
+        with patch("backend.config.loader.save_config"):
+            result, _ = execute_tool(
+                "alterar_config",
+                json.dumps(
+                    self._approved(
+                        chave="oee_default",
+                        valor=0.75,
+                    )
+                ),
+            )
         data = json.loads(result)
         assert data["status"] == "ok"
         assert state.config.oee_default == 0.75
 
     def test_alterar_config_invalid_key(self):
-        result, _ = execute_tool("alterar_config", json.dumps({
-            "chave": "nope", "valor": 1,
-        }))
+        result, _ = execute_tool(
+            "alterar_config",
+            json.dumps(
+                {
+                    "chave": "nope",
+                    "valor": 1,
+                    "expected_revision": state.plan_revision,
+                }
+            ),
+        )
         data = json.loads(result)
         assert "error" in data
 
+    def test_alterar_config_parses_false_boolean(self):
+        with patch("backend.config.loader.save_config"):
+            result, _ = execute_tool(
+                "alterar_config",
+                json.dumps(
+                    self._approved(
+                        chave="interleave_enabled",
+                        valor="false",
+                    )
+                ),
+            )
+        data = json.loads(result)
+        assert data["status"] == "ok"
+        assert state.config.interleave_enabled is False
+
+    def test_alterar_config_rejects_invalid_candidate_before_optimization(self):
+        with patch("backend.cpo.optimize") as optimize_mock:
+            result, _ = execute_tool(
+                "alterar_config",
+                json.dumps(
+                    self._approved(
+                        chave="oee_default",
+                        valor=0,
+                    )
+                ),
+            )
+        data = json.loads(result)
+        assert "error" in data
+        assert "OEE default" in " ".join(data["details"])
+        optimize_mock.assert_not_called()
+        assert state.config.oee_default == 0.66
+
+    def test_alterar_config_cannot_disable_jit_invariant(self):
+        result, _ = execute_tool(
+            "alterar_config",
+            json.dumps(
+                self._approved(
+                    chave="jit_enabled",
+                    valor=False,
+                )
+            ),
+        )
+        data = json.loads(result)
+        assert "error" in data
+        assert state.config.jit_enabled is True
+
     def test_rules(self):
-        result, _ = execute_tool("adicionar_regra", json.dumps({
-            "descricao": "Priorizar FAURECIA", "tipo": "prioridade",
-        }))
+        result, _ = execute_tool(
+            "adicionar_regra",
+            json.dumps(
+                {
+                    "descricao": "Priorizar FAURECIA",
+                    "tipo": "prioridade",
+                    "expected_revision": state.plan_revision,
+                }
+            ),
+        )
         data = json.loads(result)
         rule_id = data["regra_id"]
         assert rule_id
         assert len(state.rules) == 1
 
-        result, _ = execute_tool("remover_regra", json.dumps({"regra_id": rule_id}))
+        result, _ = execute_tool(
+            "remover_regra",
+            json.dumps(
+                {
+                    "regra_id": rule_id,
+                    "expected_revision": state.plan_revision,
+                }
+            ),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
         assert len(state.rules) == 0
 
 
 # ─── TestMasterExecutors ─────────────────────────────────────────────────
+
 
 class TestMasterExecutors:
     def setup_method(self):
@@ -261,14 +382,25 @@ class TestMasterExecutors:
     def teardown_method(self):
         self._patcher.stop()
 
+    @staticmethod
+    def _approved(**values):
+        return {
+            "expected_revision": state.plan_revision,
+            "approve_exceptions": True,
+            "approval_reason": "teste de dados mestre",
+            "approval_author": "pytest",
+            **values,
+        }
+
     def test_editar_ferramenta_sync_sH(self):
         """CRITICAL: editar_ferramenta must sync op.sH in EngineData."""
         old_sH = state.engine_data.ops[0].sH
         assert old_sH == 0.5
 
-        result, _ = execute_tool("editar_ferramenta", json.dumps({
-            "id": "T1", "setup_hours": 1.5,
-        }))
+        result, _ = execute_tool(
+            "editar_ferramenta",
+            json.dumps(self._approved(id="T1", setup_hours=1.5)),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
 
@@ -279,27 +411,62 @@ class TestMasterExecutors:
 
     def test_editar_ferramenta_sync_alt(self):
         """editar_ferramenta must sync op.alt in EngineData."""
-        result, _ = execute_tool("editar_ferramenta", json.dumps({
-            "id": "T1", "alt": "M2",
-        }))
+        result, _ = execute_tool(
+            "editar_ferramenta",
+            json.dumps(self._approved(id="T1", alt=None)),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
 
         for op in state.engine_data.ops:
             if op.t == "T1":
-                assert op.alt == "M2"
+                assert op.alt is None
+
+    def test_editar_ferramenta_same_setup_is_idempotent(self):
+        from backend.copilot import executors_master
+
+        revision = state.plan_revision
+        with patch.object(executors_master, "_reschedule") as reschedule:
+            result, _ = execute_tool(
+                "editar_ferramenta",
+                json.dumps(self._approved(id="T1", setup_hours=0.5)),
+            )
+
+        assert json.loads(result)["status"] == "unchanged"
+        assert state.plan_revision == revision
+        reschedule.assert_not_called()
 
     def test_editar_ferramenta_nonexistent(self):
         result, _ = execute_tool("editar_ferramenta", json.dumps({"id": "NOPE"}))
         data = json.loads(result)
         assert "error" in data
 
+    def test_master_executor_rolls_back_when_reschedule_fails(self):
+        from backend.copilot import executors_master
+
+        old_setup = state.config.tools["T1"]["setup_hours"]
+        old_op_setup = state.engine_data.ops[0].sH
+
+        with patch.object(executors_master, "_reschedule", side_effect=RuntimeError("boom")):
+            result, _ = execute_tool(
+                "editar_ferramenta",
+                json.dumps(self._approved(id="T1", setup_hours=1.5)),
+            )
+
+        data = json.loads(result)
+        assert "error" in data
+        assert state.config.tools["T1"]["setup_hours"] == old_setup
+        assert state.engine_data.ops[0].sH == old_op_setup
+
     def test_adicionar_feriado_sync(self):
         """adicionar_feriado must sync EngineData.holidays."""
         date = "2026-03-07"  # workday index 2
         assert date in state.engine_data.workdays
 
-        result, _ = execute_tool("adicionar_feriado", json.dumps({"data": date}))
+        result, _ = execute_tool(
+            "adicionar_feriado",
+            json.dumps(self._approved(data=date)),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
 
@@ -308,18 +475,25 @@ class TestMasterExecutors:
 
     def test_remover_feriado(self):
         # First add
-        execute_tool("adicionar_feriado", json.dumps({"data": "2026-03-07"}))
+        execute_tool(
+            "adicionar_feriado",
+            json.dumps(self._approved(data="2026-03-07")),
+        )
         assert "2026-03-07" in state.config.holidays
 
-        result, _ = execute_tool("remover_feriado", json.dumps({"data": "2026-03-07"}))
+        result, _ = execute_tool(
+            "remover_feriado",
+            json.dumps(self._approved(data="2026-03-07")),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
         assert "2026-03-07" not in state.config.holidays
 
     def test_adicionar_maquina(self):
-        result, _ = execute_tool("adicionar_maquina", json.dumps({
-            "id": "M3", "grupo": "Medias",
-        }))
+        result, _ = execute_tool(
+            "adicionar_maquina",
+            json.dumps(self._approved(id="M3", grupo="Medias")),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
         assert "M3" in state.config.machines
@@ -330,22 +504,36 @@ class TestMasterExecutors:
         old_cap = state.config.day_capacity_min
         assert old_cap == 1020
 
-        # Extend shift A to 16:00 (480 → 540 min, total = 540 + 510 = 1050)
-        result, _ = execute_tool("editar_turno", json.dumps({
-            "turno_id": "A", "fim": "16:00",
-        }))
+        # End shift A at 15:00 (480 + 510 = 990) without overlapping shift B.
+        result, _ = execute_tool(
+            "editar_turno",
+            json.dumps(self._approved(turno_id="A", fim="15:00")),
+        )
         data = json.loads(result)
         assert data["status"] == "ok"
 
         new_cap = state.config.day_capacity_min
-        assert new_cap != old_cap
+        assert new_cap == 990
 
         # Check all machines synced
         for m in state.engine_data.machines:
             assert m.day_capacity == new_cap
 
+    def test_editar_turno_rejects_overlap_and_rolls_back(self):
+        old_end = state.config.shifts[0].end_min
+        result, _ = execute_tool(
+            "editar_turno",
+            json.dumps(self._approved(turno_id="A", fim="16:00")),
+        )
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "sobrepõe-se" in data["error"]
+        assert state.config.shifts[0].end_min == old_end
+
 
 # ─── TestVizExecutors ─────────────────────────────────────────────────────
+
 
 class TestVizExecutors:
     def setup_method(self):
@@ -397,6 +585,7 @@ class TestVizExecutors:
 
 # ─── TestEngine ───────────────────────────────────────────────────────────
 
+
 class TestEngine:
     def test_unknown_tool(self):
         result, is_widget = execute_tool("tool_inexistente", "{}")
@@ -417,6 +606,7 @@ class TestEngine:
 
 
 # ─── TestState ────────────────────────────────────────────────────────────
+
 
 class TestState:
     def test_update_schedule_saves_audit(self):
@@ -448,6 +638,7 @@ class TestState:
 
 # ─── TestProviderFactory ─────────────────────────────────────────────────
 
+
 class TestProviderFactory:
     def test_default_openai(self):
         from backend.copilot.llm_provider import OpenAIProvider, get_provider
@@ -474,6 +665,7 @@ class TestProviderFactory:
 
 
 # ─── TestPrompts ──────────────────────────────────────────────────────────
+
 
 class TestPrompts:
     def test_build_system_prompt(self):

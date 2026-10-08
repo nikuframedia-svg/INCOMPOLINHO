@@ -41,12 +41,14 @@ class AuditLogger:
             if machine_id == chosen:
                 chosen_load = load
             else:
-                alts.append(Alternative(
-                    value=machine_id,
-                    score=load,
-                    rejected_by="LOAD_BALANCE",
-                    reason=f"Carga {load:.0f}min",
-                ))
+                alts.append(
+                    Alternative(
+                        value=machine_id,
+                        score=load,
+                        rejected_by="LOAD_BALANCE",
+                        reason=f"Carga {load:.0f}min",
+                    )
+                )
 
         binding = "ONLY_OPTION" if not alts else "LOAD_BALANCE"
 
@@ -110,11 +112,12 @@ class AuditLogger:
         attempt: int = 0,
         config=None,
     ) -> None:
-        """Record JIT gate placement."""
+        """Record material-release gate placement."""
         if config:
             day_cap = config.day_capacity_min
         else:
             from backend.scheduler.constants import DAY_CAP
+
             day_cap = DAY_CAP
 
         gate_day = gate_abs / day_cap if day_cap > 0 else 0

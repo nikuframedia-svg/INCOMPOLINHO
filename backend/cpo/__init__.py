@@ -1,6 +1,8 @@
-"""CPO v3.0 — Cascading Pipeline Optimizer.
+"""CPO v4 — APS trust-loop optimizer.
 
-Primary scheduling interface. Wraps the greedy pipeline in a Genetic Algorithm.
+Primary scheduling interface. Operational mode is the greedy/VNS baseline,
+local CP-SAT polish and the no-loss improvement cycle, with hard-gate
+validation. The GA lives offline in ``backend.cpo.offline_ga``.
 """
 
 from backend.cpo.optimizer import optimize

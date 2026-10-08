@@ -8,14 +8,17 @@ Three tiers:
 
 from __future__ import annotations
 
+from backend.config.types import FactoryConfig
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 from .heatmap import compute_heatmap
+from .plan_identity import planning_anchor_day
 from .slack_analytics import (
     compute_health_score,
     compute_lot_risks,
     compute_machine_risks,
+    select_top_risks,
 )
 from .surrogate import extract_features, predict_risk
 from .types import RiskResult
@@ -31,6 +34,7 @@ def compute_risk(
     lots: list[Lot],
     engine_data: EngineData,
     mc_cache: dict | None = None,
+    config: FactoryConfig | None = None,
 ) -> RiskResult:
     """Compute risk assessment (Tier 1 always, Tier 2/3 if available).
 
@@ -39,20 +43,28 @@ def compute_risk(
         lots: Production lots from lot sizing.
         engine_data: Full engine input data.
         mc_cache: Pre-computed Monte Carlo results (from monte_carlo_risk).
+        config: Factory runtime rules for resources and calendars.
 
     Returns:
         RiskResult with all tiers populated as available.
     """
     # Tier 1: Slack analytics (always)
-    lot_risks = compute_lot_risks(segments, lots, engine_data)
-    machine_risks = compute_machine_risks(segments, lot_risks, engine_data)
+    lot_risks = compute_lot_risks(segments, lots, engine_data, config=config)
+    machine_risks = compute_machine_risks(
+        segments,
+        lot_risks,
+        engine_data,
+        config=config,
+    )
     health = compute_health_score(lot_risks, machine_risks)
-    heatmap = compute_heatmap(segments, lot_risks, engine_data)
+    heatmap = compute_heatmap(segments, lot_risks, engine_data, config=config)
 
     critical_count = sum(1 for lr in lot_risks if lr.risk_level == "critical")
-    top_risks = sorted(lot_risks, key=lambda lr: -lr.risk_score)[:5]
+    top_risks = select_top_risks(lot_risks, planning_anchor_day(engine_data, config))
     bottleneck = (
-        max(machine_risks, key=lambda mr: mr.peak_utilization).machine_id
+        max(
+            machine_risks, key=lambda mr: (mr.peak_utilization is None, mr.peak_utilization or 0)
+        ).machine_id
         if machine_risks
         else ""
     )
@@ -61,7 +73,11 @@ def compute_risk(
     surrogate_otd: float | None = None
     surrogate_conf: str | None = None
     features = extract_features(lot_risks, machine_risks, engine_data)
-    prediction = predict_risk(features)
+    prediction = (
+        predict_risk(features)
+        if all(m.peak_utilization is not None for m in machine_risks)
+        else None
+    )
     if prediction:
         surrogate_otd, surrogate_conf = prediction
 

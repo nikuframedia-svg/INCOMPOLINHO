@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { T } from "../theme/tokens";
 import { getJournal } from "../api/endpoints";
-import type { JournalEntry } from "../api/types";
+import { usePlanQuery } from "../hooks/usePlanQuery";
 import { Card } from "../components/ui/Card";
 import { Pill } from "../components/ui/Pill";
 
@@ -12,14 +11,7 @@ const severityColor = (s: string) => {
 };
 
 export function JournalPage() {
-  const [entries, setEntries] = useState<JournalEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getJournal()
-      .then(setEntries)
-      .catch((e) => setError(String(e)));
-  }, []);
+  const { data: entries, error } = usePlanQuery("journal", getJournal);
 
   if (error) return <div style={{ color: T.red, padding: 24 }}>{error}</div>;
   if (!entries) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;

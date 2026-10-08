@@ -23,3 +23,31 @@ ISOP*.xlsx
 
 # Pip artifacts
 =*
+
+# Run logs locais (uvicorn/vite/cloudflared)
+.run-logs/
+
+# Snapshots reais de clientes para regressão (só no servidor, nunca no git)
+tests/fixtures/private/
+# Cópias da base de dados de planos (dados reais de cliente)
+data/*.db.*
+# Cópias de segurança de estado e configuração (dados reais)
+data/*.backup-*
+
+# Operational data and evidence stay outside the public source repository.
+/data/
+.env.*
+!.env.example
+/docs/auditoria-browser-*/
+/docs/entregaveis/
+/docs/**/*.png
+/docs/**/*.jpg
+/docs/**/*.jpeg
+/docs/**/*.pdf
+/docs/**/*.docx
+/docs/**/*.csv
+/docs/**/*.log
+/docs/auditoria-solver-*/**/*.json
+/docs/auditoria-solver-*/*.json
+/docs/auditoria-solver-*/ultimos-30-pedidos.md
+/docs/causa-raiz-planeamento-*.md

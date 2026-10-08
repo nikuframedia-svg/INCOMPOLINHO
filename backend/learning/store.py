@@ -12,8 +12,9 @@ import sqlite3
 
 from .types import ISContext, SchedulerParams, StudyResult
 
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "learning.db")
 DEFAULT_DB_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "learning.db"
+    os.environ.get("PP1_DATA_DIR", os.path.dirname(DEFAULT_DB_PATH)), "learning.db"
 )
 
 
@@ -24,6 +25,9 @@ class LearnStore:
         self._path = db_path or DEFAULT_DB_PATH
         if self._path != ":memory:":
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        from backend.runtime_guard import assert_writable
+
+        assert_writable(self._path)
         self._conn = sqlite3.connect(self._path)
         self._init_schema()
 
@@ -93,8 +97,7 @@ class LearnStore:
     def load_best_params(self) -> SchedulerParams | None:
         """Load best params from history (highest reward)."""
         row = self._conn.execute(
-            "SELECT best_params_json FROM studies "
-            "ORDER BY reward DESC LIMIT 1"
+            "SELECT best_params_json FROM studies ORDER BY reward DESC LIMIT 1"
         ).fetchone()
         if row and row[0]:
             return SchedulerParams.from_dict(json.loads(row[0]))

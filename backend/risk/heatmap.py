@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from backend.calendar import available_machine_capacity
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.types import Segment
 from backend.types import EngineData
 
@@ -47,11 +47,12 @@ def compute_heatmap(
     cells: list[HeatmapCell] = []
     for m in engine_data.machines:
         for d in range(engine_data.n_days):
-            day_cap = config.day_capacity_min if config else DAY_CAP
-            util = used.get((m.id, d), 0) / day_cap
+            day_cap = available_machine_capacity(m.id, d, engine_data, config)
+            load = used.get((m.id, d), 0)
+            util = load / day_cap if day_cap > 0 else None if load > 0 else 0.0
             slack = min_slack.get((m.id, d), -1.0)
 
-            if util > 0.95 or (slack >= 0 and slack < 120):
+            if util is None or util > 0.95 or (slack >= 0 and slack < 120):
                 level = "critical"
             elif util > 0.85 or (slack >= 0 and slack < 480):
                 level = "high"
@@ -60,12 +61,16 @@ def compute_heatmap(
             else:
                 level = "low"
 
-            cells.append(HeatmapCell(
-                machine_id=m.id,
-                day_idx=d,
-                utilization=round(util, 3),
-                min_slack_min=round(slack, 1),
-                risk_level=level,
-            ))
+            cells.append(
+                HeatmapCell(
+                    machine_id=m.id,
+                    day_idx=d,
+                    utilization=round(util, 3) if util is not None else None,
+                    load_min=round(load, 1),
+                    capacity_min=round(day_cap, 1),
+                    min_slack_min=round(slack, 1),
+                    risk_level=level,
+                )
+            )
 
     return cells

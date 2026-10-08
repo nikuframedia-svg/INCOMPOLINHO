@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>PP1 — ProdPlan</title>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,7 +20,88 @@
       ::-webkit-scrollbar-thumb { background: #D6CFC2; border-radius: 3px; }
       ::-webkit-scrollbar-thumb:hover { background: #B8AFA2; }
       input, button, textarea, select { font: inherit; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+        outline: 2px solid #2563EB;
+        outline-offset: 2px;
+      }
       a { color: inherit; text-decoration: none; }
+      @media (max-width: 760px) {
+        .app-shell { flex-direction: column !important; }
+        .app-sidebar {
+          width: 100% !important;
+          min-height: 54px;
+          flex-direction: row !important;
+          align-items: stretch;
+          border-right: 0 !important;
+          border-bottom: 1px solid #E2DDD5;
+          overflow: hidden;
+        }
+        .app-sidebar-brand {
+          min-width: max-content;
+          padding: 10px 12px !important;
+          border-right: 1px solid #E2DDD5;
+        }
+        .app-sidebar-menu {
+          min-width: 0;
+          flex-direction: row !important;
+          align-items: center;
+          overflow-x: auto;
+          padding: 6px !important;
+        }
+        .app-sidebar-menu button {
+          width: auto !important;
+          min-width: max-content;
+        }
+        .app-sidebar-dataset, .app-sidebar-profile { display: none !important; }
+        .app-main { min-width: 0; min-height: 0; }
+        .app-header {
+          height: auto !important;
+          min-height: 52px;
+          padding: 7px 12px !important;
+          flex-direction: column;
+          align-items: stretch !important;
+          gap: 6px;
+        }
+        .app-header-actions {
+          width: 100%;
+          min-width: 0;
+          gap: 10px !important;
+          overflow-x: auto;
+          padding-bottom: 2px;
+        }
+        .app-header-actions > * { flex-shrink: 0; }
+        .app-content { padding: 12px !important; }
+        .console-day-bar { padding: 10px 12px !important; }
+        .console-day-bar-row {
+          align-items: flex-start !important;
+          flex-wrap: wrap;
+        }
+        .console-day-bar-row > :first-child { flex: 1 1 160px; }
+        .console-date-navigation {
+          width: 100%;
+          justify-items: start !important;
+        }
+        .console-grid {
+          grid-template-columns: minmax(0, 1fr) !important;
+          padding: 0 12px 12px !important;
+        }
+        .console-summary-header {
+          align-items: flex-start !important;
+          flex-wrap: wrap;
+        }
+        .deliveries-view-tabs { grid-template-columns: 1fr !important; max-width: none !important; }
+        .expedition-kpis { grid-template-columns: 1fr !important; }
+        .gantt-utilization-grid {
+          display: grid !important;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px !important;
+        }
+        .ctp-controls > select { flex: 1 1 180px; }
+        .ctp-controls > input { flex: 1 1 110px; min-width: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      }
     </style>
   </head>
   <body>

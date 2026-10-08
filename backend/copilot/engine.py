@@ -145,7 +145,16 @@ def execute_tool(name: str, arguments: str) -> tuple[str, bool]:
         return result, False
 
     try:
-        result = executor(args)
+        from backend.copilot.state import state
+        from backend.plans.transactions import run_sync_mutation
+
+        if executor.__module__ in {
+            "backend.copilot.executors_master", "backend.copilot.executors_action"
+        } and name not in {"check_ctp", "monte_carlo"}:
+            mode = args.get("modo", "quick") if name == "recalcular_plano" else "normal"
+            result = run_sync_mutation(state, lambda: executor(args), planning_mode=mode)
+        else:
+            result = executor(args)
     except Exception as e:
         logger.exception("Error executing tool %s", name)
         result = json.dumps({"error": f"Erro ao executar {name}: {e}"}, ensure_ascii=False)

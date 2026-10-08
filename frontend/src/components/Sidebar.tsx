@@ -1,37 +1,27 @@
-import { useEffect, useState } from "react";
 import { T } from "../theme/tokens";
 import { useAppStore } from "../stores/useAppStore";
-import { getTrust } from "../api/endpoints";
-import type { TrustIndex } from "../api/types";
-import { ProgressBar } from "./ui/ProgressBar";
 import { Label } from "./ui/Label";
 
 const NAV = [
-  { id: "console", label: "Consola" },
-  { id: "gantt", label: "Produção" },
-  { id: "stock", label: "Stock" },
+  { id: "console", label: "Hoje" },
+  { id: "gantt", label: "Plano" },
+  { id: "capacity", label: "Carga e capacidade" },
+  { id: "deliveries", label: "Entregas" },
   { id: "risk", label: "Risco" },
-  { id: "expedition", label: "Expedição" },
-  { id: "sim", label: "Simulador" },
   { id: "config", label: "Configuração" },
-  { id: "journal", label: "Journal" },
-  { id: "rules", label: "Regras" },
 ];
 
 export function Sidebar() {
   const page = useAppStore((s) => s.activePage);
   const setPage = useAppStore((s) => s.setPage);
-  const trustScore = useAppStore((s) => s.trustScore);
+  const dataset = useAppStore((s) => s.dataset);
   const hasData = useAppStore((s) => s.hasData);
-  const [trust, setTrust] = useState<TrustIndex | null>(null);
-
-  useEffect(() => {
-    if (!hasData) return;
-    getTrust().then(setTrust).catch(() => {});
-  }, [hasData]);
+  const accessMode = useAppStore((s) => s.accessMode);
+  const setAccessMode = useAppStore((s) => s.setAccessMode);
 
   return (
     <nav
+      className="app-sidebar"
       style={{
         width: 200,
         flexShrink: 0,
@@ -41,14 +31,14 @@ export function Sidebar() {
         flexDirection: "column",
       }}
     >
-      <div style={{ padding: "20px 20px 24px" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.primary, letterSpacing: "-0.02em" }}>
+      <div className="app-sidebar-brand" style={{ padding: "20px 20px 24px" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.primary, letterSpacing: 0 }}>
           ProdPlan ONE
         </div>
         <div style={{ fontSize: 11, color: T.tertiary, marginTop: 2 }}>Incompol</div>
       </div>
 
-      <div style={{ flex: 1, padding: "0 8px", display: "flex", flexDirection: "column", gap: 1 }}>
+      <div className="app-sidebar-menu" style={{ flex: 1, padding: "0 8px", display: "flex", flexDirection: "column", gap: 1 }}>
         {NAV.map((n) => {
           const active = page === n.id;
           return (
@@ -76,47 +66,74 @@ export function Sidebar() {
         })}
       </div>
 
-      {trustScore !== null && (
-        <div style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <Label>Trust Index</Label>
-            <span
-              style={{
-                fontSize: 18,
-                fontWeight: 600,
-                color: trustScore >= 80 ? T.green : T.orange,
-                fontFamily: T.mono,
-              }}
-            >
-              {trustScore}
-            </span>
+      {hasData && dataset && (
+        <div className="app-sidebar-dataset" style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+          <Label>ISOP ativo</Label>
+          <div
+            title={dataset.filename}
+            style={{
+              marginTop: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              color: T.primary,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {dataset.filename}
           </div>
-          <div style={{ marginTop: 6 }}>
-            <ProgressBar
-              value={trustScore}
-              color={trustScore >= 80 ? T.green : T.orange}
-              height={3}
-              bg="#EFEBE3"
-            />
+          <div style={{ marginTop: 8, fontSize: 11, color: T.secondary }}>
+            {dataset.n_ops} operações
           </div>
-          {trust?.dimensions && trust.dimensions.length > 0 && (
-            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-              {trust.dimensions.map((d) => {
-                const c = d.score >= 80 ? T.green : d.score >= 50 ? T.orange : T.red;
-                return (
-                  <div key={d.name}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                      <span style={{ fontSize: 10, color: T.tertiary }}>{d.name}</span>
-                      <span style={{ fontSize: 10, color: c, fontFamily: T.mono }}>{d.score}</span>
-                    </div>
-                    <ProgressBar value={d.score} color={c} height={2} bg="#EFEBE3" />
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
+
+      <div className="app-sidebar-profile" style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+        <Label>Perfil</Label>
+        <div
+          role="group"
+          aria-label="Perfil de utilização"
+          style={{
+            marginTop: 8,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 4,
+            background: T.elevated,
+            border: `1px solid ${T.border}`,
+            borderRadius: 8,
+            padding: 3,
+          }}
+        >
+          {([
+            ["edit", "Editar"],
+            ["view", "Consulta"],
+          ] as const).map(([mode, label]) => {
+            const active = accessMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setAccessMode(mode)}
+                title={mode === "edit" ? "Permite guardar e recalcular" : "Bloqueia alterações ao plano e à configuração"}
+                style={{
+                  border: 0,
+                  borderRadius: 6,
+                  background: active ? T.card : "transparent",
+                  color: active ? T.primary : T.secondary,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: active ? 700 : 500,
+                  padding: "5px 6px",
+                  fontFamily: "inherit",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </nav>
   );
 }

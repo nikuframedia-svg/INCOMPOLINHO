@@ -53,18 +53,13 @@ def compute_counterfactual(
     delta = {
         "otd": cf_score.get("otd", 100) - original_score.get("otd", 100),
         "otd_d_failures": (
-            cf_score.get("otd_d_failures", 0)
-            - original_score.get("otd_d_failures", 0)
+            cf_score.get("otd_d_failures", 0) - original_score.get("otd_d_failures", 0)
         ),
         "setups": cf_score.get("setups", 0) - original_score.get("setups", 0),
         "earliness": (
-            cf_score.get("earliness_avg_days", 0)
-            - original_score.get("earliness_avg_days", 0)
+            cf_score.get("earliness_avg_days", 0) - original_score.get("earliness_avg_days", 0)
         ),
-        "tardy": (
-            cf_score.get("tardy_count", 0)
-            - original_score.get("tardy_count", 0)
-        ),
+        "tardy": (cf_score.get("tardy_count", 0) - original_score.get("tardy_count", 0)),
     }
 
     # Portuguese explanation

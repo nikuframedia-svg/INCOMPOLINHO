@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from backend.scheduler.jit_policy import production_due_day
 from backend.scheduler.types import Lot, Segment
 
 
@@ -19,10 +20,10 @@ class SegmentStress:
     lot_id: str
     machine_id: str
     day_idx: int
-    stress: float          # numeric score
-    level: str             # "critical" | "warning" | "ok"
-    slack_days: float      # days of slack until EDD
-    utilisation: float     # machine utilisation ratio
+    stress: float  # numeric score
+    level: str  # "critical" | "warning" | "ok"
+    slack_days: float  # days of slack until EDD
+    utilisation: float  # machine utilisation ratio
 
 
 def compute_stress_map(
@@ -49,10 +50,10 @@ def compute_stress_map(
             if seg.day_idx > prev:
                 lot_completion[seg.lot_id] = seg.day_idx
 
-    # 2. EDD per lot
-    lot_edd: dict[str, int] = {}
+    # 2. Controllable production due date per lot
+    lot_due: dict[str, int] = {}
     for lot in lots:
-        lot_edd[lot.id] = lot.edd
+        lot_due[lot.id] = production_due_day(lot)
 
     # 3. Utilisation per machine
     machine_used: dict[str, float] = defaultdict(float)
@@ -73,7 +74,7 @@ def compute_stress_map(
         if seg.day_idx < 0 or seg.prod_min <= 0:
             continue  # skip buffer days and setup-only segments
 
-        edd = lot_edd.get(seg.lot_id, n_days)
+        edd = lot_due.get(seg.lot_id, n_days)
         completion = lot_completion.get(seg.lot_id, seg.day_idx)
         slack = max(edd - completion, 0)
 
@@ -93,15 +94,17 @@ def compute_stress_map(
         else:
             level = "ok"
 
-        results.append(SegmentStress(
-            lot_id=seg.lot_id,
-            machine_id=seg.machine_id,
-            day_idx=seg.day_idx,
-            stress=round(stress, 2),
-            level=level,
-            slack_days=float(slack),
-            utilisation=round(util, 3),
-        ))
+        results.append(
+            SegmentStress(
+                lot_id=seg.lot_id,
+                machine_id=seg.machine_id,
+                day_idx=seg.day_idx,
+                stress=round(stress, 2),
+                level=level,
+                slack_days=float(slack),
+                utilisation=round(util, 3),
+            )
+        )
 
     return results
 
@@ -131,9 +134,7 @@ def stress_summary(stress_map: list[SegmentStress]) -> dict:
     machine_stress: dict[str, list[float]] = defaultdict(list)
     for s in stress_map:
         machine_stress[s.machine_id].append(s.stress)
-    machine_avg = {
-        m: sum(v) / len(v) for m, v in machine_stress.items()
-    }
+    machine_avg = {m: sum(v) / len(v) for m, v in machine_stress.items()}
     worst_machine = max(machine_avg, key=machine_avg.get) if machine_avg else None  # type: ignore[arg-type]
 
     return {
@@ -143,7 +144,9 @@ def stress_summary(stress_map: list[SegmentStress]) -> dict:
         "ok": ok,
         "fragility_pct": round(critical / max(len(stress_map), 1) * 100, 1),
         "worst_machine": worst_machine,
-        "worst_machine_stress": round(machine_avg.get(worst_machine, 0), 2) if worst_machine else 0.0,
+        "worst_machine_stress": round(machine_avg.get(worst_machine, 0), 2)
+        if worst_machine
+        else 0.0,
         "top_fragile": [
             {
                 "lot": s.lot_id,
@@ -169,8 +172,6 @@ def stress_recommendations(
     if not stress_map:
         return []
 
-    lot_edd: dict[str, int] = {lot.id: lot.edd for lot in lots}
-
     # Group stress by machine
     machine_critical: dict[str, list[SegmentStress]] = defaultdict(list)
     machine_warning: dict[str, list[SegmentStress]] = defaultdict(list)
@@ -180,57 +181,63 @@ def stress_recommendations(
         elif s.level == "warning":
             machine_warning[s.machine_id].append(s)
 
-    # Lot info for recommendations
-    lot_info: dict[str, Lot] = {lot.id: lot for lot in lots}
-
     recommendations: list[dict] = []
 
     # 1. Critical machines: immediate action
     for m_id, crits in sorted(machine_critical.items(), key=lambda x: -len(x[1])):
         # Find lots that could be produced earlier
-        early_candidates = [
-            s for s in crits if s.slack_days <= 1.0
-        ]
+        early_candidates = [s for s in crits if s.slack_days <= 1.0]
         if early_candidates:
             lot_ids = list({s.lot_id for s in early_candidates})[:3]
             lot_labels = ", ".join(lot_ids)
-            recommendations.append({
-                "priority": 1,
-                "machine": m_id,
-                "action": f"Antecipar produção de {lot_labels} em 2-3 dias.",
-                "reason": f"{m_id} tem {len(crits)} segmento(s) crítico(s) com folga < 1 dia.",
-            })
+            recommendations.append(
+                {
+                    "priority": 1,
+                    "machine": m_id,
+                    "action": f"Antecipar produção de {lot_labels} em 2-3 dias.",
+                    "reason": f"{m_id} tem {len(crits)} segmento(s) crítico(s) com folga < 1 dia.",
+                }
+            )
 
         # High utilisation warning
         if crits and crits[0].utilisation > 0.9:
-            recommendations.append({
-                "priority": 1,
-                "machine": m_id,
-                "action": f"Considerar redistribuir carga de {m_id} para máquina alternativa.",
-                "reason": f"Utilização a {crits[0].utilisation * 100:.0f}% — qualquer atraso causa incumprimento.",
-            })
+            recommendations.append(
+                {
+                    "priority": 1,
+                    "machine": m_id,
+                    "action": f"Considerar redistribuir carga de {m_id} para máquina alternativa.",
+                    "reason": (
+                        f"Utilização a {crits[0].utilisation * 100:.0f}% — "
+                        "qualquer atraso causa incumprimento."
+                    ),
+                }
+            )
 
     # 2. Warning machines: monitor
     for m_id, warns in sorted(machine_warning.items(), key=lambda x: -len(x[1])):
         if m_id in machine_critical:
             continue  # already covered
-        recommendations.append({
-            "priority": 2,
-            "machine": m_id,
-            "action": f"Monitorizar {m_id} — {len(warns)} segmento(s) com folga reduzida.",
-            "reason": "Disrução de 1-2 dias pode causar atrasos.",
-        })
+        recommendations.append(
+            {
+                "priority": 2,
+                "machine": m_id,
+                "action": f"Monitorizar {m_id} — {len(warns)} segmento(s) com folga reduzida.",
+                "reason": "Disrução de 1-2 dias pode causar atrasos.",
+            }
+        )
 
     # 3. Tight slack lots (across all machines)
     zero_slack = [s for s in stress_map if s.slack_days == 0 and s.level != "ok"]
     if zero_slack:
         machines = list({s.machine_id for s in zero_slack})
-        recommendations.append({
-            "priority": 1,
-            "machine": ", ".join(machines[:3]),
-            "action": f"{len(zero_slack)} lote(s) sem folga — produção no limite do prazo.",
-            "reason": "Qualquer paragem ou atraso resulta em incumprimento imediato.",
-        })
+        recommendations.append(
+            {
+                "priority": 1,
+                "machine": ", ".join(machines[:3]),
+                "action": f"{len(zero_slack)} lote(s) sem folga — produção no limite do prazo.",
+                "reason": "Qualquer paragem ou atraso resulta em incumprimento imediato.",
+            }
+        )
 
     # Sort by priority
     recommendations.sort(key=lambda r: r["priority"])

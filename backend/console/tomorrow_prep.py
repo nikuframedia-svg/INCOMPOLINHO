@@ -15,62 +15,97 @@ from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 
-def _find_previous_tool(segments: list[Segment], machine_id: str, day_idx: int) -> str | None:
-    """Last tool_id on this machine the day before."""
+def _find_previous_tool(
+    segments: list[Segment],
+    machine_id: str,
+    day_idx: int,
+    start_min: int,
+    initial_tools: dict[str, str] | None = None,
+) -> str | None:
+    """Tool really mounted immediately before a setup."""
     prev_segs = [
-        s for s in segments
-        if s.machine_id == machine_id and s.day_idx == day_idx - 1
+        s
+        for s in segments
+        if s.machine_id == machine_id
+        and (s.day_idx < day_idx or (s.day_idx == day_idx and s.start_min < start_min))
     ]
     if not prev_segs:
-        return None
-    return max(prev_segs, key=lambda s: s.end_min).tool_id
+        return (initial_tools or {}).get(machine_id)
+    return max(prev_segs, key=lambda s: (s.day_idx, s.end_min)).tool_id
 
 
 def check_crew_bottleneck(
     segments: list[Segment],
     day_idx: int,
     window_min: int = 120,
+    *,
+    config: FactoryConfig | None = None,
 ) -> list[dict]:
-    """Detect >=3 setups within a time window on the same day.
+    """Use the physical validator's overlap and group-capacity rules.
 
-    Returns list of {"time": str, "simultaneous": int, "machines": [...], "wait_min": float}.
+    ``window_min`` remains accepted for compatibility; nearby sequential
+    setups are not simultaneous and do not imply crew overload.
     """
+    from backend.scheduler.validation import validate_plan
+
+    config = config or FactoryConfig()
+    setups = [s for s in segments if s.day_idx == day_idx and s.setup_min > 0]
+    conflicts = {}
+    for violation in validate_plan(setups, config=config):
+        if violation["kind"] != "setup_crew_overlap":
+            continue
+        group, start = violation["setup_group"], violation["overlap_start_min"]
+        concurrent = [s for s in setups
+                      if config.machine_groups.get(s.machine_id, "Grandes") == group
+                      and s.start_min <= start < s.start_min + s.setup_min]
+        capacity = violation["setup_capacity"]
+        ends = sorted(s.start_min + s.setup_min for s in concurrent)
+        conflicts[(group, start)] = {
+            "time": _min_to_time(start), "simultaneous": len(concurrent),
+            "machines": sorted({s.machine_id for s in concurrent}),
+            "wait_min": round(ends[len(concurrent) - capacity - 1] - start, 1),
+        }
+    return list(conflicts.values())
+
+
+def compute_day_setups(
+    segments: list[Segment],
+    day_idx: int,
+    engine_data: EngineData | None = None,
+) -> list[dict]:
+    """Return setup work for one day, including the responsible shift."""
     setup_segs = sorted(
         [s for s in segments if s.day_idx == day_idx and s.setup_min > 0],
         key=lambda s: s.start_min,
     )
-
-    if len(setup_segs) < 3:
-        return []
-
-    conflicts = []
-    seen = set()
-
-    for i, s in enumerate(setup_segs):
-        if i in seen:
-            continue
-        # Setup starts approximately at start_min (post-setup, but close enough)
-        nearby = [s]
-        nearby_idx = [i]
-        for j, s2 in enumerate(setup_segs):
-            if j == i or j in seen:
-                continue
-            if abs(s2.start_min - s.start_min) < window_min:
-                nearby.append(s2)
-                nearby_idx.append(j)
-
-        if len(nearby) >= 3:
-            for idx in nearby_idx:
-                seen.add(idx)
-            total_setup = sum(ns.setup_min for ns in nearby)
-            conflicts.append({
-                "time": _min_to_time(s.start_min),
-                "simultaneous": len(nearby),
-                "machines": [ns.machine_id for ns in nearby],
-                "wait_min": round(total_setup - max(ns.setup_min for ns in nearby), 1),
-            })
-
-    return conflicts
+    setups = []
+    initial_tools = {
+        item.machine_id: item.tool_id
+        for item in (engine_data.current_machine_states if engine_data else [])
+        if item.tool_id
+    }
+    for segment in setup_segs:
+        previous = _find_previous_tool(
+            segments,
+            segment.machine_id,
+            day_idx,
+            segment.start_min,
+            initial_tools,
+        )
+        setups.append(
+            {
+                "time": _min_to_time(segment.start_min),
+                "start_min": segment.start_min,
+                "shift": segment.shift or ("A" if segment.start_min < 930 else "B"),
+                "machine": segment.machine_id,
+                "from_tool": previous if previous != segment.tool_id else None,
+                "to_tool": segment.tool_id,
+                "sku": segment.sku,
+                "duration_min": round(segment.setup_min, 1),
+                "already_mounted": previous is not None and previous == segment.tool_id,
+            }
+        )
+    return setups
 
 
 def compute_tomorrow_prep(
@@ -84,25 +119,8 @@ def compute_tomorrow_prep(
 
     Keys: date, setups, operators, expeditions_summary, problems, ok.
     """
-    segs_day = [s for s in segments if s.day_idx == day_idx]
-
     # ── Setups ──
-    setup_segs = sorted(
-        [s for s in segs_day if s.setup_min > 0],
-        key=lambda s: s.start_min,
-    )
-    setups = []
-    for s in setup_segs:
-        prev = _find_previous_tool(segments, s.machine_id, day_idx)
-        already_mounted = prev is not None and prev == s.tool_id
-        setups.append({
-            "time": _min_to_time(s.start_min),
-            "machine": s.machine_id,
-            "from_tool": prev,
-            "to_tool": s.tool_id,
-            "duration_min": round(s.setup_min, 1),
-            "already_mounted": already_mounted,
-        })
+    setups = compute_day_setups(segments, day_idx, engine_data)
 
     # ── Operators ──
     op_alerts = compute_operator_alerts(segments, engine_data, config)
@@ -135,16 +153,12 @@ def compute_tomorrow_prep(
         if a.deficit > 0:
             pl = "m" if a.deficit > 1 else ""
             ps = "es" if a.deficit > 1 else ""
-            problems.append(
-                f"Falta{pl} {a.deficit} operador{ps} "
-                f"{a.machine_group} turno {a.shift}"
-            )
+            problems.append(f"Falta{pl} {a.deficit} operador{ps} {a.machine_group} turno {a.shift}")
 
-    crew = check_crew_bottleneck(segments, day_idx)
+    crew = check_crew_bottleneck(segments, day_idx, config=config)
     for c in crew:
         problems.append(
-            f"{c['simultaneous']} setups próximos às {c['time']} "
-            f"({', '.join(c['machines'])})"
+            f"{c['simultaneous']} setups próximos às {c['time']} ({', '.join(c['machines'])})"
         )
 
     # ── Date ──
