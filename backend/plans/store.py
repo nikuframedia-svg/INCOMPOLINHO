@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
+from backend.scheduler.validation import PlanValidationError
+
 DEFAULT_DB_PATH = (
     Path(os.environ.get("PP1_DATA_DIR", Path(__file__).resolve().parents[2] / "data")) / "plans.db"
 )
@@ -17,6 +19,27 @@ logger = logging.getLogger(__name__)
 METADATA_COLUMNS = (
     "id,created_at,name,source,origin,note,is_auto,otd,otd_d,tardy_count,setups,gate_status"
 )
+
+
+class LegacyMaterialPlanError(PlanValidationError):
+    """A plan saved before per-delivery material windows cannot be reactivated.
+
+    It is not a physical conflict list for the planner to read: the plan must
+    be rebuilt with the current rules (explicit recalculation). Callers route
+    on ``code``/``requires_recalculation``; ``violations`` keeps the evidence.
+    """
+
+    code = "legacy_material_plan"
+    requires_recalculation = True
+
+    def __init__(self, violations: list[dict]) -> None:
+        super().__init__(violations)
+        self.args = (
+            "Este plano foi calculado antes de o material passar a ser libertado "
+            "por entrega e já não cumpre as regras atuais. Use «Recalcular plano» "
+            "para o reconstruir com as regras atuais; o plano guardado continua "
+            "disponível no histórico.",
+        )
 
 
 def _assert_activatable_payload(payload: dict) -> None:
@@ -27,11 +50,7 @@ def _assert_activatable_payload(payload: dict) -> None:
     ):
         return
     from backend.plans.serialize import deserialize_plan_core
-    from backend.scheduler.validation import (
-        PlanValidationError,
-        assert_plan_valid,
-        plan_anchor_violations,
-    )
+    from backend.scheduler.validation import assert_plan_valid, plan_anchor_violations
 
     config, engine_data, segments, lots = deserialize_plan_core(payload)
     assert_plan_valid(segments, engine_data, config, lots=lots)
@@ -41,6 +60,10 @@ def _assert_activatable_payload(payload: dict) -> None:
         segments, lots, engine_data, config, require_current_material=True,
     )
     if material_errors:
+        from backend.scheduler.canonical import legacy_material_plan
+
+        if legacy_material_plan(lots, engine_data, config):
+            raise LegacyMaterialPlanError(material_errors)
         raise PlanValidationError(material_errors)
     anchor_errors = plan_anchor_violations(segments, engine_data, config)
     if anchor_errors:

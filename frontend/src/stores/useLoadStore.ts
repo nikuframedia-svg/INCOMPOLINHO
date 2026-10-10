@@ -7,7 +7,7 @@ import type { LoadJob, LoadJobResponse } from "../api/types";
 import { ACTIVE_DATASET_KEY, useAppStore } from "./useAppStore";
 import { useDataStore } from "./useDataStore";
 import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";
-import { approvalReasonSentence, decisionReasons } from "../lib/gateApproval";
+import { decisionReasonSentences } from "../lib/gateApproval";
 
 export const ACTIVE_LOAD_KEY = "pp1ActiveLoadJobId";
 export const TERMINAL_LOAD_STATES = new Set(["applied", "blocked", "failed", "cancelled", "stale"]);
@@ -16,7 +16,7 @@ export function loadWarnings(job: LoadJob): string[] {
   // One dictionary for every screen; robustness is informative only and old
   // jobs may still list it as a reason.
   const gate = job.gate_report ?? job.result?.gate_report;
-  const gateWarnings = gate ? decisionReasons(gate).map(approvalReasonSentence) : [];
+  const gateWarnings = gate ? decisionReasonSentences(gate) : [];
   return [...(job.result?.state_warnings ?? []), ...gateWarnings];
 }
 

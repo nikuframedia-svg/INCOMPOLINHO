@@ -26,8 +26,8 @@ DEFAULT_OEE = _DEFAULT.oee_default
 DEFAULT_SETUP_H = _DEFAULT.default_setup_hours
 
 # Tool grouping split thresholds
-MAX_RUN_DAYS = _DEFAULT.max_run_days
 MAX_EDD_GAP = _DEFAULT.max_edd_gap
+MAX_EDD_SPAN = _DEFAULT.max_edd_span
 
 # JIT / Latest Start Time
 LST_SAFETY_BUFFER = _DEFAULT.lst_safety_buffer

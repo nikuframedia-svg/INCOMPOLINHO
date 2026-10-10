@@ -301,7 +301,6 @@ _ALLOWED_KEYS = {
     "oee_default": float,
     "jit_buffer_pct": float,
     "jit_threshold": float,
-    "max_run_days": int,
     "max_edd_gap": int,
     "edd_swap_tolerance": int,
     "campaign_window": int,

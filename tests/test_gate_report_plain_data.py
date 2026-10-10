@@ -167,25 +167,22 @@ def test_all_orders_on_time_and_report_without_data_still_builds():
     empty = build_gate_report([], [], score, None, FactoryConfig())
     assert "orders_total" not in empty["metrics"]
     assert empty["late_order_detail"] == []
-    assert empty["long_production_detail"] == []
+    assert "long_production_detail" not in empty
 
 
-def test_long_production_reason_always_carries_its_detail_list():
+def test_long_consecutive_production_is_not_an_approval_reason():
+    """A fábrica retirou o limite de dias seguidos (09/10/2026)."""
     data = _data([_op("OP-A", "A", {9: 600})], {"A": [_entry("A", "X", 9, 600)]})
     lots = [_lot("LA", "OP-A", "A", 600, 9)]
     segments = [_seg("LA", "A", day, 100) for day in range(1, 7)]
 
     report = build_gate_report(
-        segments, lots, {"otd": 100.0, "otd_d": 100.0}, data, FactoryConfig(max_run_days=4)
+        segments, lots, {"otd": 100.0, "otd_d": 100.0}, data, FactoryConfig()
     )
 
-    assert "long_production" in report["approval_reasons"]
-    detail = report["long_production_detail"]
-    assert isinstance(detail, list) and len(detail) == 1
-    assert detail[0]["machine_id"] == "M1"
-    assert detail[0]["sku"] == "A"
-    assert detail[0]["workdays"] == 6
-    assert detail[0]["limit_workdays"] == 4
+    assert "long_production" not in report["approval_reasons"]
+    assert "long_productions" not in report["metrics"]
+    assert "long_production_detail" not in report
 
 
 def test_late_order_rows_name_the_machine_that_produces_the_order():

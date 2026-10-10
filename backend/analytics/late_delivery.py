@@ -11,14 +11,8 @@ from dataclasses import dataclass
 
 from backend.calendar import available_machine_capacity, total_machine_capacity
 from backend.config.types import FactoryConfig
-from backend.scheduler.jit_policy import (
-    add_workdays,
-    calendar_holidays,
-    expedition_day,
-    lot_demand_output_milestones,
-    lot_output_milestones,
-    production_due_day,
-)
+from backend.scheduler.jit_policy import production_due_day
+from backend.scheduler.material_quantities import delivery_readiness, readiness_by_lot
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -59,7 +53,7 @@ def analyze_late_deliveries(
     engine_data: EngineData,
     config: FactoryConfig | None = None,
 ) -> LateDeliveryReport:
-    """Classify root causes for all tardy lots."""
+    """Classify root causes for all tardy lots (delivery portions, shared readiness)."""
     # Build lot → segments mapping
     lot_segs: dict[str, list[Segment]] = defaultdict(list)
     for seg in segments:
@@ -78,63 +72,35 @@ def analyze_late_deliveries(
             machine_day_lots[key].append(seg.lot_id)
 
     lot_map = {lot.id: lot for lot in lots}
-    max_lead = max(
-        (
-            int(output.get("subcontract_lead_time_days", 0) or 0)
-            for lot in lots
-            for output in lot_output_milestones(lot)
-        ),
-        default=0,
-    )
-    holidays = calendar_holidays(
-        engine_data,
-        min((segment.day_idx for segment in segments), default=0) - 14,
-        engine_data.n_days + max_lead * 2 + 14,
-    )
+    readiness = readiness_by_lot(delivery_readiness(lots, segments, engine_data))
     analyses: list[TardyAnalysis] = []
 
     for lot in lots:
         segs = lot_segs.get(lot.id, [])
-        if not segs:
+        demand_outputs = [record for record in readiness.get(lot.id, []) if record.is_demand]
+        if not demand_outputs:
             continue
-
-        completion_day = max(s.day_idx for s in segs)
-        output_readiness = [
-            (
-                add_workdays(
-                    completion_day,
-                    int(output.get("subcontract_lead_time_days", 0) or 0),
-                    holidays,
-                )
-                if bool(output.get("is_subcontracted"))
-                else completion_day,
-                int(output.get("customer_delivery_day", expedition_day(lot))),
-                output,
-            )
-            for output in lot_demand_output_milestones(lot)
-        ]
-        customer_ready_day, customer_delivery_day, controlling_output = min(
-            output_readiness,
-            key=lambda item: (
-                -(item[0] - item[1]),
-                item[1],
-                str(item[2].get("op_id", lot.op_id)),
+        # The delivery portion with the worst customer delay controls the lot.
+        controlling = min(
+            demand_outputs,
+            key=lambda record: (
+                -record.customer_delay,
+                record.customer_delivery_day,
+                record.op_id,
+                record.index,
             ),
-            default=(completion_day, expedition_day(lot), {}),
         )
-        if customer_ready_day <= customer_delivery_day:
+        if controlling.customer_delay <= 0:
             continue  # not tardy
 
+        completion_day = controlling.factory_day
+        customer_ready_day = controlling.customer_ready_day
+        customer_delivery_day = controlling.customer_delivery_day
         delay = customer_ready_day - customer_delivery_day
-        machine = segs[0].machine_id
-        op_id = str(controlling_output.get("op_id", lot.op_id))
-        sku = str(controlling_output.get("sku", lot.sku or op_id))
-        controlling_production_due = int(
-            controlling_output.get(
-                "production_due_day",
-                production_due_day(lot, holidays),
-            )
-        )
+        machine = segs[0].machine_id if segs else lot.machine_id
+        op_id = controlling.op_id
+        sku = controlling.sku or lot.sku or op_id
+        controlling_production_due = controlling.production_due_day
 
         cause, explanation, gap, competing = _classify(
             lot,
@@ -164,11 +130,7 @@ def analyze_late_deliveries(
                 competing_lots=competing,
                 customer_ready_day=customer_ready_day,
                 production_due_day=controlling_production_due,
-                subcontract_dispatch_day=(
-                    int(controlling_output["subcontract_dispatch_day"])
-                    if controlling_output.get("subcontract_dispatch_day") is not None
-                    else None
-                ),
+                subcontract_dispatch_day=controlling.subcontract_dispatch_day,
             )
         )
 

@@ -77,6 +77,44 @@ def test_shared_earliest_allocator_reclaims_retained_setup_time_before_productio
     assert (segments, lots, data, config) == before
 
 
+@pytest.mark.parametrize("placement", ["different_tool", "different_adjustment", "remote", "compatible"])
+@pytest.mark.parametrize("prefix", ["P", "RENAMED"])
+def test_insertion_preserves_mounting_required_by_a_fixed_future_continuation(placement, prefix):
+    segments, lots, data, config = _retained_capacity_case(prefix)
+    head = segments[0]
+    tail = replace(head, day_idx=2, start_min=420, end_min=450, setup_min=0)
+    fixed = [head, tail]
+    if placement == "different_tool":
+        run = _resolve_runs(segments, lots, None)["OTHER"]
+    else:
+        run = _resolve_runs(segments, lots, None)["INCOMING"]
+    if placement == "different_adjustment":
+        run.lots[0].sku = "NEW-ADJUSTMENT"
+    machine = "M2" if placement == "remote" else "M1"
+    original = copy.deepcopy(fixed)
+    scheduled = _schedule_run_earliest(run, machine, fixed, data, config)
+    assert scheduled is not None
+    _, created = scheduled
+    start = min((s.day_idx, s.start_min) for s in created)
+    if placement == "compatible":
+        assert start == (1, 420)
+    else:
+        # No reinstall was reserved in the fixed tail. Inserting a different
+        # mounting in its gap would invalidate that already scheduled work.
+        assert start >= (2, 450)
+    assert fixed == original
+
+
+def test_fixed_reinstall_allows_using_the_gap_with_another_tool():
+    segments, lots, data, config = _retained_capacity_case()
+    head = segments[0]
+    tail = replace(head, day_idx=2)
+    run = _resolve_runs(segments, lots, None)["OTHER"]
+    scheduled = _schedule_run_earliest(run, "M1", [head, tail], data, config)
+    assert scheduled is not None
+    assert min((s.day_idx, s.start_min) for s in scheduled[1]) == (1, 420)
+
+
 @pytest.mark.parametrize("prefix", ["P", "RENAMED"])
 def test_protected_other_tool_breaks_retention_in_residual_allocator(prefix):
     from backend.plans.frozen import _install_frozen_reservations

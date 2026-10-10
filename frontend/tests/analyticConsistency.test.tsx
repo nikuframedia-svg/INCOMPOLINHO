@@ -34,7 +34,7 @@ const cases = [
     marker: (name: string) => name },
   { name: "rules", load: endpoints.getConfig, component: () => <RulesPage />,
     response: (name: string) => ({ setup_crews_by_group: { Grandes: 1 }, day_capacity_min: name === "old" ? 111 : 222,
-      max_run_days: 4, eco_lot_mode: "hard", twins: [], campaign_window: 5 } as unknown as FactoryConfig),
+      eco_lot_mode: "hard", twins: [], campaign_window: 5 } as unknown as FactoryConfig),
     marker: (name: string) => name === "old" ? "111 min" : "222 min" },
 ];
 

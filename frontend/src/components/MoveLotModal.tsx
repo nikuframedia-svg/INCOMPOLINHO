@@ -7,6 +7,7 @@ import {
 } from "../api/endpoints";
 import type { GateReport, Lot, ManualMoveResponse, Segment } from "../api/types";
 import { getManualMoveApplyError } from "../lib/manualMoveContract";
+import { jobFailureText } from "../lib/jobFailure";
 import { useDataStore } from "../stores/useDataStore";
 import { useAppStore } from "../stores/useAppStore";
 import { ApiError } from "../api/client";
@@ -209,7 +210,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       activeJobIdRef.current = null;
       if (job.status === "failed") {
         setErrorGate(job.gate_report ?? null);
-        throw new Error(job.error ?? "A verificação do movimento falhou.");
+        throw new Error(jobFailureText(job, "A verificação do movimento falhou. O plano não foi alterado.", "move"));
       }
       if (job.status === "cancelled") {
         throw new Error("A verificação foi cancelada.");

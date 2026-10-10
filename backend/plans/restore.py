@@ -342,10 +342,10 @@ def restore_plan_into_state(
         if not exact_plan_inputs:
             target_state.plan_revision += 1
             target_state.persist_current_plan(
-                name="Configuracao recuperada",
+                name="Configuração recuperada",
                 source="auto",
                 is_auto=True,
-                note="Identidade atualizada apos alteracao externa da configuracao",
+                note="Identidade atualizada após alteração externa da configuração",
                 allow_blocked_recovery=recover_existing,
             )
     elif autosave:

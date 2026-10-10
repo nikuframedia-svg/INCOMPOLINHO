@@ -304,7 +304,7 @@ describe("ConsolePage", () => {
     expect(text).not.toMatch(/equipa|capacidade|margem/i);
   });
 
-  it("lista encomendas atrasadas e produções longas do plano", async () => {
+  it("lista encomendas atrasadas; um plano antigo com produções longas já não mostra esse cartão", async () => {
     mockConsoleEndpoints();
     useDataStore.setState({
       gateReport: {
@@ -338,15 +338,10 @@ describe("ConsolePage", () => {
     // 3 rows shown out of 8 late orders: the rest comes from the total, not the list length.
     expect(screen.getByText("e mais 5 encomendas atrasadas")).toBeTruthy();
 
-    expect(screen.getByText("Produções longas")).toBeTruthy();
-    expect(screen.getByText(/limite definido nos Parâmetros/)).toBeTruthy();
-    const [longRow, splitRow] = screen.getAllByTestId("long-production-row");
-    expect(within(longRow).getByText("PRM042")).toBeTruthy();
-    expect(within(longRow).getByText("JDE002")).toBeTruthy();
-    expect(within(longRow).getByText("5 dias seguidos · limite: 4 dias seguidos")).toBeTruthy();
-    expect(
-      within(splitRow).getByText("5 dias seguidos · limite: 4 dias seguidos · volta à máquina mais 2 dias depois de uma pausa"),
-    ).toBeTruthy();
+    // A fábrica retirou o limite de dias seguidos (09/10/2026).
+    expect(screen.queryByText("Produções longas")).toBeNull();
+    expect(screen.queryAllByTestId("long-production-row")).toHaveLength(0);
+    expect(document.body.textContent ?? "").not.toMatch(/dias seguidos/);
     expect(document.body.textContent ?? "").not.toMatch(/\(s\)/);
   });
 

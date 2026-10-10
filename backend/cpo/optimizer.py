@@ -1498,7 +1498,7 @@ def _delivery_left_shift_neighbors(
     engine_data: EngineData,
     config: FactoryConfig,
 ) -> list[tuple[str, list[Segment]]]:
-    rows = _tardy_run_rows(result, config)
+    rows = _tardy_run_rows(result, engine_data, config)
     if not rows:
         return []
 
@@ -1535,27 +1535,32 @@ def _delivery_left_shift_neighbors(
 
 def _tardy_run_rows(
     result: ScheduleResult,
+    engine_data: EngineData,
     config: FactoryConfig,
 ) -> list[dict[str, object]]:
-    lot_edd = {lot.id: lot.edd for lot in result.lots}
-    lot_completion: dict[str, int] = {}
-    for seg in result.segments:
-        if seg.setup_min > 0 and seg.qty == 0:
-            continue
-        lot_completion[seg.lot_id] = max(lot_completion.get(seg.lot_id, -999), seg.day_idx)
+    # Factory delay of the delivery portions each run produces (shared
+    # readiness evaluator), not the end of the whole economic lot.
+    from backend.scheduler.material_quantities import (
+        delivery_readiness,
+        segment_production_delays,
+    )
 
+    readiness = delivery_readiness(result.lots, result.segments, engine_data)
     delay_by_run: dict[str, int] = defaultdict(int)
-    for seg in result.segments:
-        edd = lot_edd.get(seg.lot_id, seg.edd)
-        delay_by_run[seg.run_id] = max(
-            delay_by_run[seg.run_id],
-            max(0, lot_completion.get(seg.lot_id, seg.day_idx) - edd),
-        )
+    for seg, delay in zip(
+        result.segments,
+        segment_production_delays(readiness, result.segments),
+        strict=True,
+    ):
+        if delay is not None:
+            delay_by_run[seg.run_id] = max(delay_by_run[seg.run_id], max(0, delay))
 
     rows: list[dict[str, object]] = []
     for row in _machine_run_rows(result.segments, config):
         run_id = str(row["run_id"])
-        delay_days = max(int(row["delay_days"]), delay_by_run.get(run_id, 0))
+        # ``row["delay_days"]`` compares the run end with the lot's earliest
+        # due day; a later portion of the same lot is not late for that.
+        delay_days = delay_by_run.get(run_id, 0)
         if delay_days <= 0:
             continue
         rows.append({**row, "delay_days": delay_days})

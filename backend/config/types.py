@@ -151,7 +151,10 @@ class FactoryConfig:
     early_window_enforcement: str = JIT_WINDOW_ENFORCEMENT
 
     # Scheduler tunables (base values — SchedulerParams can override)
-    max_run_days: int = 4
+    # Obsolete: the factory removed the consecutive-days limit (09/10/2026).
+    # Kept only so old API clients and snapshots still see the field; ``None``
+    # means "sem limite" and nothing in the planner reads it.
+    max_run_days: int | None = None
     max_edd_gap: int = 10
     max_edd_span: int = 30
     edd_swap_tolerance: int = 5

@@ -178,6 +178,7 @@ def schedule_fingerprint(segments: Any, lots: Any) -> str:
 
 def planning_model_identity() -> dict[str, str | int]:
     from backend.plans.manual_move import ALLOCATION_MODEL_VERSION
+    from backend.scheduler.canonical import QUANTITY_MATERIAL_VERSION
     from backend.scheduler.improvement import CONTRACT_VERSION, PROTECTED_CONTEXT_VERSION
     from backend.scheduler.transfer_consolidation import TRANSFER_SEARCH_VERSION
 
@@ -188,7 +189,7 @@ def planning_model_identity() -> dict[str, str | int]:
         "manual_allocation": ALLOCATION_MODEL_VERSION,
         "protected_context": PROTECTED_CONTEXT_VERSION,
         "transfer_search": TRANSFER_SEARCH_VERSION,
-        "quantity_material": 1,
+        "quantity_material": QUANTITY_MATERIAL_VERSION,
     }
 
 

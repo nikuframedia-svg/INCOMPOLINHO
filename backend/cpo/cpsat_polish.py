@@ -18,6 +18,7 @@ from backend.config.types import FactoryConfig
 from backend.planning_control import PlanningStopped, planning_checkpoint, solve_cpsat
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.dispatch import per_machine_dispatch
+from backend.scheduler.material_quantities import delivery_readiness, lot_production_delays
 from backend.scheduler.priority import (
     delivery_improves,
     delivery_not_worse,
@@ -54,25 +55,19 @@ def identify_bottleneck_machines(
         if seg.day_idx >= 0:
             machine_used[seg.machine_id] += seg.prod_min + seg.setup_min
 
-    # Completion day per lot
-    lot_completion: dict[str, int] = {}
-    for seg in segments:
-        if seg.day_idx >= 0 and seg.prod_min > 0:
-            prev = lot_completion.get(seg.lot_id, -1)
-            if seg.day_idx > prev:
-                lot_completion[seg.lot_id] = seg.day_idx
-
     lot_machine: dict[str, str] = {}
     for seg in segments:
         if seg.day_idx >= 0:
             lot_machine[seg.lot_id] = seg.machine_id
 
-    # Machine tardies
+    # Machine tardies: a delivery portion finished after its own production
+    # due day (shared readiness evaluator), not the end of the economic lot.
     machine_tardy: dict[str, int] = defaultdict(int)
-    for lot in lots:
-        comp = lot_completion.get(lot.id, data.n_days)
-        if comp > lot.edd:
-            m_id = lot_machine.get(lot.id, "")
+    for lot_id, delay in lot_production_delays(
+        delivery_readiness(lots, segments, data)
+    ).items():
+        if delay > 0:
+            m_id = lot_machine.get(lot_id, "")
             if m_id:
                 machine_tardy[m_id] += 1
 

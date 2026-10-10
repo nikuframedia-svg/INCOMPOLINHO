@@ -36,7 +36,8 @@ class TestFactoryConfig:
         assert c.oee_default == 0.66
         assert c.default_setup_hours == 0.5
         assert c.min_prod_min == 1.0
-        assert c.max_run_days == 4
+        assert c.max_run_days is None  # sem limite de dias seguidos
+        assert c.max_edd_span == 30
         assert c.max_edd_gap == 10
         assert c.lst_safety_buffer == 2
         assert c.edd_swap_tolerance == 5
@@ -308,6 +309,18 @@ class TestLoadConfig:
         assert c.tool_unavailability == []
         assert c.operator_unavailability == []
         assert c.extra_workdays == []
+        # O limite antigo de dias seguidos é aceite e ignorado.
+        assert c.max_run_days is None
+        assert validate_config(c) == []
+
+    def test_legacy_max_run_days_is_not_written_back(self, tmp_path):
+        path = tmp_path / "factory.yaml"
+        path.write_text("factory:\n  name: Velho\nscheduler:\n  max_run_days: 0\n")
+        c = load_config(str(path))
+        assert c.max_run_days is None
+        assert validate_config(c) == []
+        save_config(c, str(path))
+        assert "max_run_days" not in path.read_text(encoding="utf-8")
 
     def test_failed_save_preserves_the_existing_config(self, monkeypatch, tmp_path):
         path = tmp_path / "factory.yaml"
@@ -362,13 +375,13 @@ class TestValidation:
 
     def test_scheduler_numeric_domains(self):
         c = FactoryConfig(
-            max_run_days=0,
+            max_edd_span=0,
             jit_buffer_pct=1.5,
             jit_threshold=101,
             vns_max_iter=-1,
         )
         errors = validate_config(c)
-        assert any("max_run_days" in error for error in errors)
+        assert any("max_edd_span" in error for error in errors)
         assert any("jit_buffer_pct" in error for error in errors)
         assert any("jit_threshold" in error for error in errors)
         assert any("vns_max_iter" in error for error in errors)

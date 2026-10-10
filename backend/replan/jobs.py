@@ -30,6 +30,7 @@ from backend.plans.frozen import (
     _frozen_started_lots,
     compact_preserving_started_lots,
     optimize_preserving_started_lots,
+    preserved_lots_warning,
 )
 
 UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
@@ -40,6 +41,80 @@ DEFAULT_RETENTION_LIMIT = 100
 logger = logging.getLogger(__name__)
 
 REPLAN_TOTAL_BUDGET_S = 60.0
+# Time the bounded local calendar repair leaves for the complete constructor
+# (optimize_preserving_started_lots) when the repair cannot finish. Measured on
+# revision 121 (1 core): the constructor's first complete validated candidate
+# takes ~7 s; the rest is improvement, which stops on its own budget.
+LOCAL_REPAIR_OPTIMIZER_RESERVE_S = 25.0
+
+# Failed jobs carry a stable code and plain Portuguese text. Raw exception text
+# (often English, e.g. "Planning deadline expired") never reaches the screen.
+FAILURE_TEXTS = {
+    "planning_timeout": (
+        "Tempo de cálculo esgotado sem um plano válido",
+        "Não foi possível concluir e validar um plano novo dentro do tempo "
+        "disponível. Isto não prova que a alteração seja impossível. O plano e "
+        "a configuração não foram alterados.",
+    ),
+    "invalid_plan": (
+        "Não foi possível obter um plano válido",
+        "O plano calculado com esta alteração não cumpre as regras físicas da "
+        "fábrica. O plano e a configuração não foram alterados.",
+    ),
+    "blocked": (
+        "O plano proposto não pode ser aplicado",
+        "O plano proposto tem conflitos físicos ou peças em falta. O plano e a "
+        "configuração não foram alterados.",
+    ),
+    "internal_error": (
+        "Não foi possível concluir o replaneamento",
+        "Ocorreu um erro interno durante o cálculo. O plano e a configuração "
+        "não foram alterados. Tente novamente; se repetir, avise o suporte.",
+    ),
+    "interrupted": (
+        "Replaneamento interrompido; pode iniciar novamente.",
+        "O replaneamento foi interrompido (o servidor reiniciou ou o cálculo "
+        "parou). O plano e a configuração não foram alterados. Pode iniciar "
+        "novamente.",
+    ),
+}
+
+
+class _BlockedCandidate(ValueError):
+    """The candidate failed the physical/coverage gate; its text is Portuguese."""
+
+
+def _violation_summary(exc) -> str:
+    """First distinct conflicts in plain Portuguese, separated by "; "."""
+
+    messages: list[str] = []
+    for violation in getattr(exc, "violations", None) or []:
+        message = str(violation.get("message", "")).strip().rstrip(".")
+        machine = str(violation.get("machine_id", "")).strip()
+        if not message and machine:
+            message = f"conflito na {machine}"
+        if message and message not in messages:
+            messages.append(message)
+        if len(messages) == 3:
+            break
+    return "; ".join(messages) + "." if messages else ""
+
+
+def _baseline_needs_material_rebuild(restored_baseline: dict) -> bool:
+    """A plan built before per-delivery material windows cannot be reused.
+
+    Persisting it again is refused by the material contract (plans/store.py),
+    so a calendar edit must rebuild instead of treating it as an unchanged
+    baseline and failing at commit.  The single legacy rule lives in
+    ``canonical.legacy_material_plan``.
+    """
+    from backend.scheduler.canonical import legacy_material_plan
+
+    return legacy_material_plan(
+        restored_baseline["result"].lots,
+        restored_baseline["engine_data"],
+        restored_baseline["config"],
+    )
 
 
 def _valid_delivery_floor(baseline, engine_data, config):
@@ -199,7 +274,7 @@ class ReplanJobStore:
     _metadata_columns = (
         "id,created_at,updated_at,status,progress,phase,message,reason,dataset_id,"
         "base_revision,request_fingerprint,base_input_fingerprints_json,worker_id,"
-        "worker_pid,result_json,warnings_json,error"
+        "worker_pid,result_json,warnings_json,error,code"
     )
     def __init__(
         self,
@@ -242,7 +317,8 @@ class ReplanJobStore:
                     result_json TEXT,
                     candidate_json TEXT,
                     warnings_json TEXT,
-                    error TEXT
+                    error TEXT,
+                    code TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_replan_created
                     ON replan_jobs(created_at DESC);
@@ -264,6 +340,8 @@ class ReplanJobStore:
                 self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN worker_id TEXT")
             if "worker_pid" not in columns:
                 self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN worker_pid INTEGER")
+            if "code" not in columns:
+                self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN code TEXT")
             if "base_input_fingerprints_json" not in columns:
                 self.conn.execute(
                     "ALTER TABLE replan_jobs ADD COLUMN base_input_fingerprints_json TEXT"
@@ -303,7 +381,7 @@ class ReplanJobStore:
             "progress": row["progress"],
             "phase": "interrupted" if interrupted else row["phase"],
             "message": (
-                "Replaneamento interrompido; pode iniciar novamente."
+                FAILURE_TEXTS["interrupted"][0]
                 if interrupted
                 else row["message"]
             ),
@@ -320,12 +398,9 @@ class ReplanJobStore:
             "warnings": json.loads(row["warnings_json"]) if row["warnings_json"] else [],
             "error": (
                 row["error"]
-                or (
-                    "O processo que executava este replaneamento já não está ativo."
-                    if interrupted
-                    else None
-                )
+                or (FAILURE_TEXTS["interrupted"][1] if interrupted else None)
             ),
+            "code": "interrupted" if interrupted else row["code"],
             "stale": interrupted,
             "interrupted": interrupted,
         }
@@ -446,6 +521,7 @@ class ReplanJobStore:
             "result",
             "warnings",
             "error",
+            "code",
             "candidate",
             "base_input_fingerprints",
         }
@@ -588,8 +664,9 @@ class ReplanJobManager:
                 bool(allow_unchanged_baseline_apply),
                 bool(reoptimize_relaxed_baseline),
             )
-        except Exception as exc:
-            self.store.update(job["id"], status="failed", phase="failed", error=str(exc))
+        except Exception:
+            logger.exception("Replan job %s could not be submitted", job["id"])
+            self._fail(job["id"], "internal_error")
             raise
         return {**job, "deduplicated": False}
 
@@ -634,6 +711,83 @@ class ReplanJobManager:
         job = self.store.get(job_id)
         return job is None or job["status"] in {"cancelled", "completed", "failed"}
 
+    def _fail(self, job_id: str, code: str, error: str | None = None) -> None:
+        message, default_error = FAILURE_TEXTS[code]
+        self.store.update(
+            job_id,
+            status="failed",
+            phase="failed",
+            code=code,
+            message=message,
+            error=error or default_error,
+        )
+
+    @staticmethod
+    def _optional_budget(optimizer_reserve_s: float = 0.0) -> float:
+        """Budget for an optional pass inside the outer deadline (AGENTS §6).
+
+        Always keeps the closing reserve; ``optimizer_reserve_s`` also keeps
+        time for the complete constructor when the pass has no valid fallback.
+        """
+        return max(
+            0.0,
+            remaining_time(REPLAN_TOTAL_BUDGET_S)
+            - closing_reserve(REPLAN_TOTAL_BUDGET_S)
+            - optimizer_reserve_s,
+        )
+
+    @staticmethod
+    def _local_calendar_repair(baseline, engine_data, config, frozen_lots, budget_s):
+        """Repair only the segments a calendar edit invalidated, within its budget.
+
+        Works on a copy; the caller validates and compares the result. Raises
+        PlanningTimeout when its own scope expires so the caller can fall back
+        to the complete constructor with the remaining outer budget.
+        """
+        from backend.scheduler.alternative_repair import repair_alternative_machine_delivery
+        from backend.scheduler.campaign_tail import (
+            campaign_tail_warnings,
+            repair_short_runs_after_merged_campaigns,
+        )
+        from backend.scheduler.jit_policy import calendar_holidays
+        from backend.scheduler.scheduler import (
+            _fix_orphan_continuations,
+            _repair_hard_constraints,
+            normalize_earliest_legal_plan,
+        )
+
+        protected = {lot.id for lot in frozen_lots}
+        with planning_scope(timeout_s=budget_s):
+            repaired = copy.deepcopy(baseline)
+            holidays = calendar_holidays(engine_data, -14, engine_data.n_days + 60)
+            repaired.segments = _repair_hard_constraints(
+                repaired.segments, engine_data, config, holidays,
+            )
+            repaired.segments = _fix_orphan_continuations(repaired.segments)
+            repaired.segments = normalize_earliest_legal_plan(
+                repaired.segments, repaired.lots, engine_data, config,
+                protected_lot_ids=protected,
+            )
+            alternative = repair_alternative_machine_delivery(
+                repaired.segments, repaired.lots, engine_data, config,
+            )
+            repaired.segments = alternative.segments
+            repaired.lots = alternative.lots
+            if alternative.moves:
+                repaired.segments = normalize_earliest_legal_plan(
+                    repaired.segments, repaired.lots, engine_data, config,
+                    protected_lot_ids=protected,
+                )
+            campaign_tail = repair_short_runs_after_merged_campaigns(
+                repaired.segments, repaired.lots, engine_data, config,
+            )
+            if campaign_tail.moves:
+                repaired.segments = campaign_tail.segments
+                for warning in campaign_tail_warnings(campaign_tail):
+                    if warning not in repaired.warnings:
+                        repaired.warnings.append(warning)
+        return repaired, bool(alternative.moves)
+
     def _run(self, job_id: str, *args, **kwargs) -> None:
         try:
             with planning_scope(
@@ -641,15 +795,19 @@ class ReplanJobManager:
                 cancelled=lambda: self._is_cancelled(job_id),
             ):
                 self._run_planning(job_id, *args, **kwargs)
-        except PlanningStopped as exc:
-            cancelled = isinstance(exc, PlanningCancelled)
+        except PlanningCancelled:
+            # Also raised at scope exit after the job already failed; the store
+            # never overwrites a terminal status.
             self.store.update(
                 job_id,
-                status="cancelled" if cancelled else "failed",
-                phase="cancelled" if cancelled else "failed",
-                message="Replaneamento cancelado" if cancelled else "Tempo de planeamento esgotado",
-                error=None if cancelled else str(exc),
+                status="cancelled",
+                phase="cancelled",
+                message="Replaneamento cancelado",
+                error=None,
             )
+        except PlanningStopped:
+            logger.exception("Replan job %s exhausted its planning budget", job_id)
+            self._fail(job_id, "planning_timeout")
 
     def _run_planning(
         self,
@@ -674,40 +832,13 @@ class ReplanJobManager:
             deserialize_snapshot,
             planning_input_fingerprints,
         )
-        from backend.scheduler.alternative_repair import (
-            repair_alternative_machine_delivery,
-        )
-        from backend.scheduler.campaign_tail import (
-            campaign_tail_warnings,
-            repair_short_runs_after_merged_campaigns,
-        )
         from backend.scheduler.gates import blocked_application_message, build_gate_report
-        from backend.scheduler.jit_policy import calendar_holidays
         from backend.scheduler.operators import compute_operator_alerts
         from backend.scheduler.priority import delivery_not_worse
-        from backend.scheduler.scheduler import (
-            _fix_orphan_continuations,
-            _repair_hard_constraints,
-            normalize_earliest_legal_plan,
-        )
         from backend.scheduler.scoring import compute_score
         from backend.scheduler.validation import PlanValidationError, assert_plan_valid
         from backend.simulator.mutations import reapply_calendar_mutations
         from backend.transform.calendars import apply_calendars
-
-        def enforce_campaign_tail(plan) -> None:
-            campaign_tail = repair_short_runs_after_merged_campaigns(
-                plan.segments,
-                plan.lots,
-                engine_data,
-                config,
-            )
-            if not campaign_tail.moves:
-                return
-            plan.segments = campaign_tail.segments
-            for warning in campaign_tail_warnings(campaign_tail):
-                if warning not in plan.warnings:
-                    plan.warnings.append(warning)
 
         try:
             job_record = self.store.get(job_id) or {}
@@ -726,6 +857,10 @@ class ReplanJobManager:
             baseline_comparable = False
             baseline_model_compatible = False
             active_mutations = []
+            rebuild_warnings: list[str] = []
+            # Last complete plan known valid for the NEW inputs. Optional
+            # passes (compaction, constructor) never discard it (AGENTS §6).
+            valid_fallback = None
             if baseline_snapshot is not None:
                 restored_baseline = deserialize_snapshot(baseline_snapshot)
                 active_mutations = copy.deepcopy(restored_baseline.get("active_mutations", []))
@@ -734,6 +869,14 @@ class ReplanJobManager:
                     restored_baseline.get("model_version") == MODEL_VERSION
                     and restored_baseline.get("planning_policy_version") == PLANNING_POLICY_VERSION
                 )
+                if baseline_model_compatible and _baseline_needs_material_rebuild(
+                    restored_baseline
+                ):
+                    baseline_model_compatible = False
+                    rebuild_warnings.append(
+                        "O plano ativo foi calculado antes de o material passar a ser "
+                        "libertado por entrega; por isso foi recalculado de raiz."
+                    )
                 baseline_comparable = baseline_model_compatible and planning_input_fingerprints(
                     restored_baseline["engine_data"],
                     restored_baseline["config"],
@@ -766,6 +909,9 @@ class ReplanJobManager:
             result = None
             if reoptimize_relaxed_baseline and baseline_result is not None:
                 original_baseline_score = dict(baseline_result.score or {})
+                # Releasing capacity keeps the active plan legal: it is the
+                # fallback if compaction and the constructor cannot finish.
+                valid_fallback = _valid_delivery_floor(baseline_result, engine_data, config)
                 self.store.update(
                     job_id,
                     progress=45,
@@ -773,11 +919,12 @@ class ReplanJobManager:
                     message="A reorganizar o plano com a capacidade libertada",
                 )
                 try:
-                    compacted = compact_preserving_started_lots(
-                        engine_data,
-                        config,
-                        baseline_result,
-                    )
+                    with planning_scope(timeout_s=self._optional_budget()):
+                        compacted = compact_preserving_started_lots(
+                            engine_data,
+                            config,
+                            copy.deepcopy(baseline_result),
+                        )
                     if not delivery_not_worse(
                         compacted.score,
                         original_baseline_score,
@@ -785,7 +932,12 @@ class ReplanJobManager:
                         raise ValueError(
                             "A compactação piorava o compromisso de entrega."
                         )
+                except PlanningTimeout:
+                    planning_checkpoint()
+                    logger.info("Replan %s: compaction stopped by its budget", job_id)
+                    result = None
                 except (RuntimeError, TypeError, ValueError):
+                    logger.info("Replan %s: compaction rejected", job_id, exc_info=True)
                     result = None
                 else:
                     baseline_score = original_baseline_score
@@ -813,44 +965,17 @@ class ReplanJobManager:
                         phase="repairing",
                         message="A ajustar apenas os segmentos afetados",
                     )
+                    local_budget = self._optional_budget(LOCAL_REPAIR_OPTIMIZER_RESERVE_S)
                     try:
-                        repaired = copy.deepcopy(baseline_result)
-                        holidays = calendar_holidays(
-                            engine_data,
-                            -14,
-                            engine_data.n_days + 60,
-                        )
-                        repaired.segments = _repair_hard_constraints(
-                            repaired.segments,
+                        if local_budget <= 0:
+                            raise PlanningTimeout("No budget left for local repair.")
+                        repaired, alternative_moves = self._local_calendar_repair(
+                            baseline_result,
                             engine_data,
                             config,
-                            holidays,
+                            frozen_lots,
+                            local_budget,
                         )
-                        repaired.segments = _fix_orphan_continuations(repaired.segments)
-                        repaired.segments = normalize_earliest_legal_plan(
-                            repaired.segments,
-                            repaired.lots,
-                            engine_data,
-                            config,
-                            protected_lot_ids={lot.id for lot in frozen_lots},
-                        )
-                        alternative_repair = repair_alternative_machine_delivery(
-                            repaired.segments,
-                            repaired.lots,
-                            engine_data,
-                            config,
-                        )
-                        repaired.segments = alternative_repair.segments
-                        repaired.lots = alternative_repair.lots
-                        if alternative_repair.moves:
-                            repaired.segments = normalize_earliest_legal_plan(
-                                repaired.segments,
-                                repaired.lots,
-                                engine_data,
-                                config,
-                                protected_lot_ids={lot.id for lot in frozen_lots},
-                            )
-                        enforce_campaign_tail(repaired)
                         assert_plan_valid(
                             repaired.segments,
                             engine_data,
@@ -867,23 +992,38 @@ class ReplanJobManager:
                             repaired.score,
                             original_baseline_score,
                         ):
-                            raise ValueError("A reparação local piorava o compromisso de entrega.")
+                            raise ValueError("O ajuste rápido piorava o compromisso de entrega.")
                         repaired.operator_alerts = compute_operator_alerts(
                             repaired.segments,
                             engine_data,
                             config=config,
                         )
+                    except PlanningTimeout:
+                        # Only the local scope expired: the outer deadline or a
+                        # cancellation still stop the job here.
+                        planning_checkpoint()
+                        logger.info(
+                            "Replan %s: local calendar repair stopped by its %.1f s budget",
+                            job_id, local_budget,
+                        )
+                        baseline_result = None
+                        rebuild_warnings.append(
+                            "O ajuste rápido não terminou a tempo; o plano foi "
+                            "recalculado por completo."
+                        )
                     except (RuntimeError, TypeError, ValueError):
+                        logger.info("Replan %s: local calendar repair rejected", job_id,
+                                    exc_info=True)
                         baseline_result = None
                     else:
                         repaired.warnings = [
                             *list(repaired.warnings),
-                            "Calendário aplicado com reparação local do plano ativo.",
+                            "Calendário aplicado com um ajuste rápido do plano ativo.",
                         ]
-                        if alternative_repair.moves:
+                        if alternative_moves:
                             repaired.warnings.append(
-                                "Máquinas alternativas: reparação de entrega aplicada "
-                                "ao plano ativo."
+                                "Máquinas alternativas: entregas recuperadas no plano "
+                                "ativo com uma máquina alternativa."
                             )
                         baseline_score = original_baseline_score
                         result = repaired
@@ -891,13 +1031,22 @@ class ReplanJobManager:
                 else:
                     from backend.scheduler.shift_exchange import repair_shift_capacity_exchange
 
-                    exchanged = repair_shift_capacity_exchange(
-                        baseline_result.segments,
-                        baseline_result.lots,
-                        engine_data,
-                        config,
+                    # The active plan is valid for the new calendar: an optional
+                    # shift exchange may improve it but never replaces it.
+                    try:
+                        with planning_scope(timeout_s=self._optional_budget()):
+                            exchanged = repair_shift_capacity_exchange(
+                                copy.deepcopy(baseline_result.segments),
+                                copy.deepcopy(baseline_result.lots),
+                                engine_data,
+                                config,
+                            )
+                    except PlanningTimeout:
+                        planning_checkpoint()
+                        exchanged = None
+                    exchange_applied = exchanged is not None and (
+                        exchanged != baseline_result.segments
                     )
-                    exchange_applied = exchanged is not baseline_result.segments
                     if exchange_applied:
                         baseline_result.segments = exchanged
                         baseline_result.warnings.append(
@@ -922,16 +1071,34 @@ class ReplanJobManager:
                     phase="optimizing",
                     message="A procurar o melhor plano completo",
                 )
-                with planning_scope(
-                    timeout_s=max(0.0, remaining_time(REPLAN_TOTAL_BUDGET_S) - 2.0)
-                ):
-                    result = optimize_preserving_started_lots(
-                        engine_data, config, historical_baseline_result,
-                        mode="normal", audit=True, optimizer=optimize,
+                try:
+                    with planning_scope(
+                        timeout_s=self._optional_budget()
+                    ):
+                        result = optimize_preserving_started_lots(
+                            engine_data, config, historical_baseline_result,
+                            mode="normal", audit=True, optimizer=optimize,
+                        )
+                except (PlanningTimeout, PlanValidationError):
+                    if valid_fallback is None:
+                        raise
+                    # The active plan stays valid for the new inputs: an
+                    # unfinished or invalid rebuild never discards it.
+                    planning_checkpoint()
+                    logger.info("Replan %s: constructor failed; keeping the valid plan",
+                                job_id, exc_info=True)
+                    result = valid_fallback
+                    baseline_score = dict(valid_fallback.score)
+                    selected_source = "unchanged_baseline_after_capacity_release"
+                    result.warnings.append(
+                        "O recálculo completo não terminou; foi mantido o plano ativo, "
+                        "que continua válido com a alteração."
                     )
                 if self._is_cancelled(job_id):
                     return
 
+            if rebuild_warnings and selected_source == "optimized":
+                result.warnings = [*rebuild_warnings, *list(result.warnings)]
             if frozen_lots and selected_source == "optimized":
                 from backend.scheduler.canonical import result_validation_data
 
@@ -947,11 +1114,7 @@ class ReplanJobManager:
                 )
                 try:
                     with planning_scope(
-                        timeout_s=max(
-                            0.0,
-                            remaining_time(REPLAN_TOTAL_BUDGET_S)
-                            - closing_reserve(REPLAN_TOTAL_BUDGET_S),
-                        )
+                        timeout_s=self._optional_budget()
                     ):
                         baseline_result = compact_preserving_started_lots(
                             engine_data, config, baseline_result,
@@ -1014,7 +1177,7 @@ class ReplanJobManager:
                 trial = copy.deepcopy(result)
                 try:
                     with planning_scope(
-                        timeout_s=max(0.0, remaining_time(REPLAN_TOTAL_BUDGET_S) - 2.0)
+                        timeout_s=self._optional_budget()
                     ):
                         # Priority and gap closeout goes through the single
                         # no-loss improvement cycle (plan-melhoria §5): no
@@ -1051,10 +1214,7 @@ class ReplanJobManager:
                 lots=result.lots,
             )
             if frozen_lots:
-                frozen_warning = (
-                    f"Plano anterior preservado: {len(frozen_lots)} lote(s) iniciado(s) "
-                    f"antes do dia {freeze_day} mantidos sem alterações."
-                )
+                frozen_warning = preserved_lots_warning(len(frozen_lots), freeze_day)
                 if frozen_warning not in result.warnings:
                     result.warnings.append(frozen_warning)
             can_reuse_optimizer_gate = bool(
@@ -1093,6 +1253,7 @@ class ReplanJobManager:
             if not baseline_comparable and selected_source in {
                 "unchanged_baseline_calendar_compatible",
                 "calendar_compatible_shift_exchange", "repaired_baseline_calendar",
+                "unchanged_baseline_after_capacity_release",
             }:
                 result.improvement_report = {
                     "status": "not_evaluated", "stop_reason": "inputs_changed",
@@ -1109,7 +1270,7 @@ class ReplanJobManager:
                 and result.gate_report.get("coverage_gate_passed")
             )
             if physical_or_coverage_invalid:
-                raise ValueError(blocked_application_message(result.gate_report))
+                raise _BlockedCandidate(blocked_application_message(result.gate_report))
             if self._is_cancelled(job_id):
                 return
             candidate = _result_snapshot(
@@ -1146,27 +1307,21 @@ class ReplanJobManager:
             )
         except PlanningStopped:
             raise
-        except Exception as exc:  # pragma: no cover - defensive job boundary
-            detail = str(exc)
-            violations = getattr(exc, "violations", None)
-            if violations:
-                messages = []
-                for violation in violations[:3]:
-                    message = str(violation.get("message", "")).strip()
-                    machine = str(violation.get("machine_id", "")).strip()
-                    if message:
-                        messages.append(message)
-                    elif machine:
-                        messages.append(f"Conflito em {machine}.")
-                if messages:
-                    detail = f"{detail}: " + " ".join(messages)
-            self.store.update(
+        except _BlockedCandidate as exc:
+            logger.exception("Replan job %s produced a blocked candidate", job_id)
+            self._fail(job_id, "blocked", str(exc) or None)
+        except PlanValidationError as exc:
+            logger.exception("Replan job %s produced no valid plan", job_id)
+            summary = _violation_summary(exc)
+            detail = FAILURE_TEXTS["invalid_plan"][1]
+            self._fail(
                 job_id,
-                status="failed",
-                phase="failed",
-                message="Não foi possível concluir o replaneamento",
-                error=detail,
+                "invalid_plan",
+                f"{detail} Primeiros conflitos: {summary}" if summary else None,
             )
+        except Exception:  # defensive job boundary: never show raw (English) text
+            logger.exception("Replan job %s failed unexpectedly", job_id)
+            self._fail(job_id, "internal_error")
 
     def apply(
         self,

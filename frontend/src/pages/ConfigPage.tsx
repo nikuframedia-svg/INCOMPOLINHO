@@ -35,12 +35,13 @@ import { ApiError } from "../api/client";
 import { remainingDraft, remainingToolDraft } from "../lib/configDraft";
 import {
   approvalImpactMessage,
-  approvalReasonLabel,
+  gateReasonLabel,
   sendWithGateApproval,
   type GateApproval,
   gateStatusLabel,
 } from "../lib/gateApproval";
 import { getReadIdentity } from "../lib/planRevision";
+import { jobFailureText } from "../lib/jobFailure";
 
 type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "setup_overrides" | "operadores" | "feriados" | "indisponibilidades" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes" | "qualidade_dados";
 type ConfigGroup = "factory" | "articles" | "calendar" | "availability" | "engine";
@@ -399,25 +400,32 @@ function workdaysToCalendarDays(days: number) {
 
 // ── Tunables ─────────────────────────────────────────────────────
 
-const TUNABLES: { key: string; label: string; type: "number" | "boolean" | "select"; options?: string[] }[] = [
-  { key: "oee_default", label: "OEE Default", type: "number" },
-  { key: "jit_buffer_pct", label: "JIT Buffer %", type: "number" },
-  { key: "jit_max_retries", label: "JIT Max Retries", type: "number" },
-  { key: "max_run_days", label: "Max Run Days", type: "number" },
-  { key: "max_edd_gap", label: "Max EDD Gap", type: "number" },
-  { key: "max_edd_span", label: "Max EDD Span", type: "number" },
-  { key: "edd_swap_tolerance", label: "EDD Swap Tolerance", type: "number" },
-  { key: "edd_assign_threshold", label: "EDD Assign Threshold", type: "number" },
-  { key: "campaign_window", label: "Campaign Window", type: "number" },
-  { key: "urgency_threshold", label: "Urgency Threshold", type: "number" },
-  { key: "interleave_enabled", label: "Interleave Activo", type: "boolean" },
-  { key: "vns_enabled", label: "VNS Activo", type: "boolean" },
-  { key: "vns_max_iter", label: "VNS Max Iter", type: "number" },
-  { key: "compact_enabled", label: "Compactar Plano", type: "boolean" },
-  { key: "weight_earliness", label: "Peso Earliness", type: "number" },
-  { key: "weight_setups", label: "Peso Setups", type: "number" },
-  { key: "weight_balance", label: "Peso Balance", type: "number" },
-  { key: "eco_lot_mode", label: "Eco Lot Mode", type: "select", options: ["hard", "soft"] },
+type TunableOption = { value: string; label: string };
+
+const TUNABLES: { key: string; label: string; type: "number" | "boolean" | "select"; options?: TunableOption[] }[] = [
+  { key: "oee_default", label: "Rendimento (OEE) por omissão", type: "number" },
+  { key: "jit_buffer_pct", label: "Margem de antecipação (%)", type: "number" },
+  { key: "jit_max_retries", label: "Tentativas de antecipação", type: "number" },
+  { key: "max_edd_gap", label: "Intervalo máximo entre prazos (dias)", type: "number" },
+  { key: "max_edd_span", label: "Duração máxima de prazos numa campanha (dias)", type: "number" },
+  { key: "edd_swap_tolerance", label: "Tolerância para trocar a ordem dos prazos (dias)", type: "number" },
+  { key: "edd_assign_threshold", label: "Limite de prazo para escolher máquina (dias)", type: "number" },
+  { key: "campaign_window", label: "Janela de campanha (dias)", type: "number" },
+  { key: "urgency_threshold", label: "Limite de urgência (dias)", type: "number" },
+  { key: "interleave_enabled", label: "Intercalar urgentes", type: "boolean" },
+  { key: "vns_enabled", label: "Pesquisa de melhorias", type: "boolean" },
+  { key: "vns_max_iter", label: "Máximo de iterações da pesquisa", type: "number" },
+  { key: "compact_enabled", label: "Compactar plano", type: "boolean" },
+  { key: "weight_earliness", label: "Peso da antecipação", type: "number" },
+  { key: "weight_setups", label: "Peso das mudanças de ferramenta", type: "number" },
+  { key: "weight_balance", label: "Peso do equilíbrio entre máquinas", type: "number" },
+  {
+    key: "eco_lot_mode", label: "Lote económico", type: "select",
+    options: [
+      { value: "hard", label: "Obrigatório" },
+      { value: "soft", label: "Flexível" },
+    ],
+  },
 ];
 
 // ── ParametrosEditor ─────────────────────────────────────────────
@@ -483,10 +491,11 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
 
   const handlePreset = async (name: string) => {
     const submitted = { ...edits };
+    const presetLabel = PRESETS.find((p) => p.id === name)?.label ?? name;
     const approved = await confirm({
-      title: "Aplicar preset",
-      message: `Aplicar preset “${name}”? Os parâmetros serão substituídos.`,
-      confirmLabel: "Aplicar preset",
+      title: "Aplicar predefinição",
+      message: `Aplicar a predefinição «${presetLabel}»? Os parâmetros serão substituídos.`,
+      confirmLabel: "Aplicar predefinição",
     });
     if (!approved) return;
     setSaving(true);
@@ -506,8 +515,9 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       if (res.score && res.score_previous) {
         onDelta(res.score_previous, res.score);
       }
-      const simNote = res.simulation_active ? " — simulacao mantida" : "";
-      setMsg(`Preset "${name}" aplicado (${res.changed.length} parametros)${simNote}`);
+      const simNote = res.simulation_active ? " — simulação mantida" : "";
+      const changedCount = res.changed.length;
+      setMsg(`Predefinição «${presetLabel}» aplicada (${changedCount} ${changedCount === 1 ? "parâmetro alterado" : "parâmetros alterados"})${simNote}`);
       setActivePreset(name);
       assertRefreshed(await refreshAfterCommit(refreshAll), true);
     } catch (e) {
@@ -521,7 +531,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
     <Card>
       {/* Presets row */}
       <div style={{ marginBottom: 12 }}>
-        <Label style={{ marginBottom: 8 }}>Presets</Label>
+        <Label style={{ marginBottom: 8 }}>Predefinições</Label>
         {isSimulated && (
           <div style={{ fontSize: 11, color: T.orange, marginBottom: 8 }}>
             Simulação ativa — a predefinição será aplicada por cima dela.
@@ -559,9 +569,10 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
           Avançado
         </summary>
         <div style={{ marginTop: 8, padding: "10px 12px", background: T.elevated, borderRadius: 8, color: T.secondary, fontSize: 11 }}>
-          O plano executável começa sempre no dia 0. O antigo Auto Buffer que
-          criava dias negativos deixou de estar disponível; os buffers JIT, de
-          artigo e de subcontratação continuam a ser margens de planeamento.
+          O plano executável começa sempre no dia 0. A antiga opção que criava
+          dias antes do dia 0 deixou de estar disponível; as margens de
+          antecipação, de artigo e de subcontratação continuam a ser usadas no
+          planeamento.
         </div>
         <div style={{ marginTop: 8 }}>
           {TUNABLES.map((t) => (
@@ -585,7 +596,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
                 onChange={(e) => handleChange(t.key, e.target.value, "select")}
                 style={{ ...inputStyle, width: 120, cursor: "pointer", textAlign: "left", borderColor: t.key in edits ? T.blue : T.border }}
               >
-                {t.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+                {t.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             ) : (
               <input
@@ -1454,7 +1465,7 @@ export function ConfigPage() {
       return;
     }
     if (job.status === "failed") {
-      setReplanMessage(`Erro: ${job.error ?? "Replaneamento falhou."}`);
+      setReplanMessage(`Erro: ${jobFailureText(job, "O replaneamento falhou. O plano não foi alterado.")}`);
       return;
     }
     if (job.status === "completed") {
@@ -1616,7 +1627,7 @@ export function ConfigPage() {
     let approval: { reason: string; author: string } | undefined;
     if (gateReport?.requires_approval) {
       const reasons = gateReport.approval_reasons?.length
-        ? gateReport.approval_reasons.map((reason) => `• ${approvalReasonLabel(reason)}`).join("\n")
+        ? gateReport.approval_reasons.map((reason) => `• ${gateReasonLabel(reason, gateReport)}`).join("\n")
         : "• O plano proposto tem exceções que precisam da aprovação do planeador.";
       const score = pendingReplan.job.result?.score;
       const impact = [

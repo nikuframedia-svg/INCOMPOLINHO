@@ -14,9 +14,25 @@ from backend.config.types import FactoryConfig
 from backend.scheduler.gap_filling import PartialGapOpportunity, find_gap_opportunities
 from backend.scheduler.jit_policy import calendar_holidays, earliest_allowed_start
 from backend.scheduler.priority import lot_priority_key
-from backend.scheduler.priority_normalization import classify_priority_order_anomalies
+from backend.scheduler.priority_normalization import (
+    classify_priority_order_anomalies,
+    find_priority_order_anomalies,
+)
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
+
+# Work budget for the one slow part of the audit: proving, by validated
+# counterfactual rotations, which priority-order anomalies are avoidable.  It
+# is a count of anomalies to classify, not a wall-clock cap, so the same plan
+# always gets the same status whatever the machine load.  Each classification
+# rebuilds and validates candidate runs (~55 ms, up to ~0.2 s, on revision 121
+# with one core); 16 keeps a complete audit near 1 s on top of the ~0.3 s of
+# cheap metrics.  A plan with more anomalies keeps every cheap metric exact and
+# reports the classification as pending ("por avaliar"), never as a pass.  The
+# cheap metrics (gaps, campaign interruptions, tool inversions and the anomaly
+# count itself) are always computed in full.
+PRIORITY_CLASSIFICATION_MAX_ANOMALIES = 16
+_UNSET: Any = object()
 
 
 def build_operational_audit(
@@ -26,49 +42,80 @@ def build_operational_audit(
     config: FactoryConfig | None = None,
     *,
     gap_opportunities: list[PartialGapOpportunity] | None = None,
+    classification_budget: int | None = _UNSET,
 ) -> dict[str, Any]:
+    """Audit the final sequence; ``status`` says whether every metric is proven.
+
+    ``status == "not_evaluated"`` means the cheap metrics are exact but the
+    avoidable priority anomalies exceed the classification work budget.  That
+    is never a pass: the gate reports the audit as pending ("por avaliar").
+    By default only per-delivery plans are bounded (their anomaly count is
+    large); pass ``classification_budget=None`` for an unbounded audit.
+    """
+
     from backend.scheduler.quantity_dispatch import has_quantity_releases
 
-    if not has_quantity_releases(lots):
+    quantity_plan = has_quantity_releases(lots)
+    budget = (
+        (PRIORITY_CLASSIFICATION_MAX_ANOMALIES if quantity_plan else None)
+        if classification_budget is _UNSET
+        else classification_budget
+    )
+    if not quantity_plan:
         return _build_operational_audit(
-            segments, lots, data, config, gap_opportunities=gap_opportunities,
+            segments, lots, data, config,
+            gap_opportunities=gap_opportunities,
+            classification_budget=budget,
         )
     import copy
 
-    from backend.planning_control import (
-        PlanningTimeout,
-        execution_cache,
-        planning_checkpoint,
-        planning_scope,
-    )
+    from backend.planning_control import execution_cache
     from backend.plans.serialize import value_fingerprint
 
     cache = execution_cache("quantity_operational_audit")
-    key = value_fingerprint((segments, lots, data, config, gap_opportunities))
+    key = value_fingerprint((segments, lots, data, config, gap_opportunities, budget))
     if key in cache:
         return copy.deepcopy(cache[key])
-    try:
-        with planning_scope(timeout_s=1):
-            result = _build_operational_audit(
-                segments, lots, data, config, gap_opportunities=gap_opportunities,
-            )
-    except PlanningTimeout:
-        planning_checkpoint()
-        result = {
-            "status": "not_evaluated", "stop_reason": "audit_budget",
-            "left_shift_opportunities": 0,
-            "lower_priority_campaign_interruptions": 0,
-            "priority_order_anomalies": 0,
-            "avoidable_priority_order_anomalies": 0,
-            "released_tool_priority_inversions": 0,
-            "left_shift_detail": [], "protected_left_shift_detail": [],
-            "campaign_interruption_detail": [], "priority_order_detail": [],
-            "released_tool_priority_detail": [],
-        }
+    result = _build_operational_audit(
+        segments, lots, data, config,
+        gap_opportunities=gap_opportunities,
+        classification_budget=budget,
+    )
     if len(cache) >= 4:
         cache.pop(next(iter(cache)))
     cache[key] = copy.deepcopy(result)
     return result
+
+
+def _classified_priority_anomalies(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig,
+    budget: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return (anomalies, classified); over budget, all are marked pending.
+
+    The decision depends only on the plan (its anomaly count), never on time.
+    An outer deadline or a cancellation still stops a classification that
+    runs, through the checkpoints inside it.
+    """
+
+    if budget is not None:
+        anomalies = find_priority_order_anomalies(segments, lots, data)
+        if not anomalies:
+            return [], True
+        if len(anomalies) > max(0, int(budget)):
+            return [
+                {
+                    **detail,
+                    "verification_status": "not_evaluated",
+                    "blocking_reason": "audit_budget",
+                    "blocking_reasons": ["audit_budget"],
+                }
+                for detail in anomalies
+            ], False
+    return classify_priority_order_anomalies(segments, lots, data, config), True
 
 
 def _build_operational_audit(
@@ -78,6 +125,7 @@ def _build_operational_audit(
     config: FactoryConfig | None = None,
     *,
     gap_opportunities: list[PartialGapOpportunity] | None = None,
+    classification_budget: int | None = None,
 ) -> dict[str, Any]:
     """Return stable metrics and evidence for final-plan sequencing quality."""
 
@@ -111,11 +159,12 @@ def _build_operational_audit(
         else:
             protected_left_shift_detail.append({**item, "protection": reason})
     interruption_detail = _lower_priority_campaign_interruptions(segments, lots)
-    priority_detail = classify_priority_order_anomalies(
+    priority_detail, classified = _classified_priority_anomalies(
         segments,
         lots,
         data,
         config or FactoryConfig(),
+        classification_budget,
     )
     tool_priority_detail = released_tool_priority_inversion_detail(
         segments,
@@ -140,7 +189,17 @@ def _build_operational_audit(
     avoidable_priority = sum(
         item["verification_status"] == "permutable" for item in priority_detail
     )
+    status: dict[str, Any] = (
+        {"status": "evaluated"}
+        if classified
+        else {
+            "status": "not_evaluated",
+            "stop_reason": "audit_budget",
+            "unevaluated_metrics": ["avoidable_priority_order_anomalies"],
+        }
+    )
     return {
+        **status,
         "left_shift_opportunities": len(left_shift_detail),
         "lower_priority_campaign_interruptions": len(interruption_detail),
         "priority_order_anomalies": len(priority_detail),
@@ -306,30 +365,41 @@ def _lower_priority_campaign_interruptions(
     segments: list[Segment],
     lots: list[Lot],
 ) -> list[dict[str, Any]]:
+    """Less urgent work placed inside one physical run (one mounted campaign).
+
+    The campaign is the run, not the lot: with per-delivery material windows a
+    lot is produced in several runs, and work between two of them is the
+    material window doing its job, not an interruption.  Portions of one lot
+    keep one campaign identity, so a blocker is reported once per lot pair.
+    """
+
     lots_by_id = {lot.id: lot for lot in lots}
     productive = [
         segment
         for segment in segments
         if segment.prod_min > 0 and segment.end_min > segment.start_min
     ]
-    by_machine_lot: dict[tuple[str, str], list[Segment]] = defaultdict(list)
+    by_machine_run: dict[tuple[str, str], list[Segment]] = defaultdict(list)
     by_machine: dict[str, list[Segment]] = defaultdict(list)
     for segment in productive:
-        by_machine_lot[(segment.machine_id, segment.lot_id)].append(segment)
+        by_machine_run[(segment.machine_id, segment.run_id)].append(segment)
         by_machine[segment.machine_id].append(segment)
 
     detail: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
-    for (machine_id, lot_id), campaign in by_machine_lot.items():
-        protected = lots_by_id.get(lot_id)
-        if protected is None or len(campaign) < 2:
+    for (machine_id, run_id), campaign in by_machine_run.items():
+        if len(campaign) < 2:
             continue
         ordered = sorted(campaign, key=_position)
         for previous, following in zip(ordered, ordered[1:]):
+            protected = lots_by_id.get(following.lot_id)
+            if protected is None:
+                continue
             blockers = [
                 segment
                 for segment in by_machine[machine_id]
-                if segment.lot_id != lot_id
+                if segment.run_id != run_id
+                and segment.lot_id != following.lot_id
                 and _position(previous) < _position(segment) < _position(following)
             ]
             for blocker in blockers:
@@ -338,14 +408,15 @@ def _lower_priority_campaign_interruptions(
                     continue
                 if lot_priority_key(blocking_lot)[:-1] <= lot_priority_key(protected)[:-1]:
                     continue
-                key = (machine_id, lot_id, blocker.lot_id)
+                key = (machine_id, protected.id, blocker.lot_id)
                 if key in seen:
                     continue
                 seen.add(key)
                 detail.append(
                     {
                         "machine_id": machine_id,
-                        "urgent_lot_id": lot_id,
+                        "run_id": run_id,
+                        "urgent_lot_id": protected.id,
                         "blocking_lot_id": blocker.lot_id,
                         "gap_start_day": previous.day_idx,
                         "gap_end_day": following.day_idx,

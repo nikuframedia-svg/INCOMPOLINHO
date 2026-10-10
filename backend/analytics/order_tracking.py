@@ -10,7 +10,11 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 
-from backend.scheduler.jit_policy import add_workdays, calendar_holidays, lot_output_milestones
+from backend.scheduler.material_quantities import (
+    DeliveryPortion,
+    delivery_portions,
+    production_by_op,
+)
 from backend.scheduler.types import Lot, Segment
 from backend.types import ClientDemandEntry, EngineData
 
@@ -27,13 +31,17 @@ class OrderReadiness:
 
 
 def compute_order_readiness(segments, lots, data) -> dict[str, list[OrderReadiness]]:
-    """FIFO allocation of real output, without charging net ISOP demand twice for stock."""
-    from backend.analytics.stock_projection import build_production_by_op
+    """FIFO allocation of real output, without charging net ISOP demand twice for stock.
 
-    customer = build_production_by_op(segments, lots, data)
-    factory = build_production_by_op(segments, lots)
+    Pieces of a SKU are fungible: every lot of the operation serves its
+    deliveries in due order (``delivery_portions``), so an order is judged
+    by when its own pieces exist, whichever lot makes them.
+    """
+    portions = delivery_portions(lots, segments, data)
+    customer = production_by_op(portions)
+    factory = production_by_op(portions, customer=False)
     for supply in data.committed_supplies:
-        factory.setdefault(supply.op_id, {}).setdefault(supply.available_day, 0)
+        customer[supply.op_id][supply.available_day] += supply.qty
         factory[supply.op_id][supply.available_day] += supply.qty
     ops_by_sku = defaultdict(list)
     for op in data.ops:
@@ -150,7 +158,7 @@ class ClientOrders:
     orders: list[OrderTracking]
 
 
-# ── Lot metadata from segments ──
+# ── Production slices ──
 
 
 @dataclass
@@ -159,8 +167,6 @@ class _LotInfo:
     machine: str
     run_id: str
     days: list[int]
-    ready_day: int
-    qty: int  # for this specific SKU (twin-aware)
 
 
 @dataclass
@@ -172,41 +178,8 @@ class _LotContribution:
     factory_day: int
     customer_day: int
     segment_index: int | None = None
-    end_min: int = 0
-
-
-def _build_lot_info(
-    lots: list[Lot],
-    segments: list[Segment],
-) -> dict[str, _LotInfo]:
-    """Build metadata for each lot from its segments."""
-    seg_by_lot: dict[str, list[Segment]] = defaultdict(list)
-    for seg in segments:
-        seg_by_lot[seg.lot_id].append(seg)
-
-    info: dict[str, _LotInfo] = {}
-    for lot in lots:
-        segs = seg_by_lot.get(lot.id, [])
-        if segs:
-            days = sorted({s.day_idx for s in segs})
-            info[lot.id] = _LotInfo(
-                lot_id=lot.id,
-                machine=segs[0].machine_id,
-                run_id=segs[0].run_id,
-                days=days,
-                ready_day=max(s.day_idx for s in segs),
-                qty=lot.qty,
-            )
-        else:
-            info[lot.id] = _LotInfo(
-                lot_id=lot.id,
-                machine=lot.machine_id,
-                run_id="",
-                days=[],
-                ready_day=lot.edd,
-                qty=lot.qty,
-            )
-    return info
+    abs_end: int = 0
+    output: DeliveryPortion | None = None
 
 
 def _get_lot_qty_for_sku(lot: Lot, sku: str) -> int:
@@ -218,35 +191,6 @@ def _get_lot_qty_for_sku(lot: Lot, sku: str) -> int:
     return lot.qty
 
 
-def _output_for_sku(lot: Lot, sku: str) -> dict[str, object]:
-    return next(
-        (
-            output
-            for output in lot_output_milestones(lot)
-            if str(output.get("sku", "")) == sku
-        ),
-        {},
-    )
-
-
-def _customer_ready_day(
-    lot: Lot,
-    sku: str,
-    factory_ready_day: int,
-    holidays: set[int],
-) -> tuple[int, bool, int | None]:
-    output = _output_for_sku(lot, sku)
-    subcontracted = bool(output.get("is_subcontracted"))
-    lead = int(output.get("subcontract_lead_time_days", 0) or 0)
-    ready_day = (
-        add_workdays(factory_ready_day, lead, holidays)
-        if subcontracted
-        else factory_ready_day
-    )
-    dispatch = output.get("subcontract_dispatch_day")
-    return ready_day, subcontracted, int(dispatch) if dispatch is not None else None
-
-
 def compute_order_tracking(
     segments: list[Segment],
     lots: list[Lot],
@@ -255,20 +199,7 @@ def compute_order_tracking(
     segment_allocations: list[list[dict]] | None = None,
 ) -> list[ClientOrders]:
     """Trace each client demand to its covering lot/segments."""
-    lot_info = _build_lot_info(lots, segments)
-    max_lead = max(
-        (
-            int(output.get("subcontract_lead_time_days", 0) or 0)
-            for lot in lots
-            for output in lot_output_milestones(lot)
-        ),
-        default=0,
-    )
-    holidays = calendar_holidays(
-        engine_data,
-        min((segment.day_idx for segment in segments), default=0) - 14,
-        engine_data.n_days + max_lead * 2 + 14,
-    )
+    readiness = delivery_portions(lots, segments, engine_data)
 
     # Twin lots are indexed by all operations they produce for.
     lots_by_op: dict[str, list[Lot]] = defaultdict(list)
@@ -308,11 +239,10 @@ def compute_order_tracking(
             sku,
             list(sku_lots_by_id.values()),
             sorted_demands,
-            lot_info,
             all_trackings,
-            holidays,
             segments,
             engine_data,
+            readiness,
             segment_allocations,
         )
 
@@ -337,42 +267,51 @@ def _allocate_demands(
     sku: str,
     sku_lots: list[Lot],
     demands: list[ClientDemandEntry],
-    lot_info: dict[str, _LotInfo],
     all_trackings: dict[str, list[OrderTracking]],
-    holidays: set[int],
     segments: list[Segment],
     data: EngineData,
+    readiness: list[DeliveryPortion],
     segment_allocations: list[list[dict]] | None = None,
 ) -> None:
-    """Allocate chronological, real outputs, including partial lots and supplies."""
+    """Allocate real outputs first-in-first-out, by availability then absolute time.
+
+    Each event is the part of a segment that serves one delivery portion of
+    the operation (all its lots, ``delivery_portions``). An in-house piece is
+    available when produced; a subcontracted delivery portion when it
+    returns, so each order carries its own portion's dispatch and return.
+    """
     by_id = {lot.id: lot for lot in sku_lots}
     events = []
     produced = defaultdict(int)
-    for segment_index, segment in enumerate(segments):
-        lot = by_id.get(segment.lot_id)
-        if lot is None:
+    for portion in readiness:
+        if portion.sku != sku:
             continue
-        qty = (sum(qty for _op, item_sku, qty in segment.twin_outputs if item_sku == sku)
-               if segment.twin_outputs else segment.qty)
-        if qty <= 0:
-            continue
-        info = lot_info[lot.id]
-        subcontracted = bool(_output_for_sku(lot, sku).get("is_subcontracted"))
-        factory_day = info.ready_day if subcontracted else segment.day_idx
-        customer_day, _, _ = _customer_ready_day(lot, sku, factory_day, holidays)
-        if not subcontracted:
-            info = _LotInfo(lot.id, segment.machine_id, segment.run_id,
-                            [segment.day_idx], segment.day_idx, qty)
-        events.append(_LotContribution(lot, info, qty, False, factory_day, customer_day,
-                                       segment_index, segment.end_min))
-        produced[lot.id] += qty
+        for item in portion.slices:
+            lot = by_id.get(item.lot_id)
+            if lot is None:
+                continue
+            segment = segments[item.segment_index]
+            if portion.is_subcontracted:
+                factory_day, customer_day = portion.factory_day, portion.customer_ready_day
+            else:
+                factory_day = customer_day = item.day_idx
+            info = _LotInfo(lot.id, segment.machine_id, segment.run_id, [item.day_idx])
+            events.append(_LotContribution(lot, info, item.qty, False, factory_day, customer_day,
+                                           item.segment_index,
+                                           item.day_idx * 1440 + item.end_min, portion))
+            produced[lot.id] += item.qty
     op_ids = {op.id for op in data.ops if op.sku == sku}
     for supply in data.committed_supplies:
         if supply.op_id in op_ids and supply.qty > 0:
             events.append(_LotContribution(None, None, supply.qty, True,
-                                           supply.available_day, supply.available_day))
-    events.sort(key=lambda e: (e.customer_day, e.factory_day, e.end_min,
-                               e.lot.id if e.lot else "", e.segment_index or 0))
+                                           supply.available_day, supply.available_day,
+                                           abs_end=supply.available_day * 1440))
+    # Chronological in absolute time (day * 1440 + end), never minute-of-day.
+    events.sort(key=lambda e: (
+        e.customer_day,
+        e.abs_end,
+        e.segment_index if e.segment_index is not None else -1,
+    ))
     event_index = 0
     used = defaultdict(int)
     stock = sum(max(0, op.stk) for op in data.ops if op.sku == sku)
@@ -413,6 +352,7 @@ def _allocate_demands(
                     from_surplus=not event.lot or previously_used.get(lot_id, 0) > 0,
                     factory_day=event.factory_day,
                     customer_day=event.customer_day,
+                    output=event.output,
                 )
             )
             used[lot_id] += consumed
@@ -430,7 +370,6 @@ def _allocate_demands(
                 sum(produced[lot_id] - used[lot_id] for lot_id in used if lot_id)
                 if still_needed == 0 else 0,
                 still_needed,
-                holidays,
             )
         all_trackings[entry.client].append(tracking)
 
@@ -465,7 +404,6 @@ def _make_allocated(
     contributions: list[_LotContribution],
     surplus_remaining: int,
     shortfall_qty: int,
-    holidays: set[int],
 ) -> OrderTracking:
     production = [c for c in contributions if c.lot is not None]
     lot_ids = list(dict.fromkeys(c.lot.id for c in production))
@@ -505,14 +443,15 @@ def _make_allocated(
 
     readiness: list[tuple[int, int, bool, int | None, _LotContribution]] = []
     for contribution in contributions:
-        factory_day, customer_day = contribution.factory_day, contribution.customer_day
-        _, subcontracted, dispatch_day = (
-            _customer_ready_day(contribution.lot, entry.sku, factory_day, holidays)
-            if contribution.lot else (customer_day, False, None)
-        )
-        readiness.append(
-            (customer_day, factory_day, subcontracted, dispatch_day, contribution)
-        )
+        output = contribution.output
+        subcontracted = bool(output and output.is_subcontracted)
+        readiness.append((
+            contribution.customer_day,
+            contribution.factory_day,
+            subcontracted,
+            output.planned_dispatch_day if subcontracted else None,
+            contribution,
+        ))
 
     controlling = max(readiness, key=lambda item: (item[0], item[4].lot.id if item[4].lot else ""))
     is_subcontracted = any(item[2] for item in readiness)

@@ -1,5 +1,5 @@
 import { ApiError } from "../api/client";
-import type { GateReport, LongProductionDetail } from "../api/types";
+import type { GateReport } from "../api/types";
 
 /**
  * The single plain-language dictionary for approval reasons (codes from
@@ -8,18 +8,28 @@ import type { GateReport, LongProductionDetail } from "../api/types";
  * approvalReasonSentence() for a standalone sentence.
  */
 const APPROVAL_REASON_LABELS: Record<string, string> = {
-  delivery_risk: "há lotes que acabam depois do prazo de produção",
+  delivery_risk: "há encomendas que ficam atrasadas",
   subcontract_dispatch_risk: "existem envios para subcontratação em risco",
-  jit_window_blocked: "há produções marcadas antes de o material estar disponível",
-  material_release_blocked: "há mudanças de ferramenta marcadas antes de o material chegar",
-  long_production: "há produções seguidas acima do limite de dias",
+  jit_window_blocked: "há produções marcadas antes de o material ser libertado",
+  material_release_blocked: "há mudanças de ferramenta marcadas antes de o material ser libertado",
   operator_capacity_shortage: "faltam operadores em alguns turnos",
   operational_sequence_review: "a ordem de produção tem pontos a rever",
+  operational_sequence_not_evaluated: "a verificação da ordem de produção ficou por avaliar",
   // Revisões antigas ainda trazem estes motivos; a robustez é hoje apenas
   // informativa e já não pede aprovação.
   robustness_not_evaluated: "robustez por avaliar (critério antigo; hoje só informativo)",
   robustness_below_threshold: "robustez abaixo do limite (critério antigo; hoje só informativo)",
+  // A fábrica retirou o limite de dias seguidos (09/10/2026); só revisões
+  // antigas trazem este motivo.
+  long_production: "produção em dias seguidos acima do limite (critério antigo; já não se aplica)",
 };
+
+/**
+ * Revisões antigas pediam aprovação por lotes acabados depois do prazo de
+ * produção, mesmo sem nenhuma encomenda atrasada. Nesse caso o motivo
+ * "delivery_risk" mantém o texto antigo, para não contradizer o impacto.
+ */
+const LEGACY_LOT_DELIVERY_RISK_LABEL = "há lotes que acabam depois do prazo de produção";
 
 /** Reason codes the backend can emit today (gates.py); each one has a plain label. */
 export const BACKEND_APPROVAL_REASONS = [
@@ -27,9 +37,9 @@ export const BACKEND_APPROVAL_REASONS = [
   "subcontract_dispatch_risk",
   "jit_window_blocked",
   "material_release_blocked",
-  "long_production",
   "operator_capacity_shortage",
   "operational_sequence_review",
+  "operational_sequence_not_evaluated",
 ] as const;
 
 const UNKNOWN_REASON_LABEL = "existe uma exceção de planeamento a rever";
@@ -39,6 +49,11 @@ const LEGACY_ROBUSTNESS_REASONS = new Set(["robustness_not_evaluated", "robustne
 /** Old approval reasons from when robustness still gated plans; informative only now. */
 export function isLegacyRobustnessReason(reason: string): boolean {
   return LEGACY_ROBUSTNESS_REASONS.has(reason);
+}
+
+/** Old reasons the planner no longer decides on (robustness, the removed consecutive-days limit). */
+export function isLegacyReason(reason: string): boolean {
+  return isLegacyRobustnessReason(reason) || reason === "long_production";
 }
 
 const REASON_CODE = /^[a-z0-9_]+$/;
@@ -53,11 +68,32 @@ export function approvalReasonLabel(reason: string): string {
   return REASON_CODE.test(reason) || !reason.trim() ? UNKNOWN_REASON_LABEL : reason;
 }
 
-/** The reason as a standalone sentence ("Há lotes que acabam depois do prazo de produção."). */
-export function approvalReasonSentence(reason: string): string {
-  const label = approvalReasonLabel(reason).trim();
-  const sentence = `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+/**
+ * Plain phrase for a reason in the context of its report. delivery_risk is
+ * order-based; an old report that raised it for late lots only (no late
+ * order, or no order metrics at all) keeps the old lot wording so the reason
+ * and the impact line agree.
+ */
+export function gateReasonLabel(reason: string, gate: Pick<GateReport, "metrics">): string {
+  if (reason === "delivery_risk") {
+    const metrics = gate.metrics ?? {};
+    const ordersLate = count(metrics.orders_late);
+    if ((ordersLate === null || ordersLate === 0) && (lateLots(metrics) ?? 0) > 0) {
+      return LEGACY_LOT_DELIVERY_RISK_LABEL;
+    }
+  }
+  return approvalReasonLabel(reason);
+}
+
+function toSentence(label: string): string {
+  const trimmed = label.trim();
+  const sentence = `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/** The reason as a standalone sentence ("Há encomendas que ficam atrasadas."). */
+export function approvalReasonSentence(reason: string): string {
+  return toSentence(approvalReasonLabel(reason));
 }
 
 const GATE_STATUS_LABELS: Record<string, string> = {
@@ -75,9 +111,19 @@ export function gateStatusLabel(status: string | null | undefined): string {
   return status ? GATE_STATUS_LABELS[status] ?? "por validar" : "por validar";
 }
 
-/** Reasons that still matter for a decision (legacy robustness is informative only). */
+/** Reasons that still matter for a decision (legacy reasons are informative only). */
 export function decisionReasons(gate: Pick<GateReport, "approval_reasons">): string[] {
-  return (gate.approval_reasons ?? []).filter((reason) => !isLegacyRobustnessReason(reason));
+  return (gate.approval_reasons ?? []).filter((reason) => !isLegacyReason(reason));
+}
+
+/** Plain phrases for the reasons that still need a decision, read against the report. */
+export function decisionReasonLabels(gate: Pick<GateReport, "approval_reasons" | "metrics">): string[] {
+  return decisionReasons(gate).map((reason) => gateReasonLabel(reason, gate));
+}
+
+/** Same as decisionReasonLabels, each as a standalone sentence. */
+export function decisionReasonSentences(gate: Pick<GateReport, "approval_reasons" | "metrics">): string[] {
+  return decisionReasonLabels(gate).map(toSentence);
 }
 
 function count(value: unknown): number | null {
@@ -100,8 +146,8 @@ function lotsLateClause(lots: number): string {
 
 /**
  * Orders when the report has order metrics, otherwise lots (old reports).
- * delivery_risk is lot-based: when no order is late but some lots are, say
- * both, so the reason and the impact never contradict each other.
+ * Old reports could raise delivery_risk for late lots with no late order:
+ * then say both, so the reason and the impact never contradict each other.
  */
 function deliveryImpact(gate: GateReport): string {
   const metrics = gate.metrics ?? {};
@@ -117,23 +163,6 @@ function deliveryImpact(gate: GateReport): string {
   }
   const lots = lateLots(metrics) ?? 0;
   return lots > 0 ? lotsLateClause(lots) : "sem atrasos identificados";
-}
-
-function longProductions(gate: GateReport): LongProductionDetail[] {
-  return Array.isArray(gate.long_production_detail)
-    ? gate.long_production_detail.filter((item) => item && typeof item.workdays === "number")
-    : [];
-}
-
-/** "TP042173-0060-1 na PRM042, 5 dias seguidos (o limite é 4)". */
-export function longProductionLine(item: LongProductionDetail): string {
-  return `${item.sku || item.lot_id} na ${item.machine_id}, ${plural(item.workdays, "dia seguido", "dias seguidos")} (o limite é ${item.limit_workdays})`;
-}
-
-function listLongProductions(items: LongProductionDetail[], max: number): string {
-  const shown = items.slice(0, max).map(longProductionLine);
-  const rest = items.length - shown.length;
-  return rest > 0 ? `${shown.join("; ")}; e mais ${rest}` : shown.join("; ");
 }
 
 function resourceName(resourceType: string, resourceId: string): string {
@@ -182,7 +211,7 @@ export function gateSummaryLines(gate: GateReport): string[] {
         ? `${ordersLate} de ${ordersTotal} encomendas ${ordersLate === 1 ? "fica atrasada" : "ficam atrasadas"}.`
         : `${plural(ordersLate, "encomenda", "encomendas")} ${ordersLate === 1 ? "fica atrasada" : "ficam atrasadas"}.`);
     } else if (lotsLate !== null && lotsLate > 0) {
-      // delivery_risk is lot-based; say why it fires without contradicting the orders.
+      // Old reports: delivery_risk fired for late lots; say why without contradicting the orders.
       lines.push(`Nenhuma encomenda fica atrasada; ${lotsLateClause(lotsLate)}.`);
     } else {
       lines.push(ordersTotal !== null
@@ -202,16 +231,6 @@ export function gateSummaryLines(gate: GateReport): string[] {
     lines.push(`Falta capacidade para cumprir todos os prazos: ${parts.join(", ")}${rest > 0 ? ` e mais ${rest}` : ""}.`);
   }
 
-  const long = longProductions(gate);
-  if (long.length > 0) {
-    lines.push(`${long.length === 1 ? "Uma produção passa" : `${long.length} produções passam`} o limite de dias seguidos — ${listLongProductions(long, 2)}.`);
-  } else {
-    const longCount = count(metrics.long_productions);
-    if (longCount && longCount > 0) {
-      lines.push(`${longCount === 1 ? "Uma produção passa" : `${longCount} produções passam`} o limite de dias seguidos.`);
-    }
-  }
-
   const missingLots = count(metrics.missing_lots);
   if (missingLots && missingLots > 0) {
     lines.push(`${plural(missingLots, "lote fica", "lotes ficam")} sem produção suficiente.`);
@@ -222,7 +241,7 @@ export function gateSummaryLines(gate: GateReport): string[] {
   }
   const early = count(metrics.early_window_violations);
   if (early && early > 0) {
-    lines.push(`${plural(early, "produção está marcada", "produções estão marcadas")} antes de o material estar disponível.`);
+    lines.push(`${plural(early, "produção está marcada", "produções estão marcadas")} antes de o material ser libertado.`);
   }
   return lines.slice(0, 4);
 }
@@ -276,15 +295,13 @@ export type ApprovalDialogKind = "justification" | "confirm";
  * yes/no dialog (it cannot collect a justification, so it does not ask for one).
  */
 export function approvalImpactMessage(gate: GateReport, dialog: ApprovalDialogKind = "justification"): string {
-  // Robustness is informative only: it never explains why a decision is needed.
-  const reasons = decisionReasons(gate).map(approvalReasonLabel).join(", ") || "exceções operacionais";
-  const long = longProductions(gate);
+  // Legacy reasons are informative only: they never explain why a decision is needed.
+  const reasons = decisionReasonLabels(gate).join(", ") || "exceções operacionais";
 
   return [
     "O plano proposto pode ser executado: respeita máquinas, ferramentas, equipas, calendário e material.",
     `Requer decisão do planeador por: ${reasons}.`,
     `Impacto previsto: ${deliveryImpact(gate)}.`,
-    ...(long.length > 0 ? [`Produções longas: ${listLongProductions(long, 5)}.`] : []),
     dialog === "confirm"
       ? "Confirma para aplicar este plano."
       : "Indica uma justificação para aplicar este plano.",

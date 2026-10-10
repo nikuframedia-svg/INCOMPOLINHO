@@ -1,4 +1,12 @@
-"""Trust-loop gate report for executable production plans."""
+"""Trust-loop gate report for executable production plans.
+
+Deliveries are judged per order (AGENTS §1.2): ``delivery_risk`` is raised
+when an order is late or an OTD-D checkpoint fails, both read from the same
+delivery portions (``material_quantities.delivery_portions``) as orders,
+stock and the improvement no-loss check. The lot metric (``tardy_count``,
+``otd``: "Lotes no prazo") is reported but does not decide approval. An
+operational audit that ran out of time is "por avaliar", never a pass.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +18,10 @@ from typing import Any
 from backend.config.types import FactoryConfig
 from backend.scheduler.jit_policy import (
     calendar_holidays,
-    lot_demand_output_milestones,
     window_violation_details,
     workdays_between,
 )
+from backend.scheduler.material_quantities import delivery_portions
 from backend.scheduler.operational_audit import build_operational_audit
 from backend.scheduler.types import Lot, Segment
 from backend.scheduler.validation import (
@@ -142,13 +150,6 @@ def build_gate_report(
             score.get("latest_start_gap_max_min", 0.0) or 0.0
         ),
     }
-    long_production_detail = _long_production_detail(segments, config)
-    long_metrics = {
-        "long_productions": len(long_production_detail),
-        "long_production_excess_workdays": sum(
-            int(item["excess_workdays"]) for item in long_production_detail
-        ),
-    }
     audit_result = (
         operational_audit
         if operational_audit is not None
@@ -176,6 +177,10 @@ def build_gate_report(
             "released_tool_priority_inversions",
         )
     }
+    # An audit that ran out of time is pending ("por avaliar"), never a pass.
+    # Audits stored before the status field existed were complete.
+    operational_audit_status = str(audit_result.get("status") or "evaluated")
+    operational_audit_evaluated = operational_audit_status != "not_evaluated"
     order_metrics, late_order_detail = (
         _order_delivery(segments, lots, data) if data is not None else ({}, [])
     )
@@ -184,7 +189,6 @@ def build_gate_report(
         **delivery_metrics,
         **order_metrics,
         **window_metrics,
-        **long_metrics,
         **operational_metrics,
     }
 
@@ -205,12 +209,24 @@ def build_gate_report(
             "source_overproduced_qty",
         )
     )
-    delivery_gate_passed = (
-        delivery_metrics["otd"] >= 100.0
-        and delivery_metrics["otd_d"] >= 100.0
-        and delivery_metrics["tardy_count"] == 0
-        and delivery_metrics["otd_d_failures"] == 0
-    )
+    # Deliveries are judged per order (AGENTS §1.2): pieces of a SKU are
+    # fungible, so a lot finishing after its own delivery is no risk when
+    # another lot's pieces serve that order in time. ``tardy_count``/``otd``
+    # stay the lot metric ("Lotes no prazo") and never decide approval when
+    # the order view is available.
+    if order_metrics:
+        delivery_gate_passed = (
+            int(order_metrics["orders_late"]) == 0
+            and delivery_metrics["otd_d"] >= 100.0
+            and delivery_metrics["otd_d_failures"] == 0
+        )
+    else:
+        delivery_gate_passed = (
+            delivery_metrics["otd"] >= 100.0
+            and delivery_metrics["otd_d"] >= 100.0
+            and delivery_metrics["tardy_count"] == 0
+            and delivery_metrics["otd_d_failures"] == 0
+        )
     subcontract_dispatch_gate_passed = (
         delivery_metrics["subcontract_dispatch_misses"] == 0
     )
@@ -218,11 +234,14 @@ def build_gate_report(
     material_gate_passed = all(
         int(metrics.get(key, 0)) == 0 for key in MATERIAL_GATE_KEYS
     )
-    operational_gate_passed = (
+    operational_sequence_clean = (
         operational_metrics["left_shift_opportunities"] == 0
         and operational_metrics["lower_priority_campaign_interruptions"] == 0
         and operational_metrics["avoidable_priority_order_anomalies"] == 0
         and operational_metrics["released_tool_priority_inversions"] == 0
+    )
+    operational_gate_passed = (
+        operational_sequence_clean and operational_audit_evaluated
     )
     hard_gate_passed = physical_gate_passed
 
@@ -235,12 +254,12 @@ def build_gate_report(
         approval_reasons.append("jit_window_blocked")
     if not material_gate_passed:
         approval_reasons.append("material_release_blocked")
-    if long_production_detail:
-        approval_reasons.append("long_production")
     if not operator_capacity_gate_passed:
         approval_reasons.append("operator_capacity_shortage")
-    if not operational_gate_passed:
+    if not operational_sequence_clean:
         approval_reasons.append("operational_sequence_review")
+    if not operational_audit_evaluated:
+        approval_reasons.append("operational_sequence_not_evaluated")
 
     if (
         not physical_gate_passed
@@ -268,6 +287,8 @@ def build_gate_report(
         _setup_overlap_detail(v) for v in violations if v.get("kind") == "setup_crew_overlap"
     ]
     late_detail = _late_detail(segments, lots, data, config) if data is not None else []
+    # Late-lot proposals only make sense when an order is actually late.
+    proposal_late_detail = late_detail if not delivery_gate_passed else []
     jit_window_detail = (
         _with_calendar_dates(
             window_violation_details(
@@ -307,16 +328,16 @@ def build_gate_report(
         "robustness_gate_passed": None,
         "material_gate_passed": material_gate_passed,
         "operational_gate_passed": operational_gate_passed,
+        "operational_audit_status": operational_audit_status,
         "metrics": metrics,
         "violations": violations,
         "late_detail": late_detail,
         "late_order_detail": late_order_detail,
         "jit_window_detail": jit_window_detail,
         "subcontract_dispatch_detail": subcontract_dispatch_detail,
-        "long_production_detail": long_production_detail,
         "setup_overlap_detail": setup_overlap_detail,
         "operational_audit": audit_result,
-        "proposals": _build_proposals(metrics, violations, late_detail),
+        "proposals": _build_proposals(metrics, violations, proposal_late_detail),
     }
 
 
@@ -381,7 +402,16 @@ def blocked_application_message(report: dict[str, Any] | None) -> str:
                 "O candidato foi bloqueado por produções antecipadas fora da janela "
                 "JIT dos 5 dias úteis antes da respetiva referência de material."
             )
-    if not report.get("operational_gate_passed", True):
+    if report.get("operational_audit_status") == "not_evaluated":
+        parts.append(
+            "Há demasiadas inversões de prioridade para as verificar todas "
+            "automaticamente; este ponto fica por avaliar e o plano precisa de "
+            "decisão do planeador."
+        )
+    if not report.get("operational_gate_passed", True) and (
+        "operational_sequence_review" in reasons
+        or report.get("operational_audit_status") != "not_evaluated"
+    ):
         opportunities = int(metrics.get("left_shift_opportunities") or 0)
         interruptions = int(
             metrics.get("lower_priority_campaign_interruptions") or 0
@@ -443,7 +473,9 @@ def _order_delivery(
     Every demand entry counts, including ones already past due. An order is
     late when it is not fully covered by its due day (``tardiness > 0``); one
     that is never fully covered has no ready day (``None`` instead of inf).
-    Informational only: ``score['otd']`` and ``delivery_risk`` stay lot-based.
+    ``orders_late`` (with OTD-D, read from the same delivery portions)
+    decides ``delivery_risk``; ``score['otd']``/``tardy_count`` stay the lot
+    metric and are informational.
     """
 
     # Local import: improvement must stay free to import gate helpers later.
@@ -529,57 +561,6 @@ def _order_machine(
     return min(by_machine, key=lambda machine: (-by_machine[machine], machine))
 
 
-def _long_production_detail(
-    segments: list[Segment],
-    config: FactoryConfig | None,
-) -> list[dict[str, Any]]:
-    limit = max(1, int(getattr(config, "max_run_days", 4) or 4))
-    by_lot: dict[str, list[Segment]] = {}
-    for segment in segments:
-        if segment.prod_min > 0:
-            by_lot.setdefault(segment.lot_id, []).append(segment)
-    details: list[dict[str, Any]] = []
-    for lot_id, lot_segments in by_lot.items():
-        days = sorted({segment.day_idx for segment in lot_segments})
-        streak = _longest_consecutive_streak(days)
-        if len(streak) <= limit:
-            continue
-        first = min(lot_segments, key=lambda item: (item.day_idx, item.start_min))
-        details.append(
-            {
-                "lot_id": lot_id,
-                "sku": first.sku,
-                "machine_id": first.machine_id,
-                "workdays": len(streak),
-                "limit_workdays": limit,
-                "excess_workdays": len(streak) - limit,
-                "consecutive": True,
-                "days": days,
-                "consecutive_days": streak,
-            }
-        )
-    return details
-
-
-def _longest_consecutive_streak(days: list[int]) -> list[int]:
-    if not days:
-        return []
-    best: list[int] = []
-    current: list[int] = []
-    previous: int | None = None
-    for day in sorted(set(days)):
-        if previous is None or day == previous + 1:
-            current.append(day)
-        else:
-            if len(current) > len(best):
-                best = current
-            current = [day]
-        previous = day
-    if len(current) > len(best):
-        best = current
-    return best
-
-
 def _with_calendar_dates(details: list[dict], data: EngineData) -> list[dict]:
     """Add stable ISO labels, including buffer days before the visible horizon."""
 
@@ -630,55 +611,49 @@ def _subcontract_dispatch_detail(
     lots: list[Lot],
     data: EngineData,
 ) -> list[dict[str, Any]]:
-    completion_by_lot: dict[str, int] = {}
-    for segment in segments:
-        if segment.prod_min <= 0:
-            continue
-        completion_by_lot[segment.lot_id] = max(
-            completion_by_lot.get(segment.lot_id, segment.day_idx),
-            segment.day_idx,
-        )
+    """Subcontracted deliveries that leave after their planned dispatch.
+
+    Each delivery is judged by when its own pieces are finished, whichever
+    lot of the operation makes them (``delivery_portions``), never by the
+    end of the economic lot. ``lot_id`` is the lot that completes it.
+    """
     holidays = calendar_holidays(data, -60, data.n_days + 60)
+    lots_by_id = {lot.id: lot for lot in lots}
     details: list[dict[str, Any]] = []
-    for lot in lots:
-        completion = completion_by_lot.get(lot.id, data.n_days)
-        for output in lot_demand_output_milestones(lot):
-            if not bool(output.get("is_subcontracted")):
-                continue
-            dispatch = output.get("subcontract_dispatch_day")
-            if dispatch is None:
-                dispatch = output.get("production_due_day", lot.edd)
-            dispatch = int(dispatch)
-            if completion <= dispatch:
-                continue
-            details.append(
-                {
-                    "lot_id": lot.id,
-                    "op_id": output.get("op_id", lot.op_id),
-                    "sku": output.get("sku", lot.sku),
-                    "qty": int(output.get("qty", lot.qty) or 0),
-                    "subcontract_company_id": output.get(
-                        "subcontract_company_id",
-                        lot.subcontract_company_id,
-                    ),
-                    "customer_delivery_day": int(
-                        output.get("customer_delivery_day", lot.edd)
-                    ),
-                    "latest_subcontract_dispatch_day": output.get(
-                        "latest_subcontract_dispatch_day"
-                    ),
-                    "subcontract_dispatch_day": dispatch,
-                    "production_due_day": int(
-                        output.get("production_due_day", dispatch)
-                    ),
-                    "completion_day": completion,
-                    "late_workdays": workdays_between(
-                        dispatch,
-                        completion,
-                        holidays,
-                    ),
-                }
-            )
+    for portion in delivery_portions(lots, segments, data):
+        if not portion.is_demand or not portion.is_subcontracted:
+            continue
+        dispatch = portion.planned_dispatch_day
+        completion = portion.factory_day
+        if completion <= dispatch:
+            continue
+        source = portion.source
+        lot_id = portion.completing_lot_id or source.lot_id
+        lot = lots_by_id.get(lot_id) or lots_by_id[source.lot_id]
+        details.append(
+            {
+                "lot_id": lot_id,
+                "lot_ids": portion.lot_ids,
+                "op_id": portion.op_id,
+                "sku": portion.sku,
+                "qty": portion.qty,
+                "subcontract_company_id": source.output.get(
+                    "subcontract_company_id",
+                    lot.subcontract_company_id,
+                ),
+                "customer_delivery_day": portion.customer_delivery_day,
+                "latest_subcontract_dispatch_day": portion.latest_subcontract_dispatch_day,
+                "subcontract_dispatch_day": dispatch,
+                "production_due_day": portion.production_due_day,
+                "completion_day": completion,
+                "customer_ready_day": portion.customer_ready_day,
+                "late_workdays": workdays_between(
+                    dispatch,
+                    completion,
+                    holidays,
+                ),
+            }
+        )
     details.sort(
         key=lambda item: (
             -int(item["late_workdays"]),
@@ -779,7 +754,13 @@ def _build_proposals(
             )
         )
 
-    if metrics.get("day_cap_violations", 0) > 0 or metrics.get("tardy_count", 0) > 0:
+    late_deliveries = (
+        int(metrics.get("orders_late", 0) or 0) > 0
+        or int(metrics.get("otd_d_failures", 0) or 0) > 0
+        if "orders_late" in metrics
+        else int(metrics.get("tardy_count", 0) or 0) > 0
+    )
+    if metrics.get("day_cap_violations", 0) > 0 or late_deliveries:
         proposals.append(
             _proposal(
                 "overtime_capacity",

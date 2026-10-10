@@ -14,6 +14,90 @@ from backend.scheduler.resources import build_setup_override_map, effective_oee,
 from backend.scheduler.setup_identity import segment_setup_identity
 from backend.types import CommittedSupply
 
+# Version of the per-delivery material contract written on each lot output
+# (``quantity_material_version``) and recorded in the planning model identity.
+QUANTITY_MATERIAL_VERSION = 1
+
+_FIELD_LABELS = {
+    "machine_id": "a máquina",
+    "op_id": "a operação",
+    "prod_min": "a duração de produção",
+    "setup_min": "a duração do setup",
+    "material_quantity": "a quantidade com material libertado",
+    "edd/tool": "o prazo ou a ferramenta",
+    "output_milestones": "as entregas do lote",
+    "edd": "o prazo de produção",
+    "production_due_day": "o prazo de produção",
+    "original_edd": "a data de rutura",
+    "delivery_day": "a data de entrega ao cliente",
+    "customer_delivery_day": "a data de entrega ao cliente",
+    "internal_deadline": "o alvo interno",
+    "internal_target_day": "o alvo interno",
+    "latest_subcontract_dispatch_day": "o último envio para subcontratação",
+    "subcontract_dispatch_day": "o envio planeado para subcontratação",
+    "material_reference_day": "a data de referência do material",
+    "material_reference_kind": "a referência do material",
+    "material_release_day": "a libertação do material",
+    "is_subcontracted": "a subcontratação",
+}
+
+
+def has_quantity_material(lots) -> bool:
+    """Whether any lot carries the per-delivery material contract."""
+    return any(
+        output.get("quantity_material_version")
+        for lot in lots for output in lot.output_milestones or []
+    )
+
+
+def legacy_material_plan(lots, data, config) -> bool:
+    """A plan built before per-delivery material windows that now needs them.
+
+    Its non-twin lots carry no ``quantity_material_version`` while the current
+    lot sizing releases the material of the same scenario in several portions.
+    Such a plan can still be read, but committing it again needs a rebuild.
+    """
+    if data is None or not data.ops or not lots:
+        return False
+    if any(
+        not lot.is_twin and any(
+            output.get("quantity_material_version") for output in lot.output_milestones or []
+        )
+        for lot in lots
+    ):
+        return False
+    from backend.scheduler.quantity_dispatch import has_quantity_releases
+
+    return has_quantity_releases(create_lots(data, config or FactoryConfig()))
+
+
+def _lot_label(lot, machine_id=None):
+    """``Referência 8718696125 (PRM042)``: never the internal lot id."""
+    reference = lot.sku or lot.op_id
+    if lot.twin_outputs:
+        reference = " + ".join(
+            dict.fromkeys(str(sku or op_id) for op_id, sku, _qty in lot.twin_outputs)
+        )
+    machine = machine_id or lot.machine_id
+    return f"Referência {reference} ({machine})" if machine else f"Referência {reference}"
+
+
+def _material_message(lot, segment, allowed, data):
+    from backend.scheduler.validation import day_label, pt_int
+
+    allowed = int(allowed)
+    if allowed <= 0:
+        released = "ainda não há peças com material libertado"
+    elif allowed == 1:
+        released = "só 1 peça tem material libertado"
+    else:
+        released = f"só {pt_int(allowed)} peças têm material libertado"
+    return (
+        f"{_lot_label(lot, segment.machine_id)}, {day_label(segment.day_idx, data)}: "
+        f"{released}, mas o plano prepara ou produz mais do que isso. "
+        "É necessário recalcular o plano (botão «Recalcular plano»)."
+    )
+
 
 def production_lot_obligations(lots):
     """Stable production contract; allocation and machine-dependent times vary."""
@@ -79,8 +163,9 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
     preserved = []
 
     def fail(lot, field, actual=None, expected=None):
-        violations.append({"kind": "source_contract", "lot_id": lot.id,
-                           "message": f"Lote {lot.id}: {field} diverge dos dados do cenario.",
+        label = _FIELD_LABELS.get(field, "um dado do lote")
+        message = f"{_lot_label(lot)}: {label} não coincide com os dados carregados (ISOP)."
+        violations.append({"kind": "source_contract", "lot_id": lot.id, "message": message,
                            "field": field, "actual": actual, "expected": expected})
 
     def check_material_quantities(lot, contract):
@@ -95,9 +180,7 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                 fail(lot, "material_quantity", produced, allowed)
                 violations[-1].update(
                     day_idx=segment.day_idx,
-                    message=(f"Lote {lot.id}: no dia {segment.day_idx} existem {allowed} pecas "
-                             f"com material libertado, mas o plano prepara ou produz alem dessa "
-                             "quantidade. E necessario recalcular o plano."),
+                    message=_material_message(lot, segment, allowed, data),
                 )
                 break
 
@@ -154,10 +237,7 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                     op_id=str(op_id), sku=str(sku), qty=int(qty), available_at="",
                     available_day=0, machine_id=lot.machine_id, tool_id=lot.tool_id,
                 ))
-    quantity_material = any(
-        output.get("quantity_material_version")
-        for lot in remaining for output in lot.output_milestones or []
-    )
+    quantity_material = has_quantity_material(remaining)
     # Old snapshots remain readable under their recorded model. Operational
     # persistence and explicit recalculation request the current contract.
     expected_lots = create_lots(residual, config, quantity_material=quantity_material)
@@ -194,6 +274,10 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                 )
                 if produced > allowed:
                     fail(lot, "material_quantity", produced, allowed)
+                    violations[-1].update(
+                        day_idx=segment.day_idx,
+                        message=_material_message(lot, segment, allowed, data),
+                    )
                     break
     for lot in remaining:
         expected = expected_by_id.get(lot.id)

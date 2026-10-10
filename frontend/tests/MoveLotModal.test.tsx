@@ -177,6 +177,19 @@ it("shows a timed-out verification as inconclusive without allowing apply", asyn
   expect(useDataStore.getState().planRevision).toBe(21);
 });
 
+it("never shows a raw English job error after a failed verification", async () => {
+  mocks.startManualMovePreview.mockResolvedValue({ job: {
+    ...ready, status: "failed", result: null,
+    message: "Não foi possível verificar o movimento",
+    error: "Planning deadline expired; candidate not committed.",
+  } });
+  render(<MoveLotModal {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Verificar riscos" }));
+  expect(await screen.findByText(/Não foi possível verificar o movimento/)).toBeTruthy();
+  expect(screen.queryByText(/deadline expired/i)).toBeNull();
+  expect(mocks.applyManualMove).not.toHaveBeenCalled();
+});
+
 it("clears the previous request's failure when editing the target", async () => {
   mocks.startManualMovePreview.mockResolvedValue({ job: {
     ...ready, status: "failed", result: null,

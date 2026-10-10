@@ -88,6 +88,22 @@ def segment_setup_identity(segment: Segment) -> SetupIdentity:
     )
 
 
+def fixed_mounting_gaps(segments):
+    """Pairs whose intervening mounting is needed by a setup-free continuation."""
+    previous_by_machine = {}
+    for segment in sorted(segments, key=lambda s: (s.day_idx, s.start_min, s.end_min)):
+        if segment.end_min <= segment.start_min:
+            continue
+        previous = previous_by_machine.get(segment.machine_id)
+        previous_by_machine[segment.machine_id] = segment
+        if (
+            previous is not None and segment.setup_min <= 0
+            and segment_setup_identity(previous) == segment_setup_identity(segment)
+            and (previous.day_idx, previous.end_min) < (segment.day_idx, segment.start_min)
+        ):
+            yield previous, segment
+
+
 def retained_setup_at(
     segments: list[Segment],
     machine_id: str,

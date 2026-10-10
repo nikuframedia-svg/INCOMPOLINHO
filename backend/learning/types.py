@@ -10,7 +10,6 @@ class SchedulerParams:
     """Tunable scheduler parameters. Defaults match current constants."""
 
     max_edd_gap: int = 10
-    max_run_days: int = 4
     edd_swap_tolerance: int = 5
     edd_assign_threshold: int = 5
     campaign_window: int = 15  # EDD_SWAP_TOLERANCE + 10

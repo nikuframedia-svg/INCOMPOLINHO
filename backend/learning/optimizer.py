@@ -67,7 +67,6 @@ class OptunaTuner:
         def objective(trial: optuna.Trial) -> float:
             params = SchedulerParams(
                 max_edd_gap=trial.suggest_int("max_edd_gap", 5, 20),
-                max_run_days=trial.suggest_int("max_run_days", 2, 10),
                 edd_swap_tolerance=trial.suggest_int("edd_swap_tolerance", 2, 15),
                 edd_assign_threshold=trial.suggest_int("edd_assign_threshold", 2, 10),
                 campaign_window=trial.suggest_int("campaign_window", 10, 25),

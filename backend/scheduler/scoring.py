@@ -13,7 +13,6 @@ from backend.config.shifts import clock_to_productive_offset
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DAY_CAP
 from backend.scheduler.jit_policy import (
-    add_workdays,
     calendar_holidays,
     expedition_day,
     lot_output_milestones,
@@ -22,6 +21,12 @@ from backend.scheduler.jit_policy import (
     productive_start_days,
     window_violation_details,
     workdays_between,
+)
+from backend.scheduler.material_quantities import (
+    delivery_portions,
+    delivery_readiness,
+    production_by_op,
+    readiness_by_lot,
 )
 from backend.scheduler.operational_audit import build_operational_audit
 from backend.scheduler.types import Lot, Segment
@@ -45,16 +50,7 @@ def compute_score(
     audit enabled so the score contract and acceptance gate remain complete.
     """
 
-    # Completion day per lot (sentinel must be below any possible day_idx)
-    _NO_COMPLETION = -999
-    lot_completion: dict[str, int] = {}
     lot_start: dict[str, int] = productive_start_days(segments)
-    for seg in segments:
-        if seg.setup_min > 0 and seg.qty == 0:
-            continue
-        prev = lot_completion.get(seg.lot_id, _NO_COMPLETION)
-        if seg.day_idx > prev:
-            lot_completion[seg.lot_id] = seg.day_idx
 
     min_calendar_day = min(
         [
@@ -96,21 +92,22 @@ def compute_score(
     subcontract_dispatch_late_workdays = 0
     subcontract_dispatch_max_late_workdays = 0
 
-    from backend.scheduler.material_quantities import output_completion_days
-
-    segments_by_lot = defaultdict(list)
-    for segment in segments:
-        segments_by_lot[segment.lot_id].append(segment)
+    readiness = delivery_readiness(lots, segments, engine_data)
+    readiness_lots = readiness_by_lot(readiness)
     for lot in lots:
-        completion = lot_completion.get(lot.id, engine_data.n_days)
-        output_completions = output_completion_days(
-            lot, segments_by_lot[lot.id], engine_data.n_days
-        )
-        output_delays = [
-            _customer_delay_for_output(output, ready_day, holiday_set)
-            for output, ready_day in output_completions
+        # Every delivery portion is judged when its own quantity is ready
+        # (``delivery_readiness``); a lot with only surplus keeps the old
+        # whole-lot reading through its surplus outputs.
+        demand_outputs = [
+            record for record in readiness_lots.get(lot.id, []) if record.is_demand
         ]
-        delay = max(output_delays, default=completion - expedition_day(lot))
+        delay = max(
+            (
+                record.customer_delay
+                for record in demand_outputs or readiness_lots.get(lot.id, [])
+            ),
+            default=engine_data.n_days - expedition_day(lot),
+        )
 
         if delay > 0:
             tardy_count += 1
@@ -122,41 +119,36 @@ def compute_score(
                 priority_tardy_weight += priority
                 priority_tardiness_weighted += priority * delay
 
-        controllable_due = production_due_day(lot, holiday_set)
         due_delays = [
-            workdays_between(
-                int(output.get("production_due_day", controllable_due)), ready_day, holiday_set,
-            )
-            for output, ready_day in output_completions
-            if ready_day > int(output.get("production_due_day", controllable_due))
+            workdays_between(record.production_due_day, record.factory_day, holiday_set)
+            for record in demand_outputs
+            if record.factory_day > record.production_due_day
         ]
         if due_delays:
             production_due_misses += 1
             production_due_late_workdays += max(due_delays)
 
-        for output, output_completion in output_completions:
-            if not bool(output.get("is_subcontracted")):
-                continue
-            subcontract_dispatch_total += 1
-            dispatch_day = output.get("subcontract_dispatch_day")
-            if dispatch_day is None:
-                dispatch_day = output.get("production_due_day", controllable_due)
-            dispatch_day = int(dispatch_day)
-            if output_completion <= dispatch_day:
-                continue
-            late_workdays = workdays_between(
-                dispatch_day,
-                output_completion,
-                holiday_set,
-            )
-            subcontract_dispatch_misses += 1
-            subcontract_dispatch_late_workdays += late_workdays
-            subcontract_dispatch_max_late_workdays = max(
-                subcontract_dispatch_max_late_workdays,
-                late_workdays,
-            )
-
     otd = round((1 - tardy_count / max(n_lots, 1)) * 100, 1)
+
+    # Deliveries are judged per order (AGENTS §1.2): pieces of a SKU are
+    # fungible, so OTD-D, stock and subcontract dispatch read the delivery
+    # portions served by all lots of the operation, not each lot alone.
+    # ``tardy_count``/``otd`` above stay the lot metric ("Lotes no prazo").
+    portions = delivery_portions(lots, segments, engine_data, records=readiness)
+    for portion in portions:
+        if not portion.is_demand or not portion.is_subcontracted:
+            continue
+        subcontract_dispatch_total += 1
+        dispatch_day = portion.planned_dispatch_day
+        if portion.factory_day <= dispatch_day:
+            continue
+        late_workdays = workdays_between(dispatch_day, portion.factory_day, holiday_set)
+        subcontract_dispatch_misses += 1
+        subcontract_dispatch_late_workdays += late_workdays
+        subcontract_dispatch_max_late_workdays = max(
+            subcontract_dispatch_max_late_workdays,
+            late_workdays,
+        )
 
     start_late_count = 0
     start_late_days = 0
@@ -164,14 +156,29 @@ def compute_score(
     finish_late_days = 0
     economic_warning_count = 0
     for lot in lots:
-        completion = lot_completion.get(lot.id, engine_data.n_days)
-        start_day = lot_start.get(lot.id, completion)
+        start_day = lot_start.get(lot.id, engine_data.n_days)
         if lot.target_start_day is not None and start_day > lot.target_start_day:
             start_late_count += 1
             start_late_days += start_day - lot.target_start_day
-        if lot.internal_deadline is not None and completion > lot.internal_deadline:
-            finish_late_count += 1
-            finish_late_days += completion - lot.internal_deadline
+        if lot.internal_deadline is not None:
+            finish_excess = max(
+                (
+                    record.factory_day
+                    - (
+                        record.internal_target_day
+                        if record.internal_target_day is not None
+                        else int(lot.internal_deadline)
+                    )
+                    for record in (
+                        [r for r in readiness_lots.get(lot.id, []) if r.is_demand]
+                        or readiness_lots.get(lot.id, [])
+                    )
+                ),
+                default=engine_data.n_days - int(lot.internal_deadline),
+            )
+            if finish_excess > 0:
+                finish_late_count += 1
+                finish_late_days += finish_excess
         if lot.economic_warning:
             economic_warning_count += 1
 
@@ -195,7 +202,9 @@ def compute_score(
     earliness_avg = round(sum(run_gaps) / max(len(run_gaps), 1), 1)
 
     # OTD-D: cumulative demand check
-    otd_d_metrics = _compute_otd_d(segments, lots, engine_data, holiday_set)
+    otd_d_metrics = _compute_otd_d(
+        segments, lots, engine_data, holiday_set, portions=portions
+    )
 
     # Setups
     setups = len({s.run_id for s in segments if s.setup_min > 0})
@@ -320,6 +329,7 @@ def compute_score(
         )
         if include_operational_audit
         else {
+            "status": "skipped",
             "left_shift_opportunities": 0,
             "lower_priority_campaign_interruptions": 0,
             "priority_order_anomalies": 0,
@@ -327,6 +337,10 @@ def compute_score(
             "released_tool_priority_inversions": 0,
         }
     )
+    # "not_evaluated": the audit ran out of time before proving every metric;
+    # its zeros are unknowns, never a pass. "skipped": not requested (internal
+    # comparisons). Audits stored before this field existed were complete.
+    operational_audit_status = str(audit_result.get("status") or "evaluated")
 
     return {
         "otd": otd,
@@ -391,6 +405,7 @@ def compute_score(
         "released_tool_priority_inversions": audit_result[
             "released_tool_priority_inversions"
         ],
+        "operational_audit_status": operational_audit_status,
         "hard_violations": hard_violation_count
         + int(coverage["missing_lots"] > 0)
         + int(coverage["missing_qty"] > 0)
@@ -428,58 +443,19 @@ def _compute_otd_d(
     segments: list[Segment],
     lots: list[Lot],
     engine_data: EngineData,
-    holidays: set[int],
+    holidays: set[int] | None = None,
+    *,
+    portions: list | None = None,
 ) -> dict[str, int | float]:
     """OTD-D: for each op, at each demand day, cum_prod >= cum_demand.
 
+    Production enters on the day it is available to the customer, from the
+    shared delivery portions (a subcontracted delivery when it returns).
     Returns a bounded percentage plus explicit checkpoint and quantity deficits.
     """
-    lots_by_id = {lot.id: lot for lot in lots}
-    output_by_lot_op = {
-        (lot.id, str(output.get("op_id", lot.op_id))): output
-        for lot in lots
-        for output in lot_output_milestones(lot)
-    }
-
-    # Production by (op_id, day)
-    prod: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
-    subcontracted_qty: dict[tuple[str, str], int] = defaultdict(int)
-    subcontracted_completion: dict[tuple[str, str], int] = {}
-    for seg in segments:
-        if seg.twin_outputs:
-            for oid, _sku, qty in seg.twin_outputs:
-                output = output_by_lot_op.get((seg.lot_id, oid), {})
-                if bool(output.get("is_subcontracted")):
-                    key = (seg.lot_id, oid)
-                    subcontracted_qty[key] += qty
-                    subcontracted_completion[key] = max(
-                        subcontracted_completion.get(key, seg.day_idx),
-                        seg.day_idx,
-                    )
-                else:
-                    prod[oid][seg.day_idx] += qty
-        else:
-            lot = lots_by_id.get(seg.lot_id)
-            op_id = lot.op_id if lot is not None else seg.lot_id
-            output = output_by_lot_op.get((seg.lot_id, op_id), {})
-            if bool(output.get("is_subcontracted")):
-                key = (seg.lot_id, op_id)
-                subcontracted_qty[key] += seg.qty
-                subcontracted_completion[key] = max(
-                    subcontracted_completion.get(key, seg.day_idx),
-                    seg.day_idx,
-                )
-            else:
-                prod[op_id][seg.day_idx] += seg.qty
-    for key, qty in subcontracted_qty.items():
-        lot_id, op_id = key
-        output = output_by_lot_op.get(key, {})
-        ready_day = add_workdays(
-            subcontracted_completion[key],
-            int(output.get("subcontract_lead_time_days", 0) or 0),
-            holidays,
-        )
-        prod[op_id][ready_day] += qty
+    if portions is None:
+        portions = delivery_portions(lots, segments, engine_data)
+    prod = production_by_op(portions)
     for supply in engine_data.committed_supplies:
         prod[supply.op_id][supply.available_day] += supply.qty
 
@@ -525,19 +501,3 @@ def _compute_otd_d(
         "otd_d_cumulative_shortfall_qty": cumulative_shortfall_qty,
         "otd_d_final_shortfall_qty": final_shortfall_qty,
     }
-
-
-def _customer_delay_for_output(
-    output: dict[str, object],
-    production_completion_day: int,
-    holidays: set[int],
-) -> int:
-    customer_day = int(output.get("customer_delivery_day", production_completion_day))
-    ready_day = int(production_completion_day)
-    if bool(output.get("is_subcontracted")):
-        ready_day = add_workdays(
-            ready_day,
-            int(output.get("subcontract_lead_time_days", 0) or 0),
-            holidays,
-        )
-    return ready_day - customer_day

@@ -40,7 +40,7 @@ def _hash_input(data: EngineData, config: FactoryConfig | None = None) -> str:
         parts.append(
             f"cfg:{config.jit_enabled}|{config.jit_threshold}|{config.lst_safety_buffer}|"
             f"{config.campaign_window}|{config.urgency_threshold}|{config.max_edd_gap}|"
-            f"{config.edd_swap_tolerance}|{config.interleave_enabled}|{config.max_run_days}"
+            f"{config.edd_swap_tolerance}|{config.interleave_enabled}|{config.max_edd_span}"
         )
 
     raw = "\n".join(parts)

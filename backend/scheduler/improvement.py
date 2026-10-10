@@ -24,7 +24,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 
-from backend.scheduler.jit_policy import lot_output_milestones
+from backend.scheduler.material_quantities import delivery_portions
 from backend.scheduler.policy import (  # noqa: F401  (re-exported)
     AnticipationKey,
     anticipation_better,
@@ -72,7 +72,7 @@ class PlanFacts:
     """Everything the contract needs, computed once per materialised plan."""
 
     orders: dict[OrderKey, OrderService]
-    subcontract_lateness: dict[tuple[str, str], float]
+    subcontract_lateness: dict[tuple[str, int, int], float]
     setups: SetupSummary
     score: Mapping[str, object]
     signature: str
@@ -153,31 +153,30 @@ def _lateness(ready_day: int | None, due_day: int) -> float:
 def subcontract_lateness(
     segments: list[Segment],
     lots: list[Lot],
-) -> dict[tuple[str, str], float]:
-    """Days each subcontracted output finishes after its latest dispatch day."""
+    data: EngineData,
+) -> dict[tuple[str, int, int], float]:
+    """Days each subcontracted delivery leaves after its latest dispatch day.
 
-    finish: dict[tuple[str, str], int] = {}
-    produced: dict[tuple[str, str], int] = defaultdict(int)
-    for segment in segments:
-        outputs = segment.twin_outputs or [("", segment.sku, segment.qty)]
-        for op_id, _sku, qty in outputs:
-            if int(qty) <= 0:
-                continue
-            key = (segment.lot_id, op_id)
-            produced[key] += int(qty)
-            finish[key] = max(finish.get(key, segment.day_idx), segment.day_idx)
-    result = {}
-    for lot in lots:
-        for output in lot_output_milestones(lot):
-            due = output.get("latest_subcontract_dispatch_day")
-            if not output.get("is_subcontracted") or due is None:
-                continue
-            op_id = str(output.get("op_id") or "")
-            key = (lot.id, op_id if lot.twin_outputs else "")
-            if produced.get(key, 0) < int(output.get("qty", 0) or 0):
-                result[(lot.id, op_id)] = _MISSING
-            else:
-                result[(lot.id, op_id)] = float(max(0, finish[key] - int(due)))
+    Judged per delivery, like the orders (``delivery_portions``): the pieces
+    of all lots of the operation serve its deliveries in due order. Keyed by
+    ``(op_id, customer delivery day, occurrence)`` so the key survives a
+    move between lots. A delivery the plan does not complete is missing.
+    """
+
+    result: dict[tuple[str, int, int], float] = {}
+    seen: Counter[tuple[str, int]] = Counter()
+    for portion in delivery_portions(lots, segments, data):
+        if not portion.is_demand or not portion.is_subcontracted:
+            continue
+        due = portion.latest_subcontract_dispatch_day
+        if due is None:
+            continue
+        base = (portion.op_id, portion.customer_delivery_day)
+        key = (*base, seen[base])
+        seen[base] += 1
+        result[key] = (
+            float(max(0, portion.factory_day - due)) if portion.complete else _MISSING
+        )
     return result
 
 
@@ -288,7 +287,7 @@ def plan_facts(
 ) -> PlanFacts:
     return PlanFacts(
         orders=order_service(segments, lots, data),
-        subcontract_lateness=subcontract_lateness(segments, lots),
+        subcontract_lateness=subcontract_lateness(segments, lots, data),
         setups=physical_setups(segments),
         score=score,
         signature=physical_signature(segments, lots),
@@ -324,7 +323,9 @@ def no_loss_verdict(candidate: PlanFacts, reference: PlanFacts) -> ContractVerdi
             reasons.append(f"encomenda {label}: atraso de fabrica aumenta")
     for key, before in reference.subcontract_lateness.items():
         if candidate.subcontract_lateness.get(key, _MISSING) > before:
-            reasons.append(f"expedicao para subcontratacao do lote {key[0]} atrasa")
+            reasons.append(
+                f"expedicao para subcontratacao de {key[0]} (entrega dia {key[1]}) atrasa"
+            )
     return ContractVerdict(admissible=not reasons, reasons=reasons)
 
 

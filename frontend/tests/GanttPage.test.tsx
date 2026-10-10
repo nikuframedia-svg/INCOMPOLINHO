@@ -150,14 +150,95 @@ describe("GanttPage", () => {
         delivery_day: 1, delivery_date: "2026-03-17", customer_ready_day: 1 }],
       unallocated_output: [{sku: "SKU1", qty: 3}],
     }]);
-    const bar = view.container.querySelector('[title*="entrega 17/03/2026"]');
+    const bar = view.container.querySelector('[title*="Próxima entrega"]');
     expect(bar).toBeTruthy();
-    expect(bar?.getAttribute("title")).toContain("3 pç de excedente para stock");
+    expect(bar?.getAttribute("title")).toBe(
+      "T1 | SKU1 | Segmento: 10 pç | Lote: 10 pç | Lote económico: 0 pç | 07:00–08:00"
+      + "\nPróxima entrega: dia 1 (17/03) · Cliente B · 7 pç"
+      + "\nExcedente: 3 pç (fica em stock)",
+    );
+    expect(bar?.getAttribute("title")).not.toContain("Cobre até");
     expect(bar?.getAttribute("title")).not.toContain("Prazo produção");
     fireEvent.click(bar!);
-    expect(await screen.findByText("Entregas do segmento")).toBeTruthy();
+    expect(await screen.findByText("Entregas deste segmento")).toBeTruthy();
     expect(screen.getByText("Prazo de origem do lote")).toBeTruthy();
-    expect(screen.getByText(/7 pç para Cliente B, entrega 17\/03\/2026/)).toBeTruthy();
+    expect(screen.getByText("Dia 1 (17/03) · Cliente B · 7 pç")).toBeTruthy();
+  });
+  it("resume no tooltip a próxima entrega e até onde o segmento cobre", () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, qty: 150,
+      delivery_allocations: [
+        { sku: "SKU1", client: "F. POLSKA", qty: 506, delivery_day: 14, delivery_date: "2026-10-27", customer_ready_day: 14 },
+        { sku: "SKU1", client: "F. POLSKA", qty: 494, delivery_day: 13, delivery_date: "2026-10-26", customer_ready_day: 13 },
+        { sku: "SKU1", client: "Cliente B", qty: 500, delivery_day: 14, delivery_date: "2026-10-27", customer_ready_day: 14 },
+      ],
+      unallocated_output: [],
+    }]);
+    const title = view.container.querySelector('[title*="Próxima entrega"]')?.getAttribute("title") ?? "";
+    expect(title.split("\n")).toEqual([
+      "T1 | SKU1 | Segmento: 150 pç | Lote: 150 pç | Lote económico: 0 pç | 07:00–08:00",
+      "Próxima entrega: dia 13 (26/10) · F. POLSKA · 494 pç",
+      "Cobre até dia 14 (27/10) — 3 entregas no total",
+    ]);
+  });
+  it("mostra no tooltip só o excedente quando o segmento vai todo para stock", () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],
+    }]);
+    const title = view.container.querySelector('[title*="Excedente"]')?.getAttribute("title") ?? "";
+    expect(title.split("\n").slice(1)).toEqual(["Excedente: 10 pç (fica em stock)"]);
+    expect(title).not.toContain("Próxima entrega");
+  });
+  it("lista as entregas do segmento uma por linha e explica a primeira entrega do lote", async () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, qty: 1000,
+      delivery_allocations: [
+        { sku: "SKU1", client: "F. POLSKA", qty: 494, delivery_day: 1, delivery_date: "2026-03-17", customer_ready_day: 1 },
+        { sku: "SKU1", client: "F. POLSKA", qty: 500, delivery_day: 0, delivery_date: "2026-03-16", customer_ready_day: 0 },
+      ],
+      unallocated_output: [{ sku: "SKU1", qty: 6 }],
+      output_milestones: [1, 0].map((day) => ({
+        op_id: "OP", sku: "SKU1", qty: 500, is_subcontracted: false,
+        customer_delivery_day: day, production_due_day: day, internal_target_day: day,
+        material_reference_day: day, material_reference_kind: "customer_delivery" as const,
+        material_release_day: day, quantity_material_version: 1,
+      })),
+    }]);
+    fireEvent.click(view.container.querySelector('[title*="Próxima entrega"]')!);
+    const list = await screen.findByRole("list", { name: "Entregas deste segmento" });
+    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Dia 0 (16/03) · F. POLSKA · 500 pç",
+      "Dia 1 (17/03) · F. POLSKA · 494 pç",
+      "Excedente: 6 pç (fica em stock)",
+    ]);
+    expect((list as HTMLElement).style.textAlign).toBe("left");
+    expect(screen.queryByText("Entrega que originou o lote")).toBeNull();
+    const firstDelivery = screen.getByText("Primeira entrega do lote");
+    expect(firstDelivery.parentElement?.textContent).toContain("Dia 0 (16/03)");
+    expect(screen.getByText(/O lote económico cobre também entregas seguintes; cada parte só é produzida depois de libertado o material da sua entrega\./)).toBeTruthy();
+  });
+  it("não mostra a nota de várias entregas quando o lote cobre só uma", async () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, delivery_allocations: [], unallocated_output: [],
+    }]);
+    fireEvent.click(view.container.querySelector('[title*="Segmento: 10"]')!);
+    const firstDelivery = await screen.findByText("Primeira entrega do lote");
+    // Sem marcos de entrega não se mostra o prazo do lote como se fosse uma entrega.
+    expect(firstDelivery.parentElement?.textContent).toBe("Primeira entrega do lote-");
+    expect(screen.queryByText(/O lote económico cobre também/)).toBeNull();
+  });
+  it("ordena a coluna de entregas pelo dia da primeira entrega, em número", async () => {
+    const at = (lot: string, sku: string, day: number) => ({
+      ...segment, lot_id: lot, sku, start_min: 420 + day,
+      delivery_allocations: [{ sku, client: "C", qty: 10, delivery_day: day, delivery_date: "2026-03-16", customer_ready_day: day }],
+      unallocated_output: [],
+    });
+    renderGantt(undefined, undefined, [at("L13", "REFC", 13), at("L2", "REFB", 2), at("L100", "REFA", 100)]);
+    fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
+    const header = await screen.findByRole("button", { name: /Entregas deste segmento/ });
+    fireEvent.click(header);
+    const order = screen.getAllByText(/^REF[ABC]$/).map((cell) => cell.textContent);
+    expect(order).toEqual(["REFB", "REFC", "REFA"]);
   });
   it("identifica a hora manual sem repetir bloqueios antigos", async () => {
     renderGantt(undefined, undefined, [{
@@ -256,7 +337,7 @@ describe("GanttPage", () => {
     expect(screen.getByText("D0 · Ter")).toBeTruthy();
     expect(screen.getByText("10-Nov")).toBeTruthy();
     expect(screen.getByText("D63 · Ter")).toBeTruthy();
-    expect(view.container.querySelector('[title*="Alocação a entregas não disponível"]')).toBeTruthy();
+    expect(view.container.querySelector('[title*="Entregas deste segmento ainda não calculadas"]')).toBeTruthy();
   });
 
   it("usa o rótulo Gantt e turnos vindos da configuração", async () => {
@@ -399,7 +480,7 @@ describe("GanttPage", () => {
     fireEvent.click(await screen.findByText("1403150X050 + 1413147X070 (controla: 1413147X070)"));
 
     expect(screen.getByText("Janela conjunta de produção")).toBeTruthy();
-    expect(screen.getByText("Dia 0 (08-Set) → Dia 7 (15-Set)")).toBeTruthy();
+    expect(screen.getByText("Dia 0 (08/09) → dia 7 (15/09)")).toBeTruthy();
     expect(screen.getByText("Material comum libertado por")).toBeTruthy();
     expect(screen.getByText("Libertação se isolada")).toBeTruthy();
     expect(screen.queryByText("Referência da janela de material")).toBeNull();
@@ -407,10 +488,10 @@ describe("GanttPage", () => {
     const laterOutput = within(milestones).getByRole("row", { name: /1403150X050/ });
     const controllingOutput = within(milestones).getByRole("row", { name: /1413147X070/ });
     expect(within(laterOutput).queryByText("liberta o material comum")).toBeNull();
-    expect(within(laterOutput).getAllByText("Dia 10 (18-Set)")).toHaveLength(4);
+    expect(within(laterOutput).getAllByText("Dia 10 (18/09)")).toHaveLength(4);
     expect(within(controllingOutput).getByText(/limita o prazo/)).toBeTruthy();
     expect(within(controllingOutput).getByText(/liberta o material comum/)).toBeTruthy();
-    expect(within(controllingOutput).getAllByText("Dia 7 (15-Set)")).toHaveLength(4);
+    expect(within(controllingOutput).getAllByText("Dia 7 (15/09)")).toHaveLength(4);
   });
 
   it("separa os envios de cada output num lote gémeo subcontratado", async () => {
@@ -469,16 +550,16 @@ describe("GanttPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
     fireEvent.click(await screen.findByText("2100373X120.10 + 2185094X110.10 (controla: 2185094X110.10)"));
 
-    expect(screen.getByText("Dia -4 (04-Set) → Dia 3 (11-Set)")).toBeTruthy();
+    expect(screen.getByText("Dia -4 (04/09) → dia 3 (11/09)")).toBeTruthy();
     expect(screen.queryByText("Referência da janela de material")).toBeNull();
     const milestones = screen.getByRole("table", { name: "Datas por referência" });
     const laterOutput = within(milestones).getByRole("row", { name: /2100373X120\.10/ });
     const controllingOutput = within(milestones).getByRole("row", { name: /2185094X110\.10/ });
     expect(within(laterOutput).queryByText("liberta o material comum")).toBeNull();
-    expect(within(laterOutput).getAllByText("Dia 7 (15-Set)")).toHaveLength(4);
+    expect(within(laterOutput).getAllByText("Dia 7 (15/09)")).toHaveLength(4);
     expect(within(controllingOutput).getByText(/limita o prazo/)).toBeTruthy();
     expect(within(controllingOutput).getByText(/liberta o material comum/)).toBeTruthy();
-    expect(within(controllingOutput).getAllByText("Dia 3 (11-Set)")).toHaveLength(4);
+    expect(within(controllingOutput).getAllByText("Dia 3 (11/09)")).toHaveLength(4);
   });
 
   it("calcula a ocupação com a capacidade diária real", async () => {

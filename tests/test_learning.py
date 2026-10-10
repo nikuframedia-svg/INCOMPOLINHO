@@ -19,7 +19,6 @@ from backend.scheduler.constants import (
     DAY_CAP,
     EDD_SWAP_TOLERANCE,
     MAX_EDD_GAP,
-    MAX_RUN_DAYS,
 )
 from backend.scheduler.scheduler import schedule_all
 from backend.types import EngineData, EOp, MachineInfo
@@ -116,7 +115,7 @@ class TestSchedulerParams:
     def test_defaults_match_constants(self):
         p = SchedulerParams()
         assert p.max_edd_gap == MAX_EDD_GAP
-        assert p.max_run_days == MAX_RUN_DAYS
+        assert not hasattr(p, "max_run_days")  # limite de dias seguidos retirado
         assert p.edd_swap_tolerance == EDD_SWAP_TOLERANCE
 
     def test_default_params_same_as_no_params(self):
@@ -140,7 +139,12 @@ class TestSchedulerParams:
         d = {"max_edd_gap": 7, "unknown_param": 42}
         p = SchedulerParams.from_dict(d)
         assert p.max_edd_gap == 7
-        assert p.max_run_days == 4  # industrial default
+
+    def test_from_dict_ignores_legacy_max_run_days(self):
+        # Estudos gravados antes de 10/10/2026 ainda trazem o limite antigo.
+        p = SchedulerParams.from_dict({"max_edd_gap": 9, "max_run_days": 4})
+        assert p.max_edd_gap == 9
+        assert "max_run_days" not in p.to_dict()
 
     def test_custom_params_change_behaviour(self):
         """Non-default params should produce a different schedule."""
@@ -150,7 +154,7 @@ class TestSchedulerParams:
                     op_id="T1_M1_SKU1",
                     machine="M1",
                     tool="T1",
-                    d=[0, 0, 0, 0, 800, 800, 0, 0, 0, 0],
+                    d=[0, 800, 0, 0, 800, 0, 0, 0, 0, 0],
                 ),
             ]
         )
@@ -160,7 +164,6 @@ class TestSchedulerParams:
 
         cfg = FactoryConfig(
             max_edd_gap=1,
-            max_run_days=1,
             interleave_enabled=False,
             campaign_window=5,
         )

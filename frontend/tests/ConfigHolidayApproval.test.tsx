@@ -57,7 +57,6 @@ const config: FactoryConfig = {
   jit_threshold: 0,
   jit_max_retries: 1,
   jit_earliness_target: 5,
-  max_run_days: 4,
   max_edd_gap: 0,
   max_edd_span: 0,
   edd_swap_tolerance: 0,

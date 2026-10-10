@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from backend.calendar import total_machine_capacity
 from backend.config.types import FactoryConfig
 from backend.scheduler.jit_policy import production_due_day
+from backend.scheduler.material_quantities import delivery_readiness, lot_production_delays
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
@@ -74,17 +75,20 @@ def generate_proposals(
         machine_util[m.id] = total_used.get(m.id, 0) / max(total_capacity, 1)
 
     # ── A. Move to alt machine ──
+    # A lot is behind when one of its deliveries is finished after its
+    # production due day (shared readiness evaluator), not the lot end.
+    production_delays = lot_production_delays(
+        delivery_readiness(lots, segments, engine_data)
+    )
     tardy_lots = []
     for lot in lots:
-        segs = lot_segs.get(lot.id, [])
-        if not segs:
+        if not lot_segs.get(lot.id):
             continue
-        completion = max(s.day_idx for s in segs)
-        due_day = production_due_day(lot)
-        if completion > due_day:
-            tardy_lots.append((lot, completion))
+        delay = production_delays.get(lot.id, 0)
+        if delay > 0:
+            tardy_lots.append((lot, delay))
 
-    for lot, completion in tardy_lots:
+    for lot, delay in tardy_lots:
         op = op_map.get(lot.op_id)
         if not op or not op.alt:
             continue
@@ -107,7 +111,9 @@ def generate_proposals(
                         f"Mover {lot.op_id} de {op.m} para {op.alt}. "
                         f"Alt tem {free:.0f} min livres nos dias {due_day - 2}-{due_day}."
                     ),
-                    estimated_impact=f"Resolve atraso de {completion - due_day} dia(s)",
+                    estimated_impact=(
+                        f"Resolve atraso de {delay} dia{'s' if delay != 1 else ''}"
+                    ),
                     affected_lots=[lot.id],
                     machine_from=op.m,
                     machine_to=op.alt,

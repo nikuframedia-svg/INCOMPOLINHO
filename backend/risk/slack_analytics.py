@@ -18,6 +18,7 @@ from backend.scheduler.jit_policy import (
     production_due_day,
     window_violation_details,
 )
+from backend.scheduler.material_quantities import delivery_readiness, readiness_by_lot
 from backend.scheduler.operators import compute_operator_alerts
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, Segment
@@ -46,7 +47,6 @@ _STATUS_ORDER = {"late": 0, "at_limit": 1, "short_slack": 2}
 # is short, so an unproven lot stays "none" and shows no cause.
 _BINDING_PRIORITY = {
     "none": 0,
-    "long_run": 35,
     "jit_exception": 40,
     "setup": 45,
     "operator": 50,
@@ -65,13 +65,15 @@ def compute_lot_risks(
     Risk score = max(0, 1 - slack_min / (σ × Z_95))
     where σ = CV_PROCESSING × prod_min + CV_SETUP × setup_min.
     """
-    # Completion day and machine per lot
-    lot_end: dict[str, int] = {}
+    # Machine that finishes each lot; readiness comes from the shared evaluator.
     lot_machine: dict[str, str] = {}
+    last_key: dict[str, tuple[int, int]] = {}
     for seg in segments:
-        if seg.lot_id not in lot_end or seg.day_idx > lot_end[seg.lot_id]:
-            lot_end[seg.lot_id] = seg.day_idx
+        key = (seg.day_idx, seg.end_min)
+        if seg.lot_id not in last_key or key >= last_key[seg.lot_id]:
+            last_key[seg.lot_id] = key
             lot_machine[seg.lot_id] = seg.machine_id
+    readiness = readiness_by_lot(delivery_readiness(lots, segments, engine_data))
 
     bindings = _binding_constraints_by_lot(segments, lots, engine_data, config)
     orders_by_lot = defaultdict(list)
@@ -81,27 +83,54 @@ def compute_lot_risks(
                 orders_by_lot[lot_id].append(order)
     risks: list[LotRisk] = []
     for lot in lots:
-        comp = lot_end.get(lot.id, engine_data.n_days)
         machine = lot_machine.get(lot.id, lot.machine_id)
-        due_day = production_due_day(lot)
+        demand_outputs = [record for record in readiness.get(lot.id, []) if record.is_demand]
         controlling_order = None
-        if engine_data.client_demands:
-            orders = orders_by_lot.get(lot.id, [])
-            if not orders:
-                # Surplus without a customer commitment has no delivery risk.
-                continue
+        controlling_output = None
+        orders = orders_by_lot.get(lot.id, [])
+        if engine_data.client_demands and orders:
 
-            def readiness(order):
+            def order_readiness(order):
                 return (order.customer_ready_day if order.customer_ready_day is not None
                         else max(engine_data.n_days, order.delivery_day + 1))
 
             controlling_order = min(
                 orders,
-                key=lambda order: (order.delivery_day - readiness(order),
+                key=lambda order: (order.delivery_day - order_readiness(order),
                                    order.delivery_day, order.sku, order.client),
             )
             due_day = controlling_order.delivery_day
-            comp = readiness(controlling_order)
+            comp = order_readiness(controlling_order)
+        elif engine_data.client_demands:
+            if lot.id in lot_machine or not demand_outputs:
+                # Surplus without a customer commitment has no delivery risk.
+                continue
+            # Demand the plan does not produce at all stays a delivery risk.
+            controlling_output = min(
+                demand_outputs,
+                key=lambda record: (
+                    record.customer_delivery_day
+                    - max(record.customer_ready_day, record.customer_delivery_day + 1),
+                    record.customer_delivery_day,
+                    record.index,
+                ),
+            )
+            due_day = controlling_output.customer_delivery_day
+            comp = max(controlling_output.customer_ready_day, due_day + 1)
+        elif demand_outputs:
+            controlling_output = min(
+                demand_outputs,
+                key=lambda record: (
+                    record.production_due_day - record.factory_day,
+                    record.production_due_day,
+                    record.index,
+                ),
+            )
+            due_day = controlling_output.production_due_day
+            comp = controlling_output.factory_day
+        else:
+            due_day = production_due_day(lot)
+            comp = engine_data.n_days
         slack_days = due_day - comp
         day_cap = config.day_capacity_min if config else DAY_CAP
         slack_min = slack_days * day_cap
@@ -134,6 +163,8 @@ def compute_lot_risks(
             sku = parts[-1] if len(parts) >= 3 else lot.op_id
         if controlling_order is not None:
             sku = controlling_order.sku
+        elif controlling_output is not None and controlling_output.sku:
+            sku = controlling_output.sku
 
         risks.append(
             LotRisk(
@@ -246,29 +277,7 @@ def _binding_constraints_by_lot(
         for item in window_violation_details(segments, lots, holidays):
             set_binding(item.get("lot_id"), "jit_exception")
 
-    limit = max(1, int(getattr(effective_config, "max_run_days", 4) or 4))
-    days_by_lot: dict[str, set[int]] = defaultdict(set)
-    for segment in segments:
-        if segment.prod_min > 0:
-            days_by_lot[segment.lot_id].add(segment.day_idx)
-    for lot in lots:
-        if _longest_consecutive_streak(days_by_lot.get(lot.id, set())) > limit:
-            set_binding(lot.id, "long_run")
-
     return bindings
-
-
-def _longest_consecutive_streak(days: set[int]) -> int:
-    longest = current = 0
-    previous: int | None = None
-    for day in sorted(days):
-        if previous is None or day == previous + 1:
-            current += 1
-        else:
-            current = 1
-        longest = max(longest, current)
-        previous = day
-    return longest
 
 
 def compute_machine_risks(

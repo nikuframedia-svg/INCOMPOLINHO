@@ -13,7 +13,14 @@ import { PlanSimulatorSection } from "../components/PlanSimulatorSection";
 import { GateReportCard } from "../components/GateReportCard";
 import { JitViolationPanel } from "../components/JitViolationPanel";
 import { analyseJitWindow, type JitViolationDetail } from "../lib/jitAnalysis";
-import { segmentDeliveriesText } from "../lib/segmentDeliveries";
+import {
+  segmentDeliveriesSortValue,
+  segmentDeliveriesText,
+  segmentDeliveryLines,
+  segmentDeliveryTooltipLines,
+  capitalize,
+  fmtWorkday,
+} from "../lib/segmentDeliveries";
 
 const DEFAULT_DAY_W = 110;
 const LANE_H = 60;
@@ -877,14 +884,15 @@ export function GanttPage() {
     { id: "shift", label: "Turno", value: (segment) => segment.shift },
     { id: "tool", label: "Ferramenta", value: (segment) => segment.tool_id, render: (segment) => <span style={{ color: toolColor(segment.tool_id), fontWeight: 650 }}>{segment.tool_id}</span> },
     { id: "sku", label: "Referência", value: controllingReferenceLabel, render: (segment) => <span style={{ fontFamily: T.mono }}>{controllingReferenceLabel(segment)}</span> },
-    { id: "segment_qty", label: "Qtd. deste segmento", value: (segment) => segment.qty, render: (segment) => isSetupOnlySegment(segment) ? "—" : segment.qty.toLocaleString() },
+    { id: "segment_qty", label: "Qtd. deste segmento", value: (segment) => segment.qty, render: (segment) => isSetupOnlySegment(segment) ? "—" : segment.qty.toLocaleString("pt-PT") },
     { id: "lot_qty", label: "Qtd. total do lote", value: (segment) => segment.lot_qty || lotById.get(segment.lot_id)?.qty || segment.qty },
     { id: "setup", label: "Tempo de setup", value: (segment) => segment.setup_min, render: (segment) => <span style={{ color: segment.setup_min > 0 ? T.orange : T.tertiary, fontFamily: T.mono }}>{fmtDuration(segment.setup_min)}</span> },
     { id: "production", label: "Tempo de produção", value: (segment) => segment.prod_min, render: (segment) => <span style={{ fontFamily: T.mono }}>{isSetupOnlySegment(segment) ? "—" : fmtDuration(segment.prod_min)}</span> },
     {
       id: "delivery",
-      label: "Entregas do segmento",
-      value: segmentDeliveriesText,
+      label: "Entregas deste segmento",
+      value: segmentDeliveriesSortValue,
+      render: segmentDeliveriesText,
     },
     {
       id: "production_due",
@@ -1740,15 +1748,16 @@ export function GanttPage() {
                       const barH = isSingleDay ? SINGLE_BAR_H : 40;
                       const setupOnly = isSetupOnlySegment(s);
                       const segmentTitle = setupOnly
-                        ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min setup | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Twin" : ""}`
-                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString()} pç | Lote: ${lotQty.toLocaleString()} pç | Eco: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString()} | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | ${segmentDeliveriesText(s)}${s.twin_outputs ? " | Twin" : ""}`;
+                        ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min de preparação | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`
+                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString("pt-PT")} pç | Lote: ${lotQty.toLocaleString("pt-PT")} pç | Lote económico: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString("pt-PT")} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`;
                       const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
+                      const deliveryTitle = segmentDeliveryTooltipLines(s).map((line) => `\n${line}`).join("");
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}
-                          title={`${segmentTitle}${placementTitle}`}
+                          title={`${segmentTitle}${placementTitle}${deliveryTitle}`}
                           draggable={!isHistoricalPlacement(placementReasons[s.lot_id])}
                           onDragStart={(event) => {
                             if (isHistoricalPlacement(placementReasons[s.lot_id])) {
@@ -1823,8 +1832,8 @@ export function GanttPage() {
                                   {setupOnly
                                     ? `${s.tool_id} · sem produção neste bloco`
                                     : s.twin_outputs
-                                    ? s.twin_outputs.map(([, sku, qty]: [string, string, number]) => `${sku}: ${qty.toLocaleString()}`).join(" + ")
-                                    : `Segmento ${s.qty.toLocaleString()} · Lote ${lotQty.toLocaleString()} pç`}
+                                    ? s.twin_outputs.map(([, sku, qty]: [string, string, number]) => `${sku}: ${qty.toLocaleString("pt-PT")}`).join(" + ")
+                                    : `Segmento ${s.qty.toLocaleString("pt-PT")} · Lote ${lotQty.toLocaleString("pt-PT")} pç`}
                                 </span>
                               )}
                               {width > 100 && (
@@ -2032,7 +2041,7 @@ export function GanttPage() {
                   }} />
                 </div>
                 <span style={{ fontSize: 11, color: T.tertiary, fontFamily: T.mono }}>
-                  {md.totalPcs.toLocaleString()} pç
+                  {md.totalPcs.toLocaleString("pt-PT")} pç
                 </span>
               </div>
 
@@ -2057,7 +2066,7 @@ export function GanttPage() {
                         <div key={si} style={{ fontSize: 11, color: T.secondary, marginLeft: 8, lineHeight: 1.6 }}>
                           {setupOnly
                             ? `→ Preparação ${s.setup_min.toFixed(0)} min · ${s.tool_id} · sem produção neste bloco`
-                            : `→ Segmento ${s.qty.toLocaleString()} pç · Lote ${lotQty.toLocaleString()} pç (${controllingReferenceLabel(s)})`}
+                            : `→ Segmento ${s.qty.toLocaleString("pt-PT")} pç · Lote ${lotQty.toLocaleString("pt-PT")} pç (${controllingReferenceLabel(s)})`}
                           {s.twin_outputs && (
                             <span style={{
                               fontSize: 9,
@@ -2074,7 +2083,7 @@ export function GanttPage() {
                           {s.twin_outputs && (
                             <div style={{ marginLeft: 12, fontSize: 10, color: T.tertiary }}>
                               {s.twin_outputs.map(([, sku, qty]: [string, string, number], i: number) => (
-                                <div key={i}>↳ {sku}: {qty.toLocaleString()} pç{qty === 0 ? " (sem produção)" : ""}</div>
+                                <div key={i}>↳ {sku}: {qty.toLocaleString("pt-PT")} pç{qty === 0 ? " (sem produção)" : ""}</div>
                               ))}
                             </div>
                           )}
@@ -2148,16 +2157,23 @@ export function GanttPage() {
             const machineChange = gateReport?.improvement?.tool_transfers?.items.find(
               (item) => item.lot_ids.includes(sel.lot_id) && item.from_machine === sel.machine_id,
             );
-            const fmtDay = (day: number | null | undefined) => {
-              if (day == null) return "-";
-              const iso = isoAtDay(workdays, day);
-              return `Dia ${day}${iso ? ` (${fmtDate(iso).short})` : ""}`;
-            };
+            // Mesmo formato das entregas: "Dia 13 (26/10)" no início de uma
+            // célula, "dia 13 (26/10)" a meio de uma frase.
+            const fmtDayInline = (day: number | null | undefined) => (
+              day == null ? "-" : fmtWorkday(day, isoAtDay(workdays, day))
+            );
+            const fmtDay = (day: number | null | undefined) => capitalize(fmtDayInline(day));
             const outputMilestones = sel.output_milestones ?? selectedLot?.output_milestones ?? [];
             const hasOutputBreakdown = outputMilestones.length > 1;
             const hasJointWindow = hasOutputBreakdown && (sel.twin_outputs?.length ?? 0) > 1;
             const demandOutputs = outputMilestones.filter((output) => !output.is_coproduced_surplus && !output.is_economic_surplus);
             const constraintOutputs = demandOutputs.length ? demandOutputs : outputMilestones;
+            const lotDeliveryDays = [...new Set(demandOutputs.map((output) => output.customer_delivery_day))]
+              .filter((day): day is number => day != null);
+            // Sem marcos de entrega não há uma entrega conhecida: mostra "-"
+            // em vez de um prazo de produção ou de rutura que não é entrega.
+            const firstLotDeliveryDay = lotDeliveryDays.length ? Math.min(...lotDeliveryDays) : null;
+            const lotCoversSeveralDeliveries = !hasJointWindow && lotDeliveryDays.length > 1;
             const jointProductionDue = sel.production_due_day
               ?? selectedLot?.production_due_day
               ?? (constraintOutputs.length
@@ -2178,12 +2194,12 @@ export function GanttPage() {
             const materialReferenceLabel = sel.material_reference_kind === "subcontract_dispatch"
               ? "envio para subcontratação"
               : sel.material_reference_kind === "mixed"
-                ? "marco mais restritivo dos outputs"
+                ? "marco mais restritivo das referências"
                 : "entrega ao cliente";
             const mainRows: [string, unknown][] = [
               ["Tipo", selectedIsSetupOnly ? "Preparação sem produção neste bloco" : "Produção"],
               ["Máquina", sel.machine_id],
-              ["Dia", `${sel.day_idx}${workdays[sel.day_idx] ? ` (${fmtDate(workdays[sel.day_idx]).short})` : ""}`],
+              ["Dia", fmtDay(sel.day_idx)],
               ["Turno", sel.shift],
               ["Ferramenta", sel.tool_id],
               ["Referência controladora", sel.sku],
@@ -2191,18 +2207,18 @@ export function GanttPage() {
                 ? [["Referências gémeas", segmentReferenceLabel(sel)] as [string, unknown]]
                 : []),
               ["Quantidade segmento", selectedIsSetupOnly ? "-" : sel.qty],
-              ...(!selectedIsSetupOnly ? [["Entregas do segmento", segmentDeliveriesText(sel)] as [string, unknown]] : []),
+              ...(!selectedIsSetupOnly ? [["Entregas deste segmento", segmentDeliveryLines(sel)] as [string, unknown]] : []),
               ["Quantidade lote", selectedLotQty],
               ["Início", fmtMin(sel.start_min)],
               ["Fim", fmtMin(sel.end_min)],
               ...(hasJointWindow
                 ? [
-                    ["Janela conjunta de produção", `${fmtDay(jointMaterialRelease)} → ${fmtDay(jointProductionDue)}`] as [string, unknown],
-                    ["Material comum libertado por", `${joinSkus(releaseControllingSkus, "outputs gémeos")} · libertação ${fmtDay(jointMaterialRelease)}`] as [string, unknown],
-                    ["Prazo de origem do lote", `${joinSkus(dueControllingSkus, sel.sku)} · ${fmtDay(jointProductionDue)}`] as [string, unknown],
+                    ["Janela conjunta de produção", `${fmtDay(jointMaterialRelease)} → ${fmtDayInline(jointProductionDue)}`] as [string, unknown],
+                    ["Material comum libertado por", `${joinSkus(releaseControllingSkus, "referências gémeas")} · libertado ${fmtDayInline(jointMaterialRelease)}`] as [string, unknown],
+                    ["Prazo de origem do lote", `${joinSkus(dueControllingSkus, sel.sku)} · ${fmtDayInline(jointProductionDue)}`] as [string, unknown],
                   ]
                 : [
-                    ["Entrega que originou o lote", fmtDay(sel.customer_delivery_day ?? sel.delivery_day ?? sel.original_edd ?? sel.edd)] as [string, unknown],
+                    ["Primeira entrega do lote", fmtDay(firstLotDeliveryDay)] as [string, unknown],
                     ["Envio planeado para subcontratação", fmtDay(sel.subcontract_dispatch_day)] as [string, unknown],
                     ...(sel.latest_subcontract_dispatch_day != null
                       && sel.latest_subcontract_dispatch_day !== sel.subcontract_dispatch_day
@@ -2222,19 +2238,19 @@ export function GanttPage() {
                 : []),
             ];
             const technicalRows: [string, unknown][] = [
-              ["Quantidade campanha", sel.run_qty ? `${sel.run_qty.toLocaleString()} pç` : "-"],
+              ["Quantidade campanha", sel.run_qty ? `${sel.run_qty.toLocaleString("pt-PT")} pç` : "-"],
               ["Lotes na campanha", sel.run_lot_count || 1],
               ["Setup segmento", `${sel.setup_min.toFixed(1)} min`],
               ["Setup campanha", `${(sel.run_setup_min ?? sel.setup_min).toFixed(1)} min`],
               ["Produção", selectedIsSetupOnly ? "Sem produção neste bloco" : `${sel.prod_min.toFixed(1)} min`],
               ["Janela começo", fmtDay(sel.target_start_day)],
-              ["Eco lot ISOP", sel.eco_lot_isop ?? selectedLot?.eco_lot_isop ?? "-"],
-              ["Eco lot efetivo", sel.eco_lot_effective ?? selectedLot?.eco_lot_effective ?? "-"],
+              ["Lote económico (ISOP)", sel.eco_lot_isop ?? selectedLot?.eco_lot_isop ?? "-"],
+              ["Lote económico efetivo", sel.eco_lot_effective ?? selectedLot?.eco_lot_effective ?? "-"],
               ["Regra campanha", sel.min_campaign_qty || sel.min_campaign_prod_min ? `${sel.min_campaign_qty ?? "-"} pç / ${sel.min_campaign_prod_min ?? "-"} min / ${sel.max_group_gap_days ?? 0} dias` : "-"],
               ["Subcontratação", sel.subcontract_company_id ? `${sel.subcontract_company_id} · lead ${sel.subcontract_lead_time_days ?? 0}d · buffer ${sel.subcontract_buffer_days ?? 0}d` : "-"],
               ...outputMilestones.map((output, index): [string, unknown] => [
-                `Marco output ${index + 1}`,
-                `${output.sku}${output.production_due_day === jointProductionDue ? " (controla prazo)" : ""} · ${output.qty} pç · entrega ${fmtDay(output.customer_delivery_day)} · ${output.is_subcontracted ? `envio sub. ${fmtDay(output.subcontract_dispatch_day)}${output.latest_subcontract_dispatch_day !== output.subcontract_dispatch_day ? ` · último envio ${fmtDay(output.latest_subcontract_dispatch_day)}` : ""}` : `prazo produção ${fmtDay(output.production_due_day)}`} · libertação ${fmtDay(output.material_release_day)}`,
+                `Parcela ${index + 1}`,
+                `${output.sku}${output.production_due_day === jointProductionDue ? " (controla prazo)" : ""} · ${output.qty.toLocaleString("pt-PT")} pç · entrega ${fmtDayInline(output.customer_delivery_day)} · ${output.is_subcontracted ? `envio sub. ${fmtDayInline(output.subcontract_dispatch_day)}${output.latest_subcontract_dispatch_day !== output.subcontract_dispatch_day ? ` · último envio ${fmtDayInline(output.latest_subcontract_dispatch_day)}` : ""}` : `prazo produção ${fmtDayInline(output.production_due_day)}`} · material libertado ${fmtDayInline(output.material_release_day)}`,
               ]),
               ["Lote", sel.lot_id],
               ["Continuação", sel.is_continuation ? "Sim" : "Não"],
@@ -2242,14 +2258,20 @@ export function GanttPage() {
               ...(sel.twin_outputs
                 ? sel.twin_outputs.map(([, sku, qty]: [string, string, number], i: number): [string, unknown] => [
                     `  Referência gémea ${i + 1}`,
-                    `${qty.toLocaleString()} pç (${sku})`,
+                    `${qty.toLocaleString("pt-PT")} pç (${sku})`,
                   ])
                 : []),
             ];
             const renderRows = (rows: [string, unknown][]) => rows.map(([key, value]) => (
               <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "9px 0", borderBottom: `1px solid ${T.border}` }}>
                 <span style={{ fontSize: 12, color: T.secondary, flex: "0 0 35%" }}>{key}</span>
-                <span style={{ fontSize: 12, color: T.primary, fontWeight: 500, fontFamily: T.mono, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" }}>{String(value)}</span>
+                {Array.isArray(value) ? (
+                  <ul aria-label={key} style={{ listStyle: "none", margin: 0, padding: 0, flex: "1 1 auto", fontSize: 12, color: T.primary, fontWeight: 500, fontFamily: T.mono, textAlign: "left", minWidth: 0, overflowWrap: "anywhere" }}>
+                    {value.map((line, index) => <li key={index} style={{ padding: "1px 0" }}>{String(line)}</li>)}
+                  </ul>
+                ) : (
+                  <span style={{ fontSize: 12, color: T.primary, fontWeight: 500, fontFamily: T.mono, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" }}>{String(value)}</span>
+                )}
               </div>
             ));
             return (
@@ -2258,6 +2280,11 @@ export function GanttPage() {
                   Informação principal
                 </div>
                 {renderRows(mainRows)}
+                {lotCoversSeveralDeliveries && (
+                  <p style={{ margin: "8px 0 0", fontSize: 12, color: T.secondary, lineHeight: 1.45 }}>
+                    O lote económico cobre também entregas seguintes; cada parte só é produzida depois de libertado o material da sua entrega.
+                  </p>
+                )}
                 {hasOutputBreakdown && (
                   <div style={{ marginTop: 20 }}>
                     <div style={{ color: T.tertiary, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>
@@ -2293,7 +2320,7 @@ export function GanttPage() {
                               <tr key={`${output.op_id}-${outputIndex}`}>
                                 <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, verticalAlign: "top" }}>
                                   <div style={{ color: T.primary, fontFamily: T.mono, fontSize: 11, fontWeight: 650, overflowWrap: "anywhere" }}>{output.sku}</div>
-                                  {output.qty != null && <div style={{ color: T.secondary, fontSize: 10 }}>{output.qty.toLocaleString()} pç</div>}
+                                  {output.qty != null && <div style={{ color: T.secondary, fontSize: 10 }}>{output.qty.toLocaleString("pt-PT")} pç</div>}
                                   {constraints && <div style={{ color: T.tertiary, fontSize: 9, marginTop: 3 }}>{constraints}</div>}
                                 </td>
                                 <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, color: T.primary, fontFamily: T.mono, fontSize: 10, verticalAlign: "top" }}>{fmtDay(output.customer_delivery_day)}</td>

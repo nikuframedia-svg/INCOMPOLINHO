@@ -32,7 +32,6 @@ from backend.scheduler.improvement import (
 )
 from backend.scheduler.jit_policy import (
     earliest_allowed_start,
-    expedition_day,
     production_due_day,
 )
 from backend.scheduler.policy import anticipation_better
@@ -48,7 +47,11 @@ from backend.scheduler.priority import (
 from backend.scheduler.protection import protected_lot_ids
 from backend.scheduler.resources import clone_run_for_machine
 from backend.scheduler.scoring import compute_score
-from backend.scheduler.setup_identity import segment_setup_identity
+from backend.scheduler.setup_identity import (
+    fixed_mounting_gaps,
+    lot_setup_identity,
+    segment_setup_identity,
+)
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.scheduler.validation import PlanValidationError, assert_plan_valid, validate_plan
 from backend.types import EngineData
@@ -758,6 +761,7 @@ def _schedule_run_earliest(
     from backend.scheduler.resources import protected_mounting_segments
 
     physical_segments = [*fixed_segments, *protected_mounting_segments(data)]
+    _reserve_fixed_mounts(calendar_data, physical_segments, candidate, machine_id)
     first_shift = ordered_shifts(config)[0] if ordered_shifts(config) else None
     if first_shift is None:
         return None
@@ -830,6 +834,38 @@ def _projected_calendar(data: EngineData, config: FactoryConfig, through_day: in
     from backend.transform.calendars import calendar_window
 
     return calendar_window(data, config, through_day)
+
+
+def _reserve_fixed_mounts(data, segments, candidate, machine_id):
+    """A fixed continuation without reinstall reserves its mounting in the gap.
+
+    Booking only productive slices lets a later insertion invalidate a future
+    zero-setup slice. Compatible work on the same machine can use the gap;
+    changing adjustment or taking the mould elsewhere cannot. Reorganizing
+    that continuation requires releasing it from the fixed set first.
+    """
+    identities = {lot_setup_identity(lot) for lot in candidate.lots}
+    for previous, segment in fixed_mounting_gaps(segments):
+        identity = segment_setup_identity(segment)
+        if (
+            (segment.machine_id == machine_id and identities == {identity})
+            or (segment.machine_id != machine_id and segment.tool_id != candidate.tool_id)
+        ):
+            continue
+        start = previous.day_idx * 1440 + int(previous.end_min)
+        end = segment.day_idx * 1440 + int(segment.start_min)
+        # Calendar consumers use already-projected daily intervals.
+        for day in range(start // 1440, end // 1440 + 1):
+            lo, hi = max(0, start - day * 1440), min(1440, end - day * 1440)
+            if lo >= hi:
+                continue
+            block = {
+                "id": f"mounted:{previous.run_id}:{segment.run_id}",
+                "start_day": day, "start_min": lo,
+                "end_day": day, "end_min": hi,
+            }
+            data.machine_blocked_intervals.setdefault(segment.machine_id, []).append(dict(block))
+            data.tool_blocked_intervals.setdefault(segment.tool_id, []).append(dict(block))
 
 
 def _neighbourhood_calendar(
@@ -1373,25 +1409,35 @@ def _delivery_risk_run_ids(
     run_map: dict[str, ToolRun],
     data: EngineData,
 ) -> set[str]:
-    """Runs completing after a delivery, stock-rupture or dispatch checkpoint."""
+    """Runs feeding a delivery that is ready after its own checkpoint.
 
-    holidays = _extended_holidays(data, -20, data.n_days + 400)
-    completion_by_lot: dict[str, int] = {}
-    for segment in segments:
-        completion_by_lot[segment.lot_id] = max(
-            completion_by_lot.get(segment.lot_id, segment.day_idx),
-            segment.day_idx,
-        )
-    result: set[str] = set()
-    for run_id, run in run_map.items():
-        for lot in run.lots:
-            checkpoints = [expedition_day(lot), lot_rupture_day(lot)]
-            if lot.is_subcontracted:
-                checkpoints.append(production_due_day(lot, holidays))
-            if completion_by_lot.get(lot.id, data.n_days) > min(checkpoints):
-                result.add(run_id)
-                break
-    return result
+    Each delivery portion is judged when its own pieces exist (the shared
+    ``delivery_readiness`` evaluator), not when the whole economic lot ends:
+    against its customer date and, when subcontracted, its production due day
+    (the planned dispatch). Lots without per-output milestones keep the lot
+    stock-rupture checkpoint.
+    """
+
+    from backend.scheduler.material_quantities import delivery_readiness
+
+    lots_by_id = {lot.id: lot for run in run_map.values() for lot in run.lots}
+    late_lots: set[str] = set()
+    for record in delivery_readiness(list(lots_by_id.values()), segments, data):
+        if not record.is_demand:
+            continue
+        lot = lots_by_id[record.lot_id]
+        checkpoints = [record.customer_delivery_day]
+        if not lot.output_milestones:
+            checkpoints.append(lot_rupture_day(lot))
+        if record.is_subcontracted:
+            checkpoints.append(record.production_due_day)
+        if record.factory_day > min(checkpoints):
+            late_lots.add(record.lot_id)
+    return {
+        run_id
+        for run_id, run in run_map.items()
+        if any(lot.id in late_lots for lot in run.lots)
+    }
 
 
 def _sorted_segments(segments: Iterable[Segment]) -> list[Segment]:

@@ -782,6 +782,207 @@ def test_valid_baseline_survives_failed_compaction(ready_replan, monkeypatch):
     assert restored["result"].segments == result.segments
 
 
+@pytest.mark.parametrize("relaxed", [False, True])
+def test_calendar_candidate_survives_optional_timeout(ready_replan, monkeypatch, relaxed):
+    """A valid active plan is never discarded by an optional pass timing out."""
+    from backend.planning_control import planning_checkpoint, planning_scope, remaining_time
+    from backend.plans.serialize import deserialize_snapshot
+    from backend.replan import jobs
+
+    live, manager, _, result, _ = ready_replan
+    baseline = serialize_snapshot(live)
+    config = copy.deepcopy(live.config)
+    config.operators[("Grandes", "A")] += 1
+    budgets = []
+    clock = [0.0]
+
+    def timed_out(*args, **kwargs):
+        budgets.append(remaining_time())
+        # A failed optional pass must not mutate the retained candidate.
+        target = args[0] if isinstance(args[0], list) else args[2].segments
+        target.clear()
+        clock[0] += remaining_time() + 0.001
+        planning_checkpoint()
+
+    monkeypatch.setattr(jobs, "compact_preserving_started_lots", timed_out)
+    monkeypatch.setattr("backend.scheduler.shift_exchange.repair_shift_capacity_exchange", timed_out)
+    # With capacity released, the constructor also runs out of time here.
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", timed_out)
+    job = manager.store.create("calendar timeout", "fixture", 1)
+    with planning_scope(timeout_s=60, clock=lambda: clock[0]):
+        manager._run(
+            job["id"], copy.deepcopy(live.engine_data), config,
+            "fixture", 1, "calendar timeout", live.dataset_info,
+            baseline_snapshot=baseline, prefer_unchanged_baseline=not relaxed,
+            reoptimize_relaxed_baseline=relaxed,
+        )
+        assert remaining_time() > 0
+    current = manager.store.get(job["id"])
+    assert current["status"] == "ready", current
+    # The first optional pass keeps the closing reserve (10 s of 60 s).
+    assert budgets and 0 < budgets[0] <= 50
+    candidate = deserialize_snapshot(manager.store.get_candidate(job["id"]))
+    assert candidate["result"].segments == result.segments
+    assert candidate["config"].operators == config.operators
+    assert current["result"]["improvement_report"]["status"] != "completed"
+    assert live.plan_revision == 1
+
+
+@pytest.mark.parametrize("outcome", ["complete", "timeout", "cancelled", "invalid", "internal"])
+def test_slow_local_repair_keeps_budget_for_complete_pipeline(ready_replan, monkeypatch, outcome):
+    """T7: a slow local repair stops at its own budget; the constructor still runs."""
+    from backend.planning_control import (
+        PlanningCancelled,
+        PlanningTimeout,
+        planning_checkpoint,
+        planning_scope,
+        remaining_time,
+    )
+    from backend.plans.serialize import deserialize_snapshot
+    from backend.replan import jobs
+    from backend.scheduler.scoring import compute_score
+    from backend.scheduler.validation import PlanValidationError, assert_plan_valid
+
+    live, manager, _, result, _ = ready_replan
+    baseline = serialize_snapshot(live)
+    config = copy.deepcopy(live.config)
+    config.machine_unavailability = [{
+        "id": "stop", "resource": "M1",
+        "start_at": "2026-03-17T00:00+00:00", "end_at": "2026-03-18T00:00+00:00",
+    }]
+    clock = [0.0]
+    local_budgets = []
+    optimizer_budgets = []
+    optimizer_started = []
+
+    def slow_local_repair(segments, *_args, **_kwargs):
+        local_budgets.append(remaining_time())
+        clock[0] += remaining_time() + 0.001  # would run on: only its scope stops it
+        planning_checkpoint()
+        return segments
+
+    def complete_pipeline(data, config, history, **kwargs):
+        optimizer_budgets.append(remaining_time())
+        optimizer_started.append(clock[0])
+        assert history.segments == result.segments
+        if outcome == "timeout":
+            raise PlanningTimeout("Planning deadline expired; candidate not committed.")
+        if outcome == "cancelled":
+            raise PlanningCancelled("cancelled before candidate")
+        if outcome == "invalid":
+            raise PlanValidationError([{"kind": "x", "message": "Conflito injetado."}])
+        if outcome == "internal":
+            raise KeyError("unexpected english failure")
+        candidate = copy.deepcopy(result)
+        candidate.segments[0].day_idx = 1
+        candidate.score = compute_score(candidate.segments, candidate.lots, data, config=config)
+        assert_plan_valid(candidate.segments, data, config, lots=candidate.lots)
+        return candidate
+
+    monkeypatch.setattr(jobs, "_current_planning_day", lambda *_: 0)
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", complete_pipeline)
+    monkeypatch.setattr("backend.scheduler.scheduler._repair_hard_constraints", slow_local_repair)
+    job = manager.store.create("calendar constraint", "fixture", 1)
+    with planning_scope(timeout_s=60.0, clock=lambda: clock[0]):
+        manager._run(
+            job["id"], copy.deepcopy(live.engine_data), config,
+            "fixture", 1, "calendar constraint", live.dataset_info,
+            baseline_snapshot=baseline, prefer_unchanged_baseline=True,
+        )
+    current = manager.store.get(job["id"])
+    # Local repair: remaining − closing reserve (10 s) − constructor reserve.
+    assert local_budgets and 0 < local_budgets[0] <= 60.0 - 10.0 - jobs.LOCAL_REPAIR_OPTIMIZER_RESERVE_S
+    # The constructor still receives the reserved time ...
+    assert optimizer_budgets and optimizer_budgets[0] >= jobs.LOCAL_REPAIR_OPTIMIZER_RESERVE_S - 0.01
+    # ... and leaves the closing reserve (10 s) for gate, score, audit and save.
+    outer_remaining = 60.0 - optimizer_started[0]
+    assert optimizer_budgets[0] <= outer_remaining - 10.0 + 1e-6
+    if outcome == "complete":
+        assert current["status"] == "ready", current
+        assert current["result"]["selected_source"] == "optimized"
+        assert any("ajuste rápido não terminou" in w for w in current["warnings"])
+        candidate = deserialize_snapshot(manager.store.get_candidate(job["id"]))
+        assert candidate["result"].segments[0].day_idx == 1
+    elif outcome == "cancelled":
+        assert current["status"] == "cancelled", current
+        assert manager.store.get_candidate(job["id"]) is None
+    else:
+        expected = {
+            "timeout": "planning_timeout", "invalid": "invalid_plan", "internal": "internal_error",
+        }[outcome]
+        assert current["status"] == "failed", current
+        assert current["code"] == expected
+        assert current["message"] == jobs.FAILURE_TEXTS[expected][0]
+        assert "não foram alterados" in current["error"]
+        if outcome == "invalid":
+            assert current["error"].endswith("Primeiros conflitos: Conflito injetado.")
+        assert manager.store.get_candidate(job["id"]) is None
+    assert live.plan_revision == 1
+    assert live.segments == result.segments
+
+
+@pytest.mark.parametrize("stopped", ["outer_timeout", "internal"])
+def test_failed_job_text_is_portuguese_never_raw_exception(ready_replan, monkeypatch, stopped):
+    """T8: no job error shows "Planning deadline expired" or other raw text."""
+    from backend.planning_control import planning_checkpoint, planning_scope
+    from backend.replan import jobs
+
+    live, manager, _, _, _ = ready_replan
+    clock = [0.0]
+
+    def fail(*_args, **_kwargs):
+        if stopped == "outer_timeout":
+            clock[0] += 1_000.0
+            planning_checkpoint()
+        raise RuntimeError("Planning deadline expired; candidate not committed.")
+
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", fail)
+    job = manager.store.create("raw text", "fixture", 1)
+    with planning_scope(clock=lambda: clock[0]):
+        manager._run(
+            job["id"], copy.deepcopy(live.engine_data), copy.deepcopy(live.config),
+            "fixture", 1, "raw text", live.dataset_info,
+        )
+    current = manager.store.get(job["id"])
+    assert current["status"] == "failed", current
+    assert current["code"] == ("planning_timeout" if stopped == "outer_timeout" else "internal_error")
+    for text in (current["message"], current["error"]):
+        assert "Planning deadline expired" not in text
+        assert "candidate not committed" not in text
+
+
+def test_legacy_material_baseline_is_rebuilt_not_reused(ready_replan, monkeypatch):
+    """A5: a plan without per-delivery material is recalculated, not kept unchanged."""
+    from backend.replan import jobs
+
+    live, manager, _, result, _ = ready_replan
+    baseline = serialize_snapshot(live)
+    assert not any(lot.output_milestones for lot in result.lots)
+    monkeypatch.setattr(
+        "backend.scheduler.quantity_dispatch.has_quantity_releases", lambda _lots: True,
+    )
+    rebuilt = []
+
+    def constructor(data, config, history, **kwargs):
+        rebuilt.append(history)
+        return copy.deepcopy(result)
+
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", constructor)
+    config = copy.deepcopy(live.config)
+    config.operators[("Grandes", "A")] += 1
+    job = manager.store.create("legacy", "fixture", 1)
+    manager._run(
+        job["id"], copy.deepcopy(live.engine_data), config,
+        "fixture", 1, "legacy", live.dataset_info,
+        baseline_snapshot=baseline, prefer_unchanged_baseline=True,
+    )
+    current = manager.store.get(job["id"])
+    assert rebuilt, "a legacy baseline must go through the constructor"
+    assert current["status"] == "ready", current
+    assert current["result"]["selected_source"] == "optimized"
+    assert any("libertado por entrega; por isso foi recalculado de raiz" in w for w in current["warnings"])
+
+
 def test_unchanged_replan_keeps_the_better_compacted_baseline(ready_replan, monkeypatch):
     from dataclasses import replace
 
@@ -876,3 +1077,65 @@ def test_submission_failure_is_terminal_and_does_not_poison_deduplication(tmp_pa
         assert not replacement["deduplicated"]
     finally:
         _close(manager)
+
+
+def test_failure_summary_is_plain_portuguese_without_internal_tuples():
+    """The detail reuses the validator's plain messages, not identity tuples."""
+    from backend.replan import jobs
+    from backend.scheduler.types import Segment
+    from backend.scheduler.validation import PlanValidationError, validate_plan
+    from backend.types import EngineData, MachineInfo
+
+    def seg(lot, tool, sku, day, setup):
+        return Segment(
+            lot_id=lot, run_id=f"R_{lot}", machine_id="PRM042", tool_id=tool, day_idx=day,
+            start_min=420, end_min=600, shift="A", qty=10, prod_min=180.0 - setup,
+            setup_min=float(setup), sku=sku, run_setup_min=60.0,
+        )
+
+    data = EngineData(
+        ops=[], machines=[MachineInfo(id="PRM042", group="Médias", day_capacity=1020)],
+        twin_groups=[], client_demands={},
+        workdays=[f"2026-10-{day:02d}" for day in range(5, 25)], n_days=20, holidays=[],
+    )
+    violations = validate_plan(
+        [seg("LOT_JDE", "JDE001", "JD471512-0071", 4, 60),
+         seg("LOT_VUL115_PRM042_8718696125_1", "VUL115", "8718696125", 8, 0)],
+        data,
+    )
+    summary = jobs._violation_summary(PlanValidationError(violations))
+    assert "('" not in summary and "LOT_" not in summary
+    assert "ferramenta VUL115 (ref. 8718696125) entra na PRM042 depois da JDE001" in summary
+    assert summary.endswith(".")
+    assert "Primeiros conflitos" not in summary  # the caller adds the heading once
+
+
+def test_failure_texts_are_plain_and_say_nothing_changed():
+    from backend.replan import jobs
+
+    for code, (message, detail) in jobs.FAILURE_TEXTS.items():
+        for text in (message, detail):
+            assert "processo" not in text and "reparação local" not in text, (code, text)
+        assert "não foram alterados" in detail, code
+    assert "Pode iniciar novamente" in jobs.FAILURE_TEXTS["interrupted"][1]
+
+
+def test_one_legacy_material_rule(monkeypatch):
+    """jobs and the store share canonical.legacy_material_plan."""
+    from backend.replan import jobs
+
+    seen = []
+
+    def fake(lots, data, config):
+        seen.append((lots, data, config))
+        return True
+
+    monkeypatch.setattr("backend.scheduler.canonical.legacy_material_plan", fake)
+
+    class Result:
+        lots = ["L"]
+
+    assert jobs._baseline_needs_material_rebuild(
+        {"result": Result(), "engine_data": "D", "config": "C"}
+    ) is True
+    assert seen == [(["L"], "D", "C")]

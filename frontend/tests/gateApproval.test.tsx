@@ -5,7 +5,10 @@ import {
   approvalReasonLabel,
   BACKEND_APPROVAL_REASONS,
   capacityShortfalls,
+  decisionReasonLabels,
+  gateReasonLabel,
   gateSummaryLines,
+  isLegacyReason,
   isLegacyRobustnessReason,
 } from "../src/lib/gateApproval";
 
@@ -37,9 +40,38 @@ describe("dicionário único dos motivos de aprovação", () => {
 
   it("cobre exatamente os 7 motivos do backend", () => {
     expect([...BACKEND_APPROVAL_REASONS].sort()).toEqual([
-      "delivery_risk", "jit_window_blocked", "long_production", "material_release_blocked",
-      "operational_sequence_review", "operator_capacity_shortage", "subcontract_dispatch_risk",
+      "delivery_risk", "jit_window_blocked", "material_release_blocked",
+      "operational_sequence_not_evaluated", "operational_sequence_review",
+      "operator_capacity_shortage", "subcontract_dispatch_risk",
     ]);
+  });
+
+  it("a ordem de produção por avaliar tem texto próprio", () => {
+    expect(approvalReasonLabel("operational_sequence_not_evaluated"))
+      .toBe("a verificação da ordem de produção ficou por avaliar");
+  });
+
+  it("o risco de entrega fala em encomendas", () => {
+    expect(approvalReasonLabel("delivery_risk")).toBe("há encomendas que ficam atrasadas");
+    expect(gateReasonLabel("delivery_risk", { metrics: { orders_late: 2, tardy_count: 3 } }))
+      .toBe("há encomendas que ficam atrasadas");
+  });
+
+  it("relatórios antigos com lotes atrasados e nenhuma encomenda atrasada mantêm o texto de lotes", () => {
+    expect(gateReasonLabel("delivery_risk", { metrics: { orders_late: 0, tardy_count: 3 } }))
+      .toBe("há lotes que acabam depois do prazo de produção");
+    expect(gateReasonLabel("delivery_risk", { metrics: { tardy_count: 3 } }))
+      .toBe("há lotes que acabam depois do prazo de produção");
+    expect(decisionReasonLabels({ approval_reasons: ["delivery_risk", "long_production"], metrics: { tardy_lots: 2 } }))
+      .toEqual(["há lotes que acabam depois do prazo de produção"]);
+  });
+
+  it("material: uma só palavra, libertado", () => {
+    for (const code of ["jit_window_blocked", "material_release_blocked"]) {
+      expect(approvalReasonLabel(code)).toContain("material ser libertado");
+    }
+    expect(gateSummaryLines(gate({ metrics: { early_window_violations: 2 } })))
+      .toContain("2 produções estão marcadas antes de o material ser libertado.");
   });
 
   it("marca os motivos antigos de robustez como critério antigo", () => {
@@ -47,6 +79,11 @@ describe("dicionário único dos motivos de aprovação", () => {
       expect(isLegacyRobustnessReason(code)).toBe(true);
       expect(approvalReasonLabel(code)).toContain("critério antigo");
     }
+  });
+
+  it("o limite de dias seguidos, retirado, só aparece como critério antigo", () => {
+    expect(isLegacyReason("long_production")).toBe(true);
+    expect(approvalReasonLabel("long_production")).toContain("critério antigo");
   });
 
   it("nunca devolve um código desconhecido em bruto", () => {
@@ -105,17 +142,19 @@ describe("mensagem de impacto", () => {
       .toContain("Impacto previsto: 1 lote acaba depois do prazo de produção.");
   });
 
-  it("lista as produções longas em palavras simples", () => {
+  it("relatórios antigos com produções longas não pedem decisão por elas", () => {
     const message = approvalImpactMessage(gate({
-      approval_reasons: ["long_production"],
+      metrics: { orders_late: 1 },
+      approval_reasons: ["delivery_risk", "long_production"],
       long_production_detail: [{
         lot_id: "L1", sku: "TP042173-0060-1", machine_id: "PRM042", workdays: 5, limit_workdays: 4,
         excess_workdays: 1, days: [26, 27, 28, 29, 30], consecutive_days: [26, 27, 28, 29, 30],
       }],
-    }));
-    expect(message).toContain("Produções longas: TP042173-0060-1 na PRM042, 5 dias seguidos (o limite é 4).");
-    expect(message).not.toContain("::");
-    expect(message).toContain("Requer decisão do planeador por: há produções seguidas acima do limite de dias.");
+    } as unknown as Partial<GateReport>));
+    expect(message).not.toContain("Produções longas");
+    expect(message).not.toMatch(/dias seguidos/);
+    expect(message).toContain("Requer decisão do planeador por: há encomendas que ficam atrasadas.");
+    expect(message).toContain("Impacto previsto: 1 encomenda fica atrasada.");
   });
 
   it("não mostra códigos em bruto nem robustez", () => {
@@ -161,6 +200,8 @@ describe("resumo do relatório", () => {
     }));
     expect(lines.length).toBeLessThanOrEqual(4);
     for (const line of lines) expect(line).not.toMatch(RAW_CODE);
+    // Métrica antiga de dias seguidos: já não gera frase.
+    expect(lines.join(" ")).not.toMatch(/dias seguidos/);
   });
 
   it("sem métricas não inventa frases", () => {

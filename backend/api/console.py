@@ -70,9 +70,12 @@ def _risk_rows(top_risks, segments, workdays: list[str]) -> list[dict]:
             )
         if last is not None:
             row["completion_machine_id"] = last.machine_id
-            row["completion_date"] = (
-                workdays[last.day_idx] if 0 <= last.day_idx < len(workdays) else None
-            )
+        # Completion is the readiness of the controlling order (its own
+        # delivery portion), never the end of the economic lot.
+        completion_day = int(risk.completion_day)
+        row["completion_date"] = (
+            workdays[completion_day] if 0 <= completion_day < len(workdays) else None
+        )
         rows.append(row)
     return rows
 

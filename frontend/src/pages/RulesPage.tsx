@@ -26,7 +26,6 @@ function buildRules(config: FactoryConfig): SchedulerRule[] {
     { id: "J01", categoria: "Material", descricao: "Libertar material cinco dias úteis antes da entrega ao cliente; nos artigos subcontratados, cinco dias úteis antes do envio ao fornecedor", valor: "Obrigatório", activo: true },
     { id: "J02", categoria: "Material", descricao: "Bloquear qualquer produção iniciada antes da respetiva libertação simulada", valor: "Gate bloqueante", activo: true },
     { id: "J03", categoria: "Antecipação", descricao: "Produzir no primeiro intervalo viável depois da libertação de material, em qualquer máquina elegível", valor: "O mais cedo possível", activo: true },
-    { id: "J04", categoria: "Antecipação (alerta)", descricao: `Tentar limitar cada produção a ${config.max_run_days} dias úteis; permitir exceção necessária`, valor: `≤ ${config.max_run_days} dias`, activo: true },
     { id: "S01", categoria: "Subcontratação", descricao: "Concluir a produção antes da data planeada de envio ao subcontratante", valor: "Gate de aprovação", activo: true },
     { id: "S02", categoria: "Subcontratação", descricao: "Manter a entrega ao cliente como compromisso e KPI, acrescentando o prazo externo do fornecedor à conclusão na fábrica", valor: "OTD cliente", activo: true },
     { id: "B01", categoria: "Negócio", descricao: "Eco lot hard", valor: String(config.eco_lot_mode), activo: true },

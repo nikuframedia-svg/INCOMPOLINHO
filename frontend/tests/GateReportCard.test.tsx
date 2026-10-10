@@ -61,7 +61,8 @@ function infeasibleReport(): GateReport {
     tardy_count: 9, otd: 95.2, otd_d: 99.1, long_productions: 1,
     orders_total: 709, orders_on_time: 701, orders_late: 8, order_otd: 98.9,
   };
-  gate.long_production_detail = [{
+  // Relatório antigo: ainda traz o limite de dias seguidos, entretanto retirado.
+  (gate as unknown as Record<string, unknown>).long_production_detail = [{
     lot_id: "LOT_JDE002_PRM042_TP042173-0060-1_33", sku: "TP042173-0060-1", machine_id: "PRM042",
     workdays: 5, limit_workdays: 4, excess_workdays: 1, days: [26, 27, 28, 29, 30],
     consecutive_days: [26, 27, 28, 29, 30],
@@ -92,7 +93,7 @@ function textOutsideTechnical(container: HTMLElement): string {
 }
 
 describe("resumo em linguagem simples", () => {
-  it("mostra primeiro um resumo curto com encomendas, capacidade e produções longas", () => {
+  it("mostra primeiro um resumo curto com encomendas e capacidade (sem o limite antigo de dias seguidos)", () => {
     render(<GateReportCard gate={infeasibleReport()} />);
     const summary = screen.getByTestId("gate-summary");
     const lines = summary.querySelectorAll("p");
@@ -100,7 +101,7 @@ describe("resumo em linguagem simples", () => {
     expect(lines.length).toBeLessThanOrEqual(4);
     expect(summary.textContent).toContain("8 de 709 encomendas ficam atrasadas.");
     expect(summary.textContent).toContain("PRM042 cerca de 62 h");
-    expect(summary.textContent).toContain("TP042173-0060-1 na PRM042, 5 dias seguidos (o limite é 4)");
+    expect(summary.textContent).not.toMatch(/dias seguidos/);
   });
 
   it("não soma janelas sobrepostas do mesmo recurso", () => {

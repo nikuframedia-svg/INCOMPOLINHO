@@ -62,7 +62,6 @@ const config: FactoryConfig = {
   jit_threshold: 0,
   jit_max_retries: 1,
   jit_earliness_target: 5,
-  max_run_days: 4,
   max_edd_gap: 0,
   max_edd_span: 0,
   edd_swap_tolerance: 0,
@@ -222,6 +221,20 @@ describe("Configuração", () => {
     await waitFor(() => expect(endpointMocks.applyReplan).toHaveBeenCalledWith("job", undefined, 1));
     await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Guardar alterações" }).disabled).toBe(false));
     expect(screen.getByRole<HTMLInputElement>("spinbutton").value).toBe("2");
+  });
+
+  it("shows a failed re-plan in plain Portuguese, never the raw English error", async () => {
+    const job = configureJobs();
+    endpointMocks.getReplans.mockResolvedValue({ jobs: [{ ...job, status: "running" }] });
+    endpointMocks.getReplan.mockResolvedValue({ job: {
+      ...job, status: "failed", result: null, code: "planning_timeout",
+      message: "Tempo de cálculo esgotado sem um plano válido",
+      error: "Planning deadline expired; candidate not committed.",
+    } });
+    render(<ConfigPage />);
+    expect(await screen.findByText(/Tempo de cálculo esgotado sem um plano válido/, {}, { timeout: 4000 })).toBeTruthy();
+    expect(screen.queryByText(/deadline expired/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Aplicar e guardar" })).toBeNull();
   });
 
   it("removes the pending candidate when a lost cancellation response is recovered as cancelled", async () => {

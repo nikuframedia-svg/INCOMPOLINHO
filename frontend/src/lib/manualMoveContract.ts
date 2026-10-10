@@ -91,7 +91,6 @@ function normalizeGateReport(value: unknown): GateReport {
     late_detail: recordArray(value.late_detail),
     jit_window_detail: recordArray(value.jit_window_detail),
     setup_overlap_detail: recordArray(value.setup_overlap_detail),
-    long_production_detail: recordArray(value.long_production_detail),
     proposals: recordArray(value.proposals),
     feasibility: normalizeFeasibility(value.feasibility),
   } as unknown as GateReport;

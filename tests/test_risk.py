@@ -199,7 +199,8 @@ class TestLotRisks:
 
         assert risks[0].binding_constraint == "jit_exception"
 
-    def test_binding_constraint_identifies_long_consecutive_run(self):
+    def test_long_consecutive_run_is_not_a_risk_cause(self):
+        # A fábrica retirou o limite de dias seguidos (09/10/2026).
         engine = _engine(n_days=6)
         lots = [_lot(edd=10)]
         lots[0].delivery_day = 4
@@ -208,9 +209,9 @@ class TestLotRisks:
             for day in range(5)
         ]
 
-        risks = compute_lot_risks(segs, lots, engine, FactoryConfig(max_run_days=4))
+        risks = compute_lot_risks(segs, lots, engine, FactoryConfig())
 
-        assert risks[0].binding_constraint == "long_run"
+        assert risks[0].binding_constraint != "long_run"
 
     def test_binding_constraint_identifies_operator_capacity(self):
         engine = _engine(ops=[_eop(operators=2)], n_days=5)

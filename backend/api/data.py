@@ -77,6 +77,9 @@ def _coerce_bool(value) -> bool:
     raise ValueError(f"valor booleano inválido: {value!r}")
 
 
+_RETIRED_CONFIG_KEYS = frozenset({"max_run_days"})
+
+
 def _coerce_tunable_value(key: str, current_value, new_value):
     if isinstance(current_value, bool):
         return _coerce_bool(new_value)
@@ -1210,7 +1213,6 @@ async def get_config():
         "jit_threshold": c.jit_threshold,
         "jit_max_retries": c.jit_max_retries,
         "jit_earliness_target": c.jit_earliness_target,
-        "max_run_days": c.max_run_days,
         "max_edd_gap": c.max_edd_gap,
         "max_edd_span": c.max_edd_span,
         "edd_swap_tolerance": c.edd_swap_tolerance,
@@ -1710,7 +1712,6 @@ async def update_config(updates: dict):
         "jit_buffer_pct",
         "jit_threshold",
         "jit_max_retries",
-        "max_run_days",
         "max_edd_gap",
         "max_edd_span",
         "edd_swap_tolerance",
@@ -1728,6 +1729,13 @@ async def update_config(updates: dict):
         "weight_balance",
         "eco_lot_mode",
     ]
+    # Chaves retiradas do contrato: clientes antigos ainda as podem enviar.
+    # São ignoradas (não alteram nada) em vez de rejeitarem a gravação.
+    # ``max_run_days`` (limite de dias seguidos) foi retirado a 09/10/2026.
+    updates = {
+        key: value for key, value in updates.items()
+        if key not in _RETIRED_CONFIG_KEYS
+    }
     current = state.config
     if "setup_crews" in updates:
         raise HTTPException(

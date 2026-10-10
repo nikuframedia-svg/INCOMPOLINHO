@@ -5,9 +5,13 @@ Groups Lots by physical setup identity and machine into ToolRuns.
 
 Fix 1: Lots within each ToolRun are ALWAYS sorted by EDD.
 
-Splits runs on two criteria:
-  1. EDD gap > MAX_EDD_GAP between consecutive lots
-  2. Cumulative production time > MAX_RUN_DAYS * DAY_CAP
+Splits runs on three criteria:
+  1. different material-release floors (5-workday window)
+  2. EDD gap > MAX_EDD_GAP between consecutive lots
+  3. EDD span > MAX_EDD_SPAN from the first lot of the run
+
+There is no duration cap: the factory removed the consecutive-days limit
+(``max_run_days``) on 09/10/2026, so a long campaign stays one run.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import DAY_CAP, MAX_EDD_GAP, MAX_RUN_DAYS
+from backend.scheduler.constants import DAY_CAP, MAX_EDD_GAP, MAX_EDD_SPAN
 from backend.scheduler.jit_policy import earliest_allowed_start
 from backend.scheduler.priority import lot_priority_key
 from backend.scheduler.setup_identity import SetupIdentity, lot_setup_identity
@@ -44,13 +48,10 @@ def create_tool_runs(
         tool = setup_identity[0]
         group_lots.sort(key=lot_priority_key)
         gap = config.max_edd_gap if config else max_edd_gap
-        max_run = config.max_run_days if config else MAX_RUN_DAYS
-        span = config.max_edd_span if config else 20
+        span = config.max_edd_span if config else MAX_EDD_SPAN
         sub_runs = _split_by_edd_gap(
             group_lots,
             gap,
-            max_run,
-            day_cap=day_cap,
             max_span=span,
             release_holidays=release_holidays,
         )
@@ -166,12 +167,10 @@ def _normalise_split_positions(raw_positions: object, lot_count: int) -> list[in
 def _split_by_edd_gap(
     lots: list[Lot],
     max_gap: int,
-    max_run_days: int = MAX_RUN_DAYS,
-    day_cap: int = DAY_CAP,
-    max_span: int = 20,
+    max_span: int = MAX_EDD_SPAN,
     release_holidays: set[int] | None = None,
 ) -> list[list[Lot]]:
-    """Split sorted lots by release floor, EDD gap, span, and duration.
+    """Split sorted lots by release floor, EDD gap and EDD span.
 
     A ToolRun is non-preemptive and contains no deliberate idle time. Lots
     whose simulated material-release floors differ therefore cannot share a
@@ -184,9 +183,7 @@ def _split_by_edd_gap(
     if len(lots) <= 1:
         return [lots]
 
-    max_prod = max_run_days * day_cap
     sub_runs: list[list[Lot]] = [[lots[0]]]
-    cum_prod = lots[0].prod_min
 
     for lot in lots[1:]:
         previous = sub_runs[-1][-1]
@@ -194,19 +191,16 @@ def _split_by_edd_gap(
         first_edd = sub_runs[-1][0].edd
         gap = lot.edd - prev_edd
         span = lot.edd - first_edd
-        duration_split = cum_prod + lot.prod_min > max_prod
         release_split = bool(
             release_holidays is not None
             and max(0, earliest_allowed_start(lot, release_holidays))
             != max(0, earliest_allowed_start(previous, release_holidays))
         )
 
-        if release_split or gap > max_gap or duration_split or span > max_span:
+        if release_split or gap > max_gap or span > max_span:
             sub_runs.append([lot])
-            cum_prod = lot.prod_min
         else:
             sub_runs[-1].append(lot)
-            cum_prod += lot.prod_min
 
     return sub_runs
 

@@ -35,7 +35,12 @@ from backend.scheduler.improvement import (
 from backend.scheduler.priority import run_priority_key
 from backend.scheduler.protection import protected_lot_ids
 from backend.scheduler.resources import clone_run_for_machine
-from backend.scheduler.setup_identity import retained_setup_at, segment_setup_identity
+from backend.scheduler.setup_identity import (
+    fixed_mounting_gaps,
+    lot_setup_identity,
+    retained_setup_at,
+    segment_setup_identity,
+)
 from backend.scheduler.types import Lot, Segment, ToolRun
 from backend.types import EngineData
 
@@ -361,6 +366,28 @@ def _rebuild(
     if initial is None:
         return []
     pending_groups = [initial]
+    # The allocator now reserves mounting gaps, so an isolated insertion no
+    # longer creates the invalid successor that used to reveal dependencies
+    # below. Explicitly release its mounting chain in a separate neighbourhood.
+    identities = {lot_setup_identity(lot) for run in block_runs for lot in run.lots}
+    window_end = hop.start_abs + int(
+        (hop.end_abs - hop.start_abs) * max(1.0, hop.duration_ratio)
+    )
+    dependencies = {
+        following.run_id
+        for previous, following in fixed_mounting_gaps(segments)
+        if following.run_id not in initial and following.run_id in origins
+        and following.run_id in run_map
+        and not ({lot.id for lot in run_map[following.run_id].lots} & protected)
+        and following.machine_id == hop.to_machine
+        and identities != {segment_setup_identity(following)}
+        and _abs(previous)[1] < window_end
+        and hop.start_abs < _abs(following)[0]
+    }
+    if dependencies:
+        extended = close(initial | dependencies, include_predecessors=True)
+        if extended is not None and extended != initial:
+            pending_groups.append(extended)
     visited: set[frozenset[str]] = set()
     result = []
     while pending_groups:

@@ -1351,10 +1351,6 @@ def _move_lot(
             "O plano inicia produção antes da libertação de material calculada "
             "a partir da entrega ou do envio para subcontratação."
         )
-    if int(gate_report["metrics"].get("long_productions", 0) or 0):
-        delivery_warnings.append(
-            "O plano contém produções com mais de quatro dias úteis."
-        )
 
     requires_confirmation = bool(gate_report.get("requires_approval"))
 

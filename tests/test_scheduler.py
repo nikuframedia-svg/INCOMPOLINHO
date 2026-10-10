@@ -620,6 +620,33 @@ class TestToolGrouping:
         runs = create_tool_runs(lots, max_edd_gap=10)
         assert len(runs) == 2
 
+    def test_long_campaign_is_not_split_by_duration(self):
+        """A fábrica retirou o limite de dias seguidos (09/10/2026)."""
+        lots = [
+            _make_lot(f"L{i}", f"O{i}", "T1", "M1", prod_min=1020, edd=20 + i)
+            for i in range(8)
+        ]
+        legacy = FactoryConfig()
+        legacy.max_run_days = 1  # valor antigo: tem de ser ignorado
+
+        for config in (None, FactoryConfig(), legacy):
+            runs = create_tool_runs(lots, config=config)
+            assert len(runs) == 1
+            assert runs[0].total_prod_min == 8 * 1020
+
+    def test_edd_span_still_splits_a_campaign(self):
+        lots = [
+            _make_lot(f"L{i}", f"O{i}", "T1", "M1", prod_min=60, edd=2 + 8 * i)
+            for i in range(6)
+        ]
+
+        runs = create_tool_runs(lots, config=FactoryConfig())
+
+        # Gaps of 8 days (<= 10) keep the chain; the 30-day span cuts it.
+        assert [[lot.edd for lot in run.lots] for run in runs] == [
+            [2, 10, 18, 26], [34, 42]
+        ]
+
     def test_campaign_splits_when_material_release_floor_changes(self):
         """Future demand cannot hold back work whose material is released."""
 

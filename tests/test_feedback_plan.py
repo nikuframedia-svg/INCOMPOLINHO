@@ -750,7 +750,8 @@ def test_subcontract_lead_time_counts_workdays_and_holidays():
     assert effective_internal_deadline_for_op(op, 10, {4, 5, 6}) == 2
 
 
-def test_five_day_run_is_best_effort_not_invalid_physics():
+def test_five_consecutive_days_need_no_approval_for_their_length():
+    # A fábrica retirou o limite de dias seguidos (09/10/2026).
     data = _engine(ops=[_op(oee=1, setup_hours=0)])
     data.ops[0].d = [0] * 10 + [500]
     lot = Lot(
@@ -788,58 +789,12 @@ def test_five_day_run_is_best_effort_not_invalid_physics():
             "early_window_violations": 0,
         },
         data,
-        FactoryConfig(max_run_days=4),
+        FactoryConfig(),
     )
     assert report["physical_gate_passed"] is True
-    assert report["status"] == "best_effort"
-    assert report["apply_decision"] == "approval_required"
-    assert report["metrics"]["long_productions"] == 1
-
-
-def test_non_consecutive_five_day_run_does_not_trigger_four_day_rule():
-    data = _engine()
-    data.ops[0].d = [0] * 10 + [500]
-    lot = Lot(
-        id="LONG",
-        op_id="T1_M1_SKU1",
-        tool_id="T1",
-        machine_id="M1",
-        alt_machine_id=None,
-        qty=500,
-        prod_min=300,
-        setup_min=0,
-        edd=10,
-        is_twin=False,
-    )
-    segments = []
-    for day in [0, 1, 2, 3, 5]:
-        segment = _segment(
-            lot_id="LONG",
-            machine="M1",
-            tool="T1",
-            setup=0,
-            qty=100,
-        )
-        segment.day_idx = day
-        segment.edd = 10
-        segments.append(segment)
-
-    report = build_gate_report(
-        segments,
-        [lot],
-        {
-            "otd": 100,
-            "otd_d": 100,
-            "tardy_count": 0,
-            "otd_d_failures": 0,
-            "early_window_violations": 0,
-        },
-        data,
-        FactoryConfig(max_run_days=4),
-    )
-
-    assert report["metrics"]["long_productions"] == 0
-    assert report["long_production_detail"] == []
+    assert "long_production" not in report["approval_reasons"]
+    assert "long_productions" not in report["metrics"]
+    assert "long_production_detail" not in report
 
 
 def test_replan_job_rejects_result_from_replaced_dataset(monkeypatch):

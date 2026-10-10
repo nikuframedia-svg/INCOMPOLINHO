@@ -40,6 +40,7 @@ from backend.scheduler.jit_policy import (
     lot_demand_output_milestones,
     lot_output_milestones,
 )
+from backend.scheduler.material_quantities import delivery_readiness
 from backend.scheduler.operators import segment_operator_demand
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
@@ -493,7 +494,7 @@ def replay_scenario(
     tool_available: dict[str, float] = {}
     crew_available: dict[str, list[float]] = {}
     operator_reservations: dict[str, list[tuple[float, float, int]]] = {}
-    lot_completion: dict[str, int] = {}
+    replayed: list[Segment] = []
     operator_absences = _operator_absences(data, config)
     open_horizon = float((data.n_days + max_lead * 2 + 365) * day_cap)
 
@@ -529,7 +530,7 @@ def replay_scenario(
                 ),
             )
             _record_completion(
-                segment, end, day_cap, machine_available, tool_available, lot_completion,
+                segment, end, day_cap, machine_available, tool_available, replayed,
             )
             continue
         material_delay = int(manifest["material_delays"].get(segment.lot_id, 0))
@@ -594,32 +595,31 @@ def replay_scenario(
             horizon=open_horizon,
         )
         _record_completion(
-            segment, end, day_cap, machine_available, tool_available, lot_completion,
+            segment, end, day_cap, machine_available, tool_available, replayed,
         )
 
+    # Each delivery is ready when its own replayed pieces are (shared
+    # readiness evaluator); a late supplier adds working days to the return.
+    readiness = delivery_readiness(
+        measured_lots,
+        replayed,
+        data,
+        extra_lead={
+            str(lot_id): int(days)
+            for lot_id, days in manifest["subcontract_delays"].items()
+        },
+    )
+    output_delay: dict[str, int] = {}
+    for record in readiness:
+        if not record.is_demand or not _measured(record.customer_delivery_day, horizon):
+            continue
+        output_delay[record.lot_id] = max(
+            output_delay.get(record.lot_id, 0), max(0, record.customer_delay)
+        )
     tardy: list[tuple[str, int]] = []
     for lot in measured_lots:
         planning_checkpoint()
-        completion = lot_completion.get(lot.id, data.n_days)
-        supplier_delay = int(manifest["subcontract_delays"].get(lot.id, 0))
-        output_delays: list[int] = []
-        for output in _measured_outputs(lot, horizon):
-            ready_day = completion
-            if bool(output.get("is_subcontracted")):
-                ready_day = add_workdays(
-                    ready_day,
-                    int(output.get("subcontract_lead_time_days", 0) or 0)
-                    + supplier_delay,
-                    holidays,
-                )
-            output_delays.append(
-                max(
-                    0,
-                    ready_day
-                    - int(output.get("customer_delivery_day", lot.edd)),
-                )
-            )
-        delay = max(output_delays, default=0)
+        delay = output_delay.get(lot.id, 0)
         demand_factor = float(manifest["demand_factors"].get(lot.sku, 1.0))
         stock_factor = float(manifest["stock_factors"].get(lot.sku, 1.0))
         if math.ceil(lot.qty * demand_factor / max(0.01, stock_factor)) > lot.qty:
@@ -649,17 +649,25 @@ def _record_completion(
     day_cap: int,
     machine_available: dict[str, float],
     tool_available: dict[str, float],
-    lot_completion: dict[str, int],
+    replayed: list[Segment],
 ) -> None:
     machine_available[segment.machine_id] = end
     tool_available[segment.tool_id] = end
     completion_day = math.floor((end - 0.001) / day_cap)
-    previous_completion = lot_completion.get(segment.lot_id)
-    lot_completion[segment.lot_id] = (
-        completion_day
-        if previous_completion is None
-        else max(previous_completion, completion_day)
+    offset = max(0.0, end - completion_day * day_cap)
+    # The replayed block ends on its simulated day; its minute keeps the
+    # chronological order the shared readiness evaluator relies on.
+    replayed.append(
+        replace(
+            segment,
+            day_idx=completion_day,
+            end_min=min(1440, 420 + int(math.ceil(offset))),
+        )
     )
+
+
+def _measured(delivery_day: int, horizon: RobustnessHorizon | None) -> bool:
+    return horizon is None or horizon.covers(int(delivery_day))
 
 
 def _measured_outputs(lot: Lot, horizon: RobustnessHorizon | None) -> list[dict]:
@@ -728,33 +736,14 @@ def _baseline_tardy_lot_ids(
 ) -> frozenset[str]:
     """Return lots already late in the unperturbed candidate plan."""
 
-    lot_completion: dict[str, int] = {}
-    for segment in segments:
-        if segment.prod_min <= 0 and segment.setup_min <= 0:
-            continue
-        lot_completion[segment.lot_id] = max(
-            lot_completion.get(segment.lot_id, segment.day_idx),
-            segment.day_idx,
-        )
-    max_lead = _max_subcontract_lead(lots)
-    holidays = calendar_holidays(data, -30, data.n_days + max_lead * 2 + 30)
-    tardy: set[str] = set()
-    for lot in lots:
-        if horizon is not None and lot.id not in horizon.lot_ids:
-            continue
-        completion = lot_completion.get(lot.id, data.n_days)
-        for output in _measured_outputs(lot, horizon):
-            ready_day = completion
-            if bool(output.get("is_subcontracted")):
-                ready_day = add_workdays(
-                    ready_day,
-                    int(output.get("subcontract_lead_time_days", 0) or 0),
-                    holidays,
-                )
-            if ready_day > int(output.get("customer_delivery_day", lot.edd)):
-                tardy.add(lot.id)
-                break
-    return frozenset(tardy)
+    measured = [lot for lot in lots if horizon is None or lot.id in horizon.lot_ids]
+    return frozenset(
+        record.lot_id
+        for record in delivery_readiness(measured, segments, data)
+        if record.is_demand
+        and _measured(record.customer_delivery_day, horizon)
+        and record.customer_delay > 0
+    )
 
 
 def run_robustness_battery(

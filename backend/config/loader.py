@@ -307,7 +307,10 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> FactoryConfig:
         config.earliness_policy = JIT_EARLINESS_POLICY
         config.material_release_days = JIT_MAX_ANTICIPATION_WORKDAYS
         config.early_window_enforcement = JIT_WINDOW_ENFORCEMENT
-        config.max_run_days = sched.get("max_run_days", config.max_run_days)
+        # ``max_run_days`` (limite de dias seguidos) was removed at the
+        # factory's request. Legacy YAML/snapshots may still carry it: accept
+        # and ignore it, so old configurations keep loading.
+        config.max_run_days = None
         config.max_edd_gap = sched.get("max_edd_gap", config.max_edd_gap)
         config.max_edd_span = sched.get("max_edd_span", config.max_edd_span)
         config.edd_swap_tolerance = sched.get("edd_swap_tolerance", config.edd_swap_tolerance)
@@ -486,7 +489,6 @@ def save_config(config: FactoryConfig, path: str = DEFAULT_CONFIG_PATH) -> None:
             "earliness_policy": config.earliness_policy,
             "material_release_days": config.material_release_days,
             "early_window_enforcement": config.early_window_enforcement,
-            "max_run_days": config.max_run_days,
             "max_edd_gap": config.max_edd_gap,
             "max_edd_span": config.max_edd_span,
             "edd_swap_tolerance": config.edd_swap_tolerance,
@@ -649,9 +651,8 @@ def validate_config(config: FactoryConfig, engine_data: object | None = None) ->
 
     # Scheduler numeric domains. Invalid values otherwise reach deep arithmetic
     # and can produce empty windows, negative retries or nonsensical scores.
-    for field_name in ("max_run_days", "max_edd_span"):
-        if int(getattr(config, field_name)) < 1:
-            errors.append(f"{field_name} deve ser >= 1")
+    if int(config.max_edd_span) < 1:
+        errors.append("max_edd_span deve ser >= 1")
     for field_name in (
         "max_edd_gap",
         "edd_swap_tolerance",

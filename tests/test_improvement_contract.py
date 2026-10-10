@@ -140,8 +140,8 @@ def test_subcontract_dispatch_milestone_checked_separately() -> None:
     )
     on_time = [_seg("L1", 3, 100)]
     slipped = [_seg("L1", 5, 100)]
-    assert subcontract_lateness(on_time, [lot]) == {("L1", "OP-A"): 0.0}
-    assert subcontract_lateness(slipped, [lot]) == {("L1", "OP-A"): 1.0}
+    assert subcontract_lateness(on_time, [lot], data) == {("OP-A", 8, 0): 0.0}
+    assert subcontract_lateness(slipped, [lot], data) == {("OP-A", 8, 0): 1.0}
     verdict = no_loss_verdict(_facts(slipped, [lot], data), _facts(on_time, [lot], data))
     assert any("subcontratacao" in reason for reason in verdict.reasons)
 

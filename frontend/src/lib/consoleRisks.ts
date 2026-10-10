@@ -21,7 +21,6 @@ const CAUSE_LABELS: Record<string, string> = {
   operator: "falta de operadores no turno",
   calendar: "máquina ou ferramenta parada",
   jit_exception: "produção fora dos dias permitidos para o material",
-  long_run: "produção longa",
   setup_overhead: "muitas mudanças de ferramenta",
   priority_conflict: "outras encomendas à frente",
   lead_time: "pouco tempo até à entrega",
@@ -62,18 +61,6 @@ export type LateOrderRow = {
   machine_id: string | null;
 };
 
-export type LongProductionRow = {
-  lot_id: string;
-  sku: string;
-  machine_id: string;
-  workdays: number | null;
-  limit_workdays: number | null;
-  /** All production days of the lot (may continue after a break). */
-  total_days: number | null;
-  /** Days in the longest consecutive run. */
-  consecutive_days: number | null;
-};
-
 function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
@@ -97,18 +84,5 @@ export function lateOrderRows(gate: GateReport | null | undefined): LateOrderRow
     ready_day: asNumber(item.ready_day),
     late_days: asNumber(item.late_days),
     machine_id: typeof item.machine_id === "string" && item.machine_id ? item.machine_id : null,
-  }));
-}
-
-/** Long productions from the plan report; older reports without the field give []. */
-export function longProductionRows(gate: GateReport | null | undefined): LongProductionRow[] {
-  return records(gate?.long_production_detail).map((item) => ({
-    lot_id: String(item.lot_id ?? ""),
-    sku: String(item.sku ?? ""),
-    machine_id: String(item.machine_id ?? ""),
-    workdays: asNumber(item.workdays),
-    limit_workdays: asNumber(item.limit_workdays),
-    total_days: Array.isArray(item.days) ? item.days.length : null,
-    consecutive_days: Array.isArray(item.consecutive_days) ? item.consecutive_days.length : null,
   }));
 }

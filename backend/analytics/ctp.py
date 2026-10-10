@@ -521,7 +521,7 @@ def _verify_ctp(
     from dataclasses import asdict
 
     from backend.analytics.stock_projection import build_production_by_op
-    from backend.scheduler.jit_policy import add_workdays, lot_output_milestones
+    from backend.scheduler.material_quantities import delivery_portions
     from backend.simulator.simulator import Mutation, simulate
     from backend.validation import strict_int
 
@@ -602,27 +602,14 @@ def _verify_ctp(
         for s in scenario.mutated_data.committed_supplies
         if s.op_id == op.id
     ]
-    by_lot = defaultdict(list)
-    for segment in scenario.segments:
-        by_lot[segment.lot_id].append(segment)
-    for lot in scenario.lots:
-        output = next((o for o in lot_output_milestones(lot) if str(o.get("op_id")) == op.id), None)
-        if output is None:
+    # Each delivery is available when its own pieces are (a subcontracted one
+    # when it returns), from the same delivery portions as orders and stock.
+    for portion in delivery_portions(scenario.lots, scenario.segments, scenario.mutated_data):
+        if portion.op_id != op.id:
             continue
-        lot_segments = by_lot[lot.id]
-        if output.get("is_subcontracted"):
-            day = add_workdays(max((s.day_idx for s in lot_segments), default=0),
-                              int(output.get("subcontract_lead_time_days", 0) or 0), holidays)
-            events.append((day, lot.id, int(output.get("qty", 0)),
-                           max((s.day_idx for s in lot_segments), default=day)))
-        else:
-            for segment in lot_segments:
-                quantity = (
-                    next((q for oid, _, q in segment.twin_outputs or [] if oid == op.id), 0)
-                    if segment.twin_outputs
-                    else segment.qty
-                )
-                events.append((segment.day_idx, lot.id, quantity, segment.day_idx))
+        for item in portion.slices:
+            day = portion.customer_ready_day if portion.is_subcontracted else item.day_idx
+            events.append((day, item.lot_id, item.qty, item.day_idx))
     cumulative = 0
     relevant_until = {}
     for _day, lot_id, quantity, production_day in sorted(events):

@@ -94,6 +94,24 @@ Num ciclo gémeo confirmado, a regra industrial existente partilha material:
 individuais; não aplicar inadvertidamente `max(R_outputs)` de um modelo genérico.
 Stock coproduzido não cria encomenda ou expedição fictícia.
 
+**Janela por entrega (decidido entre 07/10 e 10/10/2026).** Quando o
+carry-forward atribui um lote económico a várias entregas, cada entrega
+conserva o seu `R`: a quantidade atribuída a uma entrega só pode ser preparada
+ou produzida a partir do seu próprio `R`. O excedente económico liberta-se com
+a última entrega coberta. O lote é dimensionado uma vez (§3); partes
+libertadas em datas diferentes são execuções físicas distintas.
+Subcontratação: cada parte é expedida por entrega e fica pronta para o cliente
+na sua própria conclusão mais o lead útil, não na conclusão do lote. Gémeas
+passam ao mesmo princípio na Fase B do plano de 10/10 (até lá, ciclo inteiro).
+
+**Um só avaliador de prontidão (10/10/2026).** Stock, OTD-D, encomendas,
+expedição, subcontratação, atrasos, riscos, tooltip, propostas, CTP,
+robustez e o ciclo de melhoria usam `material_quantities.delivery_readiness`.
+As peças são fungíveis por referência: a prontidão de cada encomenda é FIFO por
+tempo absoluto sobre todos os lotes da operação. O motivo de aprovação
+`delivery_risk` é por encomenda; `tardy_count` ("Lotes no prazo") é só
+indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
+
 ## 3. Procura, quantidades e duração
 
 - Cada célula NP negativa do ISOP é uma encomenda independente. Repetições
@@ -216,7 +234,19 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
 - `completed` refere-se ao âmbito descrito. Não prometer ótimo global nem
   determinismo apenas por usar seed fixa e corte de tempo real.
 
+- Auditoria operacional (10/10/2026): métricas baratas sempre calculadas;
+  a classificação de inversões tem um limite de trabalho (não de tempo), para o
+  mesmo plano dar sempre o mesmo resultado. `not_evaluated` nunca conta como
+  aprovado: fica "por avaliar" e pede decisão do planeador.
+
 ## 7. Alterações e validação
+
+- **Publicação (decidido em 10/10/2026):** o motor da Incompol só corre código
+  que está num commit, depois das suítes completas, de cópia de segurança dos
+  dados e de explicação ao Luís. Nunca copiar ficheiros para a árvore de
+  produção nem reiniciar o serviço com alterações por guardar; uma só sessão
+  mexe na árvore de produção de cada vez. Experiências fazem-se em worktrees
+  ou cópias isoladas com `PP1_DATA_DIR`/`PP1_CONFIG_PATH` próprios.
 
 - O checkout contém trabalho não consolidado de outras tarefas. Inspecionar
   estado/diff; não resetar, limpar, sobrescrever ou publicar alterações alheias.
@@ -241,7 +271,8 @@ tests/test_candidate_retention.py tests/test_window.py`.
 Mapa atual: datas em `scheduler/jit_policy.py`; montagem em
 `scheduler/setup_identity.py`; fontes em `scheduler/canonical.py`; validação em
 `scheduler/validation.py`; medida canónica de antecipação em
-`scheduler/policy.py`; avaliação e ciclo em `scheduler/improvement.py`;
+`scheduler/policy.py`; prontidão por entrega em
+`scheduler/material_quantities.py` (partes em `scheduler/quantity_dispatch.py`); avaliação e ciclo em `scheduler/improvement.py`;
 vizinhanças N1–N3 e alocador "primeiro intervalo viável" em
 `scheduler/alternative_repair.py`; N4 em `scheduler/local_cpsat.py`; proteção em
 `plans/frozen.py`; orçamento em `planning_control.py` (todos sob `backend/`).
@@ -250,5 +281,5 @@ GA/MAP-Elites só offline em `cpo/offline_ga.py`.
 Verificação: fixtures reais congeladas em `tests/fixtures/private/` (fora do
 git; manifestos em `tests/fixtures/snapshots/`, criados por
 `scripts/freeze_snapshot_fixture.py`); casos §8.1 em
-`tests/test_acceptance_cases.py`; oráculo independente em `tests/oracle.py`;
+`tests/test_acceptance_cases.py`; oráculos independentes em `tests/oracle.py` e `tests/oracle_delivery.py`;
 benchmark repetível em `scripts/benchmark_solver.py`.

@@ -91,7 +91,7 @@ def test_crew_or_capacity_never_appear_without_proof():
     risks = compute_lot_risks(segments, lots, engine)
 
     assert {risk.binding_constraint for risk in risks} <= {
-        "none", "jit_exception", "long_run", "operator", "setup", "calendar",
+        "none", "jit_exception", "operator", "setup", "calendar",
     }
     for risk in risks:
         assert risk.binding_constraint not in {"crew", "capacity"}

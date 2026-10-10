@@ -2562,7 +2562,6 @@ def _hermetic_benchmark_config():
     config.earliness_policy = "jit"
     config.early_window_enforcement = "soft"
     config.material_release_days = 5
-    config.max_run_days = 5
     config.setup_overrides = []
     config.machine_unavailability = []
     config.tool_unavailability = []

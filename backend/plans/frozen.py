@@ -15,6 +15,20 @@ class NoValidCandidateError(ValueError):
     """The optimizer finished without a complete executable candidate."""
 
 
+
+def preserved_lots_warning(started: int, freeze_day: int) -> str:
+    """One wording for every path that keeps started lots unchanged."""
+
+    if started == 1:
+        return (
+            f"Plano anterior preservado: 1 lote iniciado antes do dia {freeze_day} "
+            "mantido sem alterações."
+        )
+    return (
+        f"Plano anterior preservado: {started} lotes iniciados antes do dia {freeze_day} "
+        "mantidos sem alterações."
+    )
+
 def _current_planning_day(engine_data, config, *, now: datetime | None = None) -> int:
     workdays = list(getattr(engine_data, "workdays", []) or [])
     if not workdays:
@@ -420,10 +434,7 @@ def _compact_preserving_started_lots(
     ]
     started = len(frozen_lots) - len(anchored)
     if started:
-        result.warnings.append(
-            f"Plano anterior preservado: {started} lote(s) iniciado(s) "
-            f"antes do dia {freeze_day} mantidos sem alterações."
-        )
+        result.warnings.append(preserved_lots_warning(started, freeze_day))
     if anchored:
         result.warnings.append(_anchor_warning(anchored))
     return result
@@ -587,8 +598,7 @@ def optimize_preserving_started_lots(
                 started = len(lots) - len(anchored)
                 warnings = [
                     *(
-                        [f"Plano anterior preservado: {started} lote(s) iniciado(s) "
-                         f"antes do dia {freeze_day} mantidos sem alterações."]
+                        [preserved_lots_warning(started, freeze_day)]
                         if started else []
                     ),
                     *([_anchor_warning(anchored)] if anchored else []),

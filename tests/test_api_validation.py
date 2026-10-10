@@ -201,7 +201,7 @@ def test_config_validation_returns_400(monkeypatch):
 @pytest.mark.parametrize(
     ("update", "message"),
     [
-        ({"max_run_days": 0}, "max_run_days"),
+        ({"max_edd_span": 0}, "max_edd_span"),
         ({"jit_buffer_pct": 1.5}, "jit_buffer_pct"),
         ({"jit_threshold": 101}, "jit_threshold"),
         ({"vns_max_iter": -1}, "vns_max_iter"),

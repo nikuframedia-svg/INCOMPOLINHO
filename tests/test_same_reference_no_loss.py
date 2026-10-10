@@ -93,7 +93,12 @@ def test_same_reference_repair_cannot_exchange_dispatch_lateness(twin, prefix, r
     assert coverage_violations(result, lots) == []
     verdict = contract_verdict(result, segments, data, candidate_lots=lots)
     assert verdict.admissible, verdict.reasons
-    assert subcontract_lateness(result, lots) == subcontract_lateness(segments, lots)
+    # Judged per delivery (pieces are fungible across lots): no delivery
+    # leaves later; the repair may let one leave earlier.
+    lateness_before = subcontract_lateness(segments, lots, data)
+    lateness_after = subcontract_lateness(result, lots, data)
+    assert lateness_after.keys() == lateness_before.keys()
+    assert all(lateness_after[key] <= lateness_before[key] for key in lateness_before)
     assert production_lot_obligations(lots) == production_lot_obligations(original[1])
     assert (sorted(segments, key=lambda s: (s.day_idx, s.start_min)),
             sorted(lots, key=lambda lot: lot.id), data, config) == (
@@ -106,7 +111,7 @@ def test_same_reference_repair_cannot_exchange_dispatch_lateness(twin, prefix, r
     assert before["otd"] == after["otd"] == 100
     assert before["otd_d"] == after["otd_d"] == 100
     assert before["subcontract_dispatch_misses"] == after["subcontract_dispatch_misses"] == (4 if twin else 2)
-    assert before["subcontract_dispatch_late_workdays"] == after["subcontract_dispatch_late_workdays"]
+    assert after["subcontract_dispatch_late_workdays"] <= before["subcontract_dispatch_late_workdays"]
 
 
 @pytest.mark.parametrize("stop", ["cancel", "timeout"])
@@ -151,7 +156,7 @@ def test_common_normalizer_can_still_improve_both_dispatches(twin):
     assert_plan_valid(result, data, config, lots=lots)
     assert coverage_violations(result, lots) == []
     assert contract_verdict(result, segments, data, candidate_lots=lots).admissible
-    assert set(subcontract_lateness(result, lots).values()) == {0.0}
+    assert set(subcontract_lateness(result, lots, data).values()) == {0.0}
     assert {segment.day_idx for segment in result} == {0}
     assert sum(segment.setup_min for segment in result) == 30
     assert normalize_earliest_legal_plan(result, lots, data, config, annotate=False) == result

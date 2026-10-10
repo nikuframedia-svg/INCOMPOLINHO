@@ -12,12 +12,10 @@ import { ProgressBar } from "../components/ui/ProgressBar";
 import { useAppStore } from "../stores/useAppStore";
 import {
   lateOrderRows,
-  longProductionRows,
   plural,
   riskCauseLabel,
   riskStatus,
   riskStatusLabel,
-  type LongProductionRow,
   type RiskStatus,
 } from "../lib/consoleRisks";
 
@@ -93,19 +91,6 @@ function formatQty(value: number) {
 }
 
 const LATE_ORDERS_SHOWN = 10;
-
-function consecutiveDays(count: number | null) {
-  return count === null ? "— dias seguidos" : plural(count, "dia seguido", "dias seguidos");
-}
-
-function longProductionText(item: LongProductionRow) {
-  let text = `${consecutiveDays(item.workdays)} · limite: ${consecutiveDays(item.limit_workdays)}`;
-  if (item.total_days !== null && item.consecutive_days !== null && item.total_days > item.consecutive_days) {
-    const extra = item.total_days - item.consecutive_days;
-    text += ` · volta à máquina mais ${plural(extra, "dia", "dias")} depois de uma pausa`;
-  }
-  return text;
-}
 
 function groupLabel(group: string) {
   return group === "Medias" ? "Médias" : group;
@@ -256,7 +241,6 @@ export function ConsolePage() {
   const lateOrders = lateOrderRows(gateReport);
   const ordersLateTotal = Number(gateReport?.metrics?.orders_late);
   const lateOrdersCount = Number.isFinite(ordersLateTotal) ? Math.max(ordersLateTotal, lateOrders.length) : lateOrders.length;
-  const longProductions = longProductionRows(gateReport);
   const lateOrdersShown = Math.min(lateOrders.length, LATE_ORDERS_SHOWN);
   // The report lists at most 50 orders; the remainder comes from the full count.
   const lateOrdersHidden = Math.max(lateOrdersCount - lateOrdersShown, 0);
@@ -745,33 +729,6 @@ export function ConsolePage() {
               </>
             )}
           </Card>
-
-          {longProductions.length > 0 && (
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px 12px" }}>
-                <span style={{ fontSize: 15, fontWeight: 600, color: T.primary }}>Produções longas</span>
-                <div style={{ color: T.tertiary, fontSize: 10, marginTop: 4 }}>
-                  A mesma referência fica na máquina mais dias seguidos do que o limite definido nos Parâmetros
-                </div>
-              </div>
-              {longProductions.map((item, index) => (
-                <div
-                  key={`${item.lot_id}-${index}`}
-                  data-testid="long-production-row"
-                  style={{ borderTop: index > 0 ? `1px solid ${T.border}` : undefined, padding: "10px 20px", display: "flex", gap: 12, alignItems: "center" }}
-                >
-                  <Dot color={T.orange} size={6} />
-                  <div style={{ minWidth: 0, flex: 1, display: "flex", gap: 8, alignItems: "baseline" }}>
-                    <span style={{ color: T.primary, fontSize: 12, fontWeight: 500 }}>{item.machine_id || "?"}</span>
-                    <span style={{ color: T.secondary, fontSize: 11, fontFamily: T.mono }}>{item.sku}</span>
-                  </div>
-                  <span style={{ color: T.secondary, fontSize: 11, textAlign: "right" }}>
-                    {longProductionText(item)}
-                  </span>
-                </div>
-              ))}
-            </Card>
-          )}
         </div>
       </div>
     </div>

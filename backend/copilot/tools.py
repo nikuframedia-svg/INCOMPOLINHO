@@ -235,7 +235,6 @@ ACTION_TOOLS = [
                         "oee_default",
                         "jit_buffer_pct",
                         "jit_threshold",
-                        "max_run_days",
                         "max_edd_gap",
                         "edd_swap_tolerance",
                         "campaign_window",

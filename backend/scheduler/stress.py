@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from backend.scheduler.jit_policy import production_due_day
+from backend.scheduler.material_quantities import delivery_readiness, factory_readiness
 from backend.scheduler.types import Lot, Segment
 
 
@@ -32,6 +33,8 @@ def compute_stress_map(
     n_days: int,
     n_holidays: int = 0,
     day_capacity: int = 1020,
+    *,
+    data=None,
 ) -> list[SegmentStress]:
     """Compute stress for each productive segment.
 
@@ -42,18 +45,29 @@ def compute_stress_map(
         1.0-2.0 warning (yellow)  — 1-2 day disruption causes tardy
         < 1.0   ok (green)        — has slack
     """
-    # 1. Completion day per lot
-    lot_completion: dict[str, int] = {}
-    for seg in segments:
-        if seg.day_idx >= 0 and seg.prod_min > 0:
-            prev = lot_completion.get(seg.lot_id, -1)
-            if seg.day_idx > prev:
-                lot_completion[seg.lot_id] = seg.day_idx
-
-    # 2. Controllable production due date per lot
-    lot_due: dict[str, int] = {}
-    for lot in lots:
-        lot_due[lot.id] = production_due_day(lot)
+    # 1-2. Completion and controllable due day of the delivery portions each
+    # segment produces (shared readiness evaluator, not the lot end). Only
+    # factory days are read; with ``data`` the factory calendar also fixes
+    # the due day of legacy lots without per-delivery milestones.
+    readiness = (
+        delivery_readiness(lots, segments, data, missing_day=n_days)
+        if data is not None
+        else factory_readiness(lots, segments, missing_day=n_days)
+    )
+    lot_controlling: dict[str, tuple[int, int]] = {}
+    segment_controlling: dict[int, tuple[int, int]] = {}
+    for record in readiness:
+        if not record.is_demand:
+            continue
+        pair = (record.production_due_day, record.factory_day)
+        current = lot_controlling.get(record.lot_id)
+        if current is None or pair[1] - pair[0] > current[1] - current[0]:
+            lot_controlling[record.lot_id] = pair
+        for item in record.slices:
+            current = segment_controlling.get(item.segment_index)
+            if current is None or pair[1] - pair[0] > current[1] - current[0]:
+                segment_controlling[item.segment_index] = pair
+    lot_due = {lot.id: production_due_day(lot) for lot in lots}
 
     # 3. Utilisation per machine
     machine_used: dict[str, float] = defaultdict(float)
@@ -70,12 +84,14 @@ def compute_stress_map(
 
     # 4. Compute stress per segment
     results: list[SegmentStress] = []
-    for seg in segments:
+    for index, seg in enumerate(segments):
         if seg.day_idx < 0 or seg.prod_min <= 0:
             continue  # skip buffer days and setup-only segments
 
-        edd = lot_due.get(seg.lot_id, n_days)
-        completion = lot_completion.get(seg.lot_id, seg.day_idx)
+        edd, completion = segment_controlling.get(
+            index,
+            lot_controlling.get(seg.lot_id, (lot_due.get(seg.lot_id, n_days), seg.day_idx)),
+        )
         slack = max(edd - completion, 0)
 
         util = machine_util.get(seg.machine_id, 0.5)

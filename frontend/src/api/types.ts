@@ -571,7 +571,8 @@ export interface FactoryConfig {
   jit_threshold: number;
   jit_max_retries: number;
   jit_earliness_target: number;
-  max_run_days: number;
+  /** Obsoleto: o limite de dias seguidos foi retirado (09/10/2026); null = sem limite. */
+  max_run_days?: number | null;
   max_edd_gap: number;
   max_edd_span: number;
   edd_swap_tolerance: number;
@@ -813,19 +814,6 @@ export interface LateOrderDetail {
   late_days: number | null;
 }
 
-/** A lot produced on more consecutive days than max_run_days (a weekend breaks the count). */
-export interface LongProductionDetail {
-  lot_id: string;
-  sku: string;
-  machine_id: string;
-  workdays: number;
-  limit_workdays: number;
-  excess_workdays: number;
-  consecutive?: boolean;
-  days: number[];
-  consecutive_days: number[];
-}
-
 export interface GateReport {
   status: "applicable" | "best_effort" | "invalid_physics" | string;
   apply_decision: "auto_applicable" | "approval_required" | "blocked";
@@ -866,7 +854,6 @@ export interface GateReport {
     late_workdays: number;
   }>;
   setup_overlap_detail: Record<string, unknown>[];
-  long_production_detail?: LongProductionDetail[];
   proposals: GateProposal[];
   solver_trace?: SolverTrace;
   solver_status?: string;
@@ -997,6 +984,8 @@ export interface ReplanJob {
   } | null;
   warnings: string[];
   error: string | null;
+  /** Stable failure code (planning_timeout, invalid_plan, blocked, internal_error, interrupted). */
+  code?: string | null;
   request_fingerprint?: string | null;
   deduplicated?: boolean;
   stale?: boolean;

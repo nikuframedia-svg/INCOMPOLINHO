@@ -25,7 +25,108 @@ class PlanValidationError(ValueError):
 
     def __init__(self, violations: list[dict[str, Any]]) -> None:
         self.violations = violations
-        super().__init__(f"Plano invalido: {len(violations)} conflito(s) de plano.")
+        count = len(violations)
+        super().__init__(
+            f"Plano inválido: {count} {'conflito' if count == 1 else 'conflitos'}."
+        )
+
+
+def pt_int(value: float) -> str:
+    """Whole number in pt-PT style: ``1200``, ``12 345`` (space from 5 digits)."""
+
+    number = int(round(float(value)))
+    digits = f"{abs(number):d}"
+    if len(digits) >= 5:
+        digits = f"{abs(number):,d}".replace(",", " ")
+    return f"-{digits}" if number < 0 else digits
+
+
+def plural(count: float, singular: str, plural_form: str) -> str:
+    return singular if int(round(float(count))) == 1 else plural_form
+
+
+def day_label(day_idx: int, data: EngineData | None = None) -> str:
+    """``dia 13 (26/10)``; only ``dia 13`` when the calendar has no date."""
+
+    from backend.calendar import _day_date
+
+    calendar_date = _day_date(int(day_idx), data) if data is not None else None
+    if calendar_date is None:
+        return f"dia {int(day_idx)}"
+    return f"dia {int(day_idx)} ({calendar_date:%d/%m})"
+
+
+def _identity_refs(identity: tuple[str, tuple[str, ...]]) -> list[str]:
+    refs: list[str] = []
+    for reference in identity[1]:
+        text = str(reference)
+        if text.startswith("family:"):
+            refs.extend(part for part in text[len("family:"):].split("|") if part)
+        elif text:
+            refs.append(text)
+    return refs
+
+
+def setup_identity_label(identity: tuple[str, tuple[str, ...]]) -> str:
+    """``VUL115 (ref. 8718696125)`` instead of the internal identity tuple."""
+
+    refs = _identity_refs(identity)
+    if not refs:
+        return str(identity[0])
+    prefix = "ref." if len(refs) == 1 else "refs."
+    return f"{identity[0]} ({prefix} {', '.join(refs)})"
+
+
+def _transition_message(
+    current: Segment,
+    previous: Segment,
+    machine_id: str,
+    actual_setup: float,
+    required_setup: float,
+    data: EngineData | None,
+) -> str:
+    current_identity = segment_setup_identity(current)
+    previous_identity = segment_setup_identity(previous)
+    previous_text = (
+        str(previous_identity[0])
+        if previous_identity[0] != current_identity[0]
+        else setup_identity_label(previous_identity)
+    )
+    return (
+        f"Falta afinação: a ferramenta {setup_identity_label(current_identity)} entra na "
+        f"{machine_id} depois da {previous_text}, no {day_label(current.day_idx, data)}, "
+        f"com {pt_int(actual_setup)} de {pt_int(required_setup)} min de afinação."
+    )
+
+
+def _protected_context(
+    segments: list[Segment],
+    data: EngineData | None,
+) -> list[Segment]:
+    """Started-lot segments kept outside a residual plan, as physical evidence.
+
+    A residual calculation (frozen started lots) leaves those lots out of
+    ``segments`` but records them in ``data.protected_mounting_segments``.
+    Setup transitions, tool movements and machine occupancy must be judged
+    with them in place: without them the validator sees the wrong
+    predecessor (a false missing setup) and misses a real interruption of a
+    tool the started lot keeps mounted.  Lots already in the plan are
+    judged by the plan's segments only.
+    """
+
+    if data is None or not getattr(data, "protected_mounting_segments", None):
+        return []
+    from backend.scheduler.resources import protected_mounting_segments
+
+    # A lot carried by the plan itself is judged by the plan's own segments:
+    # a stale protected copy of a moved lot must never bridge a real missing
+    # setup (it would act as a phantom predecessor).
+    planned_lots = {segment.lot_id for segment in segments}
+    return [
+        segment
+        for segment in protected_mounting_segments(data)
+        if segment.end_min > segment.start_min and segment.lot_id not in planned_lots
+    ]
 
 
 def _timing(config: FactoryConfig | None) -> tuple[int, int, int]:
@@ -246,6 +347,16 @@ def validate_plan(
     shift_a_start, _shift_b_end, day_cap = _timing(config)
     # The plan and shifts are immutable during one validation pass.
     intervals = {id(segment): segment_abs(segment, config) for segment in active}
+    protected_context = _protected_context(segments, data)
+    protected_ids = {id(segment) for segment in protected_context}
+    intervals.update(
+        {id(segment): segment_abs(segment, config) for segment in protected_context}
+    )
+
+    def judged(*items: Segment) -> bool:
+        """At least one side belongs to the plan under validation."""
+
+        return any(id(item) not in protected_ids for item in items)
 
     def interval(segment: Segment) -> tuple[float, float]:
         return intervals[id(segment)]
@@ -341,8 +452,8 @@ def validate_plan(
                     _violation(
                         "ineligible_machine",
                         (
-                            f"Lote {lot.id} não é elegível para a máquina "
-                            f"{seg.machine_id}."
+                            f"A referência {lot.sku or lot.op_id} não pode ser produzida "
+                            f"na {seg.machine_id}."
                         ),
                         seg,
                         eligible_machines=sorted(eligible_machines),
@@ -353,8 +464,8 @@ def validate_plan(
                     _violation(
                         "ineligible_tool",
                         (
-                            f"Lote {lot.id} não é elegível para a ferramenta "
-                            f"{seg.tool_id}."
+                            f"A referência {lot.sku or lot.op_id} não pode ser produzida "
+                            f"com a ferramenta {seg.tool_id}."
                         ),
                         seg,
                         eligible_tools=sorted(eligible_tools),
@@ -365,7 +476,7 @@ def validate_plan(
             violations.append(
                 _violation(
                     "machine_down",
-                    f"Maquina {seg.machine_id} inativa.",
+                    f"Máquina {seg.machine_id} inativa.",
                     seg,
                 )
             )
@@ -373,7 +484,7 @@ def validate_plan(
             violations.append(
                 _violation(
                     "machine_down",
-                    f"Maquina {seg.machine_id} indisponivel no dia {seg.day_idx}.",
+                    f"Máquina {seg.machine_id} indisponível no {day_label(seg.day_idx, data)}.",
                     seg,
                 )
             )
@@ -381,7 +492,7 @@ def validate_plan(
             violations.append(
                 _violation(
                     "tool_down",
-                    f"Ferramenta {seg.tool_id} indisponivel no dia {seg.day_idx}.",
+                    f"Ferramenta {seg.tool_id} indisponível no {day_label(seg.day_idx, data)}.",
                     seg,
                 )
             )
@@ -399,7 +510,7 @@ def validate_plan(
                     _violation(
                         "machine_down",
                         (
-                            f"Maquina {seg.machine_id} indisponivel entre "
+                            f"Máquina {seg.machine_id} indisponível entre "
                             f"{block.get('start_min')} e {block.get('end_min')}."
                         ),
                         seg,
@@ -420,7 +531,7 @@ def validate_plan(
                     _violation(
                         "tool_down",
                         (
-                            f"Ferramenta {seg.tool_id} indisponivel entre "
+                            f"Ferramenta {seg.tool_id} indisponível entre "
                             f"{block.get('start_min')} e {block.get('end_min')}."
                         ),
                         seg,
@@ -445,8 +556,9 @@ def validate_plan(
                 {
                     "kind": "lot_production_minutes",
                     "message": (
-                        f"Lote {lot_id}: segmentos representam {actual_prod_min:.1f} "
-                        f"de {expected_prod_min:.1f} min de produção."
+                        f"Referência {lot.sku or lot.op_id} ({lot.machine_id}): o plano tem "
+                        f"{pt_int(actual_prod_min)} de {pt_int(expected_prod_min)} min "
+                        "de produção."
                     ),
                     "lot_id": lot_id,
                     "actual_prod_min": round(actual_prod_min, 3),
@@ -457,10 +569,15 @@ def validate_plan(
     by_machine: dict[str, list[Segment]] = {}
     for seg in active:
         by_machine.setdefault(seg.machine_id, []).append(seg)
+    protected_by_machine: dict[str, list[Segment]] = {}
+    for seg in protected_context:
+        protected_by_machine.setdefault(seg.machine_id, []).append(seg)
     ordered_by_machine: dict[str, list[Segment]] = {}
     transition_setup_by_segment: dict[int, float] = {}
     for machine_id, segs in by_machine.items():
         used_by_day: dict[int, float] = {}
+        # Protected capacity is reserved by calendar blocks, so the daily
+        # load counts only the plan under validation.
         for seg in segs:
             used_by_day[seg.day_idx] = used_by_day.get(seg.day_idx, 0.0) + (
                 seg.end_min - seg.start_min
@@ -471,8 +588,9 @@ def validate_plan(
                     _violation(
                         "day_cap_violation",
                         (
-                            f"Maquina {machine_id} excede capacidade diaria no dia {day_idx}: "
-                            f"{used_min:.0f}/{day_cap} min."
+                            f"Máquina {machine_id} excede a capacidade diária no "
+                            f"{day_label(day_idx, data)}: {pt_int(used_min)} de "
+                            f"{pt_int(day_cap)} min."
                         ),
                         machine_id=machine_id,
                         day_idx=day_idx,
@@ -481,18 +599,22 @@ def validate_plan(
                     )
                 )
 
-        ordered = sorted(segs, key=lambda s: interval(s)[0])
+        ordered = sorted(
+            [*segs, *protected_by_machine.get(machine_id, [])],
+            key=lambda s: interval(s)[0],
+        )
         ordered_by_machine[machine_id] = ordered
         for index, (prev, curr) in enumerate(zip(ordered, ordered[1:]), start=1):
+            if not judged(prev, curr):
+                continue
             prev_start, prev_end = interval(prev)
             curr_start, curr_end = interval(curr)
             if curr_start < prev_end - 0.01 and curr_end > prev_start + 0.01:
                 violations.append(
                     _violation(
                         "machine_overlap",
-                        f"Maquina {machine_id} com segmentos sobrepostos.",
-                        curr,
-                        prev,
+                        f"Máquina {machine_id} com produções sobrepostas.",
+                        *((prev, curr) if id(curr) in protected_ids else (curr, prev)),
                     )
                 )
             required_setup = required_setup_minutes(curr, lots_by_id)
@@ -512,13 +634,33 @@ def validate_plan(
                     if actual_setup <= 0.01
                     else "insufficient_tool_change_setup"
                 )
+                if id(curr) in protected_ids:
+                    # The started lot relies on its tool staying mounted; the
+                    # plan placed another tool in between.  Report it on the
+                    # plan segment, the one a repair can move.
+                    violations.append(
+                        _violation(
+                            kind,
+                            (
+                                f"A produção já iniciada da ferramenta "
+                                f"{setup_identity_label(segment_setup_identity(curr))} na "
+                                f"{machine_id}, no {day_label(curr.day_idx, data)}, precisa "
+                                f"da ferramenta montada, mas o plano coloca antes a "
+                                f"{setup_identity_label(segment_setup_identity(prev))}."
+                            ),
+                            prev,
+                            curr,
+                            actual_setup_min=actual_setup,
+                            required_setup_min=required_setup,
+                            transition="protected_mounting_interrupted",
+                        )
+                    )
+                    continue
                 violations.append(
                     _violation(
                         kind,
-                        (
-                            f"Afinação {segment_setup_identity(curr)} entra em {machine_id} "
-                            f"depois de {segment_setup_identity(prev)}, com {actual_setup:.0f} de "
-                            f"{required_setup:.0f} min de setup."
+                        _transition_message(
+                            curr, prev, machine_id, actual_setup, required_setup, data,
                         ),
                         curr,
                         prev,
@@ -531,24 +673,35 @@ def validate_plan(
     by_tool: dict[str, list[Segment]] = {}
     for seg in active:
         by_tool.setdefault(seg.tool_id, []).append(seg)
+    protected_by_tool: dict[str, list[Segment]] = {}
+    for seg in protected_context:
+        protected_by_tool.setdefault(seg.tool_id, []).append(seg)
     for tool_id, segs in by_tool.items():
-        ordered = sorted(segs, key=lambda s: interval(s)[0])
+        ordered = sorted(
+            [*segs, *protected_by_tool.get(tool_id, [])],
+            key=lambda s: interval(s)[0],
+        )
         for i, first in enumerate(ordered):
             first_start, first_end = interval(first)
             for second in ordered[i + 1 :]:
                 second_start, second_end = interval(second)
                 if second_start >= first_end - 0.01:
                     break
-                if first.machine_id != second.machine_id and second_end > first_start + 0.01:
+                if (
+                    judged(first, second)
+                    and first.machine_id != second.machine_id
+                    and second_end > first_start + 0.01
+                ):
                     violations.append(
                         _violation(
                             "tool_conflict",
-                            f"Ferramenta {tool_id} em duas maquinas ao mesmo tempo.",
-                            second,
-                            first,
+                            f"Ferramenta {tool_id} em duas máquinas ao mesmo tempo.",
+                            *((first, second) if id(second) in protected_ids else (second, first)),
                         )
                     )
         for previous, current in zip(ordered, ordered[1:]):
+            if not judged(previous, current):
+                continue
             machine_ordered = ordered_by_machine.get(current.machine_id, [])
             machine_index = next(
                 (
@@ -593,12 +746,17 @@ def validate_plan(
                     _violation(
                         kind,
                         (
-                            f"Ferramenta {tool_id} regressa de "
-                            f"{previous.machine_id} para {current.machine_id} com "
-                            f"{actual_setup:.0f} de {required_setup:.0f} min de setup."
+                            f"Falta afinação: a ferramenta {tool_id} passa da "
+                            f"{previous.machine_id} para a {current.machine_id}, no "
+                            f"{day_label(current.day_idx, data)}, com "
+                            f"{pt_int(actual_setup)} de {pt_int(required_setup)} min de "
+                            "afinação."
                         ),
-                        current,
-                        previous,
+                        *(
+                            (previous, current)
+                            if id(current) in protected_ids
+                            else (current, previous)
+                        ),
                         actual_setup_min=actual_setup,
                         required_setup_min=required_setup,
                         transition="tool_machine_change",
@@ -665,8 +823,9 @@ def validate_plan(
                 _violation(
                     "setup_crew_overlap",
                     (
-                        f"{len(active_setups)} preparacoes usam {capacity} "
-                        f"equipa(s) de setup de {group} ao mesmo tempo."
+                        f"{len(active_setups)} afinações em simultâneo para "
+                        f"{capacity} {plural(capacity, 'equipa', 'equipas')} de afinação "
+                        f"de {group}, no {day_label(day_idx, data)}."
                     ),
                     segment,
                     first_seg,
@@ -722,7 +881,10 @@ def validate_plan(
             violations.append(
                 _violation(
                     "detached_setup",
-                    f"Run {run_id} tem setup sem produção associada.",
+                    (
+                        f"Afinação da ferramenta {setup.tool_id} na {setup.machine_id}, no "
+                        f"{day_label(setup.day_idx, data)}, sem produção a seguir."
+                    ),
                     setup,
                 )
             )
@@ -760,8 +922,9 @@ def validate_plan(
                 _violation(
                     "detached_setup",
                     (
-                        f"Run {run_id} tem setup separado da primeira "
-                        "produção por tempo fabril utilizável."
+                        f"Afinação da ferramenta {setup.tool_id} na {setup.machine_id}, no "
+                        f"{day_label(setup.day_idx, data)}, separada da primeira "
+                        "produção por tempo de fábrica utilizável."
                     ),
                     setup,
                     productive[0],
@@ -775,7 +938,10 @@ def validate_plan(
                 violations.append(
                     _violation(
                         "run_setup_order",
-                        f"Run {run_id} produz antes do setup terminar.",
+                        (
+                            f"A ferramenta {seg.tool_id} produz na {seg.machine_id}, no "
+                            f"{day_label(seg.day_idx, data)}, antes de a afinação terminar."
+                        ),
                         seg,
                         setup,
                         setup_done=setup_done,
@@ -1051,24 +1217,31 @@ def coverage_violations(segments: list[Segment], lots: list[Lot]) -> list[dict[s
 
     metrics = coverage_metrics(segments, lots)
     violations: list[dict[str, Any]] = []
-    for key, kind, label in (
-        ("missing_lots", "missing_lots", "lote(s) sem producao"),
-        ("missing_qty", "missing_quantity", "peca(s) em falta"),
-        ("unexpected_lots", "unexpected_lots", "lote(s) desconhecido(s)"),
-        ("overproduced_qty", "duplicate_production", "peca(s) produzida(s) em excesso"),
+    for key, kind, one, many in (
+        ("missing_lots", "missing_lots", "lote sem produção", "lotes sem produção"),
+        ("missing_qty", "missing_quantity", "peça em falta", "peças em falta"),
+        ("unexpected_lots", "unexpected_lots", "lote desconhecido", "lotes desconhecidos"),
+        (
+            "overproduced_qty", "duplicate_production",
+            "peça produzida em excesso", "peças produzidas em excesso",
+        ),
         (
             "duplicate_twin_output_qty",
             "duplicate_twin_output",
-            "peca(s) gémea(s) repetida(s) noutro lote",
+            "peça gémea repetida noutro lote",
+            "peças gémeas repetidas noutro lote",
         ),
-        ("twin_output_mismatches", "twin_output_mismatch", "inconsistencia(s) de gemeas"),
+        (
+            "twin_output_mismatches", "twin_output_mismatch",
+            "inconsistência de gémeas", "inconsistências de gémeas",
+        ),
     ):
         value = int(metrics[key])
         if value:
             violations.append(
                 {
                     "kind": kind,
-                    "message": f"Cobertura invalida: {value} {label}.",
+                    "message": f"Cobertura inválida: {pt_int(value)} {plural(value, one, many)}.",
                     "count": value,
                 }
             )

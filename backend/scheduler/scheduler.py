@@ -4881,10 +4881,6 @@ def schedule_all(
             "Exceção necessária: há produções iniciadas antes da libertação "
             "de material (entrega ao cliente ou envio para subcontratação)."
         )
-    if gate_report["metrics"].get("long_productions", 0):
-        warnings.append(
-            "Exceção necessária: há produções com mais de quatro dias úteis."
-        )
     if jit_diagnostics:
         gate_report["solver_status"] = jit_diagnostics.get("solver_status")
         gate_report["feasibility"] = jit_diagnostics.get("feasibility")

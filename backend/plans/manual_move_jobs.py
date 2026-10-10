@@ -23,6 +23,12 @@ UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
 logger = logging.getLogger(__name__)
 _TERMINAL_STATUSES = {"ready", "applied", "failed", "cancelled"}
 _MAX_RETAINED_JOBS = 100
+# Shown when the check fails for a reason that is not a planning answer.  The
+# raw exception (often English) goes to the log, never to the screen.
+INTERNAL_ERROR_TEXT = (
+    "Ocorreu um erro interno ao verificar o movimento. O plano não foi "
+    "alterado. Tente novamente; se repetir, avise o suporte."
+)
 
 
 class _JobCancelled(Exception):
@@ -211,6 +217,7 @@ class ManualMoveJobManager:
                 status="failed",
                 progress=100,
                 phase="failed",
+                code="planning_timeout",
                 message="Verificação inconclusiva",
                 error=(
                     "A verificação atingiu o limite de tempo. Não foi demonstrada "
@@ -220,6 +227,7 @@ class ManualMoveJobManager:
         except ManualMoveInconclusive as exc:
             self._update(
                 job_id, status="failed", progress=100, phase="failed",
+                code="inconclusive",
                 message="Verificação inconclusiva", error=str(exc),
             )
         except ManualMoveError as exc:
@@ -234,20 +242,22 @@ class ManualMoveJobManager:
                 status="failed",
                 progress=100,
                 phase="failed",
+                code="blocked",
                 message="Não foi possível verificar o movimento",
                 error=detail,
                 gate_report=exc.gate_report,
             )
-        except Exception as exc:  # pragma: no cover - defensive job boundary
+        except Exception:  # defensive job boundary: never show raw (English) text
+            logger.exception("Unexpected manual-move preview failure")
             self._update(
                 job_id,
                 status="failed",
                 progress=100,
                 phase="failed",
+                code="internal_error",
                 message="Não foi possível verificar o movimento",
-                error=str(exc),
+                error=INTERNAL_ERROR_TEXT,
             )
-            logger.exception("Unexpected manual-move preview failure")
 
     def get(self, job_id: str) -> dict | None:
         with self.lock:
@@ -284,7 +294,7 @@ class ManualMoveJobManager:
             if int(job["base_revision"]) != int(plan_revision):
                 raise ValueError("O plano mudou durante a verificação; verifica novamente.")
             if input_fingerprints is not None and job["input_fingerprints"] != input_fingerprints:
-                raise ValueError("Os dados ou a configuracao mudaram; verifica novamente.")
+                raise ValueError("Os dados ou a configuração mudaram; verifica novamente.")
             if not origin or job.get("origin") != origin:
                 raise ValueError("O plano, regras ou modelo mudaram; verifica novamente.")
             if job.get("candidate_fingerprint") != result_fingerprint(candidate):

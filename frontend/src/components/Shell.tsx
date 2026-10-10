@@ -7,7 +7,7 @@ import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refres
 import { getHealth, getToday, recalculate } from "../api/endpoints";
 import { staleIsopWarning } from "../lib/recalcGuard";
 import { TH } from "../constants/thresholds";
-import { approvalGateFromError, approvalImpactMessage, approvalReasonLabel, decisionReasons } from "../lib/gateApproval";
+import { approvalGateFromError, approvalImpactMessage, decisionReasonLabels } from "../lib/gateApproval";
 import { Sidebar } from "./Sidebar";
 import { ChatPanel } from "./ChatPanel";
 import { PageErrorBoundary } from "./PageErrorBoundary";
@@ -305,7 +305,7 @@ export function Shell() {
         }
         try {
           await recalculate({
-            reason: `Recálculo confirmado com exceções: ${decisionReasons(gate).map(approvalReasonLabel).join(", ") || "exceções operacionais"}`,
+            reason: `Recálculo confirmado com exceções: ${decisionReasonLabels(gate).join(", ") || "exceções operacionais"}`,
             author: "planeador",
           });
           assertRefreshed(await refreshAfterCommit(refreshAll), true);
