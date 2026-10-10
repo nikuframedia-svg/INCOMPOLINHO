@@ -171,6 +171,8 @@ class _LotContribution:
     from_surplus: bool
     factory_day: int
     customer_day: int
+    segment_index: int | None = None
+    end_min: int = 0
 
 
 def _build_lot_info(
@@ -249,6 +251,8 @@ def compute_order_tracking(
     segments: list[Segment],
     lots: list[Lot],
     engine_data: EngineData,
+    *,
+    segment_allocations: list[list[dict]] | None = None,
 ) -> list[ClientOrders]:
     """Trace each client demand to its covering lot/segments."""
     lot_info = _build_lot_info(lots, segments)
@@ -309,6 +313,7 @@ def compute_order_tracking(
             holidays,
             segments,
             engine_data,
+            segment_allocations,
         )
 
     # Build ClientOrders
@@ -337,12 +342,13 @@ def _allocate_demands(
     holidays: set[int],
     segments: list[Segment],
     data: EngineData,
+    segment_allocations: list[list[dict]] | None = None,
 ) -> None:
     """Allocate chronological, real outputs, including partial lots and supplies."""
     by_id = {lot.id: lot for lot in sku_lots}
     events = []
     produced = defaultdict(int)
-    for segment in segments:
+    for segment_index, segment in enumerate(segments):
         lot = by_id.get(segment.lot_id)
         if lot is None:
             continue
@@ -357,14 +363,16 @@ def _allocate_demands(
         if not subcontracted:
             info = _LotInfo(lot.id, segment.machine_id, segment.run_id,
                             [segment.day_idx], segment.day_idx, qty)
-        events.append(_LotContribution(lot, info, qty, False, factory_day, customer_day))
+        events.append(_LotContribution(lot, info, qty, False, factory_day, customer_day,
+                                       segment_index, segment.end_min))
         produced[lot.id] += qty
     op_ids = {op.id for op in data.ops if op.sku == sku}
     for supply in data.committed_supplies:
         if supply.op_id in op_ids and supply.qty > 0:
             events.append(_LotContribution(None, None, supply.qty, True,
                                            supply.available_day, supply.available_day))
-    events.sort(key=lambda e: (e.customer_day, e.factory_day, e.lot.id if e.lot else ""))
+    events.sort(key=lambda e: (e.customer_day, e.factory_day, e.end_min,
+                               e.lot.id if e.lot else "", e.segment_index or 0))
     event_index = 0
     used = defaultdict(int)
     stock = sum(max(0, op.stk) for op in data.ops if op.sku == sku)
@@ -387,6 +395,15 @@ def _allocate_demands(
                 break
             event = events[event_index]
             consumed = min(event.qty, still_needed)
+            if segment_allocations is not None and event.segment_index is not None:
+                segment_allocations[event.segment_index].append({
+                    "sku": sku,
+                    "client": entry.client,
+                    "delivery_day": entry.day_idx,
+                    "delivery_date": entry.date,
+                    "qty": consumed,
+                    "customer_ready_day": event.customer_day,
+                })
             lot_id = event.lot.id if event.lot else ""
             contributions.append(
                 _LotContribution(
@@ -416,6 +433,31 @@ def _allocate_demands(
                 holidays,
             )
         all_trackings[entry.client].append(tracking)
+
+
+def compute_segment_deliveries(segments, lots, data):
+    """Read-only projection of the same FIFO allocations used by Entregas."""
+    allocations = [[] for _ in segments]
+    compute_order_tracking(segments, lots, data, segment_allocations=allocations)
+    untraced_skus = {
+        op.sku for op in data.ops
+        if any(qty > 0 for qty in op.d) and not data.client_demands.get(op.sku)
+    }
+    result = []
+    for segment, deliveries in zip(segments, allocations):
+        quantities = defaultdict(int)
+        for _op_id, sku, qty in segment.twin_outputs or [("", segment.sku, segment.qty)]:
+            quantities[sku] += qty
+        known = not untraced_skus.intersection(quantities)
+        for delivery in deliveries:
+            quantities[delivery["sku"]] -= delivery["qty"]
+        result.append({
+            "delivery_allocations": deliveries if known else None,
+            "unallocated_output": [
+                {"sku": sku, "qty": qty} for sku, qty in quantities.items() if qty > 0
+            ] if known else None,
+        })
+    return result
 
 
 def _make_allocated(

@@ -52,7 +52,12 @@ _PLAN_FINGERPRINT_KEYS = (
 
 def _jsonable(value: Any) -> Any:
     if is_dataclass(value):
-        return _jsonable(asdict(value))
+        raw = asdict(value)
+        # An empty transient mounting context must not change the identity of
+        # an existing durable plan merely because the application was upgraded.
+        if isinstance(value, EngineData) and not value.protected_mounting_segments:
+            raw.pop("protected_mounting_segments", None)
+        return _jsonable(raw)
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -183,6 +188,7 @@ def planning_model_identity() -> dict[str, str | int]:
         "manual_allocation": ALLOCATION_MODEL_VERSION,
         "protected_context": PROTECTED_CONTEXT_VERSION,
         "transfer_search": TRANSFER_SEARCH_VERSION,
+        "quantity_material": 1,
     }
 
 

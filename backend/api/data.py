@@ -494,7 +494,20 @@ def _recalculation_needs_rebuild(config) -> bool:
         return False
     detached = copy.copy(state.engine_data)
     detached.preserved_lot_proofs = {}
-    return bool(source_contract_violations(state.segments, state.lots, detached, config))
+    legacy_material = any(
+        not lot.is_twin and not any(
+            output.get("quantity_material_version") for output in lot.output_milestones or []
+        ) for lot in state.lots
+    )
+    if legacy_material:
+        from backend.scheduler.lot_sizing import create_lots
+        from backend.scheduler.quantity_dispatch import has_quantity_releases
+
+        if has_quantity_releases(create_lots(detached, config)):
+            return True
+    return bool(source_contract_violations(
+        state.segments, state.lots, detached, config, require_current_material=True,
+    ))
 
 
 def _recompute_transactional(

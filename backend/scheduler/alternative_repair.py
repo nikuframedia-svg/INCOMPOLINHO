@@ -612,6 +612,40 @@ def _resolve_runs(
                 *(lot_id for lot_id in ordered_lot_ids if lot_id not in source_order),
             ]
         run_lots = [lots_by_id[lot_id] for lot_id in ordered_lot_ids]
+        # A material tranche is a physical run, not a second economic lot.
+        # Reinsert only its quantity; the other tranches remain in the plan.
+        for index, lot in enumerate(run_lots):
+            physical = [s for s in run_segments if s.lot_id == lot.id]
+            quantity = sum(s.qty for s in physical)
+            if lot.is_twin or quantity <= 0 or quantity >= lot.qty:
+                continue
+            if not any(o.get("quantity_material_version") for o in lot.output_milestones or []):
+                continue
+            from backend.scheduler.lot_sizing import _aggregate_milestones
+
+            first = min((s.day_idx, s.start_min) for s in physical)
+            offset = sum(
+                s.qty for s in segments
+                if s.lot_id == lot.id and (s.day_idx, s.start_min) < first
+            )
+            outputs = []
+            left = quantity
+            for output in lot.output_milestones:
+                skip = min(offset, int(output["qty"]))
+                offset -= skip
+                take = min(left, int(output["qty"]) - skip)
+                if take:
+                    outputs.append({**output, "qty": take})
+                    left -= take
+            portion = copy.deepcopy(lot)
+            portion.qty = quantity
+            portion.prod_min = lot.prod_min * quantity / lot.qty
+            for attribute, value in _aggregate_milestones(outputs).items():
+                setattr(portion, attribute, value)
+            portion.edd = portion.production_due_day
+            portion.original_edd = portion.delivery_day = portion.customer_delivery_day
+            portion.internal_deadline = portion.internal_target_day
+            run_lots[index] = portion
         if not run_lots:
             continue
         if source is not None:
@@ -680,6 +714,12 @@ def _eligible_machines(
     shared = set.intersection(*lot_options) if lot_options else set()
     if not shared:
         shared = set().union(*lot_options) if lot_options else set()
+    for lot in run.lots:
+        other_machines = {
+            s.machine_id for s in segments if s.lot_id == lot.id and s.run_id != run.id
+        }
+        if other_machines:
+            shared &= other_machines
     current = {
         segment.machine_id for segment in segments if segment.run_id == run.id
     }
@@ -715,6 +755,9 @@ def _schedule_run_earliest(
     data = _projected_calendar(data, config, horizon_day + 2)
     holidays = _extended_holidays(data, -20, horizon_day + 2)
     calendar_data = _with_plan_resource_blocks(data, fixed_segments)
+    from backend.scheduler.resources import protected_mounting_segments
+
+    physical_segments = [*fixed_segments, *protected_mounting_segments(data)]
     first_shift = ordered_shifts(config)[0] if ordered_shifts(config) else None
     if first_shift is None:
         return None
@@ -728,7 +771,7 @@ def _schedule_run_earliest(
     # Dynamic plan bookings are represented as calendar blocks while finding
     # slices.  If a tentative run straddles such a booking, restart after it so
     # a campaign is never interleaved with another run.
-    for _attempt in range(len(fixed_segments) + 2):
+    for _attempt in range(len(physical_segments) + 2):
         scheduled = _schedule_preemptive_run(
             candidate,
             machine_id,
@@ -754,13 +797,27 @@ def _schedule_run_earliest(
                 segment.day_idx * 1440 + int(segment.start_min),
                 segment.day_idx * 1440 + int(segment.end_min),
             )
-            for segment in fixed_segments
+            for segment in physical_segments
             if (segment.machine_id == machine_id or segment.tool_id == candidate.tool_id)
             and campaign_start
             < segment.day_idx * 1440 + int(segment.end_min)
             and segment.day_idx * 1440 + int(segment.start_min) < campaign_end
         )
         if not interruptions:
+            for lot in candidate.lots:
+                parent = next((s for s in fixed_segments if s.lot_id == lot.id), None)
+                if parent is None or parent.lot_qty <= lot.qty:
+                    continue
+                for segment in created:
+                    if segment.lot_id != lot.id:
+                        continue
+                    for attribute in (
+                        "lot_qty", "output_milestones", "edd", "original_edd",
+                        "delivery_day", "internal_deadline", "customer_delivery_day",
+                        "production_due_day", "internal_target_day",
+                        "material_reference_day", "material_release_day",
+                    ):
+                        setattr(segment, attribute, copy.deepcopy(getattr(parent, attribute)))
             return candidate, created
         next_start = interruptions[0][1]
         if next_start <= start_after:
@@ -880,7 +937,12 @@ def _repair_complete(score: dict[str, Any]) -> bool:
 
 def _replace_lots(current: list[Lot], replacements: Iterable[Lot]) -> list[Lot]:
     by_id = {lot.id: lot for lot in replacements}
-    return [by_id.get(lot.id, lot) for lot in current]
+    return [
+        lot if lot.id in by_id and by_id[lot.id].qty < lot.qty
+        and any(o.get("quantity_material_version") for o in lot.output_milestones or [])
+        else by_id.get(lot.id, lot)
+        for lot in current
+    ]
 
 
 def _best_coordinated_repair(

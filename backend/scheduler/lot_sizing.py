@@ -35,7 +35,9 @@ class _TwinDemandEvent:
     milestones: PlanningMilestones
 
 
-def create_lots(data: EngineData, config: FactoryConfig | None = None) -> list[Lot]:
+def create_lots(
+    data: EngineData, config: FactoryConfig | None = None, *, quantity_material: bool = True,
+) -> list[Lot]:
     """Create Lots from EngineData.
 
     1. Twin ops → super-ops (TWIN lots)
@@ -99,6 +101,7 @@ def create_lots(data: EngineData, config: FactoryConfig | None = None) -> list[L
                     min_prod,
                     planning_holidays,
                     config,
+                    quantity_material=quantity_material,
                 )
             )
 
@@ -111,6 +114,7 @@ def _create_solo_lots(
     min_prod: float = MIN_PROD_MIN,
     holidays: set[int] | None = None,
     config: FactoryConfig | None = None,
+    *, quantity_material: bool = True,
 ) -> list[Lot]:
     """Create lots for a solo (non-twin) operation.
 
@@ -188,6 +192,35 @@ def _create_solo_lots(
             )
         )
 
+    if not quantity_material:
+        return lots
+
+    # Carry-forward assigns an economic lot to several deliveries. Retain
+    # those quantities instead of releasing the whole lot for its first order.
+    pending = [[day, int(qty)] for day, qty in enumerate(op.d) if qty > 0]
+    index = 0
+    for lot in lots:
+        remaining = lot.qty
+        outputs = []
+        while remaining > 0 and index < len(pending):
+            day, needed = pending[index]
+            quantity = min(remaining, needed)
+            outputs.append(_output_milestone(
+                op, quantity, planning_milestones_for_op(op, day, holidays)
+            ))
+            remaining -= quantity
+            pending[index][1] -= quantity
+            if pending[index][1] == 0:
+                index += 1
+        if remaining:
+            surplus_output = dict(outputs[-1])
+            surplus_output["qty"] = remaining
+            surplus_output["is_economic_surplus"] = True
+            outputs.append(surplus_output)
+        for field, value in _aggregate_milestones(outputs).items():
+            setattr(lot, field, value)
+        for output in lot.output_milestones:
+            output["quantity_material_version"] = 1
     return lots
 
 

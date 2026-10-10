@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict
 
+from backend.analytics.order_tracking import compute_segment_deliveries
 from backend.plans.frozen import _current_planning_day
 from backend.scheduler.explainability import annotate_left_shift_blockers
 
@@ -44,4 +45,8 @@ def plan_view_explanations(segments, lots, data, config):
     for segment in display_segments:
         if segment.lot_id in protected:
             segment.left_shift_blockers = []
-    return [asdict(segment) for segment in display_segments], placement
+    deliveries = compute_segment_deliveries(segments, lots, data)
+    return [
+        {**asdict(segment), **delivery}
+        for segment, delivery in zip(display_segments, deliveries)
+    ], placement

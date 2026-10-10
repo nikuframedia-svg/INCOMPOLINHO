@@ -122,6 +122,28 @@ def solve_global_jit(
     if not HAS_ORTOOLS or not runs:
         return None
 
+    # The contiguous run model has no quantity-dependent releases. Use the
+    # shared preemptive constructor for these lots; a scalar floor would
+    # silently release demand that is not yet available.
+    if any(
+        not lot.is_twin and len({
+            output.get("material_release_day") for output in lot.output_milestones or []
+        }) > 1
+        for run in runs for lot in getattr(run, "lots", [])
+    ):
+        fallback = _calendar_preemptive_fallback(
+            runs, data, config, horizon_end_day=horizon_end_day,
+        )
+        if fallback is None:
+            return None
+        segments, lots, machine_runs, run_gates, preemptions = fallback
+        return GlobalJITResult(
+            segments=segments, lots=lots, machine_runs=machine_runs, run_gates=run_gates,
+            solver_status="feasible",
+            feasibility={"quantity_release_constructor": True, "calendar_preemptions": preemptions},
+            warnings=[],
+        )
+
     parent_deadline = getattr(config, "_optimization_deadline", None)
     limit = _effective_time_limit(
         runs,
@@ -1647,6 +1669,7 @@ def _schedule_preemptive_run(
             horizon_day,
             holidays,
             require_exact_start=lot_index == 0,
+            material_lot=lot,
         )
         if chunks is None:
             return None
@@ -1689,10 +1712,11 @@ def _find_preemptive_setup_slot(
     ignore_run_id: str | None = None,
 ) -> tuple[int, int, int] | None:
     """Find setup immediately followed by at least one productive minute."""
-    from backend.scheduler.resources import reserved_setup_segments
+    from backend.scheduler.resources import protected_mounting_segments, reserved_setup_segments
 
     group = config.machine_groups.get(machine_id, "Grandes")
     setup_segments = [*segments, *reserved_setup_segments(data)]
+    mounting_segments = [*segments, *protected_mounting_segments(data)]
     for day, shift_id, window_start, window_end in _preemptive_resource_windows(
         data,
         config,
@@ -1718,7 +1742,7 @@ def _find_preemptive_setup_slot(
             # Retention is a physical proof, not a visual cleanup after booking
             # nominal setup time and displacing the following production.
             if setup_identity is not None and retained_setup_at(
-                segments, machine_id, setup_identity, day, operator_start,
+                mounting_segments, machine_id, setup_identity, day, operator_start,
                 ignore_run_id=ignore_run_id,
             ):
                 return day, operator_start, operator_start
@@ -1768,7 +1792,10 @@ def _allocate_preemptive_production(
     holidays: set[int],
     *,
     require_exact_start: bool,
+    material_lot: Lot | None = None,
 ) -> list[tuple[int, str, int, int]] | None:
+    from backend.scheduler.material_quantities import released_quantity
+
     group = config.machine_groups.get(machine_id, "Grandes")
     remaining = duration
     chunks: list[tuple[int, str, int, int]] = []
@@ -1798,6 +1825,10 @@ def _allocate_preemptive_production(
             if require_exact_start and not chunks and day * 1440 + start != start_after:
                 return None
             block = min(remaining, available_end - start)
+            if material_lot is not None and material_lot.qty > 0:
+                allowed = released_quantity(material_lot, day)
+                released_minutes = duration * allowed // material_lot.qty
+                block = min(block, released_minutes - (duration - remaining))
             if block <= 0:
                 continue
             chunks.append((day, shift_id, start, start + block))

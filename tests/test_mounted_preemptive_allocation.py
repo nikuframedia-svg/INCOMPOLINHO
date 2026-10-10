@@ -78,6 +78,21 @@ def test_shared_earliest_allocator_reclaims_retained_setup_time_before_productio
 
 
 @pytest.mark.parametrize("prefix", ["P", "RENAMED"])
+def test_protected_other_tool_breaks_retention_in_residual_allocator(prefix):
+    from backend.plans.frozen import _install_frozen_reservations
+
+    segments, lots, data, config = _retained_capacity_case(prefix)
+    protected = replace(segments[1], start_min=420, end_min=480, prod_min=30, qty=30)
+    _install_frozen_reservations(data, [protected], [lots[2]], 1, config)
+    run = _resolve_runs(segments, lots, None)["INCOMING"]
+    scheduled = _schedule_run_earliest(run, "M1", segments[:1], data, config)
+    assert scheduled is not None
+    _, created = scheduled
+    assert sum(s.setup_min for s in created) == 30
+    assert min(s.production_start_min for s in created if s.prod_min > 0) == 510
+
+
+@pytest.mark.parametrize("prefix", ["P", "RENAMED"])
 def test_transfer_comparison_preserves_deliveries_by_allocating_without_phantom_setup(prefix):
     segments, lots, data, config = _retained_capacity_case(prefix)
     before = copy.deepcopy((segments, lots, data, config))

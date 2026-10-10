@@ -35,6 +35,13 @@ def _assert_activatable_payload(payload: dict) -> None:
 
     config, engine_data, segments, lots = deserialize_plan_core(payload)
     assert_plan_valid(segments, engine_data, config, lots=lots)
+    from backend.scheduler.canonical import source_contract_violations
+
+    material_errors = source_contract_violations(
+        segments, lots, engine_data, config, require_current_material=True,
+    )
+    if material_errors:
+        raise PlanValidationError(material_errors)
     anchor_errors = plan_anchor_violations(segments, engine_data, config)
     if anchor_errors:
         raise PlanValidationError(anchor_errors)

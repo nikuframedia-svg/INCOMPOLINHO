@@ -16,7 +16,6 @@ from backend.scheduler.jit_policy import (
     add_workdays,
     calendar_holidays,
     expedition_day,
-    lot_demand_output_milestones,
     lot_output_milestones,
     material_reference_day,
     production_due_day,
@@ -97,11 +96,19 @@ def compute_score(
     subcontract_dispatch_late_workdays = 0
     subcontract_dispatch_max_late_workdays = 0
 
+    from backend.scheduler.material_quantities import output_completion_days
+
+    segments_by_lot = defaultdict(list)
+    for segment in segments:
+        segments_by_lot[segment.lot_id].append(segment)
     for lot in lots:
         completion = lot_completion.get(lot.id, engine_data.n_days)
+        output_completions = output_completion_days(
+            lot, segments_by_lot[lot.id], engine_data.n_days
+        )
         output_delays = [
-            _customer_delay_for_output(output, completion, holiday_set)
-            for output in lot_demand_output_milestones(lot)
+            _customer_delay_for_output(output, ready_day, holiday_set)
+            for output, ready_day in output_completions
         ]
         delay = max(output_delays, default=completion - expedition_day(lot))
 
@@ -116,15 +123,18 @@ def compute_score(
                 priority_tardiness_weighted += priority * delay
 
         controllable_due = production_due_day(lot, holiday_set)
-        if completion > controllable_due:
-            production_due_misses += 1
-            production_due_late_workdays += workdays_between(
-                controllable_due,
-                completion,
-                holiday_set,
+        due_delays = [
+            workdays_between(
+                int(output.get("production_due_day", controllable_due)), ready_day, holiday_set,
             )
+            for output, ready_day in output_completions
+            if ready_day > int(output.get("production_due_day", controllable_due))
+        ]
+        if due_delays:
+            production_due_misses += 1
+            production_due_late_workdays += max(due_delays)
 
-        for output in lot_demand_output_milestones(lot):
+        for output, output_completion in output_completions:
             if not bool(output.get("is_subcontracted")):
                 continue
             subcontract_dispatch_total += 1
@@ -132,11 +142,11 @@ def compute_score(
             if dispatch_day is None:
                 dispatch_day = output.get("production_due_day", controllable_due)
             dispatch_day = int(dispatch_day)
-            if completion <= dispatch_day:
+            if output_completion <= dispatch_day:
                 continue
             late_workdays = workdays_between(
                 dispatch_day,
-                completion,
+                output_completion,
                 holiday_set,
             )
             subcontract_dispatch_misses += 1

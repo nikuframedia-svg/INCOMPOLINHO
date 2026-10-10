@@ -68,6 +68,8 @@ export interface OutputMilestone {
   material_reference_kind: "customer_delivery" | "subcontract_dispatch" | string;
   material_release_day: number;
   is_coproduced_surplus?: boolean;
+  is_economic_surplus?: boolean;
+  quantity_material_version?: number;
 }
 
 interface PlanningMilestoneFields {
@@ -84,6 +86,15 @@ interface PlanningMilestoneFields {
 }
 
 export interface Segment extends PlanningMilestoneFields {
+  delivery_allocations?: {
+    sku: string;
+    client: string;
+    delivery_day: number;
+    delivery_date: string;
+    qty: number;
+    customer_ready_day: number;
+  }[] | null;
+  unallocated_output?: { sku: string; qty: number }[] | null;
   lot_id: string;
   run_id: string;
   machine_id: string;

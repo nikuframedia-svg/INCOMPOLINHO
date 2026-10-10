@@ -142,6 +142,7 @@ def lot_demand_output_milestones(lot: Lot) -> list[dict[str, object]]:
         output
         for output in lot_output_milestones(lot)
         if not bool(output.get("is_coproduced_surplus"))
+        and not bool(output.get("is_economic_surplus"))
     ]
 
 

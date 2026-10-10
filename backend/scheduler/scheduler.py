@@ -4202,6 +4202,28 @@ def schedule_all(
             gate_report=build_gate_report([], [], score, source_data, config),
         )
 
+    from backend.scheduler.quantity_dispatch import (
+        has_quantity_releases,
+        schedule_quantity_releases,
+    )
+
+    if has_quantity_releases(lots):
+        segments, lots = schedule_quantity_releases(lots, data, config)
+        operational_audit = build_operational_audit(segments, lots, source_data, config)
+        score = compute_score(
+            segments, lots, source_data, config=config, operational_audit=operational_audit,
+        )
+        return ScheduleResult(
+            segments=segments, lots=lots, score=score,
+            time_ms=(time.perf_counter() - t0) * 1000,
+            warnings=journal.to_warnings(),
+            operator_alerts=compute_operator_alerts(segments, data, config),
+            journal=journal.to_dicts(),
+            gate_report=build_gate_report(
+                segments, lots, score, source_data, config, operational_audit=operational_audit,
+            ),
+        )
+
     global_holidays = calendar_holidays(data, -14, data.n_days + 30)
 
     # Phase 2: Lots → ToolRuns

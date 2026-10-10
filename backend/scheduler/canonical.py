@@ -59,7 +59,7 @@ def result_validation_data(data, result):
     return detached
 
 
-def source_contract_violations(segments, lots, data, config):
+def source_contract_violations(segments, lots, data, config, *, require_current_material=False):
     # Resource-only subproblems have calendars but no operation catalogue.
     # Full scenario validation receives the original, populated catalogue.
     if data is None or not data.ops or lots is None:
@@ -82,6 +82,24 @@ def source_contract_violations(segments, lots, data, config):
         violations.append({"kind": "source_contract", "lot_id": lot.id,
                            "message": f"Lote {lot.id}: {field} diverge dos dados do cenario.",
                            "field": field, "actual": actual, "expected": expected})
+
+    def check_material_quantities(lot, contract):
+        from backend.scheduler.material_quantities import released_quantity
+
+        produced = 0
+        for segment in sorted(by_lot[lot.id], key=lambda s: (s.day_idx, s.start_min)):
+            allowed = released_quantity(contract, segment.day_idx)
+            premature_setup = segment.setup_min > 0 and produced >= allowed and produced < lot.qty
+            produced += segment.qty
+            if produced > allowed or premature_setup:
+                fail(lot, "material_quantity", produced, allowed)
+                violations[-1].update(
+                    day_idx=segment.day_idx,
+                    message=(f"Lote {lot.id}: no dia {segment.day_idx} existem {allowed} pecas "
+                             f"com material libertado, mas o plano prepara ou produz alem dessa "
+                             "quantidade. E necessario recalcular o plano."),
+                )
+                break
 
     for lot in lots:
         physical = by_lot[lot.id]
@@ -136,8 +154,47 @@ def source_contract_violations(segments, lots, data, config):
                     op_id=str(op_id), sku=str(sku), qty=int(qty), available_at="",
                     available_day=0, machine_id=lot.machine_id, tool_id=lot.tool_id,
                 ))
-    expected_lots = create_lots(residual, config)
+    quantity_material = any(
+        output.get("quantity_material_version")
+        for lot in remaining for output in lot.output_milestones or []
+    )
+    # Old snapshots remain readable under their recorded model. Operational
+    # persistence and explicit recalculation request the current contract.
+    expected_lots = create_lots(residual, config, quantity_material=quantity_material)
     expected_by_id = {lot.id: lot for lot in expected_lots}
+    if require_current_material and not quantity_material:
+        current_lots = {lot.id: lot for lot in create_lots(residual, config)}
+        for lot in remaining:
+            expected = current_lots.get(lot.id)
+            if expected is None:
+                continue
+            check_material_quantities(lot, expected)
+        # Legal splits/renames must not bypass the current material contract.
+        from backend.scheduler.material_quantities import released_quantity
+
+        current_by_op = defaultdict(list)
+        actual_by_op = defaultdict(list)
+        for lot in current_lots.values():
+            if not lot.is_twin:
+                current_by_op[lot.op_id].append(lot)
+        for lot in remaining:
+            if not lot.is_twin:
+                actual_by_op[lot.op_id].extend((s, lot) for s in by_lot[lot.id])
+        for op_id, entries in actual_by_op.items():
+            contracts = current_by_op[op_id]
+            if not contracts:
+                continue
+            produced = 0
+            for segment, lot in sorted(
+                entries, key=lambda item: (item[0].day_idx, item[0].start_min),
+            ):
+                produced += segment.qty
+                allowed = sum(
+                    released_quantity(contract, segment.day_idx) for contract in contracts
+                )
+                if produced > allowed:
+                    fail(lot, "material_quantity", produced, allowed)
+                    break
     for lot in remaining:
         expected = expected_by_id.get(lot.id)
         if expected is not None and (lot.edd != expected.edd or lot.tool_id != expected.tool_id):
@@ -175,6 +232,8 @@ def source_contract_violations(segments, lots, data, config):
         # they retain the existing physical and total-quantity checks.
         if not any("qty" in output for output in lot.output_milestones):
             continue
+        if len({item.get("material_release_day") for item in lot.output_milestones}) > 1:
+            check_material_quantities(lot, lot)
         try:
             milestones = _aggregate_milestones(lot.output_milestones)
         except (KeyError, TypeError, ValueError):

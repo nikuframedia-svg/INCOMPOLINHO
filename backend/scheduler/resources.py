@@ -42,6 +42,13 @@ def build_setup_override_map(config: FactoryConfig) -> dict[tuple[str, str], flo
     }
 
 
+def protected_mounting_segments(data):
+    """Physical evidence only; capacity is already reserved by calendar blocks."""
+    from backend.scheduler.types import Segment
+
+    return [Segment(**raw) for raw in data.protected_mounting_segments]
+
+
 def reserved_setup_segments(data):
     """Read-only crew occupancy of protected lots in a residual calculation."""
     from backend.scheduler.types import Segment

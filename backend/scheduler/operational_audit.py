@@ -27,6 +27,58 @@ def build_operational_audit(
     *,
     gap_opportunities: list[PartialGapOpportunity] | None = None,
 ) -> dict[str, Any]:
+    from backend.scheduler.quantity_dispatch import has_quantity_releases
+
+    if not has_quantity_releases(lots):
+        return _build_operational_audit(
+            segments, lots, data, config, gap_opportunities=gap_opportunities,
+        )
+    import copy
+
+    from backend.planning_control import (
+        PlanningTimeout,
+        execution_cache,
+        planning_checkpoint,
+        planning_scope,
+    )
+    from backend.plans.serialize import value_fingerprint
+
+    cache = execution_cache("quantity_operational_audit")
+    key = value_fingerprint((segments, lots, data, config, gap_opportunities))
+    if key in cache:
+        return copy.deepcopy(cache[key])
+    try:
+        with planning_scope(timeout_s=1):
+            result = _build_operational_audit(
+                segments, lots, data, config, gap_opportunities=gap_opportunities,
+            )
+    except PlanningTimeout:
+        planning_checkpoint()
+        result = {
+            "status": "not_evaluated", "stop_reason": "audit_budget",
+            "left_shift_opportunities": 0,
+            "lower_priority_campaign_interruptions": 0,
+            "priority_order_anomalies": 0,
+            "avoidable_priority_order_anomalies": 0,
+            "released_tool_priority_inversions": 0,
+            "left_shift_detail": [], "protected_left_shift_detail": [],
+            "campaign_interruption_detail": [], "priority_order_detail": [],
+            "released_tool_priority_detail": [],
+        }
+    if len(cache) >= 4:
+        cache.pop(next(iter(cache)))
+    cache[key] = copy.deepcopy(result)
+    return result
+
+
+def _build_operational_audit(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig | None = None,
+    *,
+    gap_opportunities: list[PartialGapOpportunity] | None = None,
+) -> dict[str, Any]:
     """Return stable metrics and evidence for final-plan sequencing quality."""
 
     anchored_lot_ids = {

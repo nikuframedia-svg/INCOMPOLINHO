@@ -178,6 +178,8 @@ class EngineData:
     tool_blocked_intervals: dict[str, list[dict]] = field(default_factory=dict)
     operator_blocked_intervals: list[dict] = field(default_factory=list)
     setup_crew_reservations: list[dict] = field(default_factory=list)
+    # Physical mounting evidence for protected work in a residual calculation.
+    protected_mounting_segments: list[dict] = field(default_factory=list)
     current_machine_states: list[CurrentMachineState] = field(default_factory=list)
     input_warnings: list[str] = field(default_factory=list)
     committed_supplies: list[CommittedSupply] = field(default_factory=list)

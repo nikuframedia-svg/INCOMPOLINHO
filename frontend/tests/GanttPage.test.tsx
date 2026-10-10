@@ -124,6 +124,41 @@ function renderGantt(
 }
 
 describe("GanttPage", () => {
+  it("separa as parcelas normais sem anunciar material comum de gémeas", async () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment,
+      output_milestones: [0, 1].map((day) => ({
+        op_id: "OP", sku: "SKU1", qty: 5, is_subcontracted: false,
+        customer_delivery_day: day, production_due_day: day, internal_target_day: day,
+        material_reference_day: day, material_reference_kind: "customer_delivery" as const,
+        material_release_day: day, quantity_material_version: 1,
+      })),
+    }]);
+    fireEvent.click(view.container.querySelector('[title*="Segmento: 10"]')!);
+    expect(await screen.findByText("Libertação da primeira parcela")).toBeTruthy();
+    expect(screen.queryByText("Material comum libertado por")).toBeNull();
+    expect(screen.queryByText("Janela conjunta de produção")).toBeNull();
+    const table = screen.getByRole("table", {name: "Datas por referência"});
+    expect(within(table).getAllByText("5 pç")).toHaveLength(2);
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getByText("Libertação de material")).toBeTruthy();
+  });
+  it("mostra as entregas abastecidas pelo segmento sem herdar o prazo inicial", async () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, day_idx: 1, edd: 0,
+      delivery_allocations: [{ sku: "SKU1", client: "Cliente B", qty: 7,
+        delivery_day: 1, delivery_date: "2026-03-17", customer_ready_day: 1 }],
+      unallocated_output: [{sku: "SKU1", qty: 3}],
+    }]);
+    const bar = view.container.querySelector('[title*="entrega 17/03/2026"]');
+    expect(bar).toBeTruthy();
+    expect(bar?.getAttribute("title")).toContain("3 pç de excedente para stock");
+    expect(bar?.getAttribute("title")).not.toContain("Prazo produção");
+    fireEvent.click(bar!);
+    expect(await screen.findByText("Entregas do segmento")).toBeTruthy();
+    expect(screen.getByText("Prazo de origem do lote")).toBeTruthy();
+    expect(screen.getByText(/7 pç para Cliente B, entrega 17\/03\/2026/)).toBeTruthy();
+  });
   it("identifica a hora manual sem repetir bloqueios antigos", async () => {
     renderGantt(undefined, undefined, [{
       ...segment, left_shift_blockers: ["blocked_by_setup_crew|obsolete"],
@@ -221,7 +256,7 @@ describe("GanttPage", () => {
     expect(screen.getByText("D0 · Ter")).toBeTruthy();
     expect(screen.getByText("10-Nov")).toBeTruthy();
     expect(screen.getByText("D63 · Ter")).toBeTruthy();
-    expect(view.container.querySelector('[title*="Prazo produção D63 · 10-Nov"]')).toBeTruthy();
+    expect(view.container.querySelector('[title*="Alocação a entregas não disponível"]')).toBeTruthy();
   });
 
   it("usa o rótulo Gantt e turnos vindos da configuração", async () => {

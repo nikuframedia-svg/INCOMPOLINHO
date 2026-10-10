@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 from collections import defaultdict
 
+from backend.analytics.order_tracking import compute_order_tracking
 from backend.calendar import available_machine_capacity
 from backend.config.types import FactoryConfig
 from backend.cpo import optimize
@@ -59,7 +60,7 @@ def compute_lot_risks(
     engine_data: EngineData,
     config: FactoryConfig | None = None,
 ) -> list[LotRisk]:
-    """Compute risk per lot from schedule slack.
+    """Compute delivery slack for the orders supplied by each lot.
 
     Risk score = max(0, 1 - slack_min / (σ × Z_95))
     where σ = CV_PROCESSING × prod_min + CV_SETUP × setup_min.
@@ -73,11 +74,34 @@ def compute_lot_risks(
             lot_machine[seg.lot_id] = seg.machine_id
 
     bindings = _binding_constraints_by_lot(segments, lots, engine_data, config)
+    orders_by_lot = defaultdict(list)
+    for client in compute_order_tracking(segments, lots, engine_data):
+        for order in client.orders:
+            for lot_id in order.lot_ids:
+                orders_by_lot[lot_id].append(order)
     risks: list[LotRisk] = []
     for lot in lots:
         comp = lot_end.get(lot.id, engine_data.n_days)
         machine = lot_machine.get(lot.id, lot.machine_id)
         due_day = production_due_day(lot)
+        controlling_order = None
+        if engine_data.client_demands:
+            orders = orders_by_lot.get(lot.id, [])
+            if not orders:
+                # Surplus without a customer commitment has no delivery risk.
+                continue
+
+            def readiness(order):
+                return (order.customer_ready_day if order.customer_ready_day is not None
+                        else max(engine_data.n_days, order.delivery_day + 1))
+
+            controlling_order = min(
+                orders,
+                key=lambda order: (order.delivery_day - readiness(order),
+                                   order.delivery_day, order.sku, order.client),
+            )
+            due_day = controlling_order.delivery_day
+            comp = readiness(controlling_order)
         slack_days = due_day - comp
         day_cap = config.day_capacity_min if config else DAY_CAP
         slack_min = slack_days * day_cap
@@ -108,6 +132,8 @@ def compute_lot_risks(
         elif not sku and "_" in lot.op_id:
             parts = lot.op_id.split("_")
             sku = parts[-1] if len(parts) >= 3 else lot.op_id
+        if controlling_order is not None:
+            sku = controlling_order.sku
 
         risks.append(
             LotRisk(

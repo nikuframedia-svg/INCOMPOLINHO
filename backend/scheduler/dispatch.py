@@ -609,6 +609,8 @@ def _allocate_run_candidate(
     lot_floors: dict[str, float] | None = None,
 ) -> tuple[list[Segment], float, float, dict[int, float]]:
     """Build a run allocation without mutating shared machine/crew/tool state."""
+    from backend.scheduler.material_quantities import next_release_day, released_quantity
+
     day_cap = config.day_capacity_min if config else DAY_CAP
     tl = timelines[machine_id]
     segments: list[Segment] = []
@@ -672,6 +674,14 @@ def _allocate_run_candidate(
             if day >= engine_data.n_days:
                 break
 
+            available_qty = released_quantity(lot, day) - (lot.qty - remaining_qty)
+            if available_qty <= 0:
+                next_day = next_release_day(lot, day)
+                if next_day is None:
+                    break
+                start_abs = next_day * day_cap
+                continue
+
             offset_in_day = round(start_abs - day * day_cap, 2)
 
             # Prevent float/int truncation overlaps: ensure we start after last segment
@@ -718,15 +728,22 @@ def _allocate_run_candidate(
 
             # Production time available AFTER setup
             prod_available = day_remaining - seg_setup
-            block_min = min(remaining_min, float(prod_available))
+            released_minutes = lot.prod_min * released_quantity(lot, day) / lot.qty
+            block_min = min(
+                remaining_min, float(prod_available),
+                released_minutes - (lot.prod_min - remaining_min),
+            )
             block_min = max(block_min, 0.01)  # never zero
 
             # Proportional qty
             if lot.prod_min > 0.01 and remaining_min - block_min > 0.01:
-                block_qty = round(lot.qty * (block_min / lot.prod_min))
+                total_qty = round(
+                    lot.qty * (lot.prod_min - remaining_min + block_min) / lot.prod_min
+                )
+                block_qty = total_qty - (lot.qty - remaining_qty)
             else:
                 block_qty = remaining_qty
-            block_qty = min(block_qty, remaining_qty)
+            block_qty = min(block_qty, remaining_qty, available_qty)
 
             # Twin outputs proportional (floor-based to avoid over-allocation)
             twin_out = None

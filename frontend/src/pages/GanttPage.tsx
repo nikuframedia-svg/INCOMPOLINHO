@@ -13,6 +13,7 @@ import { PlanSimulatorSection } from "../components/PlanSimulatorSection";
 import { GateReportCard } from "../components/GateReportCard";
 import { JitViolationPanel } from "../components/JitViolationPanel";
 import { analyseJitWindow, type JitViolationDetail } from "../lib/jitAnalysis";
+import { segmentDeliveriesText } from "../lib/segmentDeliveries";
 
 const DEFAULT_DAY_W = 110;
 const LANE_H = 60;
@@ -882,18 +883,12 @@ export function GanttPage() {
     { id: "production", label: "Tempo de produção", value: (segment) => segment.prod_min, render: (segment) => <span style={{ fontFamily: T.mono }}>{isSetupOnlySegment(segment) ? "—" : fmtDuration(segment.prod_min)}</span> },
     {
       id: "delivery",
-      label: "Entrega cliente",
-      help: "Compromisso de entrega recebido do ISOP.",
-      value: (segment) => isoAtDay(workdays, segment.customer_delivery_day ?? segment.delivery_day ?? segment.original_edd ?? segment.edd) ?? "",
-      render: (segment) => {
-        const value = isoAtDay(workdays, segment.customer_delivery_day ?? segment.delivery_day ?? segment.original_edd ?? segment.edd);
-        return value ? fmtDate(value).short : "—";
-      },
+      label: "Entregas do segmento",
+      value: segmentDeliveriesText,
     },
     {
       id: "production_due",
-      label: "Prazo produção",
-      help: "Último dia para concluir na fábrica; nos artigos subcontratados coincide com o envio planeado ao fornecedor.",
+      label: "Prazo de origem do lote",
       value: (segment) => isoAtDay(workdays, segment.production_due_day ?? segment.edd) ?? "",
       render: (segment) => {
         const value = isoAtDay(workdays, segment.production_due_day ?? segment.edd);
@@ -1744,12 +1739,9 @@ export function GanttPage() {
                       const top = isSingleDay ? SINGLE_BAR_PAD : 10;
                       const barH = isSingleDay ? SINGLE_BAR_H : 40;
                       const setupOnly = isSetupOnlySegment(s);
-                      const productionDueDay = s.production_due_day ?? s.edd;
-                      const productionDueIso = isoAtDay(workdays, productionDueDay);
-                      const productionDueLabel = `D${productionDueDay}${productionDueIso ? ` · ${fmtDate(productionDueIso).short}` : ""}`;
                       const segmentTitle = setupOnly
-                        ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min setup | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | Prazo produção ${productionDueLabel}${s.twin_outputs ? " | Twin" : ""}`
-                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString()} pç | Lote: ${lotQty.toLocaleString()} pç | Eco: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString()} | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | Prazo produção ${productionDueLabel}${s.twin_outputs ? " | Twin" : ""}`;
+                        ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min setup | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Twin" : ""}`
+                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString()} pç | Lote: ${lotQty.toLocaleString()} pç | Eco: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString()} | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)} | ${segmentDeliveriesText(s)}${s.twin_outputs ? " | Twin" : ""}`;
                       const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
@@ -2163,7 +2155,8 @@ export function GanttPage() {
             };
             const outputMilestones = sel.output_milestones ?? selectedLot?.output_milestones ?? [];
             const hasOutputBreakdown = outputMilestones.length > 1;
-            const demandOutputs = outputMilestones.filter((output) => !output.is_coproduced_surplus);
+            const hasJointWindow = hasOutputBreakdown && (sel.twin_outputs?.length ?? 0) > 1;
+            const demandOutputs = outputMilestones.filter((output) => !output.is_coproduced_surplus && !output.is_economic_surplus);
             const constraintOutputs = demandOutputs.length ? demandOutputs : outputMilestones;
             const jointProductionDue = sel.production_due_day
               ?? selectedLot?.production_due_day
@@ -2198,26 +2191,27 @@ export function GanttPage() {
                 ? [["Referências gémeas", segmentReferenceLabel(sel)] as [string, unknown]]
                 : []),
               ["Quantidade segmento", selectedIsSetupOnly ? "-" : sel.qty],
+              ...(!selectedIsSetupOnly ? [["Entregas do segmento", segmentDeliveriesText(sel)] as [string, unknown]] : []),
               ["Quantidade lote", selectedLotQty],
               ["Início", fmtMin(sel.start_min)],
               ["Fim", fmtMin(sel.end_min)],
-              ...(hasOutputBreakdown
+              ...(hasJointWindow
                 ? [
                     ["Janela conjunta de produção", `${fmtDay(jointMaterialRelease)} → ${fmtDay(jointProductionDue)}`] as [string, unknown],
                     ["Material comum libertado por", `${joinSkus(releaseControllingSkus, "outputs gémeos")} · libertação ${fmtDay(jointMaterialRelease)}`] as [string, unknown],
-                    ["Prazo limitado por", `${joinSkus(dueControllingSkus, sel.sku)} · produzir até ${fmtDay(jointProductionDue)}`] as [string, unknown],
+                    ["Prazo de origem do lote", `${joinSkus(dueControllingSkus, sel.sku)} · ${fmtDay(jointProductionDue)}`] as [string, unknown],
                   ]
                 : [
-                    ["Entrega ao cliente", fmtDay(sel.customer_delivery_day ?? sel.delivery_day ?? sel.original_edd ?? sel.edd)] as [string, unknown],
+                    ["Entrega que originou o lote", fmtDay(sel.customer_delivery_day ?? sel.delivery_day ?? sel.original_edd ?? sel.edd)] as [string, unknown],
                     ["Envio planeado para subcontratação", fmtDay(sel.subcontract_dispatch_day)] as [string, unknown],
                     ...(sel.latest_subcontract_dispatch_day != null
                       && sel.latest_subcontract_dispatch_day !== sel.subcontract_dispatch_day
                       ? [["Último envio possível", fmtDay(sel.latest_subcontract_dispatch_day)] as [string, unknown]]
                       : []),
-                    ["Prazo de produção", fmtDay(jointProductionDue)] as [string, unknown],
+                    ["Prazo de origem do lote", fmtDay(jointProductionDue)] as [string, unknown],
                     ["Alvo interno", fmtDay(sel.internal_target_day ?? sel.internal_deadline)] as [string, unknown],
                     ["Referência da janela de material", `${fmtDay(sel.material_reference_day)} · ${materialReferenceLabel}`] as [string, unknown],
-                    ["Libertação simulada de material", fmtDay(jointMaterialRelease)] as [string, unknown],
+                    [hasOutputBreakdown ? "Libertação da primeira parcela" : "Libertação simulada de material", fmtDay(jointMaterialRelease)] as [string, unknown],
                   ]),
               ["Início após libertação", sel.release_delay_workdays ? `${sel.release_delay_workdays} dia(s) útil(eis) depois` : "no primeiro dia permitido"],
               ["Prioridade cliente/ref.", sel.planning_priority ?? selectedLot?.planning_priority ?? 0],
@@ -2240,7 +2234,7 @@ export function GanttPage() {
               ["Subcontratação", sel.subcontract_company_id ? `${sel.subcontract_company_id} · lead ${sel.subcontract_lead_time_days ?? 0}d · buffer ${sel.subcontract_buffer_days ?? 0}d` : "-"],
               ...outputMilestones.map((output, index): [string, unknown] => [
                 `Marco output ${index + 1}`,
-                `${output.sku}${output.sku === sel.sku ? " (controla prazo)" : ""} · entrega ${fmtDay(output.customer_delivery_day)} · ${output.is_subcontracted ? `envio sub. ${fmtDay(output.subcontract_dispatch_day)}${output.latest_subcontract_dispatch_day !== output.subcontract_dispatch_day ? ` · último envio ${fmtDay(output.latest_subcontract_dispatch_day)}` : ""}` : `prazo produção ${fmtDay(output.production_due_day)}`} · libertação ${fmtDay(output.material_release_day)}`,
+                `${output.sku}${output.production_due_day === jointProductionDue ? " (controla prazo)" : ""} · ${output.qty} pç · entrega ${fmtDay(output.customer_delivery_day)} · ${output.is_subcontracted ? `envio sub. ${fmtDay(output.subcontract_dispatch_day)}${output.latest_subcontract_dispatch_day !== output.subcontract_dispatch_day ? ` · último envio ${fmtDay(output.latest_subcontract_dispatch_day)}` : ""}` : `prazo produção ${fmtDay(output.production_due_day)}`} · libertação ${fmtDay(output.material_release_day)}`,
               ]),
               ["Lote", sel.lot_id],
               ["Continuação", sel.is_continuation ? "Sim" : "Não"],
@@ -2254,8 +2248,8 @@ export function GanttPage() {
             ];
             const renderRows = (rows: [string, unknown][]) => rows.map(([key, value]) => (
               <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "9px 0", borderBottom: `1px solid ${T.border}` }}>
-                <span style={{ fontSize: 12, color: T.secondary }}>{key}</span>
-                <span style={{ fontSize: 12, color: T.primary, fontWeight: 500, fontFamily: T.mono, textAlign: "right" }}>{String(value)}</span>
+                <span style={{ fontSize: 12, color: T.secondary, flex: "0 0 35%" }}>{key}</span>
+                <span style={{ fontSize: 12, color: T.primary, fontWeight: 500, fontFamily: T.mono, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" }}>{String(value)}</span>
               </div>
             ));
             return (
@@ -2267,13 +2261,13 @@ export function GanttPage() {
                 {hasOutputBreakdown && (
                   <div style={{ marginTop: 20 }}>
                     <div style={{ color: T.tertiary, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>
-                      Datas por referência
+                      {hasJointWindow ? "Datas de origem do lote por referência" : "Datas de origem do lote por quantidade"}
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <table aria-label="Datas por referência" style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
                         <thead>
                           <tr>
-                            {["Referência", "Entrega ISOP", "Envio sub.", "Produzir até", "Alvo interno", "Referência material", "Libertação se isolada"].map((label, index) => (
+                            {["Referência", "Entrega ISOP", "Envio sub.", "Produzir até", "Alvo interno", "Referência material", hasJointWindow ? "Libertação se isolada" : "Libertação de material"].map((label, index) => (
                               <th
                                 key={label}
                                 style={{ width: index === 0 ? 160 : undefined, padding: "7px 8px", borderBottom: `1px solid ${T.border}`, color: T.tertiary, fontSize: 10, fontWeight: 650, textAlign: "left", verticalAlign: "bottom" }}
@@ -2284,20 +2278,22 @@ export function GanttPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {outputMilestones.map((output) => {
+                          {outputMilestones.map((output, outputIndex) => {
                             const contributesToJointWindow = constraintOutputs.includes(output);
                             const constraints = [
                               contributesToJointWindow && output.production_due_day === jointProductionDue ? "limita o prazo" : null,
-                              contributesToJointWindow && output.material_release_day === jointMaterialRelease ? "liberta o material comum" : null,
+                              hasJointWindow && contributesToJointWindow && output.material_release_day === jointMaterialRelease ? "liberta o material comum" : null,
                               output.is_coproduced_surplus ? "stock coproduzido" : null,
+                              output.is_economic_surplus ? "excedente do lote económico" : null,
                             ].filter(Boolean).join(" · ");
                             const outputMaterialLabel = output.material_reference_kind === "subcontract_dispatch"
                               ? "envio sub."
                               : "entrega";
                             return (
-                              <tr key={output.op_id}>
+                              <tr key={`${output.op_id}-${outputIndex}`}>
                                 <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, verticalAlign: "top" }}>
                                   <div style={{ color: T.primary, fontFamily: T.mono, fontSize: 11, fontWeight: 650, overflowWrap: "anywhere" }}>{output.sku}</div>
+                                  {output.qty != null && <div style={{ color: T.secondary, fontSize: 10 }}>{output.qty.toLocaleString()} pç</div>}
                                   {constraints && <div style={{ color: T.tertiary, fontSize: 9, marginTop: 3 }}>{constraints}</div>}
                                 </td>
                                 <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, color: T.primary, fontFamily: T.mono, fontSize: 10, verticalAlign: "top" }}>{fmtDay(output.customer_delivery_day)}</td>

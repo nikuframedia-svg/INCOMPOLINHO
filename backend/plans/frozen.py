@@ -183,12 +183,15 @@ def _install_frozen_reservations(
             "holidays", "machine_blocked_intervals", "tool_blocked_intervals",
             "operator_blocked_intervals", "committed_supplies",
             "machine_blocked_days", "tool_blocked_days",
-            "setup_crew_reservations", "plan_anchors",
+            "setup_crew_reservations", "plan_anchors", "protected_mounting_segments",
         )
     }
     # Protected lots are spliced back unchanged; the residual problem must
     # not be asked to place them again.
     protected_ids = {lot.id for lot in frozen_lots}
+    from dataclasses import asdict
+
+    engine_data.protected_mounting_segments.extend(asdict(s) for s in frozen_segments)
     engine_data.plan_anchors = [
         anchor for anchor in engine_data.plan_anchors if anchor.lot_id not in protected_ids
     ]
