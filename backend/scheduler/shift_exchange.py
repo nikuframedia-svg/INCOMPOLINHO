@@ -24,9 +24,13 @@ from backend.planning_control import planning_checkpoint, remaining_time
 from backend.scheduler.global_jit import materialise_fixed_run
 from backend.scheduler.improvement import (
     ContractVerdict,
-    anticipation_better,
-    anticipation_key,
-    contract_verdict,
+    PlanFacts,
+    improvement_better,
+    improvement_key,
+    lot_changes,
+    no_loss_verdict,
+    plan_facts,
+    tool_transfers,
     tradeoff_proposal,
 )
 from backend.scheduler.priority import delivery_not_worse
@@ -60,6 +64,30 @@ def _complete_and_legal(
         "missing_lots", "unexpected_lots", "missing_qty", "overproduced_qty",
         "duplicate_twin_output_qty", "twin_output_mismatches",
     ))
+
+
+def _canonical_gain(
+    candidate: list[Segment],
+    reference: list[Segment],
+    candidate_facts: PlanFacts,
+    reference_facts: PlanFacts,
+) -> bool:
+    """The improvement evaluator's preference (``improvement_better``,
+    contract v3) of ``candidate`` over the plan it was built from: delivery,
+    anticipation outside the tolerance, then setups before exact minutes,
+    then transfers and disturbance."""
+
+    changed, displacement = lot_changes(candidate, reference)
+    return improvement_better(
+        improvement_key(
+            candidate_facts, transfers=tool_transfers(candidate),
+            changed_lots=changed, displacement_min=displacement,
+        ),
+        improvement_key(
+            reference_facts, transfers=tool_transfers(reference),
+            changed_lots=0, displacement_min=0.0,
+        ),
+    )
 
 
 def repair_shift_capacity_exchange(
@@ -99,6 +127,7 @@ def repair_shift_capacity_exchange(
 
     original_completion = _completion_days(segments)
     before_score: dict | None = None
+    reference_facts = None
     working_days = [
         day for day in range(max(0, data.n_days))
         if is_factory_workday(day, data, config)
@@ -232,17 +261,15 @@ def repair_shift_capacity_exchange(
                     )
                 ):
                     continue
-                verdict = contract_verdict(
-                    candidate, segments, data,
-                    candidate_lots=lots,
-                    candidate_score=after_score, reference_score=before_score,
-                )
-                # Same order as the improvement evaluator: callers apply
-                # this repair directly, so it must be a canonical gain.
+                candidate_facts = plan_facts(candidate, lots, data, after_score)
+                if reference_facts is None:
+                    reference_facts = plan_facts(segments, lots, data, before_score)
+                verdict = no_loss_verdict(candidate_facts, reference_facts)
+                # Same comparator as the improvement evaluator (contract v3):
+                # callers apply this repair directly, so it must be a
+                # canonical gain against the plan it started from.
                 if verdict.admissible:
-                    if anticipation_better(
-                        anticipation_key(candidate, lots), anticipation_key(segments, lots),
-                    ):
+                    if _canonical_gain(candidate, segments, candidate_facts, reference_facts):
                         return candidate
                     verdict = ContractVerdict(False, [
                         "antecipacao atrasa um lote de maior prioridade comercial",

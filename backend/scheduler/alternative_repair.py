@@ -28,13 +28,14 @@ from backend.scheduler.improvement import (
     Proposal,
     SkippedProposal,
     contract_verdict,
+    physical_setups,
     tradeoff_proposal,
 )
 from backend.scheduler.jit_policy import (
     earliest_allowed_start,
     production_due_day,
 )
-from backend.scheduler.policy import anticipation_better
+from backend.scheduler.policy import tolerant_better
 from backend.scheduler.priority import (
     delivery_improves,
     delivery_is_complete,
@@ -361,6 +362,59 @@ def repair_alternative_machine_delivery(
     return result
 
 
+def _machine_setups(segments: Iterable[Segment], machines) -> tuple[int, float]:
+    """Physical setups (count, minutes) on ``machines`` only.
+
+    Setups are counted per machine timeline, so when a move leaves every
+    other machine untouched, comparing the touched machines compares the
+    whole plan.
+    """
+
+    summary = physical_setups(s for s in segments if s.machine_id in machines)
+    return summary.count, summary.minutes
+
+
+def _reference_setups(ordered: list[Segment]):
+    """Memoised ``_machine_setups`` of the unchanged plan per machine set."""
+
+    memo: dict[frozenset, tuple[int, float]] = {}
+
+    def setups(machines: frozenset) -> tuple[int, float]:
+        if machines not in memo:
+            memo[machines] = _machine_setups(ordered, machines)
+        return memo[machines]
+
+    return setups
+
+
+@dataclass(frozen=True, slots=True)
+class _Placement:
+    after: tuple[tuple[float, float], ...]
+    setups: tuple[int, float]
+    order: Any
+    payload: Any
+
+
+def _best_first(placements: list[_Placement]) -> list[_Placement]:
+    """Placements in the canonical preference (contract v3), best first.
+
+    Pre-checks and the evaluator share ``policy.tolerant_better``; the
+    evaluator accepts the first strict gain, so the best goes first. The
+    final key keeps the order deterministic among equivalent placements.
+    """
+
+    from functools import cmp_to_key
+
+    def compare(left: _Placement, right: _Placement) -> int:
+        if tolerant_better(left.after, right.after, left.setups, right.setups):
+            return -1
+        if tolerant_better(right.after, left.after, right.setups, left.setups):
+            return 1
+        return -1 if left.order < right.order else int(left.order > right.order)
+
+    return sorted(placements, key=cmp_to_key(compare))
+
+
 def anticipation_proposals(
     segments: list[Segment],
     lots: list[Lot],
@@ -374,9 +428,11 @@ def anticipation_proposals(
     Unlike ``repair_alternative_machine_delivery`` this does not require a
     delivery gain: a run already on time is still proposed when its lots start
     producing earlier (plan §5.2). All other runs stay fixed. Runs are tried in
-    commercial priority order and a placement is proposed only if the run's
-    own anticipation vector improves; the improvement evaluator decides with
-    the complete plan. ``not_before_abs`` is the replanning boundary.
+    commercial priority order and a placement is proposed only if it wins
+    under the evaluator's comparator on the run's own lots and the touched
+    machines' setups (contract v3: saving a setup while no lot loses 60 min
+    counts); the improvement evaluator decides with the complete plan.
+    ``not_before_abs`` is the replanning boundary.
     """
 
     from backend.scheduler.improvement import production_windows
@@ -387,12 +443,16 @@ def anticipation_proposals(
     search = _PlacementSearch(data, config, ordered, run_map.values())
     protected = protected_lot_ids(data)
     windows = production_windows(ordered)
+    reference_setups = _reference_setups(ordered)
     for run in sorted(run_map.values(), key=run_priority_key):
         if any(lot.id in protected for lot in run.lots):
             continue
         run_lots = sorted(run.lots, key=lot_priority_key)
         before = tuple(windows.get(lot.id, (math.inf, math.inf)) for lot in run_lots)
         fixed = [segment for segment in ordered if segment.run_id != run.id]
+        run_machines = frozenset(
+            segment.machine_id for segment in ordered if segment.run_id == run.id
+        )
         placements = []
         for machine_id in _eligible_machines(run, data, config, ordered):
             planning_checkpoint()
@@ -403,12 +463,15 @@ def anticipation_proposals(
                 continue
             placed = production_windows(scheduled[1])
             after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in run_lots)
-            if anticipation_better(after, before):
-                placements.append((after, str(machine_id), scheduled))
+            touched = run_machines | {machine_id}
+            setups = _machine_setups([*fixed, *scheduled[1]], touched)
+            if tolerant_better(after, before, setups, reference_setups(touched)):
+                placements.append(_Placement(after, setups, str(machine_id), scheduled))
         # The evaluator accepts the first strict gain: offer the best machine first.
-        for after, machine_id, (rebound_run, created) in sorted(
-            placements, key=lambda item: item[:2],
-        ):
+        for placement in _best_first(placements):
+            after, machine_id, (rebound_run, created) = (
+                placement.after, placement.order, placement.payload,
+            )
             subject = {
                 "key": f"anticipate:{run.id}:{machine_id}",
                 "kind": "alternative_anticipation",
@@ -447,9 +510,10 @@ def group_reinsertion_proposals(
     cannot: swapping campaigns, or freeing the opening one run needs by
     relocating its neighbours (plan §5.2). Only groups where a run still
     starts after its own floor (material release or replanning boundary) can
-    gain and are tried, most urgent group first. A proposal requires the
-    group's anticipation vector to improve; the improvement evaluator decides
-    on the complete plan.
+    gain and are tried, most urgent group first. A proposal must win under
+    the evaluator's comparator (contract v3) on the group's lots and the
+    touched machines' setups; the improvement evaluator decides on the
+    complete plan.
     """
 
     from itertools import permutations
@@ -465,6 +529,7 @@ def group_reinsertion_proposals(
     search = _PlacementSearch(data, config, ordered, run_map.values())
     protected = protected_lot_ids(data)
     windows = production_windows(ordered)
+    reference_setups = _reference_setups(ordered)
     holidays = _extended_holidays(data, -20, data.n_days + 400)
 
     def has_slack(run: ToolRun) -> bool:
@@ -533,16 +598,22 @@ def group_reinsertion_proposals(
         member_lots = group_lots(group)
         before = tuple(windows.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
         fixed = [segment for segment in ordered if segment.run_id not in group]
+        group_machines = frozenset(
+            segment.machine_id for segment in ordered if segment.run_id in group
+        )
         placements = []
         for order in permutations(group):
             for created, rebound, assignments in chains(list(order), fixed, [], [], ()):
                 placed = production_windows(created)
                 after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
-                if anticipation_better(after, before):
-                    placements.append((after, assignments, created, rebound))
-        for _after, assignments, created, rebound_lots in sorted(
-            placements, key=lambda item: item[:2],
-        ):
+                touched = group_machines | {machine for _run, machine in assignments}
+                setups = _machine_setups([*fixed, *created], touched)
+                if tolerant_better(after, before, setups, reference_setups(touched)):
+                    placements.append(
+                        _Placement(after, setups, assignments, (created, rebound)),
+                    )
+        for placement in _best_first(placements):
+            assignments, (created, rebound_lots) = placement.order, placement.payload
             subject = {
                 "key": "group:" + "|".join(f"{run}>{machine}" for run, machine in assignments),
                 "kind": "group_reinsertion",

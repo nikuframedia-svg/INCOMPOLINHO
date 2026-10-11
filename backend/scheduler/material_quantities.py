@@ -29,6 +29,52 @@ def next_release_day(lot: Lot, day: int) -> int | None:
     return min(days) if days else None
 
 
+@dataclass(frozen=True, slots=True)
+class MaterialPortion:
+    """Quantity of one economic lot released by material on the same day.
+
+    ``outputs`` are the lot outputs (delivery records, in lot order) that the
+    portion serves; their quantities add up to ``qty``. The economic surplus
+    is released with the last delivery it follows, so it closes the last
+    portion. Portions are a construction view: the lot is sized once and is
+    never split into new lots (AGENTS §2-§3).
+    """
+
+    index: int
+    qty: int
+    material_release_day: int | None
+    outputs: tuple[dict, ...] = field(compare=False)
+
+
+def material_portions(lot: Lot) -> list[MaterialPortion]:
+    """Group consecutive outputs released on the same day.
+
+    Twin cycles and lots with a single output stay one portion; the surplus
+    joins the last portion whatever its own record says.
+    """
+
+    outputs = list(lot.output_milestones or [])
+    if lot.is_twin or len(outputs) <= 1:
+        return [MaterialPortion(0, int(lot.qty), lot.material_release_day, tuple(outputs))]
+    groups: list[tuple[object, list[dict]]] = []
+    for output in outputs:
+        release = output.get("material_release_day")
+        if groups and (_is_surplus(output) or groups[-1][0] == release):
+            groups[-1][1].append(output)
+        else:
+            groups.append((release, [output]))
+    portions: list[MaterialPortion] = []
+    assigned = 0
+    for index, (release, members) in enumerate(groups):
+        last = index == len(groups) - 1
+        qty = int(lot.qty) - assigned if last else sum(int(item["qty"]) for item in members)
+        assigned += qty
+        portions.append(MaterialPortion(
+            index, qty, int(release) if release is not None else None, tuple(members),
+        ))
+    return portions
+
+
 def output_completion_days(lot: Lot, segments: list[Segment], missing_day: int):
     """Factory day of each demand portion of one lot, not the lot end.
 

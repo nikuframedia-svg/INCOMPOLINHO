@@ -38,11 +38,21 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    só o desempate final estável.
    **Tolerância (05/10/2026):** diferenças inferiores a 60 min não decidem
    entre lotes. Um lote só pode começar ou acabar 1 h ou mais tarde se um lote
-   mais urgente ganhar pelo menos 1 h; abaixo disso, os minutos exatos
-   desempatam. Cada melhoria é comparada com o plano atual e com o de partida
-   (`policy.anticipation_compare`, `improvement.improvement_better`).
-4. **Objetivos seguintes:** menos setups físicos/minutos, menos transferências,
-   menor alteração do plano. Não podem fazer perder uma antecipação admissível.
+   mais urgente ganhar pelo menos 1 h. Cada melhoria é comparada com o plano
+   atual e com o de partida (`policy.anticipation_compare`,
+   `improvement.improvement_better`, `improvement.regresses_reference`).
+   **Setups dentro da tolerância (regra 2, decidida a 10/10/2026, contrato
+   v3):** quando nenhum lote muda 60 min ou mais, decidem primeiro menos
+   setups físicos e depois menos minutos de setup; só então os minutos exatos
+   (`policy.tolerant_tiebreak`). Assim, uma ferramenta montada continua a
+   produzir mesmo havendo um lote mais urgente à espera da máquina, desde que
+   esse lote perca menos de 60 min; com 60 min ou mais, o lote urgente passa
+   à frente e paga-se o setup. A regra de não perda por encomenda (ponto 2)
+   continua acima de tudo (`improvement.CONTRACT_VERSION = 3`,
+   `policy.POLICY_VERSION = earliest-lexicographic-tolerant-setups-v3`).
+4. **Objetivos seguintes:** menos setups físicos/minutos (já decididos dentro da
+   tolerância, ponto 3), menos transferências, menor alteração do plano. Não
+   podem fazer perder uma antecipação de 60 min ou mais.
 5. **Decisão explícita de 02/10/2026:** uma antecipação pode aumentar o número
    ou os minutos de setup se preservar entregas e restrições físicas. Esta
    decisão substitui a antiga proibição automática de setups adicionais.
@@ -103,6 +113,21 @@ libertadas em datas diferentes são execuções físicas distintas.
 Subcontratação: cada parte é expedida por entrega e fica pronta para o cliente
 na sua própria conclusão mais o lead útil, não na conclusão do lote. Gémeas
 passam ao mesmo princípio na Fase B do plano de 10/10 (até lá, ciclo inteiro).
+
+Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
+
+1. **Material já libertado, ferramenta continua.** Se o material da parte
+   seguinte do lote já foi libertado quando a parte anterior acaba, a
+   ferramenta montada continua a produzir, sem novo setup.
+2. **Ferramenta montada vs. lote mais urgente.** A ferramenta montada continua
+   mesmo havendo um lote mais urgente para a máquina, desde que esse lote perca
+   menos de 60 min (a mesma tolerância do §1.3; dentro dela, os setups
+   desempatam antes dos minutos exatos). Com 60 min ou mais, passa o urgente.
+3. **Mudar de máquina leva o lote inteiro**, com todas as suas partes; um lote
+   nunca fica repartido entre máquinas.
+4. **Lote começado:** só congela o que já começou. As partes futuras continuam
+   otimizáveis e o lote nunca é redimensionado (por implementar; até lá vale o
+   congelamento do lote inteiro de `plans/frozen.py`).
 
 **Um só avaliador de prontidão (10/10/2026).** Stock, OTD-D, encomendas,
 expedição, subcontratação, atrasos, riscos, tooltip, propostas, CTP,

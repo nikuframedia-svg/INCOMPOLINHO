@@ -3,16 +3,22 @@
 One place for the anticipation measure shared by the improvement evaluator,
 the CPO ranks, the local neighbourhoods and the explanations. Lots are
 compared in the commercial priority order (``lot_priority_key``): production
-start, then production finish, of each lot in turn. Setups, transfers and plan
+start, then production finish, of each lot in turn. Transfers and plan
 disturbance rank after it, in ``improvement.improvement_key``. Bump
 ``POLICY_VERSION`` with any change.
 
 Tolerance (decision of 05/10/2026): a difference smaller than
 ``ANTICIPATION_TOLERANCE_MIN`` does not decide between lots. A lot may only
 start or finish that much later when a more urgent lot gains at least as
-much. Exact minutes still break ties afterwards, so small gains are taken
-when nothing larger is at stake. The tolerant comparison is not transitive:
-callers compare against both the current and the reference plan.
+much. The tolerant comparison is not transitive: callers compare against
+both the current and the reference plan.
+
+Setups inside the tolerance (decision of 10/10/2026, v3): when no lot moves
+by the tolerance or more, fewer setups and then fewer setup minutes decide
+*before* the exact minutes (``tolerant_tiebreak``). A mounted tool therefore
+keeps running even when a more urgent lot wants the machine, as long as that
+lot loses less than ``ANTICIPATION_TOLERANCE_MIN``. Exact minutes still break
+the remaining ties, so small gains are taken when nothing larger is at stake.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from collections.abc import Iterable
 from backend.scheduler.priority import lot_priority_key
 from backend.scheduler.types import Lot, Segment
 
-POLICY_VERSION = "earliest-lexicographic-tolerant-v2"
+POLICY_VERSION = "earliest-lexicographic-tolerant-setups-v3"
 ANTICIPATION_TOLERANCE_MIN = 60.0
 _MISSING = math.inf
 
@@ -89,10 +95,62 @@ def anticipation_compare(
 def anticipation_better(
     candidate, reference, tolerance: float = ANTICIPATION_TOLERANCE_MIN,
 ) -> bool:
-    """Tolerant comparison first, exact lexicographic minutes as tie-break."""
+    """Tolerant comparison first, exact lexicographic minutes as tie-break.
+
+    Ignores setups, so it is only for plans with the same setups; every
+    decision between plans uses ``tolerant_better`` (contract v3).
+    """
 
     decided = anticipation_compare(candidate, reference, tolerance)
     if decided:
         return decided < 0
     return tuple(item[-2:] for item in candidate) < tuple(item[-2:] for item in reference)
 
+
+def anticipation_exact(key) -> tuple[tuple[float, float], ...]:
+    """The exact (start, finish) minutes of an anticipation vector."""
+
+    return tuple(item[-2:] for item in key)
+
+
+def tolerant_tiebreak(anticipation, setups: tuple[float, ...]) -> tuple[object, ...]:
+    """Order among plans the tolerant comparison does not separate (v3).
+
+    ``setups`` is (count, minutes): a setup saved outranks any gain smaller
+    than the tolerance; exact minutes decide only between equal setups.
+    """
+
+    return (*setups, anticipation_exact(anticipation))
+
+
+def tolerant_better(
+    candidate_anticipation,
+    reference_anticipation,
+    candidate_setups: tuple[float, ...],
+    reference_setups: tuple[float, ...],
+    candidate_rest: tuple[object, ...] = (),
+    reference_rest: tuple[object, ...] = (),
+) -> bool:
+    """The one canonical preference after physics and delivery (contract v3).
+
+    1. anticipation with the tolerance (a lot may lose ``tolerance`` or more
+       only if a more urgent lot gains as much);
+    2. inside the tolerance, fewer setups, then fewer setup minutes
+       (``setups`` is (count, minutes));
+    3. then the exact anticipation minutes;
+    4. then ``rest`` (transfers, disturbance or caller proxies).
+
+    Anticipation vectors may hold (lot, start, finish) or (start, finish)
+    items; both sides must list the same lots in the same order. The
+    improvement evaluator, the CPO ranks and every pre-check before
+    validation use this function, so they never disagree.
+    """
+
+    decided = anticipation_compare(candidate_anticipation, reference_anticipation)
+    if decided:
+        return decided < 0
+    return (
+        *tolerant_tiebreak(candidate_anticipation, candidate_setups), *candidate_rest,
+    ) < (
+        *tolerant_tiebreak(reference_anticipation, reference_setups), *reference_rest,
+    )

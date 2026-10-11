@@ -465,9 +465,23 @@ def improve_preserving_protected_lots(
     from backend.scheduler.scoring import compute_score
     from backend.scheduler.validation import validate_plan
 
+    frozen_run_ids = {segment.run_id for segment in protected_segments}
+
     def evaluation_plan(segments, lots):
+        # Consumers read the complete plan exactly as they read an unprotected
+        # candidate (never mutating it), so no deep copy is needed (B4.3).
+        # Nothing protected: the residual already is the complete plan.
+        if not protected_lots:
+            return segments, lots, result_validation_data(original_data, result)
+        # The splice only rewrites ``run_id`` of residual segments whose run
+        # id collides with a protected run: copy just those, so the
+        # candidate itself is never changed.
         complete = copy.copy(result)
-        complete.segments, complete.lots = copy.deepcopy(segments), copy.deepcopy(lots)
+        complete.segments = [
+            copy.copy(segment) if segment.run_id in frozen_run_ids else segment
+            for segment in segments
+        ]
+        complete.lots = list(lots)
         complete = _splice_frozen_started_lots(complete, protected_segments, protected_lots)
         return complete.segments, complete.lots, result_validation_data(original_data, complete)
 

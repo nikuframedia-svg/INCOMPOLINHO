@@ -7,7 +7,7 @@ import math
 from collections import Counter, defaultdict
 
 from backend.config.types import FactoryConfig
-from backend.planning_control import execution_cache
+from backend.planning_control import current_planning_control, execution_cache
 from backend.plans.serialize import schedule_fingerprint
 from backend.scheduler.lot_sizing import _aggregate_milestones, create_lots
 from backend.scheduler.resources import build_setup_override_map, effective_oee, resolve_setup_hours
@@ -68,7 +68,51 @@ def legacy_material_plan(lots, data, config) -> bool:
         return False
     from backend.scheduler.quantity_dispatch import has_quantity_releases
 
-    return has_quantity_releases(create_lots(data, config or FactoryConfig()))
+    return has_quantity_releases(contract_lots(data, config or FactoryConfig()))
+
+
+def _lot_sizing_inputs(data, config, quantity_material):
+    """Everything ``create_lots`` reads; equal inputs give equal lots."""
+    return (
+        QUANTITY_MATERIAL_VERSION,
+        bool(quantity_material),
+        data.ops,
+        data.twin_groups,
+        data.committed_supplies,
+        data.holidays,
+        data.workdays,
+        data.calendar_extra_workdays,
+        data.n_days,
+        None if config is None else (
+            config.oee_default, config.min_prod_min, config.setup_families,
+        ),
+    )
+
+
+def contract_lots(data, config, *, quantity_material=True):
+    """``create_lots`` memoised inside one planning calculation (B4.1).
+
+    Validation rebuilds the canonical lots of the same scenario for every
+    candidate. The entry is reused only after exact equality with a private
+    copy of every lot-sizing input (operations, committed supplies including
+    the credits of preserved lots, calendar, configuration and material
+    contract version), so in-place edits of the scenario never return stale
+    lots. Outside a planning scope there is no cache. The returned lots are
+    shared: callers must treat them as read-only.
+    """
+    if current_planning_control() is None:
+        return create_lots(data, config, quantity_material=quantity_material)
+    cache = execution_cache("contract_lots")
+    inputs = _lot_sizing_inputs(data, config, quantity_material)
+    key = (id(data.ops), len(data.ops), len(data.committed_supplies), bool(quantity_material))
+    entry = cache.get(key)
+    if entry is not None and entry[0] == inputs:
+        return entry[1]
+    lots = create_lots(data, config, quantity_material=quantity_material)
+    cache[key] = (copy.deepcopy(inputs), lots)
+    if len(cache) > 32:
+        del cache[next(iter(cache))]
+    return lots
 
 
 def _lot_label(lot, machine_id=None):
@@ -240,10 +284,10 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
     quantity_material = has_quantity_material(remaining)
     # Old snapshots remain readable under their recorded model. Operational
     # persistence and explicit recalculation request the current contract.
-    expected_lots = create_lots(residual, config, quantity_material=quantity_material)
+    expected_lots = contract_lots(residual, config, quantity_material=quantity_material)
     expected_by_id = {lot.id: lot for lot in expected_lots}
     if require_current_material and not quantity_material:
-        current_lots = {lot.id: lot for lot in create_lots(residual, config)}
+        current_lots = {lot.id: lot for lot in contract_lots(residual, config)}
         for lot in remaining:
             expected = current_lots.get(lot.id)
             if expected is None:

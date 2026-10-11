@@ -1974,6 +1974,11 @@ def _materialise_preemptive_lot(
         last = index == len(chunks) - 1
         target_qty = lot.qty if last else round(lot.qty * consumed / max(1, duration))
         qty = max(0, target_qty - allocated_qty)
+        if not last and block > 0 and lot.qty >= len(chunks):
+            # Productive minutes always carry pieces (AGENTS §3); keep one
+            # piece for every later chunk so the residue stays in the last.
+            later = len(chunks) - index - 1
+            qty = min(max(qty, 1), lot.qty - allocated_qty - later)
         allocated_qty += qty
         twin_outputs = None
         if lot.twin_outputs is not None:
@@ -1981,6 +1986,13 @@ def _materialise_preemptive_lot(
             for output_index, (op_id, sku, total_qty) in enumerate(lot.twin_outputs):
                 target = total_qty if last else round(total_qty * consumed / max(1, duration))
                 output_qty = max(0, target - allocated_twin[output_index])
+                if not last and block > 0 and total_qty >= len(chunks):
+                    # Same rule on each twin side as for the chunk quantity.
+                    later = len(chunks) - index - 1
+                    output_qty = min(
+                        max(output_qty, 1),
+                        total_qty - allocated_twin[output_index] - later,
+                    )
                 allocated_twin[output_index] += output_qty
                 twin_outputs.append((op_id, sku, output_qty))
         segment_setup = setup_min if first_in_run and index == 0 else 0

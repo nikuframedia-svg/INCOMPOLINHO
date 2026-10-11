@@ -121,6 +121,8 @@ Artigo subcontratado:
   libertação = envio − 5 dias úteis
 ```
 
+**Janela por entrega (07–10/10/2026).** Quando um lote económico cobre várias entregas, cada entrega conserva a sua própria janela: as peças atribuídas a uma entrega só podem ser preparadas ou produzidas a partir da libertação dessa entrega (5 dias úteis antes da sua referência de material). O excedente do lote económico liberta-se com a última entrega coberta. Exemplo: o lote de 32 000 pç da BFP082 cobre as entregas de 20/10, 23/10, 26/10 e 27/10; a parte de 26/10 só pode ser produzida a partir de 19/10, mesmo que a primeira parte comece a 13/10. Se o material da parte seguinte já estiver libertado quando a anterior acaba, a ferramenta continua montada, sem novo setup. Mudar de máquina leva o lote inteiro. Na subcontratação, cada parte é enviada e fica pronta para o cliente com a sua própria conclusão mais o lead, não com a conclusão do lote inteiro.
+
 Fins de semana fechados/feriados não contam; aberturas extraordinárias afetam o calendário. Sem feriados, entrega à sexta-feira liberta material na sexta-feira anterior. Setup na quinta-feira anterior ao release é inválido, mesmo produzindo depois.
 
 **Subcontratação.** Distinguir fim interno, envio e disponibilidade para cliente. Fornecedor genérico atual: **5 dias úteis** de lead, buffer zero. Entrega à sexta-feira exige envio na anterior; o release recua mais cinco dias úteis. OTD/OTD-D usam disponibilidade após o lead, não apenas fim interno.
@@ -136,7 +138,9 @@ A janela impõe limite inferior, não garante toda a carga até ao prazo. Pode e
 3. Um espaço vazio só permanece com razão operacional demonstrável.
 4. **OTD e OTD-D nunca pioram para tornar o plano visualmente mais compacto.**
 
-**Prioridade.** Considera prazo produtivo controlável, rutura, prioridade explícita e campanha. Subcontratação pode antecipar urgência face à entrega comercial. Existe prioridade 100 para `TP042173-0040-2`; não autoriza material antecipado nem conflito físico.
+**Prioridade.** Considera, por esta ordem, prazo produtivo controlável, data de rutura, prioridade explícita, arranque e alvo internos, data do cliente e maior quantidade. Subcontratação pode antecipar urgência face à entrega comercial. Uma prioridade explícita nunca autoriza material antecipado nem conflito físico. As prioridades explícitas definem-se no ecrã Configuração.
+
+**Ferramenta montada e tolerância de 60 min (10/10/2026).** Diferenças de antecipação inferiores a 60 min não decidem entre lotes; dentro dessa tolerância decidem primeiro menos setups e menos minutos de setup, e só depois os minutos exatos. Uma ferramenta montada continua, portanto, a produzir mesmo havendo um lote mais urgente para a máquina, desde que esse lote perca menos de 60 min; com 60 min ou mais, o lote urgente passa à frente. Nenhuma encomenda pode piorar por causa desta regra.
 
 | Razão para um espaço | Evidência |
 | --- | --- |

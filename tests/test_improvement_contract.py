@@ -378,3 +378,77 @@ def test_a_chain_of_tolerated_moves_cannot_drift_from_its_reference():
     assert improvement_better(step_one, reference)
     assert improvement_better(step_two, step_one)
     assert regresses_reference(step_two, reference)
+
+
+# ── Setups inside the tolerance (contract v3, decision of 10/10/2026) ────
+
+
+def _with_setups(facts, count: int, minutes: float):
+    from backend.scheduler.improvement import SetupSummary
+
+    return dataclasses.replace(facts, setups=SetupSummary(count=count, minutes=minutes))
+
+
+def test_contract_version_is_three():
+    from backend.scheduler.improvement import CONTRACT_VERSION
+    from backend.scheduler.policy import POLICY_VERSION
+
+    assert CONTRACT_VERSION == 3
+    assert POLICY_VERSION.endswith("-v3")
+
+
+def test_mounted_tool_keeps_running_when_the_urgent_lot_loses_59_minutes():
+    """Rule 2: one setup saved outranks 59 min of a more urgent lot."""
+    from backend.scheduler.improvement import improvement_better
+
+    swap = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 2, 60.0))
+    keep = _key(_with_setups(_two_lots(480 + 59, 2 * 1440 + 420), 1, 30.0))
+    assert improvement_better(keep, swap)
+    assert not improvement_better(swap, keep)
+
+
+def test_an_hour_of_the_urgent_lot_outranks_a_setup():
+    from backend.scheduler.improvement import improvement_better
+
+    swap = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 2, 60.0))
+    keep = _key(_with_setups(_two_lots(480 + 60, 2 * 1440 + 420), 1, 30.0))
+    assert improvement_better(swap, keep)
+    assert not improvement_better(keep, swap)
+
+
+def test_setup_minutes_decide_before_exact_minutes_when_counts_tie():
+    from backend.scheduler.improvement import improvement_better
+
+    long_setup = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 1, 45.0))
+    short_setup = _key(_with_setups(_two_lots(500, 2 * 1440 + 420), 1, 30.0))
+    assert improvement_better(short_setup, long_setup)
+
+
+def test_exact_minutes_decide_between_equal_setups():
+    from backend.scheduler.improvement import improvement_better
+
+    later = _key(_with_setups(_two_lots(500, 2 * 1440 + 420), 1, 30.0))
+    earlier = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 1, 30.0))
+    assert improvement_better(earlier, later)
+    assert not improvement_better(later, earlier)
+
+
+def test_setups_never_outrank_delivery():
+    from backend.scheduler.improvement import improvement_better
+
+    on_time = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 5, 150.0))
+    late = _with_setups(_two_lots(480, 2 * 1440 + 420), 1, 30.0)
+    late = dataclasses.replace(late, score={"otd": 90.0, "otd_d": 90.0})
+    assert improvement_better(on_time, _key(late))
+    assert not improvement_better(_key(late), on_time)
+
+
+def test_chain_of_setup_savings_cannot_drift_an_hour_from_the_reference():
+    from backend.scheduler.improvement import improvement_better, regresses_reference
+
+    reference = _key(_with_setups(_two_lots(480, 2 * 1440 + 420), 3, 90.0))
+    step_one = _key(_with_setups(_two_lots(480 + 40, 2 * 1440 + 420), 2, 60.0))
+    step_two = _key(_with_setups(_two_lots(480 + 80, 2 * 1440 + 420), 1, 30.0))
+    assert improvement_better(step_one, reference)
+    assert improvement_better(step_two, step_one)
+    assert regresses_reference(step_two, reference)

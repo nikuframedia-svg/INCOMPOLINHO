@@ -729,10 +729,19 @@ def _allocate_run_candidate(
             # Production time available AFTER setup
             prod_available = day_remaining - seg_setup
             released_minutes = lot.prod_min * released_quantity(lot, day) / lot.qty
-            block_min = min(
-                remaining_min, float(prod_available),
-                released_minutes - (lot.prod_min - remaining_min),
-            )
+            released_block = released_minutes - (lot.prod_min - remaining_min)
+            if released_block < 1.0:
+                # Minute rounding below pieces already released: their own
+                # minutes, never an empty or sub-minute block (AGENTS §3).
+                released_block = max(1.0, lot.prod_min * available_qty / lot.qty)
+            block_min = min(remaining_min, float(prod_available), released_block)
+            if (
+                0.0 < remaining_min - block_min < 1.0
+                and remaining_min <= prod_available
+                and remaining_qty <= available_qty
+            ):
+                # Do not leave a sub-minute residue for a later segment.
+                block_min = remaining_min
             block_min = max(block_min, 0.01)  # never zero
 
             # Proportional qty

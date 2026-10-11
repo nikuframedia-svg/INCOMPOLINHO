@@ -592,6 +592,7 @@ def _remove_redundant_retained_tool_setups(
     segments: list[Segment],
     *,
     protected_lot_ids: set[str] | None = None,
+    fixed_segments: list[Segment] | None = None,
 ) -> list[Segment]:
     """Remove a setup when the same tool is still mounted on the machine.
 
@@ -600,6 +601,10 @@ def _remove_redundant_retained_tool_setups(
     change when no different tool ran on the machine and the mould did not move
     to another machine in between. Keep the allocated production window until
     resource-aware normalization can safely fill the released time.
+
+    ``fixed_segments`` are physical work outside ``segments`` (the protected
+    mountings of a frozen recalculation). They are never changed, but they are
+    evidence: a different tool among them between two runs is a tool change.
     """
 
     by_machine_run: dict[tuple[str, str], list[Segment]] = defaultdict(list)
@@ -618,6 +623,7 @@ def _remove_redundant_retained_tool_setups(
     removed = 0
     discarded: set[int] = set()
     protected = protected_lot_ids or set()
+    evidence = [*segments, *(fixed_segments or ())]
     for machine_id, openings in openings_by_machine.items():
         planning_checkpoint()
         openings.sort(key=lambda item: (item.day_idx, item.start_min, item.run_id))
@@ -640,7 +646,7 @@ def _remove_redundant_retained_tool_setups(
             if not all(segment_setup_identity(item) == identity for item in prefix):
                 continue
             if not retained_setup_at(
-                segments, machine_id, identity, first.day_idx,
+                evidence, machine_id, identity, first.day_idx,
                 first.start_min, ignore_run_id=opening.run_id,
             ):
                 continue
@@ -4206,9 +4212,35 @@ def schedule_all(
         has_quantity_releases,
         schedule_quantity_releases,
     )
+    from backend.scheduler.resources import protected_mounting_segments
 
     if has_quantity_releases(lots):
         segments, lots = schedule_quantity_releases(lots, data, config)
+        # Close-out: a setup the campaign builder could not avoid at allocation
+        # time but that a later placement made redundant (same tool still
+        # mounted) is not a physical tool change.
+        # Protected work of a frozen recalculation is evidence of a tool change.
+        setups_before = sum(segment.setup_min for segment in segments)
+        built = [
+            (segment, segment.start_min, segment.setup_min, segment.run_setup_min)
+            for segment in segments
+        ]
+        segments = _remove_redundant_retained_tool_setups(
+            segments,
+            protected_lot_ids=set(data.preserved_lot_proofs),
+            fixed_segments=protected_mounting_segments(data),
+        )
+        if sum(segment.setup_min for segment in segments) != setups_before:
+            try:
+                assert_plan_valid(segments, data, config, lots=lots)
+            except PlanValidationError as error:
+                # The builder's plan was already validated: keep it rather
+                # than fail the recalculation over an optional clean-up.
+                logger.warning("Fecho de setups retidos rejeitado: %s", error)
+                for segment, start, setup, run_setup in built:
+                    segment.start_min, segment.setup_min = start, setup
+                    segment.run_setup_min = run_setup
+                segments = [segment for segment, *_ in built]
         operational_audit = build_operational_audit(segments, lots, source_data, config)
         score = compute_score(
             segments, lots, source_data, config=config, operational_audit=operational_audit,

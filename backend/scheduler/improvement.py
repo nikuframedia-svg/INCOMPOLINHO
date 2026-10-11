@@ -31,6 +31,8 @@ from backend.scheduler.policy import (  # noqa: F401  (re-exported)
     anticipation_compare,
     anticipation_key,
     production_windows,
+    tolerant_better,
+    tolerant_tiebreak,
 )
 from backend.scheduler.priority import delivery_priority_key
 from backend.scheduler.setup_identity import segment_setup_identity
@@ -38,7 +40,9 @@ from backend.scheduler.types import Lot, Segment
 from backend.types import ClientDemandEntry, EngineData
 
 # 2: anticipation vector ranks before setups; extra setups no longer veto.
-CONTRACT_VERSION = 2
+# 3: inside the anticipation tolerance, setups (count, then minutes) decide
+#    before the exact minutes (10/10/2026, AGENTS.md §1).
+CONTRACT_VERSION = 3
 PROTECTED_CONTEXT_VERSION = 5
 
 # Same precision as ``scoring.setup_time_min``. Both the phase reference and
@@ -339,7 +343,9 @@ def improvement_key(
     """Canonical lexicographic order among admissible candidates (smaller wins).
 
     Delivery, then anticipation, then setups/minutes, transfers and plan
-    disturbance. Compare keys only between plans with the same lots.
+    disturbance. Compare keys only between plans with the same lots, and
+    only through ``improvement_better``: inside the anticipation tolerance
+    the setups rank before the exact anticipation minutes (contract v3).
     """
 
     return (
@@ -357,16 +363,18 @@ def improvement_better(candidate_key: tuple, reference_key: tuple) -> bool:
     """Canonical preference between two ``improvement_key`` values.
 
     Delivery first; then anticipation with the policy tolerance (a lot may
-    lose an hour or more only if a more urgent lot gains as much); then the
-    exact key (exact minutes, setups, transfers, disturbance).
+    lose an hour or more only if a more urgent lot gains as much); inside the
+    tolerance fewer setups, then fewer setup minutes, then the exact minutes
+    (contract v3); then transfers and disturbance.
     """
 
     if candidate_key[0] != reference_key[0]:
         return candidate_key[0] < reference_key[0]
-    decided = anticipation_compare(candidate_key[1], reference_key[1])
-    if decided:
-        return decided < 0
-    return candidate_key < reference_key
+    return tolerant_better(
+        candidate_key[1], reference_key[1],
+        (candidate_key[2], candidate_key[3]), (reference_key[2], reference_key[3]),
+        tuple(candidate_key[4:]), tuple(reference_key[4:]),
+    )
 
 
 def regresses_reference(candidate_key: tuple, reference_key: tuple) -> bool:

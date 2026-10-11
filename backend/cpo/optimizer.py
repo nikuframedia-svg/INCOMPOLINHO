@@ -20,6 +20,7 @@ import logging
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from functools import cmp_to_key
 
 from backend.config.types import FactoryConfig
 from backend.planning_control import (
@@ -35,10 +36,11 @@ from backend.planning_control import (
 )
 from backend.scheduler.dispatch import assign_machines
 from backend.scheduler.gates import HARD_GATE_KEYS, build_gate_report
+from backend.scheduler.improvement import physical_setups
 from backend.scheduler.jit_policy import calendar_holidays
 from backend.scheduler.lot_sizing import create_lots
 from backend.scheduler.operators import compute_operator_alerts
-from backend.scheduler.policy import anticipation_compare, anticipation_key
+from backend.scheduler.policy import anticipation_key, tolerant_better
 from backend.scheduler.priority import (
     DELIVERY_PRIORITY_KEYS,
     delivery_is_complete,
@@ -1468,9 +1470,13 @@ def _try_delivery_left_shift_repair(
                 candidates.append((trial_rank, [*moves, move], trial))
         if not candidates:
             break
-        candidates.sort(key=lambda item: (item[0], len(item[1]), item[1]))
+        candidates.sort(key=cmp_to_key(
+            lambda a, b: _rank_order(a[0], b[0])
+            or (-1 if (len(a[1]), a[1]) < (len(b[1]), b[1])
+                else int((len(a[1]), a[1]) > (len(b[1]), b[1]))),
+        ))
         beam = candidates[:6]
-        if beam[0][0] < best[0]:
+        if _rank_better(beam[0][0], best[0]):
             best = beam[0]
         if _is_fully_trusted_score(best[2].score or {}):
             break
@@ -3213,27 +3219,48 @@ def _result_rank(result: ScheduleResult) -> tuple[object, ...]:
     anticipation vector of the improvement contract in its place."""
 
     score = result.score or {}
+    setups = physical_setups(result.segments)
     return (
         _trust_prefix(score),
         # Aggregate proxies only break exact ties of the canonical vector.
-        (anticipation_key(result.segments, result.lots), _anticipation_proxies(score)),
+        (
+            anticipation_key(result.segments, result.lots),
+            _anticipation_proxies(score),
+            (setups.count, setups.minutes),
+        ),
         _trust_tail(score),
     )
 
 
 def _rank_better(candidate: tuple, reference: tuple) -> bool:
     """Ranks are (physics+delivery, anticipation, tie-breaks). With the
-    canonical per-lot vector on both sides, anticipation uses the policy
-    tolerance before the exact order (same rule as the improvement cycle)."""
+    canonical per-lot vector on both sides the comparator is the improvement
+    cycle's (``policy.tolerant_better``, contract v3): anticipation with the
+    tolerance, then physical setups (count, minutes), then exact minutes,
+    then the aggregate proxies and score tail. Ranks from the score alone
+    (different lots) compare lexicographically."""
 
     if candidate[0] != reference[0]:
         return candidate[0] < reference[0]
     left, right = candidate[1], reference[1]
-    if left and right and isinstance(left[0], tuple) and isinstance(right[0], tuple):
-        decided = anticipation_compare(left[0], right[0])
-        if decided:
-            return decided < 0
+    if _canonical_rank(left) and _canonical_rank(right):
+        return tolerant_better(
+            left[0], right[0], left[2], right[2],
+            (left[1], candidate[2]), (right[1], reference[2]),
+        )
     return candidate < reference
+
+
+def _canonical_rank(anticipation: tuple) -> bool:
+    return len(anticipation) == 3 and isinstance(anticipation[0], tuple)
+
+
+def _rank_order(left: tuple, right: tuple) -> int:
+    """``cmp`` form of ``_rank_better`` for sorting (best first)."""
+
+    if _rank_better(left, right):
+        return -1
+    return 1 if _rank_better(right, left) else 0
 
 
 def _comparable_ranks(

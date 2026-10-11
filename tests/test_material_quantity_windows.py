@@ -177,17 +177,42 @@ def test_reinserting_one_material_portion_preserves_the_economic_lot():
     )
     from backend.scheduler.validation import validate_plan
 
+    # Another tool released on day 7 breaks the mounting after the first
+    # portion: the economic lot runs as two physical runs (B1a campaigns).
     data = scenario()
+    demand = [0] * data.n_days
+    demand[14] = 1000
+    data.ops.append(replace(
+        data.ops[0], id="OTHER_MACHINE_OTHER", sku="OTHER", t="OTHER", d=demand, eco_lot=0,
+    ))
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
     runs = _resolve_runs(result.segments, result.lots, None)
-    assert sorted(lot.qty for run in runs.values() for lot in run.lots) == [2400, 5680, 9520, 14400]
-    for run in runs.values():
+    sku_runs = [run for run in runs.values() if run.tool_id == "TOOL"]
+    assert sorted(lot.qty for run in sku_runs for lot in run.lots) == [5680, 26320]
+    for run in sku_runs:
         fixed = [s for s in result.segments if s.run_id != run.id]
         rebound, created = _schedule_run_earliest(run, "MACHINE", fixed, data, config)
         combined = [*fixed, *created]
         lots = _replace_lots(result.lots, rebound.lots)
         assert lots == result.lots
-        assert sum(s.qty for s in combined) == 32000
+        assert sum(s.qty for s in combined if s.sku == "SKU") == 32000
         assert all(s.lot_qty == 32000 for s in created)
         assert not validate_plan(combined, data, config, lots=lots)
+
+
+def test_released_portions_continue_on_the_mounted_tool_in_one_run():
+    """Rule 1 (10/10): nothing else needs the machine, so the tool stays mounted
+    across the material waits: one setup, one run, portion boundaries kept."""
+
+    data = scenario()
+    config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
+    result = schedule_all(data, config=config)
+    assert len({s.run_id for s in result.segments}) == 1
+    assert sum(1 for s in result.segments if s.setup_min > 0) == 1
+    # Every portion ends on a segment boundary.
+    cumulative, boundaries = 0, set()
+    for segment in sorted(result.segments, key=lambda s: (s.day_idx, s.start_min)):
+        cumulative += segment.qty
+        boundaries.add(cumulative)
+    assert {5680, 20080, 22480, 32000} <= boundaries
