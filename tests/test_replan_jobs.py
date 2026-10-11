@@ -650,6 +650,74 @@ def test_commit_failure_does_not_complete_job_or_publish_config(ready_replan, mo
     assert live.plans_store.list() == []
 
 
+def test_apply_refused_by_the_history_guard_is_a_plain_409(ready_replan, monkeypatch):
+    """Small-outage rehearsal of 11/10/2026: the commit refused a candidate
+    that changed a started lot and the screen got HTTP 500. It is a 409 in
+    plain Portuguese; nothing is published and the job stays ready."""
+    from backend.plans.store import HistoricalPlanProtectedError
+
+    live, manager, job, _, config_path = ready_replan
+    before_plan = serialize_snapshot(live)
+    before_config = config_path.read_bytes()
+
+    def refuse(*_args, **_kwargs):
+        raise HistoricalPlanProtectedError(["L1"], ["Referência SKU1 (M1)"])
+
+    monkeypatch.setattr(live.plans_store, "commit_mutation", refuse)
+    body = {"expected_revision": 1, "approve_exceptions": True,
+            "approval_reason": "test", "approval_author": "test"}
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(replan_api.apply_replan(job["id"], body))
+
+    assert refused.value.status_code == 409
+    detail = refused.value.detail
+    assert detail["code"] == "historical_plan_protected"
+    assert detail["message"] == (
+        "O plano proposto alteraria a produção anterior a hoje, que está protegida "
+        "(Referência SKU1 (M1)). O plano ativo não foi alterado; calcule novamente a alteração."
+    )
+    assert detail["current_revision"] == 1
+    assert serialize_snapshot(live) == before_plan
+    assert config_path.read_bytes() == before_config
+    assert manager.store.get(job["id"])["status"] == "ready"
+    assert live.plans_store.list() == []
+    assert live.plans_store.pending_mutations() == []
+
+
+@pytest.mark.parametrize("approval", [{}, {"approve_exceptions": True}])
+def test_apply_needing_approval_says_why_in_plain_portuguese(ready_replan, monkeypatch, approval):
+    """The approval refusal of a replan apply shows the reasons in plain
+    Portuguese, never the internal codes (``operational_sequence_review``);
+    the codes stay machine-readable in ``approval_reasons``."""
+    from backend.scheduler import gates
+
+    live, manager, job, _, config_path = ready_replan
+    before_plan = serialize_snapshot(live)
+    build = gates.build_gate_report
+    reasons = ["delivery_risk", "operational_sequence_review"]
+
+    def needs_approval(*args, **kwargs):
+        return {**build(*args, **kwargs), "requires_approval": True,
+                "apply_decision": "approval_required", "approval_reasons": reasons}
+
+    monkeypatch.setattr(gates, "build_gate_report", needs_approval)
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(replan_api.apply_replan(job["id"], {"expected_revision": 1, **approval}))
+
+    assert refused.value.status_code == 409
+    detail = refused.value.detail
+    assert detail["code"] == "approval_required"
+    assert detail["requires_approval"] is True
+    assert detail["approval_reasons"] == reasons
+    assert detail["current_revision"] == 1
+    assert not any(code in detail["message"] for code in reasons)
+    assert "conflitos físicos" not in detail["message"]
+    expected = "motivo e autor" if approval else "há encomendas em risco de atraso"
+    assert expected in detail["message"]
+    assert serialize_snapshot(live) == before_plan
+    assert manager.store.get(job["id"])["status"] == "ready"
+
+
 def test_durable_receipt_recovers_failed_completion_callback_and_replay(ready_replan, monkeypatch):
     live, manager, job, _, _ = ready_replan
     update = manager.store.update

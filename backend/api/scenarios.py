@@ -177,11 +177,50 @@ async def apply_scenario(scenario_id: str, body: dict):
                 approval_author=str(body.get("approval_author", body.get("author", ""))),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(
-                409,
-                f"O cenário tem conflitos físicos e não pode ser aplicado: {exc}",
-            ) from exc
+            raise _apply_refusal(exc) from exc
     return {"status": "applied", **restored}
+
+
+def _apply_refusal(exc: Exception) -> HTTPException:
+    """Why a saved scenario was not applied, without calling everything a conflict.
+
+    Only a validation failure is reported as physical conflicts; a gate block
+    keeps its own explanation (conflicts, quantities or material window); a
+    missing approval says so, with the reasons in plain Portuguese and the
+    gate report so the screen can ask the planner; anything else (e.g. an
+    obsolete revision) keeps its own text.
+    """
+    from backend.scheduler.gates import (
+        ApplicationBlocked,
+        ApprovalRequired,
+        application_refusal_detail,
+        approval_reasons_text,
+    )
+    from backend.scheduler.validation import PlanValidationError
+
+    if isinstance(exc, ApprovalRequired):
+        detail = application_refusal_detail(exc)
+        if exc.incomplete:
+            detail["message"] = (
+                "O cenário não tem conflitos físicos; para o aplicar, a aprovação do "
+                "planeador precisa de motivo e autor."
+            )
+        else:
+            reasons = approval_reasons_text(exc.approval_reasons)
+            detail["message"] = (
+                "O cenário não tem conflitos físicos, mas só pode ser aplicado com a "
+                "aprovação do planeador" + (f": {reasons}." if reasons else ".")
+            )
+        return HTTPException(409, detail)
+    if isinstance(exc, PlanValidationError):
+        return HTTPException(
+            409, f"O cenário tem conflitos físicos e não pode ser aplicado: {exc}",
+        )
+    if isinstance(exc, ApplicationBlocked):
+        detail = application_refusal_detail(exc)
+        detail["message"] = f"O cenário não pode ser aplicado: {exc}"
+        return HTTPException(409, detail)
+    return HTTPException(409, f"O cenário não pode ser aplicado: {exc}")
 
 
 @router.delete("/{scenario_id}")

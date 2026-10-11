@@ -249,7 +249,7 @@ def _require_expected_revision(body: dict | None) -> int:
 
 
 def _ensure_result_applicable(result, body: dict | None = None) -> dict | None:
-    from backend.scheduler.gates import authorize_application
+    from backend.scheduler.gates import application_refusal_detail, authorize_application
 
     report = _result_gate_report(result)
     if report is None:
@@ -257,8 +257,13 @@ def _ensure_result_applicable(result, body: dict | None = None) -> dict | None:
     try:
         return authorize_application(report, **_approval_args(body))
     except ValueError as exc:
+        # Plain Portuguese, never an internal reason code; ``code`` and
+        # ``approval_reasons`` stay machine-readable (holiday, config, master
+        # data and recalculation writes all answer here).
         error = _gate_exception(report)
-        error.detail["message"] = str(exc)
+        error.detail.update(
+            application_refusal_detail(exc, gate_report=False) or {"message": str(exc)}
+        )
         raise error from exc
 
 

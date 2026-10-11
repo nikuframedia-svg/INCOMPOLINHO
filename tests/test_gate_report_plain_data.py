@@ -208,3 +208,21 @@ def test_late_order_rows_name_the_machine_that_produces_the_order():
     assert rows["A"]["machine_id"] == "M2"
     assert rows["N"]["ready_day"] is None
     assert rows["N"]["machine_id"] == "M3"
+
+
+def test_every_approval_reason_has_plain_portuguese_text():
+    """No route shows an internal reason code (review of 11/10/2026): every
+    reason ``build_gate_report`` can emit has its own text."""
+    import inspect
+    import re
+
+    from backend.scheduler import gates
+
+    emitted = set(re.findall(
+        r'approval_reasons\.append\("(\w+)"\)', inspect.getsource(gates.build_gate_report),
+    ))
+    assert emitted and emitted <= set(gates.APPROVAL_REASON_TEXTS)
+    text = gates.approval_required_message({"approval_reasons": sorted(emitted)})
+    assert not any(code in text for code in emitted)
+    # A reason added later without its text still never shows its code.
+    assert "nova_razao" not in gates.approval_reasons_text(["nova_razao"])

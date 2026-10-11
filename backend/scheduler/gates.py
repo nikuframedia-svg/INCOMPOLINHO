@@ -434,6 +434,107 @@ def blocked_application_message(report: dict[str, Any] | None) -> str:
     return "O candidato foi bloqueado pelas regras de aplicação do plano."
 
 
+class ApplicationBlocked(ValueError):
+    """The candidate breaks a physical or quantity rule: no approval can apply it."""
+
+    code = "blocked"
+
+    def __init__(self, message: str, report: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.report = report
+
+
+class ApprovalRequired(ValueError):
+    """The candidate is physically valid but needs the planner's explicit approval.
+
+    Not a physical conflict: callers say that an approval is missing (or
+    incomplete: ``incomplete`` when it came without reason or author), never
+    that the plan has conflicts. The message is plain Portuguese; the reason
+    codes stay machine-readable in ``approval_reasons``.
+    """
+
+    code = "approval_required"
+
+    def __init__(
+        self, message: str, report: dict[str, Any] | None = None, *, incomplete: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.report = report
+        self.approval_reasons = list((report or {}).get("approval_reasons") or [])
+        self.incomplete = incomplete
+
+
+# Plain Portuguese for each approval reason of ``build_gate_report``.
+APPROVAL_REASON_TEXTS = {
+    "delivery_risk": "há encomendas em risco de atraso",
+    "subcontract_dispatch_risk": "há envios para subcontratação em risco",
+    "jit_window_blocked": "há produção antes da libertação do material",
+    "material_release_blocked": "há produção sem material libertado",
+    "operator_capacity_shortage": "falta capacidade de operadores",
+    "operational_sequence_review": (
+        "a sequência das máquinas tem intervalos ou inversões de prioridade "
+        "que o planeador deve rever"
+    ),
+    "operational_sequence_not_evaluated": (
+        "a sequência das máquinas ficou por avaliar e precisa de decisão do planeador"
+    ),
+}
+
+
+# A reason without its own text never shows its internal code.
+UNKNOWN_APPROVAL_REASON_TEXT = "há uma exceção que o planeador deve rever"
+
+
+def approval_reasons_text(reasons) -> str:
+    """``há encomendas em risco de atraso; falta capacidade de operadores``."""
+
+    texts = [
+        APPROVAL_REASON_TEXTS.get(str(reason), UNKNOWN_APPROVAL_REASON_TEXT)
+        for reason in reasons or []
+    ]
+    return "; ".join(dict.fromkeys(texts))
+
+
+def approval_required_message(report: dict[str, Any] | None) -> str:
+    """Why a physically valid plan waits for the planner, in plain Portuguese."""
+
+    reasons = approval_reasons_text((report or {}).get("approval_reasons"))
+    return (
+        "O plano só pode ser aplicado com aprovação explícita do planeador"
+        + (f": {reasons}." if reasons else ".")
+    )
+
+
+def application_refusal_detail(
+    exc: BaseException, *, gate_report: bool = True,
+) -> dict[str, Any] | None:
+    """The 409 detail of a refusal of ``authorize_application``, else ``None``.
+
+    Every route answers an apply refusal the same way: a stable ``code``
+    (``approval_required`` or ``blocked``) and a plain Portuguese ``message``
+    that never shows an internal reason code; the reason codes stay
+    machine-readable in ``approval_reasons``. ``gate_report=False`` leaves
+    the report out when the response already carries it.
+    """
+
+    if isinstance(exc, ApprovalRequired):
+        detail: dict[str, Any] = {
+            "code": exc.code,
+            "message": str(exc),
+            "requires_approval": True,
+            "approval_reasons": list(exc.approval_reasons),
+        }
+        report = exc.report
+    elif isinstance(exc, ApplicationBlocked):
+        detail = {"code": exc.code, "message": str(exc), "requires_approval": False}
+        report = exc.report
+    else:
+        return None
+    if gate_report:
+        detail["gate_report"] = report
+    return detail
+
+
 def authorize_application(
     report: dict[str, Any] | None,
     *,
@@ -441,17 +542,21 @@ def authorize_application(
     approval_reason: str = "",
     approval_author: str = "",
 ) -> dict[str, Any] | None:
-    """Validate the shared apply contract and return an approval audit record."""
+    """Validate the shared apply contract and return an approval audit record.
+
+    Raises ``ApplicationBlocked`` for a physical or quantity conflict and
+    ``ApprovalRequired`` when only the planner's approval is missing or
+    incomplete (both are ``ValueError``).
+    """
 
     if not physically_valid(report):
-        raise ValueError(blocked_application_message(report))
+        raise ApplicationBlocked(blocked_application_message(report), report)
     if not report or not report.get("requires_approval"):
         return None
     if not approve_exceptions:
-        reasons = ", ".join(report.get("approval_reasons", []))
-        raise ValueError(f"O candidato exige aprovação explícita: {reasons}.")
+        raise ApprovalRequired(approval_required_message(report), report)
     if not approval_reason.strip() or not approval_author.strip():
-        raise ValueError("A aprovação exige motivo e autor.")
+        raise ApprovalRequired("A aprovação exige motivo e autor.", report, incomplete=True)
     return {
         "approved_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "author": approval_author.strip(),

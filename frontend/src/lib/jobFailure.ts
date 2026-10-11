@@ -24,6 +24,9 @@ const CODE_TEXT: Record<JobFailureContext, Record<string, string>> = {
       "Não foi possível obter um plano válido com esta alteração. O plano e a configuração não foram alterados.",
     blocked:
       "O plano proposto tem conflitos físicos ou peças em falta. O plano e a configuração não foram alterados.",
+    // Não é um conflito físico: o plano mexeria em produção já iniciada.
+    history_protected:
+      "O plano calculado alteraria produção já iniciada, que está protegida, e por isso não pode ser aplicado. O plano e a configuração não foram alterados. Pode iniciar novamente.",
     internal_error:
       "Ocorreu um erro interno durante o cálculo. O plano e a configuração não foram alterados. Tente novamente; se repetir, avise o suporte.",
     interrupted:

@@ -683,10 +683,14 @@ def test_non_physical_exception_requires_explicit_audited_approval():
     }
 
     assert gate_passed(report) is False
-    with pytest.raises(ValueError, match="aprovação explícita"):
+    with pytest.raises(ValueError, match="aprovação explícita") as missing:
         authorize_application(report)
-    with pytest.raises(ValueError, match="motivo e autor"):
+    # A reason without its own text never shows its internal code.
+    assert "jit_window_exception" not in str(missing.value)
+    assert missing.value.approval_reasons == ["jit_window_exception"]
+    with pytest.raises(ValueError, match="motivo e autor") as incomplete:
         authorize_application(report, approve_exceptions=True)
+    assert incomplete.value.incomplete is True
 
     approval = authorize_application(
         report,

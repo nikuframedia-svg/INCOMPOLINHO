@@ -15,8 +15,16 @@ fi
 PRISTINE=$(realpath "$1"); CODE=$(realpath "$2"); TAG=$3; ACTIONS=$4; CORE=$5; OUT=$(realpath -m "$6")
 shift 6
 PY=${PP1_PYTHON:-/home/luis/projects/INCOMPOLINHO/.venv/bin/python}
+LIVE_TREE=$(realpath -m "${PP1_LIVE_TREE:-/home/luis/projects/INCOMPOLINHO}")
 HERE=$(cd "$(dirname "$0")" && pwd)
 RT=$OUT/rt_$TAG
+# Antes de qualquer rm/cp: a cópia nunca pode ficar dentro da árvore viva.
+case "$OUT/" in
+  "$LIVE_TREE"/*) echo "ERRO: $OUT fica dentro da árvore viva ($LIVE_TREE)" >&2; exit 2 ;;
+esac
+case "$TAG" in
+  ""|*/*|.|..) echo "ERRO: etiqueta inválida: '$TAG'" >&2; exit 2 ;;
+esac
 mkdir -p "$OUT"
 rm -rf "$RT"
 mkdir -p "$RT"

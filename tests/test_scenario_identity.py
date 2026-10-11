@@ -331,6 +331,72 @@ def test_apply_requests_exact_autosaved_restore_and_keeps_saved_schedule(service
     assert services.store.get(plan["id"])["payload"] == plan["payload"]
 
 
+def _gate_override(monkeypatch, **changes):
+    import backend.plans.restore as restore_module
+
+    real = restore_module.build_gate_report
+
+    def report(*args, **kwargs):
+        return {**real(*args, **kwargs), **changes}
+
+    monkeypatch.setattr(restore_module, "build_gate_report", report)
+
+
+def test_apply_needing_approval_is_not_reported_as_physical_conflicts(services, monkeypatch):
+    """Rehearsal of 11/10/2026: a saved scenario whose only reason to stop is an
+    approval (operational_sequence_review) was refused as "conflitos físicos"."""
+    saved = _save(services)
+    _gate_override(
+        monkeypatch, physical_gate_passed=True, coverage_gate_passed=True,
+        apply_decision="approval_required", requires_approval=True,
+        approval_reasons=["operational_sequence_review"],
+    )
+    before = _snapshot(services)
+
+    response = _apply(services, saved["scenario"]["id"], approve_exceptions=False,
+                      approval_reason="", approval_author="")
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "approval_required"
+    assert detail["requires_approval"] is True
+    assert detail["approval_reasons"] == ["operational_sequence_review"]
+    assert detail["gate_report"]["requires_approval"] is True
+    assert "não tem conflitos físicos" in detail["message"]
+    assert "conflitos físicos e não pode" not in detail["message"]
+    assert "operational_sequence_review" not in detail["message"]
+    assert "a sequência das máquinas" in detail["message"]
+    assert _snapshot(services) == before
+
+    incomplete = _apply(services, saved["scenario"]["id"], approval_reason=" ")
+    assert incomplete.status_code == 409, incomplete.text
+    assert incomplete.json()["detail"]["code"] == "approval_required"
+    assert "motivo e autor" in incomplete.json()["detail"]["message"]
+    assert _snapshot(services) == before
+
+    approved = _apply(services, saved["scenario"]["id"])
+    assert approved.status_code == 200, approved.text
+    assert state.approvals[-1]["approval_reasons"] == ["operational_sequence_review"]
+
+
+def test_apply_of_a_physically_blocked_scenario_explains_the_block(services, monkeypatch):
+    saved = _save(services)
+    _gate_override(monkeypatch, physical_gate_passed=False, apply_decision="blocked",
+                   requires_approval=False)
+    before = _snapshot(services)
+
+    response = _apply(services, saved["scenario"]["id"])
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "blocked"
+    assert detail["message"] == (
+        "O cenário não pode ser aplicado: O candidato tem conflitos físicos e não pode "
+        "substituir o plano."
+    )
+    assert _snapshot(services) == before
+
+
 def test_restore_rejection_keeps_live_state_and_store_unchanged(services, monkeypatch):
     saved = _save(services)
     before = _snapshot(services)

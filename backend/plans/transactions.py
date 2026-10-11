@@ -170,6 +170,36 @@ def _failed_result(response) -> bool:
     return isinstance(value, dict) and bool(value.get("error") or value.get("erro"))
 
 
+def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException | None:
+    """The 409 of a known refusal at the durable boundary, else ``None``.
+
+    Only typed refusals are a 409, in plain Portuguese with a stable code:
+    started production would change (``HistoricalPlanProtectedError``), the
+    inputs of «Recalcular plano» changed during the calculation
+    (``RecalculationContextChanged``), a missing approval or a blocked
+    candidate (``gates.ApprovalRequired``, ``gates.ApplicationBlocked``).
+    Physical conflicts (``PlanValidationError``) keep their own 409 handler.
+    Anything else is not a refusal (an integrity check such as "Snapshot
+    inconsistente", a corrupt journal row, a defect): the caller logs it and
+    it stays an HTTP 500, never a 409 asking to calculate again.
+    """
+    from backend.plans.store import HistoricalPlanProtectedError, RecalculationContextChanged
+    from backend.scheduler.gates import application_refusal_detail
+
+    if isinstance(exc, HistoricalPlanProtectedError | RecalculationContextChanged):
+        detail = {
+            "code": exc.code,
+            "message": f"{exc} O plano ativo não foi alterado; calcule novamente a alteração.",
+        }
+    else:
+        detail = application_refusal_detail(exc)
+        if detail is None:
+            return None
+        detail["message"] = f"{detail['message']} O plano ativo não foi alterado."
+    detail["current_revision"] = current_revision
+    return HTTPException(409, detail)
+
+
 def _commit(
     state, staged, origin, file_identity, operation_id, fingerprint, response,
     validators, callbacks,
@@ -410,7 +440,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
 
         def calculate():
             from backend.plans.candidates import PreparedPlanWrite, previews
-            from backend.scheduler.gates import authorize_application
+            from backend.scheduler.gates import application_refusal_detail, authorize_application
 
             candidate = previews.get_prepared_write(
                 request_body.get("candidate_id"), preview_kind, origin, preview_parameters,
@@ -431,7 +461,9 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                     )
                 except ValueError as exc:
                     raise HTTPException(409, {
-                        "message": str(exc), "gate_report": prepared.values["gate_report"],
+                        "message": str(exc),
+                        **(application_refusal_detail(exc, gate_report=False) or {}),
+                        "gate_report": prepared.values["gate_report"],
                         **candidate.identity(),
                     }) from exc
                 for key, value in prepared.values.items():
@@ -469,11 +501,25 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
             finally:
                 planning_checkpoint()
             async with plan_mutation_lock:
-                return await run_in_threadpool(
-                    _commit, state, staged, origin, file_identity, operation_id, fingerprint,
-                    response, validators, callbacks,
-                    recalculate_from_start=recalculate_from_start,
-                )
+                try:
+                    return await run_in_threadpool(
+                        _commit, state, staged, origin, file_identity, operation_id,
+                        fingerprint, response, validators, callbacks,
+                        recalculate_from_start=recalculate_from_start,
+                    )
+                except ValueError as exc:
+                    # Rolled back: a known refusal of the durable boundary
+                    # (e.g. started production changed) is a 409; anything
+                    # else is a fault and stays a 500, logged.
+                    refusal = _commit_refusal(exc, state.plan_revision)
+                    if refusal is not None:
+                        logger.info("%s refused at commit: %s", fn.__name__, exc)
+                        raise refusal from exc
+                    from backend.scheduler.validation import PlanValidationError
+
+                    if not isinstance(exc, PlanValidationError):
+                        logger.exception("%s failed at commit (not a refusal)", fn.__name__)
+                    raise
 
     wrapped.__signature__ = signature
     return wrapped

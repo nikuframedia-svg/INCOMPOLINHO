@@ -460,13 +460,30 @@ def _protected_plan(baseline_result, freeze_day: int, engine_data, config) -> Pr
                    if lot_id in lots_by_id]
     partial = []
     for lot_id in sorted(touched - whole):
-        lot = lots_by_id[lot_id]
+        # Never re-sized, but its deliveries are dated by the current calendar
+        # (a holiday added since it was sized moves U and R like for any lot).
+        lot = _current_delivery_dates(lots_by_id[lot_id], engine_data)
         started = [segments[index] for index in by_lot[lot_id] if index in selected]
         partial.append((copy.deepcopy(lot), _remainder_lot(lot, started, engine_data, config)))
     return ProtectedPlan(
         segments=frozen_segments, lots=frozen_lots, partial=partial,
         anchored=anchored - started_ids, started=started_ids,
     )
+
+
+def _current_delivery_dates(lot, engine_data):
+    """A started lot whose rest is replanned, dated by the current inputs.
+
+    The lot keeps its size and deliveries (rule 4); the delivery dates derived
+    from the calendar follow the current one (``lot_sizing.redate_lot_outputs``).
+    The full-plan contract check compares the lot with the lots sized from the
+    current inputs, and the rest is planned with the current material windows.
+    """
+    from backend.scheduler.lot_sizing import redate_lot_outputs
+
+    if engine_data is None or not getattr(engine_data, "ops", None):
+        return lot
+    return redate_lot_outputs(lot, engine_data)
 
 
 def _trim_outputs(outputs: list[dict], made: dict[str, int]) -> list[dict]:
@@ -491,6 +508,12 @@ def _remainder_lot(lot, started_segments, engine_data, config):
     machine, rule 3); its quantity and deliveries are what the started part
     did not make, first in, first out (the readiness rule). Durations follow
     the source contract for that quantity on that machine.
+
+    Its lot-level dates are those of its first remaining delivery (the
+    source contract checks them against the remaining deliveries), so they
+    rank it neither as the complete plan ranks the lot nor each of its later
+    runs by the deliveries it serves: a lot-level reordering of the residual
+    keeps it where it is (``repair_preserving_protected_lots``).
     """
     from backend.config.types import FactoryConfig
     from backend.scheduler.lot_sizing import _aggregate_milestones
@@ -743,7 +766,10 @@ def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=()
         return segment
 
     result.segments = [rejoined(s) for s in result.segments if s.lot_id not in frozen_ids]
-    result.segments.extend(copy.deepcopy(frozen_segments))
+    # The started part of a partial lot carries the same lot metadata as its
+    # rest (its deliveries dated by the current calendar); physically it is
+    # the frozen segment unchanged.
+    result.segments.extend(rejoined(s) for s in copy.deepcopy(frozen_segments))
     result.segments.sort(key=lambda s: (
         s.day_idx, s.start_min, s.machine_id, s.tool_id, s.lot_id,
     ))
@@ -971,6 +997,77 @@ def improve_preserving_protected_lots(
             and improved.gate_report.get("coverage_gate_passed")):
         return reject_merged("merged_gate_failed")
     return improved, report
+
+
+def repair_preserving_protected_lots(baseline_result, engine_data, config, freeze_day: int, repair):
+    """Run a repair on the movable part of a plan only (AGENTS §2 rule 4, §5).
+
+    ``repair(segments, lots, started_rests) -> (segments, lots)`` receives a
+    copy of the residual plan (``_residual_of``) while the protected work of
+    ``_protected_plan`` (production started before ``freeze_day``, the run
+    mounted at that boundary, its mount suppliers, honoured anchors) is
+    reserved in ``engine_data``, exactly as the improvement cycle sees it. The
+    protected work is spliced back unchanged and the rest of a started lot
+    rejoins its lot, never re-sized. Reservations are always removed. Returns
+    the complete repaired plan (a new result; ``baseline_result`` is not
+    changed); the caller validates it.
+
+    ``started_rests`` holds the ids of the started lots whose rest is in the
+    residual. A lot-level reordering (the canonical normalisation) must keep
+    them where they are, as the improvement cycle's compaction keeps them
+    (``improvement.default_generators``, ``earliest_legal``): a rest's
+    lot-level dates are those of its first remaining delivery
+    (``_remainder_lot``), which rank neither the lot as the complete plan
+    ranks it nor its later runs by the deliveries they serve. Ranked by them,
+    the rest of a twin lot due on day 3 became due on day 12 and its run on
+    day 40 (deliveries due on day 46) went behind a run due on day 47 of a
+    lot due on day 11 (revision 124, small PRM031 outage). A hard-constraint
+    repair still moves a rest the change invalidates.
+    """
+    protected = _protected_plan(baseline_result, freeze_day, engine_data, config)
+    repaired = copy.deepcopy(baseline_result)
+    if not protected:
+        repaired.segments, repaired.lots = repair(repaired.segments, repaired.lots, set())
+        return repaired
+    segments, lots = _residual_of(repaired, protected)
+    started_rests = {rest.id for _original, rest in protected.partial}
+    snapshot = _install_frozen_reservations(
+        engine_data, protected.segments, protected.lots, freeze_day, config, protected.partial,
+    )
+    try:
+        segments, lots = repair(copy.deepcopy(segments), copy.deepcopy(lots), started_rests)
+    finally:
+        _restore_frozen_reservations(engine_data, snapshot)
+    repaired.segments, repaired.lots = segments, lots
+    return _splice_frozen_started_lots(
+        repaired, protected.segments, protected.lots, protected.partial,
+    )
+
+
+def candidate_history_changes(
+    baseline_snapshot: dict | None, result, engine_data, config, *, freeze_day: int,
+):
+    """Started lots a candidate would change: the commit guard, applied early.
+
+    The same rule as ``plans.store`` at commit (``historical_schedule_changes``)
+    against the active plan the calculation started from, read on the
+    calculation's own planning day (``freeze_day``, the day the commit sees
+    as today), so a candidate the commit would refuse is never offered.
+    Nothing is history when the calculation protects no prefix.
+    """
+    workdays = list(getattr(engine_data, "workdays", None) or [])
+    if not baseline_snapshot or not 0 < freeze_day < len(workdays):
+        return []
+    candidate = {
+        "dataset_info": baseline_snapshot.get("dataset_info"),
+        "engine_data": {"workdays": [str(day) for day in engine_data.workdays or []]},
+        "config": {"timezone": str(getattr(config, "timezone", "Europe/Lisbon"))},
+        "segments": [asdict(segment) for segment in result.segments],
+        "lots": [asdict(lot) for lot in result.lots],
+    }
+    return historical_schedule_changes(
+        baseline_snapshot, candidate, today=str(workdays[freeze_day])[:10],
+    )
 
 
 def optimize_preserving_started_lots(

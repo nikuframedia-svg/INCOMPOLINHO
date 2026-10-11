@@ -1174,6 +1174,14 @@ def test_manual_move_api_previews_and_blocks_avoidable_delivery_regression(
         json=apply_body,
     )
     assert blocked.status_code == 409
+    detail = blocked.json()["detail"]
+    # An approval, not a conflict: plain Portuguese, machine-readable reasons.
+    assert detail["code"] == "approval_required"
+    assert detail["requires_confirmation"] is True
+    reasons = payload["gate_report"]["approval_reasons"]
+    assert reasons and detail["approval_reasons"] == reasons
+    assert "aprovação explícita" in detail["message"]
+    assert not any(reason in detail["message"] for reason in reasons)
     assert state.manual_edits == []
     assert {segment.day_idx for segment in state.segments if segment.lot_id == "LOT1"} == {0}
 
@@ -1189,6 +1197,37 @@ def test_manual_move_api_previews_and_blocks_avoidable_delivery_regression(
     assert approved.status_code == 200, approved.text
     assert state.manual_edits
     assert {segment.day_idx for segment in state.segments if segment.lot_id == "LOT1"} == {1}
+
+
+def test_manual_move_apply_of_a_blocked_candidate_asks_for_no_confirmation(
+    manual_api_state, monkeypatch,
+):
+    """Mirror of the scenario fix (review of 11/10/2026): a physical block is
+    not presented as something the planner could confirm."""
+    from backend.scheduler.gates import ApplicationBlocked
+
+    client = TestClient(app)
+    body = {"lot_id": "LOT1", "target_day": 1, "target_machine": "M2"}
+    preview = client.post("/api/data/plan/move-preview", json=body).json()
+
+    def blocked(report, **_kwargs):
+        raise ApplicationBlocked(
+            "O candidato tem conflitos físicos e não pode substituir o plano.", report,
+        )
+
+    monkeypatch.setattr(manual_plan_api, "authorize_application", blocked)
+    response = client.post("/api/data/plan/move-apply", json={
+        **body, "candidate_id": preview["candidate_id"],
+        "expected_revision": state.plan_revision, "confirm_delivery_risk": True,
+        "reason": "Teste", "author": "pytest",
+    })
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "blocked"
+    assert detail["requires_confirmation"] is False
+    assert detail["requires_approval"] is False
+    assert "conflitos físicos" in detail["message"]
+    assert state.manual_edits == []
 
 
 def test_legacy_manual_move_preview_keeps_event_loop_responsive(

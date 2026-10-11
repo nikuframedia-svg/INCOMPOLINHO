@@ -80,22 +80,7 @@ def create_lots(
     ops_by_id: dict[str, EOp] = {
         op.id: _op_after_committed_supply(op, data) for op in data.ops
     }
-    max_backward_workdays = max(
-        (
-            5
-            + max(0, int(op.subcontract_lead_time_days or 0))
-            + max(0, int(op.subcontract_buffer_days or 0))
-            + max(0, int(op.finish_buffer_days or 0))
-            for op in ops_by_id.values()
-        ),
-        default=5,
-    )
-    first_calendar_day = -(14 + math.ceil(max_backward_workdays / 5) * 7)
-    planning_holidays = calendar_holidays(
-        data,
-        first_calendar_day,
-        data.n_days + 14,
-    )
+    planning_holidays = sizing_holidays(data)
     lots: list[Lot] = []
 
     # Twin lots first
@@ -134,6 +119,79 @@ def create_lots(
     # sized with the lot; it is returned as it is, never sized again.
     lots.extend(_carried_lot(raw) for raw in data.residual_lot_remainders)
     return lots
+
+
+def sizing_holidays(data: EngineData) -> set[int]:
+    """Non-working day indices lot sizing dates every delivery with.
+
+    Wide enough before day 0 for the longest backward window (five workdays
+    of material plus subcontracting and finishing buffers) and after the
+    horizon, weekends extrapolated outside the ISOP columns.
+    """
+    max_backward_workdays = max(
+        (
+            5
+            + max(0, int(op.subcontract_lead_time_days or 0))
+            + max(0, int(op.subcontract_buffer_days or 0))
+            + max(0, int(op.finish_buffer_days or 0))
+            for op in data.ops
+        ),
+        default=5,
+    )
+    first_calendar_day = -(14 + math.ceil(max_backward_workdays / 5) * 7)
+    return calendar_holidays(data, first_calendar_day, data.n_days + 14)
+
+
+def redate_lot_outputs(lot: Lot, data: EngineData) -> Lot:
+    """The same sized lot with every delivery dated by the current inputs.
+
+    A started lot is never re-sized (AGENTS §2, rule 4): its quantities and
+    the deliveries they cover (operation, customer day ``C``, economic and
+    co-produced surplus) stay. The dates derived from ``C`` and the calendar
+    (``U``, ``I``, subcontract dispatch, material ``R``, the twin cycle's
+    ``R_ciclo``) are derived again exactly as ``create_lots`` derives them
+    now, so a calendar edit (a holiday, an extra workday) moves them as it
+    moves the dates of every lot that is sized again. Returns a new lot; the
+    lot itself is returned unchanged when it has no per-delivery outputs or
+    an output's operation is no longer in the scenario (the contract check
+    reports that).
+    """
+    if not lot.output_milestones:
+        return lot
+    ops = {op.id: op for op in data.ops}
+    sides = [str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []]
+    holidays = sizing_holidays(data)
+    outputs: list[dict[str, object]] = []
+    for output in lot.output_milestones:
+        op = ops.get(str(output.get("op_id")))
+        if op is None or output.get("customer_delivery_day") is None:
+            return lot
+        # Co-produced stock is dated as the delivery that controls the cycle,
+        # on the other side (``_coproduced_surplus_milestone``).
+        dating = op
+        if output.get("is_coproduced_surplus"):
+            dating = next((ops.get(side) for side in sides if side != op.id), None)
+            if dating is None:
+                return lot
+        milestones = planning_milestones_for_op(
+            dating, int(output["customer_delivery_day"]), holidays,
+        )
+        outputs.append({**output, **_output_milestone(op, int(output["qty"]), milestones)})
+    # Only the two deliveries that formed a twin cycle share its release.
+    paired = [
+        int(output["material_release_day"])
+        for output in outputs if "cycle_material_release_day" in output
+    ]
+    for output in outputs:
+        if "cycle_material_release_day" in output:
+            output["cycle_material_release_day"] = min(paired)
+    redated = copy.deepcopy(lot)
+    for field, value in _aggregate_milestones(outputs).items():
+        setattr(redated, field, value)
+    redated.edd = int(redated.production_due_day)
+    redated.original_edd = redated.delivery_day = int(redated.customer_delivery_day)
+    redated.internal_deadline = int(redated.internal_target_day)
+    return redated
 
 
 def _carried_lot(raw: dict) -> Lot:

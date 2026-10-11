@@ -35,6 +35,7 @@ from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
 from backend.copilot.tools import TOOLS
 from backend.planning_control import PlanningCancelled, PlanningTimeout
+from backend.plans.store import HistoricalPlanProtectedError
 from backend.scheduler.validation import PlanValidationError
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,16 @@ async def plan_validation_handler(_request: Request, exc: PlanValidationError):
         "code": getattr(exc, "code", "invalid_plan"),
         "message": f"{exc} O plano ativo não foi alterado.",
         "requires_recalculation": bool(getattr(exc, "requires_recalculation", False)),
+    }
+    return JSONResponse(status_code=409, content={"detail": detail})
+
+
+@app.exception_handler(HistoricalPlanProtectedError)
+async def historical_plan_handler(_request: Request, exc: HistoricalPlanProtectedError):
+    """Started production is protected history (AGENTS §2 rule 4): a 409, not a 500."""
+    detail = {
+        "code": exc.code,
+        "message": f"{exc} O plano ativo não foi alterado; calcule novamente a alteração.",
     }
     return JSONResponse(status_code=409, content={"detail": detail})
 

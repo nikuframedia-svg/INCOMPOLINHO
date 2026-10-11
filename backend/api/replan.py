@@ -573,10 +573,14 @@ async def apply_replan(job_id: str, body: dict):
                 ),
             )
         except ValueError as exc:
+            from backend.scheduler.gates import application_refusal_detail
+
             raise HTTPException(
                 409,
                 {
                     "message": str(exc),
+                    # An approval refusal: plain Portuguese, machine-readable code.
+                    **(application_refusal_detail(exc) or {}),
                     "current_revision": state.plan_revision,
                 },
             ) from exc

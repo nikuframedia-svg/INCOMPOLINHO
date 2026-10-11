@@ -39,6 +39,13 @@ describe("jobFailureText", () => {
     expect(jobFailureText({ code: "invalid_plan" }, "x")).toMatch(/O plano e a configuração não foram alterados\./);
   });
 
+  it("produção já iniciada: não fala em conflitos físicos", () => {
+    const text = jobFailureText({ code: "history_protected" }, "x");
+    expect(text).toMatch(/produção já iniciada/);
+    expect(text).toMatch(/O plano e a configuração não foram alterados\./);
+    expect(text).not.toMatch(/conflitos físicos/);
+  });
+
   it("interrompido: diz o que aconteceu e usa a palavra replaneamento", () => {
     expect(jobFailureText({ code: "interrupted" }, "x")).toBe(
       "O replaneamento foi interrompido (o servidor reiniciou ou o cálculo parou). O plano e a configuração não foram alterados. Pode iniciar novamente.",

@@ -986,7 +986,7 @@ export interface ReplanJob {
   } | null;
   warnings: string[];
   error: string | null;
-  /** Stable failure code (planning_timeout, invalid_plan, blocked, internal_error, interrupted). */
+  /** Stable failure code (planning_timeout, invalid_plan, blocked, history_protected, internal_error, interrupted). */
   code?: string | null;
   request_fingerprint?: string | null;
   deduplicated?: boolean;

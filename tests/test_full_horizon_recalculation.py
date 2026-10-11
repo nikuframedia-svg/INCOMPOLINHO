@@ -10,6 +10,7 @@ import pytest
 from backend.api import data as data_api
 from backend.plans import frozen
 from backend.plans.serialize import _finalize_snapshot, serialize_snapshot
+from backend.plans.store import RecalculationContextChanged
 from backend.planning_control import PlanningCancelled, PlanningTimeout
 from backend.types import CurrentMachineState, PlanAnchor
 from tests import test_frozen_planning as frozen_fixtures
@@ -161,9 +162,11 @@ def test_recalculation_cannot_remove_a_manual_anchor(planning):
     planning.store.prepare_mutation("anchor", "fingerprint", {
         "plan_revision": 8, "recalculate_from_start": True,
     })
-    with pytest.raises(ValueError, match="recalculation_context"):
+    with pytest.raises(RecalculationContextChanged) as refused:
         planning.store.commit_mutation("anchor", candidate, {}, source="auto",
                                        recalculate_from_start=True)
+    assert (refused.value.code, refused.value.changed) == ("recalculation_context", "plan_anchors")
+    assert "posições manuais" in str(refused.value)
     assert planning.store.active()["payload"] == baseline
 
 
@@ -175,9 +178,10 @@ def test_recalculation_cannot_discard_observed_machine_state(planning):
     planning.store.prepare_mutation("observed", "fingerprint", {
         "plan_revision": 8, "recalculate_from_start": True,
     })
-    with pytest.raises(ValueError, match="recalculation_context"):
+    with pytest.raises(RecalculationContextChanged) as refused:
         planning.store.commit_mutation("observed", candidate, {}, source="auto",
                                        recalculate_from_start=True)
+    assert refused.value.changed == "current_machine_states"
     assert planning.store.active()["payload"] == baseline
 
 

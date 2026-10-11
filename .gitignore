@@ -27,8 +27,9 @@ ISOP*.xlsx
 # Run logs locais (uvicorn/vite/cloudflared)
 .run-logs/
 
-# Snapshots reais de clientes para regressão (só no servidor, nunca no git)
-tests/fixtures/private/
+# Snapshots reais de clientes para regressão (só no servidor, nunca no git).
+# Sem barra final: cobre a pasta e a ligação simbólica temporária do gate.sh.
+tests/fixtures/private
 # Cópias da base de dados de planos (dados reais de cliente)
 data/*.db.*
 # Cópias de segurança de estado e configuração (dados reais)

@@ -11,8 +11,12 @@ Usage (``run.sh`` prepares the runtime copy and the environment)::
       --out out.json --actions recalc,outage31 [--move LOT,DAY,START] \
       [--stock-sku SKU ...] [--raise]
 
-Actions: none, recalc, outage31, outage19, outagesmall (Sunday 18/10),
-outageshift (PRM031 shift A on 19/10), move, legacymove.
+Actions: none, recalc, outage31 (PRM031 19/10-09/11: full rebuild), outage19,
+outagesunday (PRM031 on Sunday 18/10), outageshift (PRM031 shift A on 19/10:
+the small breakdown of the golden master, F3_outage_small, which runs the
+local repair), move, legacymove. ``outagesmall`` was the old name of
+``outagesunday`` and is refused, because "small" meant the Sunday case here
+and the shift case in the golden master.
 ``PP1_DATA_DIR``/``PP1_CONFIG_PATH`` must be an isolated copy: never the
 running application's ``data/`` or ``config/``.
 """
@@ -41,6 +45,9 @@ _parser.add_argument("--raise", dest="raise_errors", action="store_true",
 ARGS = _parser.parse_args()
 CODE, ORACLE_DIR, OUT, ACTIONS = ARGS.code, ARGS.oracle_dir, ARGS.out, ARGS.actions
 MOVE = ARGS.move
+if "outagesmall" in ACTIONS.split(","):
+    raise SystemExit("ação outagesmall foi renomeada: usar outagesunday (domingo 18/10) ou"
+                     " outageshift (turno A 19/10, a avaria pequena do golden master)")
 for name in ("PP1_DATA_DIR", "PP1_CONFIG_PATH"):
     value = os.environ.get(name)
     if not value:
@@ -289,8 +296,9 @@ def do_recalc(client):
 
 OUTAGES = {"outage31": ("PRM031", "2026-10-19T00:01", "2026-11-09T23:59"),
            "outage19": ("PRM019", "2026-10-19T00:01", "2026-10-23T23:59"),
-           "outagesmall": ("PRM031", "2026-10-18T00:01", "2026-10-18T23:59"),
+           "outagesunday": ("PRM031", "2026-10-18T00:01", "2026-10-18T23:59"),
            "outageshift": ("PRM031", "2026-10-19T07:00", "2026-10-19T15:30")}
+
 
 
 def do_outage(client, kind="outage31"):

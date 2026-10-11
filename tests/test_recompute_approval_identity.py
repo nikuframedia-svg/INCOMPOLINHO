@@ -72,6 +72,40 @@ def test_recalculate_approval_reuses_the_exact_presented_candidate(client, compa
     assert _snapshot() == after
 
 
+def _assert_plain_approval(detail, reasons):
+    """An approval refusal: machine-readable code and reasons, plain message."""
+    assert detail["code"] == "approval_required"
+    assert detail["requires_approval"] is True
+    assert detail["approval_reasons"] == reasons
+    assert "aprovação explícita" in detail["message"] or "motivo e autor" in detail["message"]
+    assert not any(reason in detail["message"] for reason in reasons)
+    assert "conflito" not in detail["message"]
+
+
+@pytest.mark.parametrize(("approval", "text"), [
+    ({}, "há encomendas em risco de atraso"),
+    ({"approve_exceptions": True}, "motivo e autor"),
+])
+def test_presented_candidate_refusal_says_why_in_plain_portuguese(client, compact, approval, text):
+    """The presented candidate sent back without (complete) approval: the
+    prepared-candidate path answers like the first calculation, with the
+    reasons in plain Portuguese and the same candidate identity."""
+    body, preview = _preview_recompute(client)
+    _assert_plain_approval(preview, ["delivery_risk"])
+    before = _snapshot()
+    response = client.post("/api/data/recalculate", json={
+        **body, "candidate_id": preview["candidate_id"], **approval,
+    })
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    _assert_plain_approval(detail, ["delivery_risk"])
+    assert text in detail["message"]
+    assert detail["candidate_id"] == preview["candidate_id"]
+    assert detail["gate_report"]["requires_approval"] is True
+    assert _snapshot() == before
+    compact.assert_called_once()
+
+
 def test_recalculate_cannot_approve_an_unidentified_calculation(client, compact):
     before = _snapshot()
     response = client.post("/api/data/recalculate", json={
@@ -303,6 +337,10 @@ def test_calendar_writer_approval_reuses_exact_schedule(
     assert _snapshot() == before
     preview = first.json()["detail"]
     assert preview["gate_report"]["approval_reasons"] == ["delivery_risk", "long_production"]
+    # Plain Portuguese, never the internal reason codes (review of 11/10/2026:
+    # "O candidato exige aprovação explícita: operational_sequence_review").
+    _assert_plain_approval(preview, ["delivery_risk", "long_production"])
+    assert "há encomendas em risco de atraso" in preview["message"]
     optimizer.side_effect = AssertionError("Do not optimize the approved calendar candidate again")
     response = getattr(client, method)(path, json={
         **body, "candidate_id": preview["candidate_id"], "approve_exceptions": True,

@@ -401,8 +401,9 @@ def _trace_calibration(golden: Path, trace_dir: Path) -> Path:
         budget = [call for call in calls if call.get("stop_reason") == "budget"]
         if not budget:
             raise SystemExit(f"calibration: {source} has no budget-stopped call")
-        calibration["flows"][name] = {"calls": [dict(budget[0], index=0)],
-                                      "note": f"trace probe: cap of {source}"}
+        # Caps are keyed by call site: the probe gets its source flow's sites.
+        calibration["flows"][name] = {"calls": [dict(call) for call in calls],
+                                      "note": f"trace probe: caps of {source}"}
     target = trace_dir / "calibration-trace.json"
     _write_json(target, calibration)
     return target
@@ -442,9 +443,14 @@ def _trace_flow(flow, *, code, golden, out, mode, calibration, anchor, core, pyt
             exit_code = "timeout"
     entry = {"core": core, "wall_s": round(time.monotonic() - started, 1),
              "exit_code": exit_code}
-    if exit_code == 0 and target.exists() and trace_file.exists():
+    # A probe may call improve_plan where its source flow does not (an
+    # uncalibrated call site, exit 3): it still runs, with the default cap.
+    # The trace only needs what ran; a golden flow must stay a valid capture.
+    accepted = (0, capture.golden_flows.HARNESS_ERROR_EXIT) if flow.name in PROBES else (0,)
+    if exit_code in accepted and target.exists() and trace_file.exists():
         written = json.loads(target.read_text())
         traced = json.loads(trace_file.read_text())
+        entry["harness_errors"] = written["meta"].get("harness_errors") or []
         entry.update(
             status="error" if written["result"].get("error") else "ok",
             sha256=written["sha256"],
@@ -452,8 +458,8 @@ def _trace_flow(flow, *, code, golden, out, mode, calibration, anchor, core, pyt
             cpsat_solves=written["meta"].get("cpsat_solves"),
             legacy_alarms=written["meta"].get("legacy_alarms"),
             improvement_calls=[
-                {key: call.get(key) for key in ("cap", "cap_source", "candidates_evaluated",
-                                                "stop_reason")}
+                {key: call.get(key) for key in ("site", "occurrence", "cap", "cap_source",
+                                                "candidates_evaluated", "stop_reason")}
                 for call in written["result"].get("improvement_calls") or []
             ],
             functions=len(traced["functions"]),

@@ -201,6 +201,27 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    lote fixo primeiro, melhoria) a produção congelada tem de estar fisicamente
    igual (`_keeps_frozen`), senão o candidato é recusado. Mover um lote já
    começado continua recusado. Caminho por quantidades no §6.
+   **Calendário e ajuste rápido (11/10/2026).** As datas das entregas de um
+   lote começado seguem o calendário atual: um feriado ou dia extra novo
+   volta a datá-las (`U`, `I`, `R`, `R_ciclo`, envio para subcontratação)
+   exatamente como o dimensionamento as dataria hoje
+   (`lot_sizing.redate_lot_outputs`); o tamanho, as entregas cobertas
+   (operação, quantidade, dia do cliente) e o excedente não mudam, e a
+   verificação de contrato continua a comparar o lote com o dimensionado a
+   partir dos dados atuais. O ajuste rápido de uma alteração de calendário
+   (avaria, indisponibilidade) só trabalha a parte móvel
+   (`frozen.repair_preserving_protected_lots`): a produção congelada fica
+   reservada e volta igual; o resto de um lote começado é reparado como o
+   mesmo lote, mas a normalização canónica deixa-o onde está, como a
+   compactação do ciclo de melhoria. As datas de lote do resto são as da sua
+   primeira entrega por fazer: não o ordenam como o plano completo ordena o
+   lote nem pelas entregas que cada execução serve (na avaria pequena da
+   PRM031, revisão 124, punham uma execução para o dia 46 atrás de outra para
+   o dia 47). Só a reparação das restrições físicas o move, quando a
+   alteração o invalida. Nenhum candidato que mude produção iniciada é
+   oferecido: o ajuste rápido cai para o construtor completo e um candidato
+   final assim falha o trabalho com o código `history_protected` (não
+   `blocked`, que é conflito físico).
 
 Construtor por partes (`quantity_dispatch.py`, B1a):
 
@@ -306,6 +327,11 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   (`api/data._recalculation_needs_rebuild`).
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
+- **Decisão pendente (11/10/2026, à espera do Luís):** retirar um feriado (ou
+  acrescentar um dia extra) dentro da janela de material de uma entrega já
+  parcialmente produzida antes de hoje põe o seu `R` depois dessa produção; a
+  gravação recusa, porque o histórico é julgado com a janela atual. Até haver
+  decisão, essa alteração continua recusada.
 - Replanear apenas produção móvel, mas validar contra o contexto completo:
   reservas, montagem herdada, produção preservada e compromissos de origem.
 - Um candidato referencia dataset, revisão, configuração, calendário, versão

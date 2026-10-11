@@ -42,6 +42,73 @@ class LegacyMaterialPlanError(PlanValidationError):
         )
 
 
+class HistoricalPlanProtectedError(ValueError):
+    """A plan would change production that started before today (AGENTS §2, rule 4).
+
+    Protected history, not a physical conflict: the plan as calculated cannot
+    replace the active one, which stays untouched. ``lot_ids`` keeps the
+    evidence; the message names references and machines, never lot ids.
+    """
+
+    code = "historical_plan_protected"
+
+    def __init__(self, lot_ids: list[str], labels: list[str] | None = None) -> None:
+        self.lot_ids = list(lot_ids)
+        self.labels = list(labels or [])
+        shown = "; ".join(self.labels[:5]) + ("; …" if len(self.labels) > 5 else "")
+        super().__init__(
+            "O plano proposto alteraria a produção anterior a hoje, que está "
+            f"protegida{f' ({shown})' if shown else ''}."
+        )
+
+
+class RecalculationContextChanged(ValueError):
+    """«Recalcular plano»: its inputs changed while it was being calculated.
+
+    A stale calculation, not a fault: the ISOP or a fixed constraint
+    (manual positions, observed machine states, committed supply) is no
+    longer the one the recalculation started from, so the plan as calculated
+    cannot replace the active one, which stays untouched.
+    """
+
+    code = "recalculation_context"
+    _LABELS = {
+        "dataset": "o ISOP",
+        "plan_anchors": "as posições manuais",
+        "current_machine_states": "o estado observado das máquinas",
+        "committed_supplies": "a oferta já comprometida",
+    }
+
+    def __init__(self, changed: str) -> None:
+        self.changed = changed
+        super().__init__(
+            "Os dados de partida do recálculo mudaram durante o cálculo "
+            f"({self._LABELS.get(changed, changed)})."
+        )
+
+
+def _lot_labels(lot_ids: list[str], *payloads: dict) -> list[str]:
+    """``Referência 8718696125 (PRM042)`` for each lot id, from a snapshot."""
+
+    lots: dict[str, dict] = {}
+    for payload in reversed(payloads):
+        lots.update({str(lot.get("id")): lot for lot in payload.get("lots") or []})
+    labels = []
+    for lot_id in lot_ids:
+        lot = lots.get(str(lot_id))
+        if lot is None:
+            labels.append("um lote que já não existe no plano proposto")
+            continue
+        references = list(dict.fromkeys(
+            str(output[1] or output[0]) for output in lot.get("twin_outputs") or []
+        )) or [str(lot.get("sku") or lot.get("op_id") or "")]
+        machine = lot.get("machine_id")
+        labels.append(
+            f"Referência {' + '.join(references)}" + (f" ({machine})" if machine else "")
+        )
+    return labels
+
+
 def _assert_activatable_payload(payload: dict) -> None:
     if (
         not (payload.get("dataset_info") or {}).get("id")
@@ -271,11 +338,11 @@ class PlansStore:
         ).fetchone()
         if row is None:
             return
-        changed = historical_schedule_changes(json.loads(row[0]), payload)
+        before = json.loads(row[0])
+        changed = historical_schedule_changes(before, payload)
         if changed:
-            raise ValueError(
-                "historical_plan_protected: lotes iniciados antes de hoje "
-                f"não podem mudar: {', '.join(changed[:5])}"
+            raise HistoricalPlanProtectedError(
+                changed, _lot_labels(changed, payload, before),
             )
 
     def runtime_identity(self) -> dict:
@@ -298,13 +365,13 @@ class PlansStore:
         if (before.get("dataset_info") or {}).get("id") != (
             payload.get("dataset_info") or {}
         ).get("id"):
-            raise ValueError("recalculation_context: o ISOP mudou")
+            raise RecalculationContextChanged("dataset")
         # A past date is not execution. Observations and intentional anchors
         # are real constraints and must survive this special recalculation.
         old_data, new_data = before.get("engine_data") or {}, payload.get("engine_data") or {}
         for field in ("plan_anchors", "current_machine_states", "committed_supplies"):
             if old_data.get(field, []) != new_data.get(field, []):
-                raise ValueError(f"recalculation_context: restricao alterada: {field}")
+                raise RecalculationContextChanged(field)
 
     def active(self) -> dict | None:
         from backend.plans.serialize import snapshot_integrity_errors

@@ -404,12 +404,16 @@ def test_failed_restore_does_not_change_live_config_or_revision():
         "payload": copy.deepcopy(payload),
     }
 
-    with pytest.raises(ValueError, match="aprovação explícita: delivery_risk"):
+    with pytest.raises(ValueError, match="aprovação explícita") as refused:
         restore_plan_into_state(
             plan,
             target,
             expected_revision=original_revision,
         )
+    # Plain Portuguese for the planner; the reason code stays machine-readable.
+    assert "há encomendas em risco de atraso" in str(refused.value)
+    assert not any(code in str(refused.value) for code in refused.value.approval_reasons)
+    assert "delivery_risk" in refused.value.approval_reasons
 
     assert target.config.name == "Configuração em produção"
     assert target.engine_data is original_engine

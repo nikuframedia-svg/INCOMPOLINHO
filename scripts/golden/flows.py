@@ -18,8 +18,15 @@ count and never by wall clock (AGENTS §6: a time cut is not deterministic):
 * ``improve_plan`` gets ``max_evaluations`` = the number of candidates the
   same call evaluated in the calibration run, when that call stopped on its
   time budget (``stop_reason == "budget"``); calls that ended on their own
-  keep no cap. A call the calibration never saw gets the flow's largest
-  budget-stopped count, else ``DEFAULT_EVALUATION_CAP``;
+  keep no cap. "The same call" is its call site, not its position: the flow,
+  the caller's qualified name (``site_key``: leading underscores dropped, so
+  moving the caller to another module or making it public keeps the key) and
+  the occurrence at that site. A call the calibration never saw at that site
+  is a harness failure (exit 3, ``meta.harness_errors``): the run goes on with
+  ``DEFAULT_EVALUATION_CAP`` so the output can be inspected, but it is not a
+  golden capture. A renamed caller is mapped back with ``--site-alias
+  NEW=OLD``. A calibration in the old format (caps by call order) is refused;
+  ``capture.py --migrate-calibration`` converts it;
 * every planning budget is multiplied by ``SLOW_FACTOR``: ``time.monotonic``
   runs that many times slower for this process. That covers every budget
   constant at once (``MODE_CONFIG[...]["time_budget_s"]``,
@@ -62,8 +69,18 @@ taken over ``result``; ``meta`` (timings, versions) is not hashed.
 ``result.equivalence`` holds the coarse facts compared for flows that do
 not reproduce byte for byte ("só equivalência").
 
+A planning job's candidate (replan jobs, Gantt move previews) is recorded by
+its own facts (``schedule_fingerprint``, ``physical_signature``, lot
+quantities), computed here from the stored candidate: the application's
+``candidate_fingerprint`` hashes durations and is volatile, and the job
+result alone holds only totals, so a change that keeps the totals equal would
+otherwise go unseen.
+
 Client data (lot ids, SKUs) never appears in this file: flow parameters live
-in ``<golden>/pristine/flow_params.json`` (outside git).
+in ``<golden>/pristine/flow_params.json`` (outside git). Moves that need a
+particular path through the engine (F4b) are chosen at capture time with
+``--select`` (``capture.py --select-manual-move-fallback``), which writes the
+candidates it tried to the private golden directory.
 """
 
 from __future__ import annotations
@@ -96,6 +113,17 @@ from pathlib import Path
 LIVE_TREE = Path(os.environ.get("PP1_LIVE_TREE", "/home/luis/projects/INCOMPOLINHO"))
 SLOW_FACTOR = 20.0
 DEFAULT_EVALUATION_CAP = 200
+# Calibration file format: caps keyed by call site (see ``site_key``).
+CALIBRATION_FORMAT = "site-keyed-v1"
+# Exit code of a flow whose run is not a valid golden capture (harness errors).
+HARNESS_ERROR_EXIT = 3
+# Manual-move functions whose calls and non-None results are counted in
+# ``meta.instrumented`` (F4, F4b and the F4b selection). Not hashed: the
+# golden master compares what the planner does, not which helper did it.
+MANUAL_MOVE_MODULE = "backend.plans.manual_move"
+MANUAL_MOVE_PROBES = ("_fixed_positions_move", "_allocate_existing_lots",
+                      "_replan_around_fixed_lot")
+FALLBACK_FUNCTION = "_replan_around_fixed_lot"
 JOB_TIMEOUT_S = 3600.0
 POLL_S = 1.0
 APPROVAL_REASON = "Golden master: aprovação do planeador"
@@ -236,6 +264,8 @@ def _flows() -> dict[str, Flow]:
              (("resource", "PRM031"), ("start_at", "2026-10-18T00:01"),
               ("end_at", "2026-10-18T23:59")), weight=3),
         Flow("F4_manual_move", "F4", "flow_manual_move", fast=True, weight=3),
+        Flow("F4b_manual_move_fallback", "F4", "flow_manual_move_fallback", fast=True,
+             weight=3),
         Flow("F5_simulate_scenarios", "F5", "flow_simulate_scenarios", weight=4),
         Flow("F5_ctp", "F5", "flow_ctp", weight=3),
         Flow("F6_copilot_quick", "F6", "flow_copilot", (("modo", "quick"),), weight=2),
@@ -302,6 +332,23 @@ def parse_anchor(value: str) -> _datetime.datetime:
     return anchor
 
 
+def site_key(qualname: str) -> str:
+    """Stable key of an ``improve_plan`` caller: its qualified name without
+    the leading underscores of each part. The module is left out, so moving
+    the caller (plan Passos 6d-8) or making it public keeps the key."""
+    return ".".join(part.lstrip("_") or part for part in qualname.split("."))
+
+
+def parse_site_aliases(values) -> dict[str, str]:
+    aliases = {}
+    for value in values or ():
+        new, separator, old = value.partition("=")
+        if not separator or not new.strip() or not old.strip():
+            raise SystemExit(f"--site-alias espera NOVO=ANTIGO, recebeu {value!r}")
+        aliases[site_key(new.strip())] = site_key(old.strip())
+    return aliases
+
+
 class Harness:
     def __init__(self, args):
         self.mode = args.mode
@@ -313,13 +360,35 @@ class Harness:
         self.calibration = {}
         if args.calibration:
             self.calibration = json.loads(Path(args.calibration).read_text())
+        self.calibration_flow = self.flow
+        self.legacy_index_caps = bool(getattr(args, "legacy_index_caps", False))
+        self.uniform_cap = getattr(args, "uniform_cap", None)
+        self.site_aliases = parse_site_aliases(getattr(args, "site_alias", None))
+        if self.mode == "deterministic" and self.uniform_cap is None:
+            self._check_calibration_format()
         self.improvement_calls: list[dict] = []
+        self.call_sites_raw: list[str] = []
+        self._site_counts: collections.Counter = collections.Counter()
+        self.harness_errors: list[str] = []
+        self.instrumented: dict[str, dict] = {}
         self.cpsat_solves = 0
         self.legacy_alarms: list[str] = []
         self._lock = threading.Lock()
         self._cpsat_limits: dict[int, tuple[float, float]] = {}
         self.protected = [LIVE_TREE.resolve(), self.code, self.pristine]
         self.set_anchor(args.anchor)
+
+    def _check_calibration_format(self) -> None:
+        keyed = self.calibration.get("format") == CALIBRATION_FORMAT
+        if self.legacy_index_caps:
+            if keyed:
+                raise SystemExit("--legacy-index-caps só serve para migrar uma calibração"
+                                 " no formato antigo; esta já está por local de chamada")
+            return
+        if not keyed:
+            raise SystemExit(
+                "calibração no formato antigo (limites por ordem de chamada) ou sem formato:"
+                " converter com capture.py --migrate-calibration")
 
     # clock anchor -----------------------------------------------------
     def set_anchor(self, value: str) -> None:
@@ -472,8 +541,13 @@ class Harness:
                 raise PermissionError("golden master: ligações de rede recusadas")
 
     # improvement budget -------------------------------------------------
-    def evaluation_cap(self, index: int) -> tuple[int | None, str]:
-        calls = ((self.calibration.get("flows") or {}).get(self.flow) or {}).get("calls") or []
+    def _calibrated_calls(self) -> list[dict]:
+        flows = self.calibration.get("flows") or {}
+        return (flows.get(self.calibration_flow) or {}).get("calls") or []
+
+    def _legacy_cap(self, index: int) -> tuple[int | None, str]:
+        """Caps by call order: the old format, only to migrate it."""
+        calls = self._calibrated_calls()
         if index < len(calls):
             call = calls[index]
             if call.get("stop_reason") == "budget":
@@ -484,6 +558,29 @@ class Harness:
         if budget:
             return max(budget), "fallback:flow_max"
         return DEFAULT_EVALUATION_CAP, "fallback:default"
+
+    def evaluation_cap(self, record: dict) -> tuple[int | None, str]:
+        """Cap of one call, by its call site (flow, caller, occurrence)."""
+        if self.uniform_cap is not None:
+            return int(self.uniform_cap), "uniform"
+        if self.legacy_index_caps:
+            return self._legacy_cap(record["index"])
+        site, occurrence = record["site"], record["occurrence"]
+        for call in self._calibrated_calls():
+            if call.get("site") == site and call.get("occurrence") == occurrence:
+                if call.get("stop_reason") == "budget":
+                    return int(call.get("candidates_evaluated") or 0), "calibration"
+                return None, f"calibration:{call.get('stop_reason')}"
+        calibrated = sorted(
+            f"{call.get('site')}#{call.get('occurrence')}" for call in self._calibrated_calls()
+            if call.get("site") is not None
+        )
+        self.harness_errors.append(
+            f"improve_plan chamado em {site}#{occurrence} (fluxo {self.calibration_flow}),"
+            f" que a calibração não tem (calibradas: {', '.join(calibrated) or 'nenhuma'})."
+            " O número ou o local das chamadas mudou: se o chamador só mudou de nome, usar"
+            " --site-alias NOVO=ANTIGO; senão o fluxo mudou e a diferença é real.")
+        return DEFAULT_EVALUATION_CAP, "uncalibrated"
 
     def wrap_improvement(self) -> None:
         module = None
@@ -497,17 +594,27 @@ class Harness:
         if module is None or not hasattr(module, "improve_plan"):
             raise RuntimeError("improve_plan not found: update scripts/golden/flows.py")
         original = module.improve_plan
+        if getattr(original, "_golden_wrapped", False):
+            return
         harness = self
 
         @functools.wraps(original)
         def improve_plan(*args, **kwargs):
+            caller = sys._getframe(1)
+            qualname = getattr(caller.f_code, "co_qualname", caller.f_code.co_name)
+            site = site_key(qualname)
+            site = harness.site_aliases.get(site, site)
             with harness._lock:
-                record: dict = {"index": len(harness.improvement_calls)}
+                record: dict = {"index": len(harness.improvement_calls), "site": site,
+                                "occurrence": harness._site_counts[site]}
+                harness._site_counts[site] += 1
                 harness.improvement_calls.append(record)
+                harness.call_sites_raw.append(
+                    f"{caller.f_globals.get('__name__')}:{qualname}")
             if kwargs.get("max_evaluations") is not None:
                 record.update(cap=kwargs["max_evaluations"], cap_source="caller")
             elif harness.mode == "deterministic":
-                cap, source = harness.evaluation_cap(record["index"])
+                cap, source = harness.evaluation_cap(record)
                 record["cap_source"] = source
                 if cap is not None:
                     kwargs["max_evaluations"] = cap
@@ -526,9 +633,51 @@ class Harness:
                 record[key] = report_view.get(key)
             return segments, lots, report
 
+        improve_plan._golden_wrapped = True
         for loaded in list(sys.modules.values()):
             if getattr(loaded, "improve_plan", None) is original:
                 loaded.improve_plan = improve_plan
+
+    # call counters (meta only) -------------------------------------------
+    def instrument(self, module_name: str, names: tuple[str, ...]) -> None:
+        """Count the calls and non-None results of module-level functions.
+
+        Only module globals are replaced, so calls between functions of that
+        module go through the counters. Recorded in ``meta.instrumented``
+        (never hashed); a function that no longer exists is recorded as
+        absent."""
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            for name in names:
+                self.instrumented[name] = {"absent": True}
+            return
+        harness = self
+        for name in names:
+            original = getattr(module, name, None)
+            if original is None:
+                self.instrumented[name] = {"absent": True}
+                continue
+            if getattr(original, "_golden_counted", False):
+                continue
+            counter = self.instrumented.setdefault(name, {"calls": 0, "results": 0})
+
+            def counted(*args, _original=original, _counter=counter, **kwargs):
+                with harness._lock:
+                    _counter["calls"] += 1
+                value = _original(*args, **kwargs)
+                if value is not None:
+                    with harness._lock:
+                        _counter["results"] += 1
+                return value
+
+            functools.update_wrapper(counted, original)
+            counted._golden_counted = True
+            setattr(module, name, counted)
+
+    def counters(self) -> dict:
+        with self._lock:
+            return copy.deepcopy(self.instrumented)
 
 
 # ─── Runner: app, HTTP, approvals, jobs, facts ─────────────────────────
@@ -713,6 +862,13 @@ class Runner:
         plans = []
         for step in self.steps:
             facts = step.get("state") or step.get("plan")
+            if facts is None and "candidate" in step:
+                candidate = step["candidate"]
+                plans.append({"label": step["label"],
+                              "lot_quantities": candidate.get("lot_quantities"),
+                              "segments_nonempty": bool(candidate.get("segments")),
+                              "error": candidate.get("error")})
+                continue
             if facts is None:
                 if "error" in step:
                     plans.append({"label": step["label"], "error": step["error"]})
@@ -731,6 +887,59 @@ class Runner:
                 "otd_d": score.get("otd_d"),
             })
         return {"http": http, "plans": plans}
+
+
+def _plan_identity(segments, lots) -> dict:
+    """What identifies a plan physically: the facts compared for a candidate."""
+    serialize = _import_first("backend.plans.serialize")
+    improvement = _import_first("backend.scheduler.improvement", "backend.engine.improve")
+    segments, lots = list(segments or []), list(lots or [])
+    return {
+        "schedule_fingerprint": serialize.schedule_fingerprint(segments, lots),
+        "physical_signature": improvement.physical_signature(segments, lots),
+        "segments": len(segments),
+        "lots": len(lots),
+        "lot_quantities": digest(sorted([lot.id, int(lot.qty)] for lot in lots)),
+    }
+
+
+def _replan_candidate_facts(runner: "Runner", job_id: str) -> dict:
+    """The candidate of a ready replan job, read from the run copy's
+    ``replan.db`` (``replan_jobs.candidate_json``, a frozen snapshot format)
+    and identified by its own facts (the job result holds only totals)."""
+    serialize = _import_first("backend.plans.serialize")
+    path = runner.h.run_dir / "data" / "replan.db"
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "select candidate_json from replan_jobs where id=?", (job_id,)).fetchone()
+        finally:
+            connection.close()
+        if row is None or not row[0]:
+            return {"error": "sem candidato guardado"}
+        restored = serialize.deserialize_snapshot(json.loads(row[0]))
+        result = restored["result"]
+        return {**_plan_identity(result.segments, result.lots),
+                "plan_revision": restored.get("plan_revision")}
+    except Exception as exc:  # noqa: BLE001 - recorded, so a change here is seen
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _move_candidate_facts(job_id: str) -> dict:
+    """The candidate of a ready Gantt move preview (held in memory by the
+    move-preview job manager), identified by its own facts."""
+    try:
+        jobs = _import_first("backend.plans.manual_move_jobs")
+        with jobs.manager.lock:
+            candidate = jobs.manager.candidates.get(job_id)
+        if candidate is None:
+            return {"error": "sem candidato guardado"}
+        return {**_plan_identity(candidate.segments, candidate.lots),
+                "target": [candidate.target_day, candidate.target_machine,
+                           candidate.target_start_min]}
+    except Exception as exc:  # noqa: BLE001 - recorded, so a change here is seen
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 def _result_facts(result) -> dict:
@@ -833,6 +1042,8 @@ def flow_outage(runner: Runner, resource: str, start_at: str, end_at: str) -> No
             job = runner.wait_job("replan:job", f"/api/data/replan-jobs/{job['id']}",
                                   active={"queued", "running"})
             if job.get("status") == "ready":
+                runner.steps.append({"label": "replan:candidate",
+                                     "candidate": _replan_candidate_facts(runner, job["id"])})
                 gate = (job.get("result") or {}).get("gate_report") or {}
                 needed = bool(gate.get("requires_approval"))
                 runner.http("replan:apply", "POST", f"/api/data/replan-jobs/{job['id']}/apply",
@@ -846,7 +1057,10 @@ def flow_outage(runner: Runner, resource: str, start_at: str, end_at: str) -> No
         runner.record_state("after")
 
 
-def _move(runner: Runner, label: str, move: dict) -> None:
+def _move(runner: Runner, label: str, move: dict, *, apply: bool = True) -> dict:
+    """A Gantt move as the screen does it: preview job, then apply.
+
+    Returns the preview job (``{}`` when it did not start)."""
     state = runner.state
     machine = move.get("target_machine") or next(
         (segment.machine_id for segment in sorted(
@@ -861,12 +1075,16 @@ def _move(runner: Runner, label: str, move: dict) -> None:
                                   "/api/data/plan/move-preview-jobs", body=request)
     job = payload.get("job") if isinstance(payload, dict) else None
     if status != 200 or not isinstance(job, dict):
-        return
+        return {}
     job = runner.wait_job(f"{label}:preview-job", f"/api/data/plan/move-preview-jobs/{job['id']}",
                           active={"queued", "running"})
     result = job.get("result") or {}
     if job.get("status") != "ready" or not result:
-        return
+        return job
+    runner.steps.append({"label": f"{label}:candidate",
+                         "candidate": _move_candidate_facts(job["id"])})
+    if not apply:
+        return job
     gate = result.get("gate_report") or {}
     needed = bool(result.get("requires_confirmation") or gate.get("requires_approval"))
     runner.http(f"{label}:apply", "POST", "/api/data/plan/move-apply", body={
@@ -875,17 +1093,105 @@ def _move(runner: Runner, label: str, move: dict) -> None:
         "approval_author": APPROVAL_AUTHOR, "confirm_delivery_risk": needed,
         "request_id": runner.request_id(f"{label}-apply"),
     })
+    return job
 
 
 def flow_manual_move(runner: Runner) -> None:
     """F4: a Gantt move that is refused, then one that is applied."""
     params = runner.params["F4_manual_move"]
+    runner.h.instrument(MANUAL_MOVE_MODULE, MANUAL_MOVE_PROBES)
     with runner.app():
         for index, move in enumerate(params["refused"]):
             _move(runner, f"refused-{index}", move)
         runner.record_state("after-refused")
         _move(runner, "applied", params["applied"])
         runner.record_state("after-applied")
+
+
+def flow_manual_move_fallback(runner: Runner) -> None:
+    """F4b: Gantt moves onto an occupied slot (the trace probe P4 scenario).
+
+    The fixed-positions attempt cannot place them, so ``_move_lot`` falls
+    back to ``_replan_around_fixed_lot`` -> ``_allocate_existing_lots``: the
+    path plan Passo 6c rewires when it removes the forks around it (with M5,
+    "the fallback returns None", F4b must differ). ``inconclusive`` moves (previews only) reach
+    that fallback without a valid candidate; ``applied`` is one whose
+    candidate comes from it, applied afterwards. The moves were chosen at
+    capture time by ``select_manual_move_fallback`` on the pristine plan and
+    live in the private ``flow_params.json``; ``meta.instrumented`` counts the
+    fallback calls (not hashed)."""
+    params = runner.params["F4b_manual_move_fallback"]
+    runner.h.instrument(MANUAL_MOVE_MODULE, MANUAL_MOVE_PROBES)
+    with runner.app():
+        for index, move in enumerate(params.get("inconclusive") or []):
+            _move(runner, f"inconclusive-{index}", move, apply=False)
+        runner.record_state("after-inconclusive")
+        _move(runner, "applied", params["applied"])
+        runner.record_state("after-applied")
+
+
+FALLBACK_SELECTION_ATTEMPTS = 30
+
+
+def _occupied_slot_moves(runner: Runner) -> list[dict]:
+    """Each movable lot (first production from today + 2) onto the
+    production start of the next lot on the same machine, which begins on a
+    later day: an occupied slot whose material is already released."""
+    state = runner.state
+    _status, today = runner.http("today", "GET", "/api/data/today", record=False)
+    today_idx = int(today.get("today_idx", 0)) if isinstance(today, dict) else 0
+    first: dict[str, tuple[int, int, str]] = {}
+    for segment in sorted(state.segments, key=lambda s: (s.day_idx, s.start_min)):
+        if segment.prod_min > 0 and segment.lot_id not in first:
+            first[segment.lot_id] = (segment.day_idx, segment.start_min, segment.machine_id)
+    by_machine: dict[str, list] = collections.defaultdict(list)
+    for lot_id, (day, start, machine) in first.items():
+        by_machine[machine].append((day, start, lot_id))
+    moves = []
+    for machine, items in sorted(by_machine.items()):
+        items.sort()
+        for (day, _start, lot_id), (next_day, next_start, _next) in zip(items, items[1:]):
+            if day >= today_idx + 2 and next_day > day:
+                moves.append({"lot_id": lot_id, "target_day": int(next_day),
+                              "target_machine": machine, "target_start_min": int(next_start),
+                              "from_day": int(day)})
+    moves.sort(key=lambda move: (move["from_day"], move["target_machine"], move["lot_id"]))
+    return moves
+
+
+def select_manual_move_fallback(runner: Runner) -> dict:
+    """Choose F4b's moves (``--select``): previews only, on the pristine plan,
+    under the same harness as the golden run. ``applied`` = the first move
+    whose preview is ready with a candidate the fallback returned;
+    ``inconclusive`` = the first one that reached the fallback and was
+    refused as inconclusive."""
+    runner.h.instrument(MANUAL_MOVE_MODULE, MANUAL_MOVE_PROBES)
+    selection: dict = {"applied": None, "inconclusive": None, "tried": []}
+    with runner.app():
+        moves = _occupied_slot_moves(runner)
+        selection["candidates"] = len(moves)
+        for attempt, move in enumerate(moves[:FALLBACK_SELECTION_ATTEMPTS]):
+            before = runner.h.counters().get(FALLBACK_FUNCTION) or {}
+            job = _move(runner, f"select-{attempt}", move, apply=False)
+            after = runner.h.counters().get(FALLBACK_FUNCTION) or {}
+            calls = after.get("calls", 0) - before.get("calls", 0)
+            results = after.get("results", 0) - before.get("results", 0)
+            request = {key: move[key] for key in ("lot_id", "target_day", "target_machine",
+                                                  "target_start_min")}
+            selection["tried"].append({**move, "status": job.get("status"),
+                                       "code": job.get("code"), "fallback_calls": calls,
+                                       "fallback_results": results})
+            if job.get("status") == "ready" and results > 0 and selection["applied"] is None:
+                selection["applied"] = request
+            elif (job.get("status") == "failed" and job.get("code") == "inconclusive"
+                  and calls > 0 and results == 0 and selection["inconclusive"] is None):
+                selection["inconclusive"] = request
+            if selection["applied"] and selection["inconclusive"]:
+                break
+    return selection
+
+
+SELECTORS = {"F4b_manual_move_fallback": select_manual_move_fallback}
 
 
 def flow_simulate_scenarios(runner: Runner) -> None:
@@ -1066,6 +1372,8 @@ def run(args) -> int:
 
     runner = Runner(harness, params)
     started = harness.real_monotonic()
+    if args.select:
+        return _run_selection(args, flow, harness, runner, started)
     error = error_trace = None
     try:
         getattr(sys.modules[__name__], flow.function)(runner, **dict(flow.kwargs))
@@ -1107,11 +1415,46 @@ def run(args) -> int:
             "timings": runner.timings,
             "error_traceback": error_trace,
             "server_errors": runner.server_errors,
+            "harness_errors": harness.harness_errors,
+            "instrumented": harness.counters(),
+            "improvement_call_sites": harness.call_sites_raw,
+            "site_aliases": harness.site_aliases,
             "python": sys.version.split()[0],
             "pid": os.getpid(),
         },
     })
+    if harness.harness_errors:
+        for message in harness.harness_errors:
+            print(f"ERRO DO HARNESS: {message}", file=sys.stderr)
+        return HARNESS_ERROR_EXIT
     return 0
+
+
+def _run_selection(args, flow, harness: Harness, runner: Runner, started: float) -> int:
+    """``--select``: run the flow's selector and write what it chose (with
+    client lot ids) to ``--out``, in the private golden directory."""
+    selector = SELECTORS.get(flow.name)
+    if selector is None:
+        raise SystemExit(f"{flow.name} has no selector")
+    error = None
+    selection: dict = {}
+    try:
+        selection = selector(runner)
+    except Exception as exc:  # noqa: BLE001 - reported, nothing is chosen
+        error = f"{type(exc).__name__}: {exc}"
+        print(traceback.format_exc(), file=sys.stderr)
+    _write_json(Path(args.out), jsonable({
+        "flow": flow.name,
+        "selection": selection,
+        "error": error,
+        "steps": runner.steps,
+        "improvement_calls": harness.improvement_calls,
+        "meta": {"mode": harness.mode, "code": str(harness.code), "uniform_cap": harness.uniform_cap,
+                 "anchor": _ANCHOR[0].isoformat(), "instrumented": harness.counters(),
+                 "wall_s": round(harness.real_monotonic() - started, 2),
+                 "timings": runner.timings, "server_errors": runner.server_errors},
+    }))
+    return 1 if error else 0
 
 
 def main(argv=None) -> int:
@@ -1124,8 +1467,18 @@ def main(argv=None) -> int:
     parser.add_argument("--anchor", required=True, help="frozen clock, ISO 8601 with offset")
     parser.add_argument("--mode", choices=("deterministic", "calibrate"), default="deterministic")
     parser.add_argument("--calibration", default="")
+    parser.add_argument("--site-alias", action="append", default=[], metavar="NEW=OLD",
+                        help="an improve_plan caller renamed since the calibration")
+    parser.add_argument("--legacy-index-caps", action="store_true",
+                        help="caps by call order (old calibration format; migration only)")
+    parser.add_argument("--select", action="store_true",
+                        help="run the flow's selector instead of the flow (capture time)")
+    parser.add_argument("--uniform-cap", type=int, default=None,
+                        help="--select only: the same evaluation cap for every call")
     args = parser.parse_args(argv)
-    if args.mode == "deterministic" and not args.calibration:
+    if args.uniform_cap is not None and not args.select:
+        parser.error("--uniform-cap is only for --select")
+    if args.mode == "deterministic" and not args.calibration and args.uniform_cap is None:
         parser.error("--calibration is required in deterministic mode")
     return run(args)
 

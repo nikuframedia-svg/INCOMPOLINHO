@@ -28,6 +28,7 @@ from backend.planning_control import (
 from backend.plans.frozen import (
     _current_planning_day,
     _frozen_started_lots,
+    candidate_history_changes,
     compact_preserving_started_lots,
     optimize_preserving_started_lots,
     preserved_lots_warning,
@@ -75,6 +76,14 @@ FAILURE_TEXTS = {
         "O plano proposto tem conflitos físicos ou peças em falta. O plano e a "
         "configuração não foram alterados.",
     ),
+    # Not a physical conflict: the candidate would change production that
+    # already started (AGENTS §2 rule 4, §5), which the commit refuses.
+    "history_protected": (
+        "O plano proposto alteraria produção já iniciada",
+        "O plano calculado alteraria produção já iniciada, que está protegida, e "
+        "por isso não pode ser aplicado. O plano e a configuração não foram "
+        "alterados. Pode iniciar novamente.",
+    ),
     "internal_error": (
         "Não foi possível concluir o replaneamento",
         "Ocorreu um erro interno durante o cálculo. O plano e a configuração "
@@ -91,6 +100,21 @@ FAILURE_TEXTS = {
 
 class _BlockedCandidate(ValueError):
     """The candidate failed the physical/coverage gate; its text is Portuguese."""
+
+
+class _ProtectedHistoryChanged(ValueError):
+    """A candidate would change started production (AGENTS §2 rule 4, §5).
+
+    Never offered: a quick-repair candidate falls back to the complete
+    constructor; a final candidate fails the job with ``history_protected``.
+    """
+
+    def __init__(self, lot_ids: list[str]) -> None:
+        self.lot_ids = list(lot_ids)
+        super().__init__(f"started production changed: {', '.join(self.lot_ids[:5])}")
+
+
+PROTECTED_HISTORY_TEXT = FAILURE_TEXTS["history_protected"][1]
 
 
 def _violation_summary(exc) -> str:
@@ -783,13 +807,23 @@ class ReplanJobManager:
         )
 
     @staticmethod
-    def _local_calendar_repair(baseline, engine_data, config, frozen_lots, budget_s):
+    def _local_calendar_repair(baseline, engine_data, config, freeze_day, budget_s):
         """Repair only the segments a calendar edit invalidated, within its budget.
+
+        Only movable work is repaired (AGENTS §2 rule 4, §5): the production
+        started before ``freeze_day``, the run mounted at that boundary, its
+        mount suppliers and honoured anchors stay reserved and are spliced
+        back unchanged (``frozen.repair_preserving_protected_lots``); the rest
+        of a started lot is repaired as the same lot, never re-sized. The
+        canonical normalisation keeps that rest where it is, as the
+        improvement cycle's compaction does; the hard-constraint repair still
+        moves it when the edit invalidates it.
 
         Works on a copy; the caller validates and compares the result. Raises
         PlanningTimeout when its own scope expires so the caller can fall back
         to the complete constructor with the remaining outer budget.
         """
+        from backend.plans.frozen import repair_preserving_protected_lots
         from backend.scheduler.alternative_repair import repair_alternative_machine_delivery
         from backend.scheduler.campaign_tail import (
             campaign_tail_warnings,
@@ -802,37 +836,42 @@ class ReplanJobManager:
             normalize_earliest_legal_plan,
         )
 
-        protected = {lot.id for lot in frozen_lots}
-        with planning_scope(timeout_s=budget_s):
-            repaired = copy.deepcopy(baseline)
+        alternative_moves = False
+        tail_warnings: list[str] = []
+
+        def repair(segments, lots, started_rests):
+            nonlocal alternative_moves
             holidays = calendar_holidays(engine_data, -14, engine_data.n_days + 60)
-            repaired.segments = _repair_hard_constraints(
-                repaired.segments, engine_data, config, holidays,
-            )
-            repaired.segments = _fix_orphan_continuations(repaired.segments)
-            repaired.segments = normalize_earliest_legal_plan(
-                repaired.segments, repaired.lots, engine_data, config,
-                protected_lot_ids=protected,
+            segments = _repair_hard_constraints(segments, engine_data, config, holidays)
+            segments = _fix_orphan_continuations(segments)
+            segments = normalize_earliest_legal_plan(
+                segments, lots, engine_data, config, protected_lot_ids=started_rests,
             )
             alternative = repair_alternative_machine_delivery(
-                repaired.segments, repaired.lots, engine_data, config,
+                segments, lots, engine_data, config,
             )
-            repaired.segments = alternative.segments
-            repaired.lots = alternative.lots
+            segments, lots = alternative.segments, alternative.lots
             if alternative.moves:
-                repaired.segments = normalize_earliest_legal_plan(
-                    repaired.segments, repaired.lots, engine_data, config,
-                    protected_lot_ids=protected,
+                alternative_moves = True
+                segments = normalize_earliest_legal_plan(
+                    segments, lots, engine_data, config, protected_lot_ids=started_rests,
                 )
             campaign_tail = repair_short_runs_after_merged_campaigns(
-                repaired.segments, repaired.lots, engine_data, config,
+                segments, lots, engine_data, config,
             )
             if campaign_tail.moves:
-                repaired.segments = campaign_tail.segments
-                for warning in campaign_tail_warnings(campaign_tail):
-                    if warning not in repaired.warnings:
-                        repaired.warnings.append(warning)
-        return repaired, bool(alternative.moves)
+                segments = campaign_tail.segments
+                tail_warnings.extend(campaign_tail_warnings(campaign_tail))
+            return segments, lots
+
+        with planning_scope(timeout_s=budget_s):
+            repaired = repair_preserving_protected_lots(
+                baseline, engine_data, config, freeze_day, repair,
+            )
+        for warning in tail_warnings:
+            if warning not in repaired.warnings:
+                repaired.warnings.append(warning)
+        return repaired, alternative_moves
 
     def _run(self, job_id: str, *args, **kwargs) -> None:
         try:
@@ -953,6 +992,14 @@ class ReplanJobManager:
                 historical_baseline_result,
                 freeze_day,
             )
+
+            def history_changes(candidate) -> list[str]:
+                # The commit guard, before a candidate is offered.
+                return candidate_history_changes(
+                    baseline_snapshot, candidate, engine_data, config,
+                    freeze_day=freeze_day,
+                )
+
             baseline_score = None
             selected_source = "optimized"
             result = None
@@ -1025,7 +1072,7 @@ class ReplanJobManager:
                             baseline_result,
                             engine_data,
                             config,
-                            frozen_lots,
+                            freeze_day,
                             local_budget,
                         )
                         assert_plan_valid(
@@ -1034,6 +1081,12 @@ class ReplanJobManager:
                             config,
                             lots=repaired.lots,
                         )
+                        # The commit refuses a change to started production;
+                        # such a candidate is never offered (the complete
+                        # constructor replans around it instead).
+                        changed = history_changes(repaired)
+                        if changed:
+                            raise _ProtectedHistoryChanged(changed)
                         repaired.score = compute_score(
                             repaired.segments,
                             repaired.lots,
@@ -1110,6 +1163,12 @@ class ReplanJobManager:
                     exchange_applied = exchanged is not None and (
                         exchanged != baseline_result.segments
                     )
+                    if exchange_applied:
+                        exchange = copy.copy(baseline_result)
+                        exchange.segments = exchanged
+                        if history_changes(exchange):
+                            # Never offered: started production stays as it is.
+                            exchange_applied = False
                     if exchange_applied:
                         baseline_result.segments = exchanged
                         baseline_result.warnings.append(
@@ -1282,6 +1341,11 @@ class ReplanJobManager:
                 config,
                 lots=result.lots,
             )
+            # Last line of defence: a candidate the commit would refuse for
+            # changing started production is never offered (no HTTP 500 later).
+            changed_history = history_changes(result)
+            if changed_history:
+                raise _ProtectedHistoryChanged(changed_history)
             if frozen_lots:
                 frozen_warning = preserved_lots_warning(len(frozen_lots), freeze_day)
                 result.warnings = [
@@ -1381,6 +1445,12 @@ class ReplanJobManager:
             )
         except PlanningStopped:
             raise
+        except _ProtectedHistoryChanged as exc:
+            logger.error(
+                "Replan %s: candidate changes started production: %s",
+                job_id, ", ".join(exc.lot_ids[:5]),
+            )
+            self._fail(job_id, "history_protected")
         except _BlockedCandidate as exc:
             logger.exception("Replan job %s produced a blocked candidate", job_id)
             self._fail(job_id, "blocked", str(exc) or None)

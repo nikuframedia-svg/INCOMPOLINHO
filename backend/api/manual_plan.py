@@ -22,7 +22,7 @@ from backend.plans.manual_move import (
 from backend.plans.manual_move_jobs import manager as move_job_manager
 from backend.plans.serialize import planning_input_fingerprints
 from backend.plans.transactions import clone_state, input_identity, plan_writer
-from backend.scheduler.gates import authorize_application
+from backend.scheduler.gates import application_refusal_detail, authorize_application
 from backend.scheduler.operators import compute_operator_alerts
 from backend.scheduler.types import ScheduleResult
 from backend.types import PlanAnchor
@@ -319,11 +319,15 @@ async def apply_move(body: dict):
                 approval_author=str(body.get("approval_author", body.get("author", ""))),
             )
         except ValueError as exc:
+            refusal = application_refusal_detail(exc, gate_report=False) or {}
             raise HTTPException(
                 409,
                 {
                     "message": str(exc),
-                    "requires_confirmation": True,
+                    **refusal,
+                    # A blocked candidate cannot be confirmed (physical or
+                    # quantity conflict); only an approval can be given.
+                    "requires_confirmation": refusal.get("code") != "blocked",
                     "delivery_warnings": candidate.delivery_warnings,
                     "candidate": _response(candidate),
                 },

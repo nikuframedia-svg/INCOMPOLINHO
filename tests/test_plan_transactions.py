@@ -25,7 +25,11 @@ from backend.copilot.state import CopilotState, state
 from backend.plans import transactions
 from backend.plans.context import after_commit, is_staging, redirected_state, stage_state
 from backend.plans.serialize import _finalize_snapshot, assert_snapshot_integrity, serialize_snapshot
-from backend.plans.store import PlansStore
+from backend.plans.store import (
+    HistoricalPlanProtectedError,
+    PlansStore,
+    RecalculationContextChanged,
+)
 from backend.scheduler.types import Lot, ScheduleResult, Segment
 from backend.scheduler.validation import PlanValidationError
 from backend.types import EngineData, EOp, MachineInfo
@@ -164,12 +168,107 @@ def test_durable_commit_rejects_retroactive_historical_move(planning, offsets):
     _finalize_snapshot(candidate)
     planning.store.prepare_mutation("retroactive", "fingerprint", {"plan_revision": 8})
 
-    with pytest.raises(ValueError, match="historical_plan_protected"):
+    with pytest.raises(HistoricalPlanProtectedError) as refused:
         planning.store.commit_mutation("retroactive", candidate, {}, source="auto")
 
+    assert refused.value.code == "historical_plan_protected"
+    assert refused.value.lot_ids == ["LOT1"]
+    # Plain Portuguese for the planner: references and machines, no lot ids.
+    assert str(refused.value) == (
+        "O plano proposto alteraria a produção anterior a hoje, que está "
+        "protegida (Referência SKU1 (M1))."
+    )
     assert planning.store.runtime_identity() == before
     assert planning.store.active()["payload"] == baseline
     planning.store.abort_mutation("retroactive")
+
+
+def test_writer_commit_refused_by_history_guard_is_409_and_rolls_back(planning):
+    """A plan writer whose candidate changes started production gets a plain
+    409 at the durable boundary, never an HTTP 500 (small-outage rehearsal of
+    11/10/2026), and nothing is published."""
+    today = datetime.now(ZoneInfo("Europe/Lisbon")).date()
+    state.engine_data.workdays = [(today + timedelta(days=offset)).isoformat()
+                                  for offset in (-1, 0, 1)]
+    state.persist_current_plan(name="Before", source="auto", is_auto=True)
+    before_runtime = planning.store.runtime_identity()
+    baseline = _runtime_values()
+
+    @transactions.plan_writer
+    async def writer(body: dict):
+        # Moves the production of day 0 (yesterday): started history.
+        return _mutate(body["marker"])
+
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(writer({"request_id": "history", "marker": "history"}))
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "historical_plan_protected"
+    assert "produção anterior a hoje" in caught.value.detail["message"]
+    assert "O plano ativo não foi alterado" in caught.value.detail["message"]
+    assert "LOT1" not in caught.value.detail["message"]
+    assert _runtime_values() == baseline
+    assert planning.store.runtime_identity() == before_runtime
+    assert planning.store.mutation_receipt("history") is None
+    assert planning.store.pending_mutations() == []
+
+
+def test_commit_refusal_maps_only_typed_refusals_to_plain_409():
+    from backend.scheduler.gates import ApplicationBlocked, ApprovalRequired
+
+    report = {"requires_approval": True, "approval_reasons": ["operational_sequence_review"]}
+    refusals = {
+        "historical_plan_protected": HistoricalPlanProtectedError(["LOT1"], ["Referência SKU1 (M1)"]),
+        "recalculation_context": RecalculationContextChanged("dataset"),
+        "approval_required": ApprovalRequired("O plano só pode ser aplicado ...", report),
+        "blocked": ApplicationBlocked("O candidato tem conflitos físicos.", {}),
+    }
+    for code, exc in refusals.items():
+        refusal = transactions._commit_refusal(exc, 3)
+        assert refusal.status_code == 409, code
+        assert refusal.detail["code"] == code
+        assert refusal.detail["current_revision"] == 3
+        assert "O plano ativo não foi alterado" in refusal.detail["message"]
+        assert code not in refusal.detail["message"] and "LOT1" not in refusal.detail["message"]
+    approval = transactions._commit_refusal(refusals["approval_required"], 3).detail
+    assert approval["approval_reasons"] == ["operational_sequence_review"]
+    # Physical conflicts keep their own 409 handler. Any other ValueError is a
+    # fault, not a refusal (review of 11/10/2026): an integrity check, a
+    # corrupt journal row or an internal guard must stay an HTTP 500.
+    assert transactions._commit_refusal(PlanValidationError([{"kind": "x"}]), 3) is None
+    for fault in (
+        ValueError("Snapshot inconsistente: fingerprint divergente"),
+        ValueError("recalculation_scope: falta autorizacao interna do recalculo"),
+        ValueError("active_plan_invalid: identidade ativa ausente"),
+        ValueError("A operacao ja nao pode ser confirmada."),
+        OSError("disk"),
+    ):
+        assert transactions._commit_refusal(fault, 3) is None, fault
+
+
+def test_writer_commit_integrity_error_stays_500_and_is_logged(planning, monkeypatch, caplog):
+    """An integrity failure at the durable boundary is not hidden behind a
+    409 that asks to calculate again: it propagates (HTTP 500), with its
+    traceback in the server log, and nothing is published."""
+    before_runtime = planning.store.runtime_identity()
+    baseline = _runtime_values()
+
+    def corrupt(*_args, **_kwargs):
+        raise ValueError("Snapshot inconsistente: fingerprint divergente")
+
+    monkeypatch.setattr(planning.store, "commit_mutation", corrupt)
+
+    @transactions.plan_writer
+    async def writer(body: dict):
+        return _mutate(body["marker"])
+
+    with caplog.at_level("ERROR", logger=transactions.logger.name):
+        with pytest.raises(ValueError, match="Snapshot inconsistente"):
+            asyncio.run(writer({"request_id": "integrity", "marker": "integrity"}))
+    logged = [record for record in caplog.records if record.name == transactions.logger.name]
+    assert any(record.exc_info and "not a refusal" in record.getMessage() for record in logged)
+    assert _runtime_values() == baseline
+    assert planning.store.runtime_identity() == before_runtime
+    assert planning.store.pending_mutations() == []
 
 
 @pytest.mark.parametrize("conflict", ["machine_down", "operator_capacity"])
