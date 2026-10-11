@@ -431,6 +431,7 @@ def test_manual_move_reuses_a_report_verified_on_the_exact_complete_candidate(mo
 
 
 def test_fixed_lot_replan_defers_improvement_until_the_complete_candidate_exists(monkeypatch):
+    from backend.plans.frozen import ProtectedPlan
     from backend.plans.manual_move import _replan_around_fixed_lot
 
     data, config = _engine(), _config()
@@ -444,7 +445,7 @@ def test_fixed_lot_replan_defers_improvement_until_the_complete_candidate_exists
     monkeypatch.setattr("backend.plans.frozen.improve_preserving_protected_lots",
                         lambda *_a, **_k: pytest.fail("Only the complete candidate may be improved"))
     result = _replan_around_fixed_lot(
-        data, config, [_lot()], [], [], {}, _lot(), _segment(),
+        data, config, [_lot()], ProtectedPlan(), {}, _lot(), _segment(),
         1, "M2", 600, "quick", None, 10,
     )
     assert result is not None

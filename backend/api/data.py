@@ -834,6 +834,20 @@ async def get_lots():
     return [asdict(lot) for lot in state.lots]
 
 
+def _plan_notices(lots, engine_data, config) -> list[str]:
+    """Plain pt-PT notes about the active plan itself, shown above every screen.
+
+    Today only the legacy material note: a plan saved before the per-delivery
+    material rules is kept as saved, cannot be committed again (moves and
+    edits are refused) and only «Recalcular plano» applies the current rules.
+    Computed from the plan, so it disappears as soon as the plan is rebuilt.
+    """
+    from backend.plans.restore import legacy_material_warning
+
+    note = legacy_material_warning(lots, engine_data, config)
+    return [note] if note else []
+
+
 @router.get("/plan-view")
 async def get_plan_view():
     """Return one revision-consistent snapshot for the main frontend views."""
@@ -855,8 +869,12 @@ async def get_plan_view():
             state.engine_data,
             state.config,
         )
+        plan_notices = await run_in_threadpool(
+            _plan_notices, state.lots, state.engine_data, state.config,
+        )
         return {
             "plan_revision": revision,
+            "plan_notices": plan_notices,
             "dataset_id": str((state.dataset_info or {}).get("id", "")),
             "dataset": copy.deepcopy(state.dataset_info),
             "active_mutations": copy.deepcopy(state.active_mutations),
@@ -2292,20 +2310,28 @@ def _apply_ctp_locked(request: CTPRequest):
     }
 
 
+# «Recalcular plano» answers this long before the writer's 60 s deadline
+# (measured: ~53 s with only ~6 s to spare on revision 123, 1 core).
+RECALCULATE_RESPONSE_MARGIN_S = 15.0
+
+
 @router.post("/recalculate")
 @plan_writer(recalculate_from_start=True)
 async def recalculate(body: dict):
+    from backend.planning_control import response_margin
+
     _require_data()
 
     async with plan_mutation_lock:
         _require_expected_revision(body)
         old_score = dict(state.score) if state.score else {}
         try:
-            result = await run_in_threadpool(
-                _recompute_transactional,
-                state.config,
-                body,
-            )
+            with response_margin(RECALCULATE_RESPONSE_MARGIN_S):
+                result = await run_in_threadpool(
+                    _recompute_transactional,
+                    state.config,
+                    body,
+                )
         except (KeyError, TypeError, ValueError) as exc:
             raise _plan_validation_error(exc) from exc
 

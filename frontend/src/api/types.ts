@@ -25,6 +25,8 @@ export interface Score {
 
 export interface PlanView {
   plan_revision: number;
+  /** Plain notes about the active plan itself (e.g. saved under older material rules). */
+  plan_notices?: string[];
   dataset_id: string;
   dataset?: DatasetInfo | null;
   active_mutations: MutationInput[];

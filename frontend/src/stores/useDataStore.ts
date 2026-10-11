@@ -24,6 +24,7 @@ interface DataState {
   capacity: CapacityResponse | null;
   workdays: string[];
   blockedDays: BlockedDaysResponse | null;
+  planNotices: string[];
 
   // Simulation state
   isSimulated: boolean;
@@ -51,6 +52,7 @@ export const useDataStore = create<DataState>((set, get) => ({
   capacity: null,
   workdays: [],
   blockedDays: null,
+  planNotices: [],
 
   isSimulated: false,
   activeMutations: [],
@@ -90,6 +92,7 @@ export const useDataStore = create<DataState>((set, get) => ({
           lots: snapshot.lots, config: snapshot.config,
           learning: snapshot.learning, capacity: snapshot.capacity,
           workdays: snapshot.workdays, blockedDays: snapshot.blocked_days,
+          planNotices: Array.isArray(snapshot.plan_notices) ? snapshot.plan_notices : [],
           canRevert: snapshot.can_revert, isSimulated: snapshot.active_mutations.length > 0,
           activeMutations: snapshot.active_mutations, manualEdits: snapshot.manual_edits,
           ...(changed || snapshot.active_mutations.length === 0 ? { simulationSummary: [] } : {}),
@@ -143,7 +146,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     datasetId: null, planRevision: null,
     score: null, gateReport: null, segments: null, placementReasons: {},
     lots: null, config: null, learning: null, capacity: null,
-    workdays: [], blockedDays: null,
+    workdays: [], blockedDays: null, planNotices: [],
     isSimulated: false, activeMutations: [], simulationSummary: [], canRevert: false, manualEdits: [],
     });
   },

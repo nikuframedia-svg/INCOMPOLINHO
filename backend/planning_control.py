@@ -182,8 +182,39 @@ def remaining_time(limit_s: float | None = None) -> float | None:
     return remaining if limit_s is None else min(limit_s, remaining)
 
 
+# An interactive request answers well before its hard deadline: its search
+# phases stop ``margin`` seconds earlier, plus what still runs after them
+# (merge, gates, analytics, the prepared candidate). Measured 11/10/2026 on
+# revisions 123/124, 1 core: 2.2 to 2.6 s after the improvement cycle on an
+# idle core, up to 4 s on a busy one.
+CLOSING_WORK_S = 4.0
+_response_margin: ContextVar[float | None] = ContextVar("response_margin", default=None)
+
+
+@contextmanager
+def response_margin(margin_s: float):
+    """Searches in this call tree leave ``margin_s`` plus the closing work.
+
+    Only the closing reserve grows; the hard deadline is unchanged, so closing
+    work that overruns its estimate uses margin instead of failing the request.
+    """
+    token = _response_margin.set(max(0.0, float(margin_s)))
+    try:
+        yield
+    finally:
+        _response_margin.reset(token)
+
+
+def response_margin_active() -> bool:
+    return _response_margin.get() is not None
+
+
 def closing_reserve(budget: float) -> float:
-    return min(10.0, max(0.0, budget) * 0.2)
+    reserve = min(10.0, max(0.0, budget) * 0.2)
+    margin = _response_margin.get()
+    if margin is None:
+        return reserve
+    return max(reserve, min(max(0.0, budget), margin + CLOSING_WORK_S))
 
 
 def improvement_time_budget(total_budget_s: float) -> float:

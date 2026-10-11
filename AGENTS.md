@@ -193,8 +193,14 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    sempre consigo o lote que montou a ferramenta (a produção anterior desse
    lote incluída); um lote de um contrato de material anterior, ancorado ou já
    todo feito fica inteiro. A proteção do histórico na gravação compara só a
-   produção anterior a hoje e o próprio lote. Movimentos manuais continuam a
-   proteger lotes inteiros (com os fornecedores de montagem quando realocam).
+   produção anterior a hoje e o próprio lote. **Movimentos manuais (12/10/2026)**
+   seguem a mesma regra (`plans/manual_move._move_protection`, sobre
+   `_protected_plan` sem o lote movido): o lote movido é decisão do planeador e
+   sai da proteção; o resto de um lote começado é realocado como o mesmo lote,
+   nunca redimensionado; depois de cada caminho (posições fixas, realocação,
+   lote fixo primeiro, melhoria) a produção congelada tem de estar fisicamente
+   igual (`_keeps_frozen`), senão o candidato é recusado. Mover um lote já
+   começado continua recusado. Caminho por quantidades no §6.
 
 Construtor por partes (`quantity_dispatch.py`, B1a):
 
@@ -345,7 +351,8 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   se for aceite e houver tempo, a pesquisa continua sobre o plano
   compactado. Cada candidato aceite já é completo e validado, por isso um
   orçamento que acaba antes ou durante a compactação devolve o último
-  aceite (`closing_compaction` no relatório diz o que aconteceu). Um limite
+  aceite (`closing_compaction` no relatório diz o que aconteceu; no
+  «Recalcular plano» interativo não corre, ver nota de 12/10/2026). Um limite
   de avaliações (`max_evaluations`) conta também as da compactação: a
   pesquisa para uma avaliação antes, para a compactação final caber.
 - Começar com um worker do solver; medir antes de aumentar. O código atual já
@@ -355,7 +362,39 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   movimento manual, CPO e recálculo dão ao ciclo de melhoria o tempo que resta
   no orçamento do pedido menos a reserva de fecho
   (`planning_control.improvement_time_budget`); na revisão 90 a compactação
-  demora ~50 s. Mais pesquisa, não menor latência.
+  demora ~50 s. Mais pesquisa, não menor latência. (Exceção de 12/10/2026
+  para o «Recalcular plano» interativo: margem de resposta, ver abaixo.)
+- **Decidido em 12/10/2026 (exceção à nota de 05/10 só para o «Recalcular
+  plano» interativo):** o pedido guarda 15 s de margem de resposta
+  (`api/data.RECALCULATE_RESPONSE_MARGIN_S`, contexto
+  `planning_control.response_margin`): a reserva de fecho passa a margem +
+  `CLOSING_WORK_S` (19 s em vez de 10 s) e o deadline de 60 s não muda. Dentro
+  dessa margem o ciclo de melhoria não corre a compactação de fecho
+  (`closing_compaction: "skipped"` no relatório) e a pesquisa fica com a fase
+  inteira. Medido (revisões 123 e 124, 1 núcleo, 3 pares cada): a compactação
+  de fecho nunca melhorou o plano em nenhuma execução medida e custava 7–12 s;
+  o 409 passou de 51–53 s para 43–45 s (margem 15–17 s), com o plano novo igual
+  ou melhor pelo comparador em todos os pares, 0 atrasos. Todos os outros
+  chamadores (jobs de replaneamento em segundo plano, movimentos manuais,
+  optimizador incluindo `deep`/`max`) mantêm a pesquisa e a compactação como
+  antes. Risco aceite: um caso em que essa compactação
+  ganharia (por exemplo logo após libertar capacidade) não foi observado.
+- Movimento manual com material libertado por quantidades (12/10/2026,
+  `plans/manual_move.py`): a realocação usa o mesmo construtor por partes do
+  recálculo (`schedule_quantity_releases`) sobre os lotes existentes, sem os
+  redimensionar. Esse construtor não lê âncoras, por isso, quando há
+  libertações por quantidade (`_reallocation_ignores_target`), salta-se a
+  realocação do plano inteiro e vai-se direto ao lote fixo primeiro
+  (`_replan_around_fixed_lot`); a melhoria fica com o tempo poupado (~8 s na
+  revisão 124; em 320 tentativas, mesmos resultados e os 15 candidatos
+  idênticos antes da melhoria; uma verificação inconclusiva demora metade).
+  Recusa imediata, antes de planear, com mensagem simples:
+  dia de produção sem material libertado, afinação que começaria antes de
+  `earliest_allowed_start` (ex.: produção às 07:00 do dia de libertação com a
+  afinação no fim do dia anterior), e plano de um contrato de material
+  anterior (`LegacyMaterialPlanError`, 409 `legacy_material_plan`, tanto ao
+  iniciar a verificação como ao aplicar). Esse plano mostra o aviso no topo
+  do ecrã (`plan-view.plan_notices`).
 - Decidido em 07/10/2026: a robustez já não consome orçamento do solver nem
   corre dentro de planeamento, melhoria, movimento ou recálculo (§1.6).
 - Decidido em 08/10/2026: no modo `normal`, instâncias com 50 ou mais

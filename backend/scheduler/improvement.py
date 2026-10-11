@@ -23,6 +23,7 @@ import copy
 import hashlib
 import json
 import math
+import pickle
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -1151,6 +1152,35 @@ def _summary(evaluated: _Evaluated) -> dict[str, object]:
     }
 
 
+def _plain_copy(value):
+    """``copy.deepcopy`` of plain plan data (dataclasses, lists, dicts, atoms).
+
+    A pickle round trip rebuilds the same structure (references shared inside
+    ``value`` stay shared, like deepcopy's memo) 3 to 5 times faster on a real
+    ISOP (revision 124: lots 6.5 -> 1.6 ms). Anything pickle cannot handle
+    falls back to deepcopy.
+    """
+
+    try:
+        return pickle.loads(pickle.dumps(value, pickle.HIGHEST_PROTOCOL))
+    except Exception:  # noqa: BLE001 - same result through the slow path
+        return copy.deepcopy(value)
+
+
+def _exact_plan_key(segments, lots) -> bytes:
+    """Exact key of a rejected plan, to skip only that same plan again.
+
+    Equal keys come from equal pickles, so from equal plans (never a wrong
+    skip). Equal plans with differently shared references may get different
+    keys, which only costs evaluating that plan once more. It replaces the
+    canonical JSON fingerprint here (~80 ms per plan on revision 123, paid on
+    every physical rejection) at a tenth of its cost.
+    """
+
+    payload = pickle.dumps((segments, lots), pickle.HIGHEST_PROTOCOL)
+    return hashlib.blake2b(payload, digest_size=16).digest()
+
+
 def _working_copy(evaluated: _Evaluated) -> tuple[list[Segment], list[Lot]]:
     """Per-object copies: a generator may mutate or replace segments and lots
     freely without touching the current candidate, at a fraction of the cost
@@ -1163,9 +1193,9 @@ def _working_copy(evaluated: _Evaluated) -> tuple[list[Segment], list[Lot]]:
         if segment.twin_outputs is not None:
             clone.twin_outputs = list(segment.twin_outputs)
         if segment.output_milestones is not None:
-            clone.output_milestones = copy.deepcopy(segment.output_milestones)
+            clone.output_milestones = _plain_copy(segment.output_milestones)
         segments.append(clone)
-    return segments, copy.deepcopy(evaluated.lots)
+    return segments, _plain_copy(evaluated.lots)
 
 
 def _proposals(produced) -> Iterable:
@@ -1246,6 +1276,7 @@ def improve_plan(
         planning_checkpoint,
         planning_scope,
         remaining_time,
+        response_margin_active,
     )
 
     started = time.monotonic()
@@ -1378,9 +1409,7 @@ def improve_plan(
             return False
         exact = None
         if signature in invalid:
-            from backend.plans.serialize import schedule_fingerprint
-
-            exact = schedule_fingerprint(proposal.segments, proposal.lots)
+            exact = _exact_plan_key(proposal.segments, proposal.lots)
             if exact in invalid[signature]:
                 report["duplicates_skipped"] += 1
                 return False
@@ -1414,9 +1443,7 @@ def improve_plan(
             # generator may propose the same times validly. Only the exact
             # same plan is skipped as a duplicate.
             if exact is None:
-                from backend.plans.serialize import schedule_fingerprint
-
-                exact = schedule_fingerprint(proposal.segments, proposal.lots)
+                exact = _exact_plan_key(proposal.segments, proposal.lots)
             invalid.setdefault(signature, set()).add(exact)
             reject(f"{scope}:physical")
             note(scope, proposal.subject, "rejected", "physical", physical)
@@ -1454,10 +1481,17 @@ def improve_plan(
     # the last pass did.
     compacting = generators[0] if len(generators) > 1 else None
     searching = list(generators[1:]) if compacting is not None else list(generators)
+    # An interactive answer («Recalcular plano», ``planning_control.response_margin``)
+    # gives the whole phase to the search and runs no compaction pass. Measured
+    # 11/10/2026 on revisions 123 and 124 (1 core): the pass never gained (6 of
+    # 6 runs, at the end, on the builder's plan and on the active plan) and
+    # took 7 to 12 s; within the shorter phase its 30 % reserve no longer fitted
+    # it, so it was interrupted and its time lost. Other callers keep it.
+    closing = compacting is not None and not response_margin_active()
     every = compaction_every if compaction_every is not None else COMPACTION_EVERY_ACCEPTED
     progress = {"compaction_s": None, "since_compaction": 0, "compacted": None, "rounds": 0}
     report["compactions"] = 0
-    report["closing_compaction"] = "not_run"
+    report["closing_compaction"] = "not_run" if closing or compacting is None else "skipped"
 
     def phase_limit() -> float | None:
         limits = []
@@ -1481,7 +1515,7 @@ def improve_plan(
         return None if phase_end is None else max(0.0, phase_end - time.monotonic())
 
     def reserve() -> float:
-        if compacting is None or phase_budget is None:
+        if compacting is None or phase_budget is None or not closing:
             return 0.0
         if progress["compaction_s"] is not None:
             return progress["compaction_s"] * CLOSING_COMPACTION_MARGIN
@@ -1493,7 +1527,7 @@ def improve_plan(
 
         if max_evaluations is None:
             return True
-        kept = 1 if for_search and compacting is not None else 0
+        kept = 1 if for_search and closing else 0
         return evaluations < max_evaluations - kept
 
     def search_out_of_time() -> bool:
@@ -1513,7 +1547,7 @@ def improve_plan(
         is not compacted again: the compaction reaches a fixed point.
         """
 
-        if compacting is None or progress["compacted"] == current.facts.signature:
+        if not closing or progress["compacted"] == current.facts.signature:
             return False, False
         if not evaluations_left(for_search=False):
             return False, False
@@ -1585,7 +1619,8 @@ def improve_plan(
                     count("limited_by_scope", generator.name)
                     limited = True
                 if accepted:
-                    report["closing_compaction"] = "not_run"  # on the new plan
+                    if closing:
+                        report["closing_compaction"] = "not_run"  # on the new plan
                     progress["since_compaction"] += 1
                     left = time_left()
                     if (
@@ -1611,6 +1646,8 @@ def improve_plan(
                         if not time_left():  # the phase itself (or no limit of ours)
                             raise
                         stop_reason = "budget"  # the search part of the budget
+                    if not closing:
+                        break
                     accepted, limited = compact()
                     if limited and stop_reason == "no_admissible_improvement":
                         stop_reason = "search_limit"

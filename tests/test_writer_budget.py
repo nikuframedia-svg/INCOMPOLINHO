@@ -253,7 +253,7 @@ def test_manual_move_reserves_the_same_close_budget(monkeypatch):
     _, _, data, config, result = named_planning_case("bfp082_initial_priority")
     now, observed = [0.0], []
 
-    def improve(candidate, *_args, time_budget_s):
+    def improve(candidate, *_args, time_budget_s, **_kwargs):
         observed.append(time_budget_s)
         return candidate, {"status": "partial"}
 

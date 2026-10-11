@@ -98,6 +98,7 @@ export function Shell() {
   const gateReport = useDataStore((s) => s.gateReport);
   const refreshAll = useDataStore((s) => s.refreshAll);
   const isSimulated = useDataStore((s) => s.isSimulated);
+  const planNotices = useDataStore((s) => s.planNotices);
   const activeMutations = useDataStore((s) => s.activeMutations);
   const simulationSummary = useDataStore((s) => s.simulationSummary);
   const manualEdits = useDataStore((s) => s.manualEdits);
@@ -542,6 +543,29 @@ export function Shell() {
             </div>
           );
         })()}
+
+        {hasData && planNotices.length > 0 && (
+          <div
+            role="status"
+            aria-label="Aviso sobre o plano ativo"
+            style={{
+              padding: "8px 24px",
+              background: `${T.orange}15`,
+              borderBottom: `1px solid ${T.orange}44`,
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.orange, whiteSpace: "nowrap" }}>
+              Aviso do plano
+            </span>
+            <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
+              {planNotices.join(" ")}
+            </span>
+          </div>
+        )}
 
         {isSimulated && (
           <div style={{

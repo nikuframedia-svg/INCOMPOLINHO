@@ -499,6 +499,32 @@ describe("Shell", () => {
     expect(screen.queryByText(/Entregas a tempo/)).toBeNull();
   });
 
+  it("mostra no topo o aviso de plano calculado com regras de material antigas", async () => {
+    mockShellEndpoints();
+    const planView = await endpointMocks.getPlanView();
+    const notice = "Este plano foi calculado antes de o material passar a ser libertado por entrega. "
+      + "Para aplicar as regras por entrega é preciso usar «Recalcular plano»; até lá, o plano "
+      + "mantém-se como foi guardado.";
+    endpointMocks.getPlanView.mockResolvedValue({ ...planView, plan_notices: [notice] });
+
+    render(<Shell />);
+
+    const banner = await screen.findByRole("status", { name: "Aviso sobre o plano ativo" });
+    expect(within(banner).getByText("Aviso do plano")).toBeTruthy();
+    expect(banner.textContent).toContain("«Recalcular plano»");
+    expect(useDataStore.getState().planNotices).toEqual([notice]);
+  });
+
+  it("sem avisos do plano não mostra a faixa", async () => {
+    mockShellEndpoints();
+
+    render(<Shell />);
+
+    await waitFor(() => expect(useDataStore.getState().planRevision).toBe(1));
+    expect(screen.queryByRole("status", { name: "Aviso sobre o plano ativo" })).toBeNull();
+    expect(useDataStore.getState().planNotices).toEqual([]);
+  });
+
   it("plano antigo sem métricas de encomendas mostra — no cabeçalho", async () => {
     mockShellEndpoints();
 

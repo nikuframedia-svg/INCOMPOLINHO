@@ -61,6 +61,61 @@ class ManualMoveResult:
     improvement_report: dict | None = None
 
 
+def _move_protection(baseline_result, freeze_day: int, data, config, lot_id: str):
+    """What a manual move keeps exactly as in the baseline (AGENTS §2, rule 4).
+
+    The production before the planning day, the run mounted at that boundary
+    while it continues without a new setup, the mount supplier of every such
+    continuation and the honoured anchors (``frozen._protected_plan``). The
+    rest of a started lot is re-allocated as the same, pre-sized lot. The
+    moved lot is the planner's decision: it is left out, so a running run it
+    belonged to simply ends where it leaves.
+    """
+    from backend.plans.frozen import _protected_plan
+
+    others = copy.copy(baseline_result)
+    others.segments = [s for s in baseline_result.segments if s.lot_id != lot_id]
+    others.lots = [item for item in baseline_result.lots if item.id != lot_id]
+    return _protected_plan(others, freeze_day, data, config)
+
+
+def _started_lot_proofs(protection) -> dict:
+    """Preservation proofs of the started lots kept whole.
+
+    A lot whose rest is re-allocated has no proof: its started part is
+    checked row by row (``_keeps_frozen``) and the lot against its contract.
+    """
+    from backend.scheduler.canonical import preserved_lot_proofs
+
+    whole = [item for item in protection.lots if item.id in protection.started]
+    ids = {item.id for item in whole}
+    return preserved_lot_proofs(
+        [segment for segment in protection.segments if segment.lot_id in ids], whole,
+    )
+
+
+def _keeps_frozen(segments: list[Segment], frozen_segments: list[Segment]) -> bool:
+    """Every frozen segment is still in the plan, physically unchanged."""
+    from collections import Counter
+
+    from backend.scheduler.improvement import _segment_physical_row
+
+    needed = Counter(_segment_physical_row(segment) for segment in frozen_segments)
+    if not needed:
+        return True
+    lot_ids = {segment.lot_id for segment in frozen_segments}
+    present = Counter(
+        _segment_physical_row(segment) for segment in segments if segment.lot_id in lot_ids
+    )
+    return not needed - present
+
+
+_FROZEN_CHANGED = (
+    "O movimento alteraria produção já iniciada ou a ferramenta montada que continua "
+    "a produzir; o histórico deve permanecer intacto."
+)
+
+
 def _overlaps(start: float, end: float, other_start: float, other_end: float) -> bool:
     return start < other_end - 0.01 and other_start < end - 0.01
 
@@ -243,11 +298,55 @@ def _resource_blocked(data: EngineData, machine_id: str, tool_id: str, day: int)
     )
 
 
+def _setup_material_floor(
+    data, config, lot, template, day, minute, machine_id, mount_layouts,
+):
+    """Setup start and material floor when the setup would precede the material.
+
+    The material gate (``validation`` rule ``setup_before_material``) refuses a
+    setup that starts before ``earliest_allowed_start``. A move to the first
+    minutes of a shift places the setup at the end of the previous working
+    day, so checking only the production day is not enough. Returns
+    ``(setup_day, floor, setup_start_min, setup_min)`` when every layout the
+    move may use (``mount_layouts``) needs that setup and it would start before
+    the floor, else ``None``. A retained mounting needs no setup.
+    """
+    from backend.scheduler.jit_policy import calendar_holidays, earliest_allowed_start
+    from backend.scheduler.setup_identity import retained_setup_at, segment_setup_identity
+    from backend.transform.calendars import calendar_window
+
+    rebound_lot, rebound_template = _rebound_target(
+        copy.deepcopy(lot), template, machine_id, data, config,
+    )
+    setup_total = float(max(
+        rebound_lot.setup_min, rebound_template.run_setup_min, rebound_template.setup_min,
+    ))
+    if setup_total <= 0:
+        return None
+    identity = segment_setup_identity(replace(
+        rebound_template, tool_id=lot.tool_id, twin_outputs=lot.twin_outputs,
+    ))
+    if any(
+        retained_setup_at(layout, machine_id, identity, day, minute)
+        for layout in mount_layouts
+    ):
+        return None
+    view = calendar_window(data, config, data.n_days - 1)
+    slices = _setup_slices_before_target(view, config, day, minute, setup_total)
+    if not slices:
+        return None
+    setup_day = slices[0][0]
+    holidays = calendar_holidays(data, min(setup_day, 0) - 7, data.n_days + 7)
+    floor = max(0, earliest_allowed_start(lot, holidays))
+    return (setup_day, floor, slices[0][2], setup_total) if setup_day < floor else None
+
+
 def _check_immutable_start(
-    data, config, baseline, lot, template, day, minute, machine_id, freeze_day,
+    data, config, protected_segments, lot, template, day, minute, machine_id,
+    mount_layouts=(),
 ):
     from backend.calendar import is_factory_workday
-    from backend.plans.frozen import _protected_lots
+    from backend.scheduler.material_quantities import next_release_day, released_quantity
     from backend.transform.calendars import calendar_window
 
     view = calendar_window(data, config, day, from_day=day)
@@ -258,6 +357,33 @@ def _check_immutable_start(
     )
     if not is_factory_workday(day, view, config):
         raise ManualMoveError(context + "O calendário da fábrica não permite produção nesse dia.")
+    # Material release is a hard floor (AGENTS §2; the material gate blocks
+    # any candidate that breaks it): no production before the first release.
+    if released_quantity(lot, day) <= 0:
+        release = next_release_day(lot, day)
+        when = (
+            f"só é libertado no dia {release} ({str(data.workdays[release])[:10]})"
+            if release is not None and release < len(data.workdays)
+            else "ainda não está libertado nesse dia"
+        )
+        raise ManualMoveError(context + f"O material deste lote {when}.")
+    early_setup = _setup_material_floor(
+        data, config, lot, template, day, minute, machine_id, mount_layouts,
+    )
+    if early_setup is not None:
+        setup_day, floor, setup_start, setup_total = early_setup
+        floor_date = (
+            f" ({str(data.workdays[floor])[:10]})" if floor < len(data.workdays) else ""
+        )
+        raise ManualMoveError(
+            context + f"O material deste lote só é libertado no dia {floor}{floor_date}, "
+            f"mas a afinação de {int(round(setup_total))} min tem de terminar antes das "
+            f"{minute // 60:02d}:{minute % 60:02d} e começaria no dia {setup_day} "
+            f"({str(data.workdays[setup_day])[:10]}), às "
+            f"{int(setup_start) // 60:02d}:{int(setup_start) % 60:02d}, antes do material. "
+            "Escolha uma hora que deixe a afinação inteira a partir do dia "
+            f"{floor}."
+        )
     for label, resource, blocked_days, blocked_intervals in (
         ("Máquina", machine_id, view.machine_blocked_days, view.machine_blocked_intervals),
         ("Ferramenta", lot.tool_id, view.tool_blocked_days, view.tool_blocked_intervals),
@@ -271,8 +397,7 @@ def _check_immutable_start(
                     context + f"{label} {resource} indisponível das "
                     f"{start // 60:02d}:{start % 60:02d} às {end // 60:02d}:{end % 60:02d}."
                 )
-    protected, _lots, _anchors = _protected_lots(baseline, freeze_day, data, config)
-    protected = [segment for segment in protected if segment.lot_id != lot.id]
+    protected = [segment for segment in protected_segments if segment.lot_id != lot.id]
     for segment in protected:
         if (segment.day_idx == day and segment.start_min <= minute < segment.end_min
                 and (segment.machine_id == machine_id or segment.tool_id == lot.tool_id)):
@@ -805,37 +930,65 @@ def _allocate_existing_lots(
     baseline_result: ScheduleResult | None = None,
     cancel_event: threading.Event | None = None,
     time_budget_s: float | None = None,
+    protection=None,
 ) -> ScheduleResult | None:
-    """Allocate existing productions using the shared physical solver, without lot sizing."""
+    """Allocate existing productions using the shared physical solver, without lot sizing.
+
+    ``protection`` (a ``frozen.ProtectedPlan``; derived from ``baseline_result``
+    when omitted) stays exactly as in the baseline. The rest of a started lot
+    is allocated as its pre-sized remainder and rejoins the lot (rule 4).
+    """
     from backend.plans.frozen import (
         _current_planning_day,
         _install_frozen_reservations,
-        _protected_lots,
+        _protected_plan,
         _splice_frozen_started_lots,
     )
     from backend.scheduler.global_jit import solve_global_jit
     from backend.scheduler.jit_policy import calendar_holidays
+    from backend.scheduler.quantity_dispatch import (
+        has_quantity_releases,
+        schedule_quantity_releases,
+    )
     from backend.scheduler.tool_grouping import create_tool_runs
 
     planning_checkpoint()
     residual_data = copy.deepcopy(candidate_data)
-    protected_segments, protected_lots = [], []
-    if baseline_result is not None:
-        protected_segments, protected_lots, _ = _protected_lots(
-            baseline_result, _current_planning_day(candidate_data, config),
-            candidate_data, config, mount_suppliers=True,
-        )
+    freeze_day = _current_planning_day(candidate_data, config)
+    if protection is None and baseline_result is not None:
+        protection = _protected_plan(baseline_result, freeze_day, candidate_data, config)
+    protected_segments, protected_lots, partial = [], [], []
+    if protection is not None:
+        protected_segments = list(protection.segments)
+        protected_lots, partial = list(protection.lots), list(protection.partial)
         _install_frozen_reservations(
-            residual_data, protected_segments, protected_lots,
-            _current_planning_day(candidate_data, config), config,
+            residual_data, protected_segments, protected_lots, freeze_day, config, partial,
         )
     protected_ids = {lot.id for lot in protected_lots}
-    movable = copy.deepcopy([lot for lot in source_lots if lot.id not in protected_ids])
-    runs = create_tool_runs(
-        movable, config=config,
-        release_holidays=calendar_holidays(residual_data, -14, residual_data.n_days + 30),
-    )
+    rests = {original.id: rest for original, rest in partial}
+    movable = copy.deepcopy([
+        rests.get(lot.id, lot) for lot in source_lots if lot.id not in protected_ids
+    ])
     result = ScheduleResult([], [], {}, 0, [], [])
+    if has_quantity_releases(movable):
+        # Material released by delivery (AGENTS §2): the same campaign builder
+        # as a recalculation, on the existing, already sized lots. The
+        # contiguous run model cannot place quantity-dependent releases.
+        with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
+            try:
+                built_segments, built_lots = schedule_quantity_releases(
+                    movable, residual_data, config,
+                )
+            except ValueError:  # includes PlanValidationError
+                return None
+            planning_checkpoint()
+        result = ScheduleResult(built_segments, built_lots, {}, 0, [], [])
+        runs = []
+    else:
+        runs = create_tool_runs(
+            movable, config=config,
+            release_holidays=calendar_holidays(residual_data, -14, residual_data.n_days + 30),
+        )
     if runs:
         with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
             allocated = solve_global_jit(
@@ -852,22 +1005,43 @@ def _allocate_existing_lots(
             machine_runs=allocated.machine_runs, solver_status=allocated.solver_status,
             feasibility=allocated.feasibility,
         )
-    result = _splice_frozen_started_lots(result, protected_segments, protected_lots)
+    result = _splice_frozen_started_lots(result, protected_segments, protected_lots, partial)
     if any(segment.day_idx < 0 or segment.day_idx >= candidate_data.n_days
            for segment in result.segments):
         return None
     if not _preserves_production(result, source_lots):
         return None
+    if not _keeps_frozen(result.segments, protected_segments):
+        return None
     result.score = compute_score(result.segments, result.lots, candidate_data, config)
     return result
+
+
+def _reallocation_ignores_target(source_lots: list[Lot], protection) -> bool:
+    """Whether ``_allocate_existing_lots`` would use the quantity-release builder.
+
+    That builder (``schedule_quantity_releases``, the one «Recalcular plano»
+    uses) places lots by material portions and ignores ``plan_anchors``, so a
+    reallocation through it cannot place the moved lot at the requested start.
+    Same movable set as ``_allocate_existing_lots``.
+    """
+    from backend.scheduler.quantity_dispatch import has_quantity_releases
+
+    protected_ids = {item.id for item in protection.lots} if protection is not None else set()
+    rests = (
+        {original.id: rest for original, rest in protection.partial}
+        if protection is not None else {}
+    )
+    return has_quantity_releases(
+        [rests.get(item.id, item) for item in source_lots if item.id not in protected_ids]
+    )
 
 
 def _replan_around_fixed_lot(
     candidate_data: EngineData,
     config: FactoryConfig,
     source_lots: list[Lot],
-    frozen_segments: list[Segment],
-    frozen_lots: list[Lot],
+    protection,
     frozen_proofs: dict,
     lot: Lot,
     template: Segment,
@@ -878,6 +1052,11 @@ def _replan_around_fixed_lot(
     cancel_event: threading.Event | None,
     time_budget_s: float,
 ) -> ScheduleResult | None:
+    """Place the moved lot exactly, then allocate the rest around it.
+
+    ``protection`` (``frozen.ProtectedPlan``) is kept as in the baseline; the
+    rest of each started lot is re-allocated as its remainder (rule 4).
+    """
     from backend.planning_control import planning_scope
     from backend.plans.frozen import (
         _current_planning_day,
@@ -886,34 +1065,40 @@ def _replan_around_fixed_lot(
     )
     from backend.scheduler.canonical import preserved_lot_proofs
 
+    frozen_segments = list(protection.segments)
+    partial = list(protection.partial)
     anchored_segments = _materialize_target(
         frozen_segments, lot, template, candidate_data, config,
         target_day, target_machine, target_start_min,
     )
     protected_segments = [*frozen_segments, *anchored_segments]
-    protected_lots = [*frozen_lots, lot]
+    protected_lots = [*protection.lots, lot]
     protected_ids = {item.id for item in protected_lots}
+    rests = {original.id: rest for original, rest in partial}
     residual_data = copy.deepcopy(candidate_data)
     residual_data.plan_anchors = [
         anchor for anchor in residual_data.plan_anchors if anchor.lot_id not in protected_ids
     ]
     _install_frozen_reservations(
         residual_data, protected_segments, protected_lots,
-        _current_planning_day(candidate_data, config), config,
+        _current_planning_day(candidate_data, config), config, partial,
     )
     with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
         result = _allocate_existing_lots(
             residual_data, source_lots=[
-                item for item in source_lots if item.id not in protected_ids
+                rests.get(item.id, item) for item in source_lots
+                if item.id not in protected_ids
             ], config=config, cancel_event=cancel_event,
             time_budget_s=time_budget_s,
         )
         if result is None:
             return None
         result = _splice_frozen_started_lots(
-            result, protected_segments, protected_lots,
+            result, protected_segments, protected_lots, partial,
         )
         if not _preserves_production(result, source_lots):
+            return None
+        if not _keeps_frozen(result.segments, frozen_segments):
             return None
         if frozen_proofs:
             frozen_ids = set(frozen_proofs)
@@ -943,9 +1128,12 @@ def _replan_around_fixed_lot(
 
 def _fixed_positions_move(
     segments, lots, lot_id, target_day, machine_id, start_min,
-    data, config, candidate_data, frozen_proofs,
+    data, config, candidate_data, frozen_proofs, frozen_segments=(),
 ):
-    """Attempt one candidate with all other positions fixed; not an infeasibility proof."""
+    """Attempt one candidate with all other positions fixed; not an infeasibility proof.
+
+    ``frozen_segments``: production that must stay exactly as it is (rule 4).
+    """
     from backend.scheduler.canonical import preserved_lot_proofs
 
     candidate_segments = copy.deepcopy(segments)
@@ -995,6 +1183,8 @@ def _fixed_positions_move(
                 "O movimento alteraria um lote já iniciado; "
                 "o histórico deve permanecer intacto."
             )
+    if not _keeps_frozen(candidate_segments, list(frozen_segments)):
+        raise ManualMoveError(_FROZEN_CHANGED)
     validation_data = copy.copy(candidate_data)
     validation_data.preserved_lot_proofs = frozen_proofs
     score = compute_score(candidate_segments, candidate_lots, validation_data, config)
@@ -1029,11 +1219,17 @@ def _fixed_positions_move(
     )
 
 
-def _finalize_move_candidate(result, candidate_data, config, source_lots):
+def _finalize_move_candidate(
+    result, candidate_data, config, source_lots, frozen_segments=(), lot_id=None,
+):
+    """Improve and validate the complete candidate; ``frozen_segments`` stay as they are.
+
+    ``lot_id``: the requested lot, kept whole where it was placed.
+    """
     from backend.planning_control import improvement_time_budget
     from backend.plans.frozen import (
         _current_planning_day,
-        _protected_lots,
+        _protected_plan,
         improve_preserving_protected_lots,
     )
     from backend.scheduler.canonical import result_validation_data
@@ -1047,18 +1243,34 @@ def _finalize_move_candidate(result, candidate_data, config, source_lots):
         budget = improvement_time_budget(MANUAL_MOVE_BUDGET_S)
         if budget > 0:
             freeze_day = _current_planning_day(candidate_data, config)
-            protected_segments, protected_lots, _ = _protected_lots(
-                result, freeze_day, candidate_data, config,
-            )
+            # Rule 4: of a started lot only what started is fixed, its rest
+            # may still improve. The requested lot stays exactly where it was
+            # placed; as before, what precedes it may still be improved (the
+            # merged plan is validated, so its mounting is never lost).
+            if lot_id is None:
+                protection = _protected_plan(result, freeze_day, candidate_data, config)
+            else:
+                protection = _move_protection(
+                    result, freeze_day, candidate_data, config, lot_id,
+                )
+                protection.segments = [*protection.segments, *(
+                    copy.deepcopy(item) for item in result.segments if item.lot_id == lot_id
+                )]
+                protection.lots = [*protection.lots, *(
+                    copy.deepcopy(item) for item in result.lots if item.id == lot_id
+                )]
             result, report = improve_preserving_protected_lots(
                 result, candidate_data, copy.deepcopy(candidate_data), config,
-                protected_segments, protected_lots, freeze_day, time_budget_s=budget,
+                protection.segments, protection.lots, freeze_day, time_budget_s=budget,
+                partial=protection.partial,
             )
         else:
             report = {"status": "not_evaluated", "stop_reason": "no_time_left"}
     planning_checkpoint()
     if not _preserves_production(result, source_lots):
         raise ManualMoveError("A verificação alterou as quantidades ou identidades dos lotes.")
+    if not _keeps_frozen(result.segments, list(frozen_segments)):
+        raise ManualMoveError(_FROZEN_CHANGED)
     view = result_validation_data(candidate_data, result)
     old_gate = dict(result.gate_report or {})
     result.gate_report = build_gate_report(
@@ -1149,9 +1361,7 @@ def _move_lot(
         NoValidCandidateError,
         _current_planning_day,
         _frozen_started_lots,
-        _protected_lots,
     )
-    from backend.scheduler.canonical import preserved_lot_proofs
 
     baseline_result = ScheduleResult(
         segments=segments,
@@ -1162,14 +1372,17 @@ def _move_lot(
         operator_alerts=[],
     )
     freeze_day = _current_planning_day(data, config)
-    frozen_segments, _ = _frozen_started_lots(baseline_result, freeze_day)
-    frozen_ids = {segment.lot_id for segment in frozen_segments}
-    frozen_lots = [item for item in lots if item.id in frozen_ids]
-    frozen_proofs = preserved_lot_proofs(frozen_segments, frozen_lots)
-    if any(segment.lot_id == lot_id for segment in frozen_segments):
+    started_segments, _ = _frozen_started_lots(baseline_result, freeze_day)
+    if any(segment.lot_id == lot_id for segment in started_segments):
         raise ManualMoveError(
             f"Lote {lot_id} já iniciado está congelado e não pode ser movido."
         )
+    # Rule 4 (AGENTS §2): only what started (and the run mounted at the
+    # boundary, with its mount supplier) is fixed; the rest of a started lot
+    # may be re-allocated, never re-sized.
+    protection = _move_protection(baseline_result, freeze_day, data, config, lot_id)
+    frozen_segments = protection.segments
+    frozen_proofs = _started_lot_proofs(protection)
     candidate_segments = [segment for segment in candidate_segments if segment.lot_id != lot_id]
 
     current_machine = moved_segments[0].machine_id
@@ -1204,8 +1417,9 @@ def _move_lot(
     if target_day >= len(data.workdays):
         raise ManualMoveError(f"Dia alvo fora do calendário: {target_day}.")
     _check_immutable_start(
-        data, config, baseline_result, lot, first_moved,
-        target_day, start_min, machine_id, freeze_day,
+        data, config, frozen_segments, lot, first_moved,
+        target_day, start_min, machine_id,
+        mount_layouts=(candidate_segments, frozen_segments),
     )
     timezone = ZoneInfo(config.timezone)
     target_date = datetime.fromisoformat(str(data.workdays[target_day])[:10])
@@ -1233,11 +1447,15 @@ def _move_lot(
     try:
         result = _fixed_positions_move(
             segments, lots, lot_id, target_day, machine_id, start_min,
-            data, config, candidate_data, frozen_proofs,
+            data, config, candidate_data, frozen_proofs, frozen_segments,
         )
     except ManualMoveError:
         result = None
-    if result is None:
+    # With material released by quantity the reallocation builder does not
+    # read plan anchors: it leaves the moved lot where the campaigns put it
+    # and cannot honour the requested start. The budget then goes straight
+    # to the attempt that fixes the moved lot first (_replan_around_fixed_lot).
+    if result is None and not _reallocation_ignores_target(lots, protection):
         if progress:
             progress("scheduling", 50, "A reorganizar as produções existentes")
         try:
@@ -1248,14 +1466,16 @@ def _move_lot(
             result = _allocate_existing_lots(
                 candidate_data, source_lots=lots, config=config,
                 baseline_result=baseline_result, cancel_event=cancel_event,
-                time_budget_s=max(0.0, search_budget),
+                time_budget_s=max(0.0, search_budget), protection=protection,
             )
         except (NoValidCandidateError, PlanningTimeout):
             if cancel_event is not None and cancel_event.is_set():
                 raise PlanningCancelled("O movimento foi cancelado.") from None
             result = None
     planning_checkpoint()
-    if result is not None and not _preserves_production(result, lots):
+    if result is not None and not (
+        _preserves_production(result, lots) and _keeps_frozen(result.segments, frozen_segments)
+    ):
         result = None
     if progress:
         progress("validating", 80, "A validar recursos e riscos")
@@ -1285,12 +1505,9 @@ def _move_lot(
                 rebound_lot, rebound_template = _rebound_target(
                     lot, first_moved, machine_id, data, config,
                 )
-                protected_segments, protected_lots, _ = _protected_lots(
-                    baseline_result, freeze_day, candidate_data, config,
-                )
                 fixed_result = _replan_around_fixed_lot(
-                    candidate_data, config, lots, protected_segments, protected_lots,
-                    frozen_proofs, rebound_lot, rebound_template,
+                    candidate_data, config, lots, protection, frozen_proofs,
+                    rebound_lot, rebound_template,
                     target_day, machine_id, start_min, optimization_mode,
                     cancel_event, remaining_budget,
                 )
@@ -1320,7 +1537,9 @@ def _move_lot(
         preserved_lot_proofs=frozen_proofs,
     )
     try:
-        complete = _finalize_move_candidate(complete, candidate_data, config, lots)
+        complete = _finalize_move_candidate(
+            complete, candidate_data, config, lots, frozen_segments, lot_id=lot_id,
+        )
     except ManualMoveError as exc:
         raise _inconclusive_move(lot_id, target_day, start_min, machine_id) from exc
     candidate_segments, candidate_lots = complete.segments, complete.lots

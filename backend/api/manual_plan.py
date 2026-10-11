@@ -39,6 +39,22 @@ def _require_plan() -> None:
         raise HTTPException(503, "Sem plano carregado.")
 
 
+def _refuse_legacy_material_plan(lots, engine_data, config) -> None:
+    """Refuse a move on a plan saved before the per-delivery material rules.
+
+    Such a plan can no longer be committed (``plans/store.py`` raises
+    ``LegacyMaterialPlanError`` at the commit), so verifying a move on it only
+    spends the whole move budget before the same refusal. The single legacy
+    rule is ``canonical.legacy_material_plan``; the app answers 409 with
+    ``code=legacy_material_plan`` and ``requires_recalculation``.
+    """
+    from backend.plans.store import LegacyMaterialPlanError
+    from backend.scheduler.canonical import legacy_material_plan, legacy_material_reason
+
+    if legacy_material_plan(lots, engine_data, config):
+        raise LegacyMaterialPlanError([], legacy_material_reason(lots))
+
+
 def _request_values(body: dict) -> tuple[str, int, str | None, int | None, bool, str, str]:
     lot_id = str(body.get("lot_id", "")).strip()
     if not lot_id:
@@ -133,6 +149,7 @@ async def preview_move(body: dict):
 
     async with plan_mutation_lock:
         baseline = clone_state(state)
+    _refuse_legacy_material_plan(baseline.lots, baseline.engine_data, baseline.config)
     with stage_state(state, baseline):
         candidate, _confirmed = await run_in_threadpool(_candidate, body)
     preview = previews.put("manual", baseline, _preview_parameters(body), candidate)
@@ -192,6 +209,7 @@ async def start_move_preview_job(body: dict):
     ) = _request_values(body)
     async with plan_mutation_lock:
         baseline = clone_state(state)
+        _refuse_legacy_material_plan(baseline.lots, baseline.engine_data, baseline.config)
         job = move_job_manager.start(
             segments=baseline.segments,
             lots=baseline.lots,
@@ -260,6 +278,7 @@ async def apply_move(body: dict):
     async with plan_mutation_lock:
         from backend.api.data import _require_expected_revision
 
+        _refuse_legacy_material_plan(state.lots, state.engine_data, state.config)
         _require_expected_revision(body)
         preview_job_id = str(body.get("preview_job_id", "")).strip()
         if preview_job_id:
