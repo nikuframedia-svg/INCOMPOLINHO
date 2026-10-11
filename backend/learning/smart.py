@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from backend.scheduler.types import ScheduleResult
 from backend.types import EngineData
 
@@ -9,6 +11,10 @@ from .context import extract_context
 from .optimizer import OptunaTuner
 from .store import LearnStore
 from .transfer import ThompsonTransfer
+
+# Alarm for the legacy engine (plan Passo 1d): Python logging only, never the
+# plan journal or ScheduleResult.warnings, so plans stay byte-identical.
+_legacy_logger = logging.getLogger("backend.legacy")
 
 
 def smart_schedule(
@@ -40,6 +46,7 @@ def smart_schedule(
     Returns:
         ScheduleResult with .study attached when learn=True.
     """
+    _legacy_logger.warning("motor antigo usado: %s", "learning.smart_schedule")
     from backend.cpo import optimize
 
     store = LearnStore(db_path=store_path)

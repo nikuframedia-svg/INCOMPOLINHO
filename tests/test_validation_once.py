@@ -19,10 +19,7 @@ candidate itself.
 from __future__ import annotations
 
 import copy
-import gzip
-import json
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -42,9 +39,6 @@ from backend.scheduler.types import Lot, ScheduleResult, Segment
 from backend.scheduler.validation import validate_plan, validation_counts
 from backend.types import CommittedSupply, EngineData, EOp, MachineInfo
 from tests.test_delivery_views_agree import FIXTURES, OP_ID
-
-ROOT = Path(__file__).resolve().parents[1]
-REV121 = ROOT / "tests" / "fixtures" / "private" / "rev121.json.gz"
 
 
 @pytest.fixture
@@ -158,16 +152,13 @@ def test_preserved_lot_credits_are_part_of_the_cache_identity(counted):
 
 @pytest.fixture(scope="module")
 def rev121():
-    if not REV121.exists():
-        pytest.skip("private fixture rev121.json.gz absent")
-    from backend.plans.serialize import assert_snapshot_integrity, deserialize_snapshot
+    from tests.snapshot_fixture import load_snapshot
 
-    payload = json.loads(gzip.decompress(REV121.read_bytes()).decode("utf-8"))
-    assert_snapshot_integrity(payload)
-    restored = deserialize_snapshot(payload)
-    return restored["engine_data"], restored["config"], restored["result"]
+    snapshot = load_snapshot("rev121")
+    return snapshot.data, snapshot.config, snapshot.result
 
 
+@pytest.mark.needs_private
 def test_rev121_validation_identical_with_cache_on_and_off(rev121):
     from backend.scheduler.canonical import result_validation_data
     from backend.scheduler.validation import validate_plan

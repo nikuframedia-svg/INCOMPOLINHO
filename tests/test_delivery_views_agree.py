@@ -10,8 +10,6 @@ subcontracted with the shape of 6800017267C.30 (F2), with economic surplus
 
 from __future__ import annotations
 
-import gzip
-import json
 import re
 from dataclasses import replace
 from datetime import date, timedelta
@@ -560,22 +558,16 @@ def test_twin_sides_agree_with_the_oracle_order_by_order(slip):
 # ── F6: frozen revision 121 (private, skipped when absent) ───────────────
 
 
-REV121 = ROOT / "tests" / "fixtures" / "private" / "rev121.json.gz"
-
-
 @pytest.fixture(scope="module")
 def rev121():
-    if not REV121.exists():
-        pytest.skip("private fixture rev121.json.gz absent")
-    from backend.plans.serialize import assert_snapshot_integrity, deserialize_snapshot
+    from tests.snapshot_fixture import load_snapshot
 
-    payload = json.loads(gzip.decompress(REV121.read_bytes()).decode("utf-8"))
-    assert payload.get("plan_revision") == 121
-    assert_snapshot_integrity(payload)
-    restored = deserialize_snapshot(payload)
-    return restored["engine_data"], restored["config"], restored["result"]
+    snapshot = load_snapshot("rev121")
+    assert snapshot.manifest["plan_revision"] == 121
+    return snapshot.data, snapshot.config, snapshot.result
 
 
+@pytest.mark.needs_private
 def test_rev121_views_agree(rev121):
     data, config, result = rev121
     segments, lots = result.segments, result.lots

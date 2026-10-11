@@ -2,7 +2,9 @@
 
 The payload holds client data and lives in ``tests/fixtures/private`` (git
 ignored); the committed manifest in ``tests/fixtures/snapshots`` identifies
-it by hash. Tests skip when the private payload is absent.
+it by hash. Tests skip when the private payload is absent, and fail instead
+with ``PP1_REQUIRE_PRIVATE=1`` (the publication gate), so a run without the
+real cases can never pass for a complete one.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import copy
 import gzip
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +24,33 @@ from backend.plans.serialize import assert_snapshot_integrity, deserialize_snaps
 from backend.scheduler.canonical import preserved_lot_proofs, result_validation_data
 
 FIXTURES = Path(__file__).parent / "fixtures"
+MANIFESTS = FIXTURES / "snapshots"
+REQUIRE_PRIVATE_ENV = "PP1_REQUIRE_PRIVATE"
+
+
+def private_required() -> bool:
+    """Whether an absent private fixture must fail rather than skip."""
+    return os.environ.get(REQUIRE_PRIVATE_ENV) == "1"
+
+
+def skip_or_fail_absent(path: Path) -> None:
+    """Skip a test whose private fixture is absent; fail under the gate."""
+    message = f"private fixture {path.name} absent; see scripts/freeze_snapshot_fixture.py"
+    if private_required():
+        pytest.fail(f"{message} ({REQUIRE_PRIVATE_ENV}=1)", pytrace=False)
+    pytest.skip(message)
+
+
+def read_manifest(name: str) -> dict:
+    return json.loads((MANIFESTS / f"{name}.json").read_text())
+
+
+def expected_private_fixtures() -> dict[str, Path]:
+    """Every private payload a committed manifest names, by manifest name."""
+    return {
+        path.stem: FIXTURES.parent.parent / read_manifest(path.stem)["private_fixture"]
+        for path in sorted(MANIFESTS.glob("*.json"))
+    }
 
 
 @dataclass
@@ -45,11 +75,12 @@ class FrozenSnapshot:
 
 
 def load_payload(name: str) -> tuple[dict, dict]:
-    """``(manifest, payload)`` of a frozen snapshot; skips when it is absent."""
-    manifest = json.loads((FIXTURES / "snapshots" / f"{name}.json").read_text())
+    """``(manifest, payload)`` of a frozen snapshot; skips when it is absent
+    (fails with ``PP1_REQUIRE_PRIVATE=1``)."""
+    manifest = read_manifest(name)
     path = FIXTURES.parent.parent / manifest["private_fixture"]
     if not path.exists():
-        pytest.skip(f"private fixture {path.name} absent; see scripts/freeze_snapshot_fixture.py")
+        skip_or_fail_absent(path)
     raw = gzip.decompress(path.read_bytes()).decode("utf-8")
     assert hashlib.sha256(raw.encode("utf-8")).hexdigest() == manifest["payload_sha256"]
     payload = json.loads(raw)

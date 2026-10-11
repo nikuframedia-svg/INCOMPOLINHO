@@ -78,6 +78,9 @@ from backend.telemetry import measured
 from backend.types import EngineData
 
 logger = logging.getLogger(__name__)
+# Alarm for the legacy engine (plan Passo 1d): Python logging only, never the
+# plan journal or ScheduleResult.warnings, so plans stay byte-identical.
+_legacy_logger = logging.getLogger("backend.legacy")
 
 
 def _detect_buffer_need(
@@ -4272,6 +4275,9 @@ def schedule_all(
             ),
         )
 
+    # Legacy run-based planner below (tool runs, dispatch, JIT): no lot
+    # releases material by quantity. Real ISOPs are not expected here.
+    _legacy_logger.warning("motor antigo usado: %s", "scheduler.schedule_all")
     global_holidays = calendar_holidays(data, -14, data.n_days + 30)
 
     # Phase 2: Lots → ToolRuns

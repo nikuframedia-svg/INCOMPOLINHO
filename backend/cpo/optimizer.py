@@ -63,6 +63,9 @@ from backend.telemetry import measured, phase
 from backend.types import EngineData
 
 logger = logging.getLogger(__name__)
+# Alarm for the legacy engine (plan Passo 1d): Python logging only, never the
+# plan journal or ScheduleResult.warnings, so plans stay byte-identical.
+_legacy_logger = logging.getLogger("backend.legacy")
 
 
 # ─── Mode configurations ──────────────────────────────────────────────
@@ -647,6 +650,7 @@ def _improve_baseline(
     t0: float,
     deadline: float,
 ) -> ScheduleResult:
+    _legacy_logger.warning("motor antigo usado: %s", "optimizer._improve_baseline")
     best_result = baseline
     best_config = config
     final_source = "baseline"

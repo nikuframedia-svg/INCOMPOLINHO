@@ -10,16 +10,12 @@ so the second run keeps its setup.
 from __future__ import annotations
 
 import copy
-import gzip
-import json
-from pathlib import Path
 
 import pytest
 
 from backend.scheduler.scheduler import _remove_redundant_retained_tool_setups
 from backend.scheduler.types import Segment
-
-REV121 = Path(__file__).parent / "fixtures" / "private" / "rev121.json.gz"
+from tests.snapshot_fixture import load_snapshot
 
 
 def _segment(lot, run, tool, start, end, *, setup=0.0, qty=10, prod=None):
@@ -63,15 +59,11 @@ def test_closeout_ignores_protected_work_on_another_machine():
 
 @pytest.fixture(scope="module")
 def rev121():
-    if not REV121.exists():
-        pytest.skip("private fixture rev121.json.gz absent")
-    from backend.plans.serialize import deserialize_snapshot
-
-    payload = json.loads(gzip.decompress(REV121.read_bytes()).decode("utf-8"))
-    restored = deserialize_snapshot(payload)
-    return restored["engine_data"], restored["config"], restored["result"]
+    snapshot = load_snapshot("rev121")
+    return snapshot.data, snapshot.config, snapshot.result
 
 
+@pytest.mark.needs_private
 @pytest.mark.parametrize("freeze_day", [1, 3])
 def test_rev121_frozen_recalculation_keeps_tool_changes_after_protected_jobs(
     rev121, monkeypatch, freeze_day,

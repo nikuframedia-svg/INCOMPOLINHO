@@ -19,10 +19,7 @@ blocked (3139 anomalies on revision 121, none of them real).
 
 from __future__ import annotations
 
-import gzip
-import json
 import time
-from pathlib import Path
 
 import pytest
 
@@ -42,9 +39,6 @@ from backend.scheduler.priority_normalization import find_priority_order_anomali
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData, MachineInfo
-
-ROOT = Path(__file__).resolve().parents[1]
-REV121 = ROOT / "tests" / "fixtures" / "private" / "rev121.json.gz"
 
 
 def _lot(lot_id: str, rupture: int, tool: str = "T1") -> Lot:
@@ -562,15 +556,11 @@ def test_more_urgent_work_inside_a_run_is_not_reported():
 
 @pytest.fixture(scope="module")
 def rev121():
-    if not REV121.exists():
-        pytest.skip("private fixture rev121.json.gz absent")
-    from backend.plans.serialize import assert_snapshot_integrity, deserialize_snapshot
+    from tests.snapshot_fixture import load_snapshot
 
-    payload = json.loads(gzip.decompress(REV121.read_bytes()).decode("utf-8"))
-    assert payload.get("plan_revision") == 121
-    assert_snapshot_integrity(payload)
-    restored = deserialize_snapshot(payload)
-    return restored["engine_data"], restored["config"], restored["result"]
+    snapshot = load_snapshot("rev121")
+    assert snapshot.manifest["plan_revision"] == 121
+    return snapshot.data, snapshot.config, snapshot.result
 
 
 def _explained_by_own_deliveries(segments, lots, data):
@@ -592,6 +582,7 @@ def _explained_by_own_deliveries(segments, lots, data):
     return explained
 
 
+@pytest.mark.needs_private
 def test_rev121_audit_counts_per_delivery_and_is_evaluated(rev121):
     data, config, result = rev121
     segments, lots = result.segments, result.lots
@@ -639,6 +630,7 @@ def test_rev121_audit_counts_per_delivery_and_is_evaluated(rev121):
         assert cheap[key] == audit[key], key
 
 
+@pytest.mark.needs_private
 def test_rev121_audit_is_identical_on_repeat_and_under_a_slow_classifier(rev121, monkeypatch):
     """Same plan, same answer: no wall-clock dependency anywhere in the status."""
     data, config, result = rev121

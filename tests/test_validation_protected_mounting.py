@@ -12,10 +12,7 @@ expose real ones, never hide them.
 from __future__ import annotations
 
 import copy
-import gzip
-import json
 from dataclasses import asdict
-from pathlib import Path
 
 import pytest
 
@@ -142,9 +139,8 @@ def test_validation_error_text_has_accent_and_plural():
 
 # ── Revision 121 (private fixture): the residual plan of a replan is valid ──
 
-REV121 = Path(__file__).resolve().parent / "fixtures" / "private" / "rev121.json.gz"
 
-
+@pytest.mark.needs_private
 @pytest.mark.parametrize("freeze_day", [1, 5])
 def test_rev121_residual_plan_has_no_false_setup_conflicts(freeze_day):
     """Revision 121 minus its started lots, judged as a replan judges it.
@@ -153,13 +149,11 @@ def test_rev121_residual_plan_has_no_false_setup_conflicts(freeze_day):
     and 7 (freeze day 5) false missing setups, e.g. VUL115 after JDE001 on
     PRM042 and BFP183 after BFP110 on PRM039.
     """
-    if not REV121.exists():
-        pytest.skip("private fixture rev121.json.gz absent")
     from backend.plans.frozen import _frozen_started_lots, _install_frozen_reservations
-    from backend.plans.serialize import deserialize_snapshot
+    from tests.snapshot_fixture import load_snapshot
 
-    restored = deserialize_snapshot(json.loads(gzip.decompress(REV121.read_bytes())))
-    data, config, result = restored["engine_data"], restored["config"], restored["result"]
+    snapshot = load_snapshot("rev121")
+    data, config, result = snapshot.data, snapshot.config, snapshot.result
     frozen_segments, frozen_lots = _frozen_started_lots(result, freeze_day)
     assert frozen_lots
     _install_frozen_reservations(data, frozen_segments, frozen_lots, freeze_day, config)

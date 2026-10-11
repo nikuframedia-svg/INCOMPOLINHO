@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import threading
 import time
@@ -29,6 +30,9 @@ from backend.types import EngineData, PlanAnchor
 
 MANUAL_MOVE_BUDGET_S = 60.0
 ALLOCATION_MODEL_VERSION = 1
+# Alarm for the legacy engine (plan Passo 1d): Python logging only, never the
+# plan journal or the move result, so plans stay byte-identical.
+_legacy_logger = logging.getLogger("backend.legacy")
 
 
 class ManualMoveError(ValueError):
@@ -985,6 +989,7 @@ def _allocate_existing_lots(
         result = ScheduleResult(built_segments, built_lots, {}, 0, [], [])
         runs = []
     else:
+        _legacy_logger.warning("motor antigo usado: %s", "manual_move._allocate_existing_lots")
         runs = create_tool_runs(
             movable, config=config,
             release_holidays=calendar_holidays(residual_data, -14, residual_data.n_days + 30),
@@ -1456,6 +1461,7 @@ def _move_lot(
     # and cannot honour the requested start. The budget then goes straight
     # to the attempt that fixes the moved lot first (_replan_around_fixed_lot).
     if result is None and not _reallocation_ignores_target(lots, protection):
+        _legacy_logger.warning("motor antigo usado: %s", "manual_move._move_lot")
         if progress:
             progress("scheduling", 50, "A reorganizar as produções existentes")
         try:

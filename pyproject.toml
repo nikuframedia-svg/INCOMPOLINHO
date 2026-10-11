@@ -7,6 +7,13 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "acceptance: owner acceptance case replayed on a real plan",
+    "needs_private: needs tests/fixtures/private (skip if absent; fail if PP1_REQUIRE_PRIVATE=1)",
+    "live_data: reads the running application's data or config (read-only)",
+    "timing: asserts wall-clock time or a time budget; sensitive to machine load",
+    "slow: takes more than about 10 s",
+]
 
 [tool.ruff]
 line-length = 100

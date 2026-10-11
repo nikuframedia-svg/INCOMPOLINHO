@@ -9,6 +9,7 @@ solution into the existing Segment contract.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -59,6 +60,10 @@ try:
 except ImportError:  # pragma: no cover - production dependency, defensive fallback
     cp_model = None
     HAS_ORTOOLS = False
+
+# Alarm for the legacy engine (plan Passo 1d): Python logging only, never the
+# plan journal or the result warnings, so plans stay byte-identical.
+_legacy_logger = logging.getLogger("backend.legacy")
 
 
 @dataclass(slots=True)
@@ -119,6 +124,7 @@ def solve_global_jit(
     delay production.
     """
 
+    _legacy_logger.warning("motor antigo usado: %s", "global_jit.solve_global_jit")
     planning_checkpoint()
     if not HAS_ORTOOLS or not runs:
         return None
