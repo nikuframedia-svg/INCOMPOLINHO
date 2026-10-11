@@ -691,10 +691,15 @@ def _resolve_runs(
         for index, lot in enumerate(run_lots):
             physical = [s for s in run_segments if s.lot_id == lot.id]
             quantity = sum(s.qty for s in physical)
-            if lot.is_twin or quantity <= 0 or quantity >= lot.qty:
+            if quantity <= 0 or quantity >= lot.qty:
                 continue
-            if not any(o.get("quantity_material_version") for o in lot.output_milestones or []):
-                continue
+            from backend.scheduler.material_quantities import (
+                lot_material_version,
+                twin_per_delivery,
+            )
+
+            if not lot_material_version(lot) or (lot.is_twin and not twin_per_delivery(lot)):
+                continue  # legacy lot or twin cycle released whole
             from backend.scheduler.lot_sizing import _aggregate_milestones
 
             first = min((s.day_idx, s.start_min) for s in physical)
@@ -702,23 +707,49 @@ def _resolve_runs(
                 s.qty for s in segments
                 if s.lot_id == lot.id and (s.day_idx, s.start_min) < first
             )
-            outputs = []
-            left = quantity
+            # A twin tranche is ``quantity`` cycles: the same slice of each
+            # side's deliveries (side order, first-in-first-out).
+            sides: dict[object, list[dict]] = {}
             for output in lot.output_milestones:
-                skip = min(offset, int(output["qty"]))
-                offset -= skip
-                take = min(left, int(output["qty"]) - skip)
-                if take:
-                    outputs.append({**output, "qty": take})
-                    left -= take
+                sides.setdefault(output.get("op_id"), []).append(output)
+            outputs = []
+            for side_outputs in sides.values():
+                skip_left, left = offset, quantity
+                for output in side_outputs:
+                    skip = min(skip_left, int(output["qty"]))
+                    skip_left -= skip
+                    take = min(left, int(output["qty"]) - skip)
+                    if take:
+                        outputs.append({**output, "qty": take})
+                        left -= take
             portion = copy.deepcopy(lot)
             portion.qty = quantity
             portion.prod_min = lot.prod_min * quantity / lot.qty
+            if lot.twin_outputs:
+                portion.twin_outputs = [
+                    (op_id, sku, quantity) for op_id, sku, _qty in lot.twin_outputs
+                ]
             for attribute, value in _aggregate_milestones(outputs).items():
                 setattr(portion, attribute, value)
             portion.edd = portion.production_due_day
             portion.original_edd = portion.delivery_day = portion.customer_delivery_day
             portion.internal_deadline = portion.internal_target_day
+            if lot.is_twin:
+                # The tranche's first cycle (``offset + 1``) is released on the
+                # first day the lot's release curve reaches it; the earliest
+                # date of its slices can be earlier than the curve allows.
+                from backend.scheduler.material_quantities import (
+                    next_release_day,
+                    released_quantity,
+                )
+
+                day = lot.material_release_day or 0
+                while released_quantity(lot, day) <= offset:
+                    following = next_release_day(lot, day)
+                    if following is None:
+                        break
+                    day = following
+                portion.material_release_day = day
             run_lots[index] = portion
         if not run_lots:
             continue

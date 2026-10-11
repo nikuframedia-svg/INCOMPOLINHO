@@ -22,7 +22,12 @@ from backend.config.types import FactoryConfig, MachineConfig
 from backend.scheduler.global_jit import _materialise_preemptive_lot
 from backend.scheduler.lot_sizing import create_lots
 from backend.scheduler.material_quantities import material_portions, released_quantity
-from backend.scheduler.quantity_dispatch import _CampaignBuilder, _portion_lot
+from backend.scheduler.quantity_dispatch import (
+    _break_accepted,
+    _CampaignBuilder,
+    _Placement,
+    _portion_lot,
+)
 from backend.scheduler.priority import lot_priority_key
 from backend.scheduler.scheduler import schedule_all
 from backend.scheduler.setup_identity import segment_setup_identity
@@ -165,9 +170,16 @@ def _retention_case(setup_hours):
     return builder, blocked, retained
 
 
-def test_retained_tool_is_kept_when_the_dependent_portion_would_lose_60_min():
-    builder, blocked, _retained = _retention_case(setup_hours=1.0)
-    assert not builder.break_retention(blocked)
+def test_retained_tool_yields_when_the_inserted_lot_gains_more_than_the_dependent_loses():
+    """Rule 2 weighed both ways: A1 loses exactly 60 min (its new setup), X
+    gains days. X waiting would lose far more than 60 min, so it passes."""
+
+    builder, blocked, retained = _retention_case(setup_hours=1.0)
+    assert builder.break_retention(blocked)
+    a1 = builder.placed[("LOT_TA_M1_A_13", 1)]
+    assert a1.start - retained.start == 60
+    x = builder.placed[("LOT_TX_M1_X_14", 0)]
+    assert blocked.start - x.start > 60
 
 
 def test_retained_tool_yields_to_a_gain_of_60_min_when_the_dependent_loses_less():
@@ -179,6 +191,53 @@ def test_retained_tool_yields_to_a_gain_of_60_min_when_the_dependent_loses_less(
     assert a1.setup == 30
     assert a1.start - retained.start == 30  # loses its setup, under 60 min
     assert a1.created[0].run_id != builder.placed[("LOT_TA_M1_A_13", 0)].created[0].run_id
+
+
+def _at(start, end, delays=(0,)):
+    return _Placement(None, "M1", [], float(start), float(end), 0.0, tuple(delays))
+
+
+@pytest.mark.parametrize(("own", "others", "accepted"), [
+    # The inserted lot gains 59 min and no delivery: nothing worth a setup.
+    ([(_at(1000, 1100), _at(941, 1041))], [], False),
+    # The dependent loses 30 min (under the tolerance): never decides.
+    ([(_at(1000, 1100), _at(900, 1000))], [(_at(1100, 1200), _at(1130, 1230))], True),
+    # The dependent loses 120 min, the inserted lot gains only 100: refused.
+    ([(_at(1000, 1100), _at(900, 1000))], [(_at(1100, 1200), _at(1220, 1320))], False),
+    # ... and accepted when the inserted lot gains at least as much.
+    ([(_at(1000, 1100), _at(800, 900))], [(_at(1100, 1200), _at(1220, 1320))], True),
+    # A later portion of the inserted lot gains a delivery: always accepted
+    # once no delivery gets later, whatever the minutes.
+    (
+        [(_at(1000, 1100), _at(990, 1090)), (_at(5000, 9000, (2,)), _at(3000, 7000, (0,)))],
+        [(_at(1100, 1200), _at(1500, 1600))],
+        True,
+    ),
+])
+def test_retention_break_weighs_rule_2_both_ways(own, others, accepted):
+    assert _break_accepted(own, others) is accepted
+
+
+def test_retention_break_never_makes_an_unplaced_portion_of_the_tail_later(monkeypatch):
+    """Deliveries first: the tail moved by the break ends up later; if a
+    portion of that lot not placed yet would get a delivery later, the break
+    is refused (here simulated)."""
+
+    builder, blocked, _retained = _retention_case(setup_hours=0.5)
+    calls = []
+    original = _CampaignBuilder._unplaced
+
+    def later(self, lot_id, machine, segments, cursor, *, start=None):
+        calls.append(lot_id)
+        if lot_id != "LOT_TA_M1_A_13":
+            return original(self, lot_id, machine, segments, cursor, start=start)
+        delay = (0,) if segments is self.segments else (1,)
+        return [_at(0, 1, delay)]
+
+    monkeypatch.setattr(_CampaignBuilder, "_unplaced", later)
+    assert not builder.break_retention(blocked)
+    assert calls == ["LOT_TA_M1_A_13", "LOT_TA_M1_A_13"]
+    assert not [s for s in builder.segments if s.tool_id == "TX"]
 
 
 # ── same lot in one run ──────────────────────────────────────────────────
@@ -451,6 +510,21 @@ def test_part_of_a_delivery_ranks_with_the_quantity_of_that_delivery():
     assert lot_priority_key(share.lot) > lot_priority_key(other.lot)
 
 
+def test_portion_ranks_only_with_deliveries_due_on_its_own_due_day():
+    """The second portion of lot A_13 holds 30 pieces due on Saturday 17
+    (production due Friday 16) and 900 of the 2000 due on Monday 19: both
+    release on day 12. Its due day is 16, so the 2000 due later must not rank
+    it; only its own quantity (930) and the day-16 delivery (30) count."""
+
+    data = _data([_op("A", "TA", {13: 100, 17: 30, 19: 2000}, eco_lot=1030)])
+    lots = create_lots(data)
+    builder = _CampaignBuilder(lots, data, _config())
+    _first, mixed = builder.portions["LOT_TA_M1_A_13"]
+    assert mixed.lot.qty == 930
+    assert mixed.key[0] == 16
+    assert mixed.key[6] == -930
+
+
 # ── fallback: a builder defect never fails the recalculation ─────────────
 
 
@@ -471,6 +545,12 @@ def test_builder_failure_falls_back_to_one_run_per_portion(monkeypatch):
     a_runs = {s.run_id for s in result.segments if s.tool_id == "TA"}
     assert a_runs == {"quantity:LOT_TA_M1_A_13:0", "quantity:LOT_TA_M1_A_13:1"}
     assert sum(s.qty for s in result.segments if s.tool_id == "TA") == 1030
+    # The planner sees the fallback with the plan, in plain Portuguese.
+    # First, so the API's first-ten cut never hides it.
+    assert result.warnings[0] == quantity_dispatch.FALLBACK_WARNING
+    assert "setups" in quantity_dispatch.FALLBACK_WARNING
+    monkeypatch.undo()
+    assert quantity_dispatch.FALLBACK_WARNING not in schedule_all(data, config=config).warnings
 
 
 def test_a_planning_timeout_is_never_hidden_by_the_fallback(monkeypatch):

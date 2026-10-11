@@ -389,7 +389,11 @@ def test_twin_demands_without_isolated_window_overlap_still_pair() -> None:
     assert (lot.material_release_day, lot.production_due_day) == (-7, 0)
 
 
-def test_synthetic_subcontract_twin_output_is_stock_not_fake_dispatch() -> None:
+def test_coproduced_subcontract_twin_output_serves_its_own_later_delivery() -> None:
+    """Fase B2: the cycle made for NORMAL (day 1) also makes the 100 SUB pieces
+    of the day-14 delivery by carry-forward. They are that delivery's output,
+    with its own dates, never stock without a delivery nor a fake dispatch."""
+
     normal = _op(sku="NORMAL", delivery_day=1)
     subcontracted = _op(sku="SUB", delivery_day=14)
     data = _twin_engine(normal, subcontracted)
@@ -400,9 +404,12 @@ def test_synthetic_subcontract_twin_output_is_stock_not_fake_dispatch() -> None:
     segment = _segment(lot, 1)
     milestones = {item["sku"]: item for item in lot.output_milestones or []}
 
-    assert milestones["SUB"]["is_coproduced_surplus"] is True
+    assert milestones["SUB"].get("is_coproduced_surplus") is not True
+    assert milestones["SUB"]["customer_delivery_day"] == 14
+    assert "cycle_material_release_day" not in milestones["SUB"]  # not paired
     score = compute_score([segment], [lot], data, config)
-    assert score["subcontract_dispatch_total"] == 0
+    # One real subcontract dispatch (the day-14 delivery), made in time.
+    assert score["subcontract_dispatch_total"] == 1
     assert score["subcontract_dispatch_misses"] == 0
 
     production = build_production_by_op([segment], [lot], data)

@@ -37,6 +37,7 @@ from backend.scheduler.jit_policy import (
     production_due_day,
     subtract_workdays,
 )
+from backend.scheduler.material_quantities import releases_in_portions
 from backend.scheduler.operators import (
     effective_operator_capacity,
     operator_free_windows,
@@ -123,12 +124,11 @@ def solve_global_jit(
         return None
 
     # The contiguous run model has no quantity-dependent releases. Use the
-    # shared preemptive constructor for these lots; a scalar floor would
-    # silently release demand that is not yet available.
+    # shared preemptive constructor for these lots, twin cycles with a
+    # release curve included (Fase B2); a scalar floor would silently
+    # release demand that is not yet available.
     if any(
-        not lot.is_twin and len({
-            output.get("material_release_day") for output in lot.output_milestones or []
-        }) > 1
+        releases_in_portions(lot)
         for run in runs for lot in getattr(run, "lots", [])
     ):
         fallback = _calendar_preemptive_fallback(

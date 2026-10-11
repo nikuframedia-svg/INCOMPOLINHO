@@ -32,13 +32,13 @@ class LegacyMaterialPlanError(PlanValidationError):
     code = "legacy_material_plan"
     requires_recalculation = True
 
-    def __init__(self, violations: list[dict]) -> None:
+    def __init__(self, violations: list[dict], reason: str | None = None) -> None:
         super().__init__(violations)
+        reason = reason or "antes de o material passar a ser libertado por entrega"
         self.args = (
-            "Este plano foi calculado antes de o material passar a ser libertado "
-            "por entrega e já não cumpre as regras atuais. Use «Recalcular plano» "
-            "para o reconstruir com as regras atuais; o plano guardado continua "
-            "disponível no histórico.",
+            f"Este plano foi calculado {reason} e já não cumpre as regras atuais. "
+            "Use «Recalcular plano» para o reconstruir com as regras atuais; o "
+            "plano guardado continua disponível no histórico.",
         )
 
 
@@ -60,10 +60,10 @@ def _assert_activatable_payload(payload: dict) -> None:
         segments, lots, engine_data, config, require_current_material=True,
     )
     if material_errors:
-        from backend.scheduler.canonical import legacy_material_plan
+        from backend.scheduler.canonical import legacy_material_plan, legacy_material_reason
 
         if legacy_material_plan(lots, engine_data, config):
-            raise LegacyMaterialPlanError(material_errors)
+            raise LegacyMaterialPlanError(material_errors, legacy_material_reason(lots))
         raise PlanValidationError(material_errors)
     anchor_errors = plan_anchor_violations(segments, engine_data, config)
     if anchor_errors:

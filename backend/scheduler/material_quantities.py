@@ -6,8 +6,57 @@ from dataclasses import dataclass, field, replace
 from backend.scheduler.types import Lot, Segment
 
 
+def output_release_day(output: dict) -> int:
+    """Material release ``R`` of one lot output.
+
+    The two outputs paired in one twin cycle share ``R_ciclo = min(R)``
+    (``cycle_material_release_day``); every other output keeps its own ``R``.
+    """
+
+    shared = output.get("cycle_material_release_day")
+    return int(shared if shared is not None else output["material_release_day"])
+
+
+def lot_material_version(lot: Lot) -> int:
+    """Material contract version recorded on the lot's outputs (0: none)."""
+
+    return max(
+        (
+            int(output.get("quantity_material_version") or 0)
+            for output in lot.output_milestones or []
+        ),
+        default=0,
+    )
+
+
+def twin_per_delivery(lot: Lot) -> bool:
+    """A twin cycle under the per-delivery contract (material version 2)."""
+
+    return bool(lot.is_twin) and lot_material_version(lot) >= 2
+
+
+def _twin_curve(lot: Lot, day: int) -> int:
+    """Cycles released by ``day``: the larger of the two sides' released outputs.
+
+    Every cycle makes one piece of each side, so a side's released quantity
+    allows as many cycles; the other side's pieces are co-produced. A side
+    whose output is only co-produced stock (no delivery of its own in the
+    cycle) never drives the release: the cycle follows the other side.
+    """
+
+    by_side: dict[str, int] = defaultdict(int)
+    for output in lot.output_milestones or []:
+        if output.get("is_coproduced_surplus"):
+            continue
+        if output_release_day(output) <= day:
+            by_side[str(output.get("op_id"))] += int(output["qty"])
+    return min(int(lot.qty), max(by_side.values(), default=0))
+
+
 def released_quantity(lot: Lot, day: int) -> int:
-    # Confirmed twin cycles share material from their controlling output.
+    if lot.is_twin and twin_per_delivery(lot):
+        return _twin_curve(lot, day)
+    # Legacy twin cycles (version 1) share material from their controlling output.
     if lot.is_twin or not lot.output_milestones:
         return lot.qty if day >= (lot.material_release_day or 0) else 0
     return min(
@@ -20,11 +69,23 @@ def released_quantity(lot: Lot, day: int) -> int:
     )
 
 
+def _driving_outputs(lot: Lot) -> list[dict]:
+    """Outputs whose release can free production of the lot.
+
+    Co-produced stock of a per-delivery twin cycle never drives the release.
+    """
+
+    outputs = list(lot.output_milestones or [])
+    if twin_per_delivery(lot):
+        return [output for output in outputs if not output.get("is_coproduced_surplus")]
+    return outputs
+
+
 def next_release_day(lot: Lot, day: int) -> int | None:
     days = [
-        int(output["material_release_day"])
-        for output in lot.output_milestones or []
-        if int(output["material_release_day"]) > day
+        output_release_day(output)
+        for output in _driving_outputs(lot)
+        if output_release_day(output) > day
     ]
     return min(days) if days else None
 
@@ -46,14 +107,29 @@ class MaterialPortion:
     outputs: tuple[dict, ...] = field(compare=False)
 
 
+def releases_in_portions(lot: Lot) -> bool:
+    """Whether the lot's material is released in more than one portion.
+
+    Twin cycles under the per-delivery contract count (their release curve,
+    AGENTS §2). Such a lot needs a quantity-aware allocator: a single release
+    floor would release pieces that are not yet available.
+    """
+
+    return len(lot.output_milestones or []) > 1 and len(material_portions(lot)) > 1
+
+
 def material_portions(lot: Lot) -> list[MaterialPortion]:
     """Group consecutive outputs released on the same day.
 
-    Twin cycles and lots with a single output stay one portion; the surplus
-    joins the last portion whatever its own record says.
+    Lots with a single output and legacy twin cycles stay one portion; the
+    surplus joins the last portion whatever its own record says. A twin cycle
+    under the per-delivery contract has one portion per increment of its
+    release curve (:func:`_twin_portions`).
     """
 
     outputs = list(lot.output_milestones or [])
+    if twin_per_delivery(lot):
+        return _twin_portions(lot)
     if lot.is_twin or len(outputs) <= 1:
         return [MaterialPortion(0, int(lot.qty), lot.material_release_day, tuple(outputs))]
     groups: list[tuple[object, list[dict]]] = []
@@ -72,6 +148,44 @@ def material_portions(lot: Lot) -> list[MaterialPortion]:
         portions.append(MaterialPortion(
             index, qty, int(release) if release is not None else None, tuple(members),
         ))
+    return portions
+
+
+def _twin_portions(lot: Lot) -> list[MaterialPortion]:
+    """One portion per increment of a twin cycle's release curve.
+
+    The portion released on day ``d`` holds ``curve(d) - curve(previous)``
+    cycles. Its outputs are the slices of each side's deliveries (in side
+    order, first-in-first-out) that those cycles make, with their quantities
+    in pieces of that side; the side that is not driving the release gets
+    co-produced pieces for its later deliveries.
+    """
+
+    outputs = list(lot.output_milestones or [])
+    days = sorted({output_release_day(output) for output in _driving_outputs(lot)})
+    by_side: dict[str, list[dict]] = defaultdict(list)
+    for output in outputs:
+        by_side[str(output.get("op_id"))].append(output)
+    portions: list[MaterialPortion] = []
+    previous = 0
+    for position, day in enumerate(days):
+        last = position == len(days) - 1
+        current = int(lot.qty) if last else _twin_curve(lot, day)
+        if current <= previous:
+            continue
+        members: list[dict] = []
+        for side_outputs in by_side.values():
+            start = 0
+            for output in side_outputs:
+                end = start + int(output["qty"])
+                overlap = min(end, current) - max(start, previous)
+                if overlap > 0:
+                    members.append({**output, "qty": overlap})
+                start = end
+        portions.append(MaterialPortion(len(portions), current - previous, day, tuple(members)))
+        previous = current
+    if not portions:
+        return [MaterialPortion(0, int(lot.qty), lot.material_release_day, tuple(outputs))]
     return portions
 
 
@@ -113,8 +227,10 @@ def output_completion_days(lot: Lot, segments: list[Segment], missing_day: int):
 # later lot is produced before an earlier one: the earlier lot is "late" while
 # no order is (the later lot's pieces serve it).
 #
-# Confirmed twin cycles (and legacy lots without quantity material) keep the
-# cycle rule until Fase B: every output of the cycle completes with the lot
+# Twin cycles are per delivery since Fase B2 (material version 2): each side's
+# production serves that side's deliveries first-in-first-out, like any lot.
+# Legacy lots without quantity material and twin cycles of version 1 keep the
+# cycle rule: every output of the cycle completes with the lot
 # (``cycle_rule``). Views may differ for them: lateness and subcontract
 # readiness use the lot end, while stock, OTD-D and order coverage credit an
 # in-house piece on the day it is produced.
@@ -310,8 +426,9 @@ def delivery_readiness(
 
     Production of each lot is assigned to its outputs first-in-first-out by
     absolute end time (``day * 1440 + end_min``, then segment order) and per
-    operation. Confirmed twin cycles and legacy lots without quantity
-    material keep the cycle rule: every output completes with the lot.
+    operation (each side of a twin cycle is its own operation). Legacy lots
+    without quantity material and twin cycles of version 1 keep the cycle
+    rule: every output completes with the lot.
     ``data`` (required) supplies the factory calendar for subcontract lead
     times and the default ``missing_day`` (the horizon end). ``extra_lead``
     adds working days to a lot's subcontract return (robustness scenarios).
@@ -364,9 +481,11 @@ def _readiness(
             key=lambda item: (item[1].day_idx * _DAY_MINUTES + item[1].end_min, item[0]),
         )
         outputs = lot_output_milestones(lot)
-        cycle_rule = lot.is_twin or not any(
-            output.get("quantity_material_version") for output in outputs
+        version = max(
+            (int(output.get("quantity_material_version") or 0) for output in outputs),
+            default=0,
         )
+        cycle_rule = version == 0 or (lot.is_twin and version < 2)
         lot_completion = max(
             (segment.day_idx for _, segment in ordered if segment.qty > 0),
             default=None,

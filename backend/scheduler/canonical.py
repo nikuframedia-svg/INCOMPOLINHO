@@ -9,14 +9,19 @@ from collections import Counter, defaultdict
 from backend.config.types import FactoryConfig
 from backend.planning_control import current_planning_control, execution_cache
 from backend.plans.serialize import schedule_fingerprint
-from backend.scheduler.lot_sizing import _aggregate_milestones, create_lots
+from backend.scheduler.lot_sizing import (
+    QUANTITY_MATERIAL_VERSION,
+    _aggregate_milestones,
+    create_lots,
+    material_version,
+)
 from backend.scheduler.resources import build_setup_override_map, effective_oee, resolve_setup_hours
 from backend.scheduler.setup_identity import segment_setup_identity
 from backend.types import CommittedSupply
 
-# Version of the per-delivery material contract written on each lot output
-# (``quantity_material_version``) and recorded in the planning model identity.
-QUANTITY_MATERIAL_VERSION = 1
+# ``QUANTITY_MATERIAL_VERSION`` (defined in lot_sizing, imported from here by
+# the planning model identity): the per-delivery material contract written on
+# each lot output (``quantity_material_version``).
 
 _FIELD_LABELS = {
     "machine_id": "a máquina",
@@ -42,40 +47,56 @@ _FIELD_LABELS = {
 }
 
 
-def has_quantity_material(lots) -> bool:
-    """Whether any lot carries the per-delivery material contract."""
-    return any(
-        output.get("quantity_material_version")
-        for lot in lots for output in lot.output_milestones or []
+def quantity_material_version(lots) -> int:
+    """Material contract version a plan's lots were built with (0: none)."""
+    return max(
+        (
+            int(output.get("quantity_material_version") or 0)
+            for lot in lots for output in lot.output_milestones or []
+        ),
+        default=0,
     )
 
 
-def legacy_material_plan(lots, data, config) -> bool:
-    """A plan built before per-delivery material windows that now needs them.
+def legacy_material_reason(lots) -> str:
+    """Plain pt-PT clause saying which material rule a legacy plan predates.
 
-    Its non-twin lots carry no ``quantity_material_version`` while the current
-    lot sizing releases the material of the same scenario in several portions.
-    Such a plan can still be read, but committing it again needs a rebuild.
+    Version 0 predates the per-delivery release of every lot; version 1 had it
+    already for single parts and only predates it for twin parts (Fase B2).
+    """
+    if quantity_material_version(lots) >= 1:
+        return "antes de o material das peças gémeas passar a ser libertado por entrega"
+    return "antes de o material passar a ser libertado por entrega"
+
+
+def legacy_material_plan(lots, data, config) -> bool:
+    """A plan built under an older material contract that now needs a rebuild.
+
+    Version 0 (before 08/10/2026): no lot carries ``quantity_material_version``
+    while the current lot sizing releases the material of the same scenario in
+    several portions. Version 1 (before Fase B2): twin cycles released whole
+    at the cycle ``R`` while the current lot sizing releases some twin cycle
+    per delivery. Such a plan can still be read, but committing it again
+    needs a rebuild.
     """
     if data is None or not data.ops or not lots:
         return False
-    if any(
-        not lot.is_twin and any(
-            output.get("quantity_material_version") for output in lot.output_milestones or []
-        )
-        for lot in lots
-    ):
+    version = quantity_material_version(lots)
+    if version >= QUANTITY_MATERIAL_VERSION:
         return False
     from backend.scheduler.quantity_dispatch import has_quantity_releases
 
-    return has_quantity_releases(contract_lots(data, config or FactoryConfig()))
+    current = contract_lots(data, config or FactoryConfig())
+    if version >= 1:
+        current = [lot for lot in current if lot.is_twin]
+    return has_quantity_releases(current)
 
 
 def _lot_sizing_inputs(data, config, quantity_material):
     """Everything ``create_lots`` reads; equal inputs give equal lots."""
     return (
         QUANTITY_MATERIAL_VERSION,
-        bool(quantity_material),
+        material_version(quantity_material),
         data.ops,
         data.twin_groups,
         data.committed_supplies,
@@ -96,7 +117,7 @@ def contract_lots(data, config, *, quantity_material=True):
     candidate. The entry is reused only after exact equality with a private
     copy of every lot-sizing input (operations, committed supplies including
     the credits of preserved lots, calendar, configuration and material
-    contract version), so in-place edits of the scenario never return stale
+    contract version requested), so in-place edits of the scenario never return stale
     lots. Outside a planning scope there is no cache. The returned lots are
     shared: callers must treat them as read-only.
     """
@@ -104,7 +125,10 @@ def contract_lots(data, config, *, quantity_material=True):
         return create_lots(data, config, quantity_material=quantity_material)
     cache = execution_cache("contract_lots")
     inputs = _lot_sizing_inputs(data, config, quantity_material)
-    key = (id(data.ops), len(data.ops), len(data.committed_supplies), bool(quantity_material))
+    key = (
+        id(data.ops), len(data.ops), len(data.committed_supplies),
+        material_version(quantity_material),
+    )
     entry = cache.get(key)
     if entry is not None and entry[0] == inputs:
         return entry[1]
@@ -281,16 +305,18 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                     op_id=str(op_id), sku=str(sku), qty=int(qty), available_at="",
                     available_day=0, machine_id=lot.machine_id, tool_id=lot.tool_id,
                 ))
-    quantity_material = has_quantity_material(remaining)
+    version = quantity_material_version(remaining)
     # Old snapshots remain readable under their recorded model. Operational
     # persistence and explicit recalculation request the current contract.
-    expected_lots = contract_lots(residual, config, quantity_material=quantity_material)
+    expected_lots = contract_lots(residual, config, quantity_material=version)
     expected_by_id = {lot.id: lot for lot in expected_lots}
-    if require_current_material and not quantity_material:
+    if require_current_material and version < QUANTITY_MATERIAL_VERSION:
         current_lots = {lot.id: lot for lot in contract_lots(residual, config)}
         for lot in remaining:
             expected = current_lots.get(lot.id)
-            if expected is None:
+            # Version 1 already releases non-twin lots per delivery; only its
+            # twin cycles changed (Fase B2).
+            if expected is None or (version >= 1 and not lot.is_twin):
                 continue
             check_material_quantities(lot, expected)
         # Legal splits/renames must not bypass the current material contract.
@@ -299,10 +325,10 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
         current_by_op = defaultdict(list)
         actual_by_op = defaultdict(list)
         for lot in current_lots.values():
-            if not lot.is_twin:
+            if not lot.is_twin and not version:
                 current_by_op[lot.op_id].append(lot)
         for lot in remaining:
-            if not lot.is_twin:
+            if not lot.is_twin and not version:
                 actual_by_op[lot.op_id].extend((s, lot) for s in by_lot[lot.id])
         for op_id, entries in actual_by_op.items():
             contracts = current_by_op[op_id]
@@ -360,7 +386,10 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
         # they retain the existing physical and total-quantity checks.
         if not any("qty" in output for output in lot.output_milestones):
             continue
-        if len({item.get("material_release_day") for item in lot.output_milestones}) > 1:
+        if len({
+            item.get("cycle_material_release_day", item.get("material_release_day"))
+            for item in lot.output_milestones
+        }) > 1:
             check_material_quantities(lot, lot)
         try:
             milestones = _aggregate_milestones(lot.output_milestones)

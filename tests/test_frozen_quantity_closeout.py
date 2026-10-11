@@ -136,3 +136,7 @@ def test_a_rejected_closeout_keeps_the_builder_plan(monkeypatch):
     ] == [
         (s.lot_id, s.day_idx, s.start_min, s.end_min, s.setup_min) for s in reference.segments
     ]
+    # The planner is told with the plan, in plain Portuguese, not only in a log.
+    # First, so the API's first-ten cut never hides it.
+    assert result.warnings[0] == scheduler_module.CLOSEOUT_REJECTED_WARNING
+    assert scheduler_module.CLOSEOUT_REJECTED_WARNING not in reference.warnings

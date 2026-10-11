@@ -873,9 +873,12 @@ class ReplanJobManager:
                     restored_baseline
                 ):
                     baseline_model_compatible = False
+                    from backend.scheduler.canonical import legacy_material_reason
+
+                    reason = legacy_material_reason(historical_baseline_result.lots)
                     rebuild_warnings.append(
-                        "O plano ativo foi calculado antes de o material passar a ser "
-                        "libertado por entrega; por isso foi recalculado de raiz."
+                        f"O plano ativo foi calculado {reason}; por isso foi "
+                        "recalculado de raiz."
                     )
                 baseline_comparable = baseline_model_compatible and planning_input_fingerprints(
                     restored_baseline["engine_data"],

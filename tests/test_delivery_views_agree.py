@@ -501,13 +501,60 @@ def test_economic_surplus_is_never_an_order():
     assert traces[-1]["unallocated_output"] == [{"sku": "SKU", "qty": 390}]
 
 
-def test_twin_cycle_keeps_completing_with_the_lot():
+def test_legacy_twin_cycle_keeps_completing_with_the_lot():
+    """Material version 1 twin cycles (plans saved before Fase B2) are read
+    under their recorded rule: every output completes with the lot."""
+
     from backend.scheduler.material_quantities import delivery_readiness
 
     segments, lots, data = f1()
-    lot = replace(lots[0], is_twin=True)
+    outputs = [{**output, "quantity_material_version": 1}
+               for output in lots[0].output_milestones]
+    lot = replace(lots[0], is_twin=True, output_milestones=outputs)
     days = {r.index: r.factory_day for r in delivery_readiness([lot], segments, data)}
     assert set(days.values()) == {13}
+
+
+@pytest.mark.parametrize("slip", [False, True], ids=["on-time", "late-side"])
+def test_twin_sides_agree_with_the_oracle_order_by_order(slip):
+    """Fase B2: each side of a twin cycle is served per delivery; every view
+    reads the same readiness as the oracle (orders, gate, OTD-D, stock,
+    late report, risks, tooltip)."""
+
+    from tests.test_twin_per_delivery import CONFIG as TWIN_CONFIG
+    from tests.test_twin_per_delivery import _carry_forward, _segment
+
+    data = _carry_forward()
+    (lot,) = create_lots(data, TWIN_CONFIG)
+    segments = [_segment(lot, 7, 420, 550, 2500, setup=30),
+                _segment(lot, 31 if slip else 21, 420, 440, 500)]
+    oracle = oracle_orders(segments, [lot], data)
+    late = [o for o in oracle if o.late]
+    assert [(o.sku, o.due_day) for o in late] == ([("B", 30)] if slip else [])
+    score = compute_score(segments, [lot], data, TWIN_CONFIG)
+    gate = build_gate_report(segments, [lot], score, data, TWIN_CONFIG)
+    orders = {(o.sku, o.delivery_day): o for c in compute_order_tracking(segments, [lot], data)
+              for o in c.orders}
+    assert len(orders) == len(oracle)
+    for expected in oracle:
+        order = orders[(expected.sku, expected.due_day)]
+        assert order.customer_ready_day == expected.ready_day, expected
+        assert (order.status == "ready") == (not expected.late), expected
+    assert gate["metrics"]["orders_late"] == len(late)
+    assert score["otd_d_failures"] == oracle_otd_d_failures(segments, [lot], data)
+    assert {p.op_id: p.stockout_day for p in compute_stock_projections(segments, [lot], data)} \
+        == oracle_first_rupture(segments, [lot], data)
+    # The lot is late exactly when one of its deliveries is.
+    assert score["tardy_count"] == int(bool(late))
+    assert analyze_late_deliveries(segments, [lot], data, TWIN_CONFIG).tardy_count == int(bool(late))
+    assert [r.status == "late" for r in compute_lot_risks(segments, [lot], data, TWIN_CONFIG)] \
+        == [bool(late)]
+    tooltip = sorted(
+        (index, item["sku"], item["delivery_day"], item["qty"])
+        for index, trace in enumerate(compute_segment_deliveries(segments, [lot], data))
+        for item in trace["delivery_allocations"] or [])
+    assert tooltip == sorted(
+        (index, o.sku, o.due_day, qty) for o in oracle for index, qty in o.allocations)
 
 
 # ── F6: frozen revision 121 (private, skipped when absent) ───────────────

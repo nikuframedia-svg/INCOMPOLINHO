@@ -99,7 +99,8 @@ Para cada necessidade/output:
 - O limite de cinco dias é uma antecedência máxima de material; não é uma
   ordem para esperar nem um horizonte de otimização limitado a cinco dias.
 
-Num ciclo gémeo confirmado, a regra industrial existente partilha material:
+Num ciclo gémeo confirmado, a regra industrial existente partilha material
+entre as duas entregas que formam o ciclo (a que o controla e a sua par):
 `R_ciclo = min(R_outputs)` e `U_ciclo = min(U_outputs)`. Conservar os marcos
 individuais; não aplicar inadvertidamente `max(R_outputs)` de um modelo genérico.
 Stock coproduzido não cria encomenda ou expedição fictícia.
@@ -111,8 +112,29 @@ ou produzida a partir do seu próprio `R`. O excedente económico liberta-se com
 a última entrega coberta. O lote é dimensionado uma vez (§3); partes
 libertadas em datas diferentes são execuções físicas distintas.
 Subcontratação: cada parte é expedida por entrega e fica pronta para o cliente
-na sua própria conclusão mais o lead útil, não na conclusão do lote. Gémeas
-passam ao mesmo princípio na Fase B do plano de 10/10 (até lá, ciclo inteiro).
+na sua própria conclusão mais o lead útil, não na conclusão do lote.
+
+**Gémeas por entrega (decidido pelo Luís a 11/10/2026, Fase B2).** Cada lado
+de um ciclo gémeo regista um output por entrega que as suas peças cobrem
+(carry-forward), com as datas dessa entrega. Só as duas entregas que formam
+o ciclo (no máximo uma por lado, com no máximo 5 dias entre elas) partilham
+`R_ciclo = min(R)` (`cycle_material_release_day`); a quantidade feita para
+entregas futuras não é produzida antes do `R` próprio dessas entregas. O
+excedente económico de um lado liberta-se com o `R` próprio da última entrega
+coberta desse lado, nunca com o `R_ciclo` (mesmo quando essa entrega é a do
+par). Um lado sem nenhuma entrega coberta no ciclo é stock coproduzido: fica
+registado (com as datas da entrega que controla o ciclo, só para
+rastreabilidade) mas nunca liberta material; o ciclo segue a curva do outro
+lado. Num dia `d`, o ciclo pode fazer tantos ciclos quanto o maior dos dois
+lados libertados até `d`, sem contar stock coproduzido (cada ciclo faz uma
+peça de cada lado; as do outro lado são coproduzidas). As
+partes de um lote gémeo são os incrementos dessa curva; o tempo é sempre o de
+uma execução (o maior dos dois lados, nunca a soma) e o lote económico
+continua HARD por SKU. A prontidão é por lado e por entrega, como em qualquer
+lote. Versão do contrato de material: `QUANTITY_MATERIAL_VERSION = 2`
+(`lot_sizing.py`); planos guardados na versão 1 (ou sem versão) leem-se pelo
+modelo registado, mas só se reativam se cumprirem as janelas atuais; caso
+contrário pedem «Recalcular plano» (`canonical.legacy_material_plan`).
 
 Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
 
@@ -123,11 +145,38 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    mesmo havendo um lote mais urgente para a máquina, desde que esse lote perca
    menos de 60 min (a mesma tolerância do §1.3; dentro dela, os setups
    desempatam antes dos minutos exatos). Com 60 min ou mais, passa o urgente.
+   A perda mede-se sobre todas as partes que faltam ao lote urgente, na sua
+   melhor máquina, contra a posição que tinha **antes de começar a cadeia de
+   continuações**: vários passos pequenos nunca somam 60 min ou mais. Nenhuma
+   entrega do lote urgente pode ficar atrasada ou mais atrasada.
 3. **Mudar de máquina leva o lote inteiro**, com todas as suas partes; um lote
    nunca fica repartido entre máquinas.
 4. **Lote começado:** só congela o que já começou. As partes futuras continuam
    otimizáveis e o lote nunca é redimensionado (por implementar; até lá vale o
    congelamento do lote inteiro de `plans/frozen.py`).
+
+Construtor por partes (`quantity_dispatch.py`, B1a):
+
+- **Prioridade de uma parte:** `lot_priority_key` com a quantidade da entrega
+  ao cliente que a parte serve (operação + dia, somada sobre todos os lotes),
+  não a fatia da parte; só contam as entregas com o mesmo prazo de produção
+  da parte. Uma parte com uma fatia de uma entrega grande não espera atrás de
+  uma entrega mais pequena do mesmo dia.
+- **Entregas primeiro, mesmo dia:** uma parte menos urgente com prazo igual
+  ou anterior passa à frente quando isso salva a sua entrega e nenhuma
+  entrega fica mais atrasada (nem a do lote que ultrapassa, nem as das partes
+  ordenadas entre elas). A cadeia de continuações para quando se aplica.
+- **Ferramenta retida:** uma inserção num intervalo de ferramenta retida só
+  se aceita se nenhuma entrega das partes que recoloca, nem das partes ainda
+  por colocar desses lotes, nem do lote inserido (incluindo as suas partes
+  seguintes), ficar mais atrasada. Cumprido isso, aceita-se sempre que uma
+  entrega do lote inserido fique mais cedo. Sem esse ganho, pesa-se a regra 2:
+  recusa-se se o lote inserido ganhar menos de 60 min, ou se alguma parte
+  perder 60 min ou mais e o lote inserido ganhar menos do que essa perda;
+  perdas abaixo de 60 min nunca decidem (`quantity_dispatch._break_accepted`).
+- Se o construtor por campanhas falhar, usa-se o anterior (uma execução por
+  parte) e o plano leva um aviso simples; o mesmo quando o fecho de setups
+  retidos é rejeitado pela validação.
 
 **Um só avaliador de prontidão (10/10/2026).** Stock, OTD-D, encomendas,
 expedição, subcontratação, atrasos, riscos, tooltip, propostas, CTP,

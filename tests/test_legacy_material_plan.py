@@ -106,6 +106,7 @@ def test_legacy_plan_activation_asks_for_recalculation_in_plain_portuguese():
     assert "Plano invalido" not in message and "conflito" not in message
     assert "Recalcular plano" in message and "material" in message
     assert "já não" in message and "disponível" in message  # pt-PT with accents
+    assert "gémeas" not in message  # version 0: every lot predates the rule
 
 
 def test_store_refuses_the_legacy_plan_without_activating_anything(tmp_path):

@@ -24,6 +24,23 @@ from backend.types import EngineData, EOp, TwinGroup
 
 TWIN_MAX_PAIR_GAP_DAYS = 5
 
+# Version of the per-delivery material contract written on each lot output
+# (``quantity_material_version``) and recorded in the planning model identity.
+# 1: non-twin lots release each delivery's quantity at its own ``R``.
+# 2: twin cycles too (Fase B2); only the two outputs paired in one cycle share
+#    ``R_ciclo = min(R)`` (``cycle_material_release_day``).
+QUANTITY_MATERIAL_VERSION = 2
+
+
+def material_version(quantity_material: bool | int | None) -> int:
+    """Normalise ``create_lots(quantity_material=...)``: ``True`` is the current."""
+
+    if quantity_material is True:
+        return QUANTITY_MATERIAL_VERSION
+    if not quantity_material:
+        return 0
+    return int(quantity_material)
+
 
 @dataclass(slots=True)
 class _TwinDemandEvent:
@@ -36,14 +53,20 @@ class _TwinDemandEvent:
 
 
 def create_lots(
-    data: EngineData, config: FactoryConfig | None = None, *, quantity_material: bool = True,
+    data: EngineData, config: FactoryConfig | None = None, *,
+    quantity_material: bool | int = True,
 ) -> list[Lot]:
     """Create Lots from EngineData.
 
     1. Twin ops → super-ops (TWIN lots)
     2. Remaining ops → solo lots
     3. Eco lot carry-forward applied to both
+
+    ``quantity_material`` is the material contract version to build (``True``:
+    the current one; ``False``/0: none, whole lot at its first release). Old
+    snapshots are rebuilt under the version they recorded.
     """
+    version = material_version(quantity_material)
     validate_active_twin_eco_lots(data)
     oee_default = config.oee_default if config else DEFAULT_OEE
     min_prod = config.min_prod_min if config else MIN_PROD_MIN
@@ -87,6 +110,7 @@ def create_lots(
                     oee_default,
                     min_prod,
                     planning_holidays,
+                    material_version=version,
                 )
             )
 
@@ -101,7 +125,7 @@ def create_lots(
                     min_prod,
                     planning_holidays,
                     config,
-                    quantity_material=quantity_material,
+                    quantity_material=version,
                 )
             )
 
@@ -114,7 +138,7 @@ def _create_solo_lots(
     min_prod: float = MIN_PROD_MIN,
     holidays: set[int] | None = None,
     config: FactoryConfig | None = None,
-    *, quantity_material: bool = True,
+    *, quantity_material: bool | int = True,
 ) -> list[Lot]:
     """Create lots for a solo (non-twin) operation.
 
@@ -192,7 +216,8 @@ def _create_solo_lots(
             )
         )
 
-    if not quantity_material:
+    version = material_version(quantity_material)
+    if not version:
         return lots
 
     # Carry-forward assigns an economic lot to several deliveries. Retain
@@ -220,7 +245,7 @@ def _create_solo_lots(
         for field, value in _aggregate_milestones(outputs).items():
             setattr(lot, field, value)
         for output in lot.output_milestones:
-            output["quantity_material_version"] = 1
+            output["quantity_material_version"] = version
     return lots
 
 
@@ -231,8 +256,21 @@ def _create_twin_lots(
     oee_default: float = DEFAULT_OEE,
     min_prod: float = MIN_PROD_MIN,
     holidays: set[int] | None = None,
+    *,
+    material_version: int = QUANTITY_MATERIAL_VERSION,
 ) -> list[Lot]:
-    """Create deterministic twin cycles with equal output in every joint run."""
+    """Create deterministic twin cycles with equal output in every joint run.
+
+    Material version 2 (Fase B2, AGENTS §2 "Janela por entrega"): each side
+    records one output per delivery its pieces cover (carry-forward), with
+    that delivery's own dates, and the surplus dated as the side's last
+    covered delivery. Only the controlling delivery and its partner (the
+    pair that formed the cycle) share ``R_ciclo = min(R)``, recorded as
+    ``cycle_material_release_day``; quantity carried to future deliveries is
+    released at their own ``R``; the surplus keeps its own date and never the
+    cycle release. A side without any covered delivery is co-produced stock:
+    it never drives the release, which follows the other side's deliveries.
+    """
     lots: list[Lot] = []
     events = [
         _TwinDemandEvent(
@@ -298,33 +336,45 @@ def _create_twin_lots(
         # never a physically unilateral run.
         qty_by_side = {0: run_qty, 1: run_qty}
 
+        coverage_by_side: dict[int, list[tuple[_TwinDemandEvent, int]]] = {0: [], 1: []}
+        surplus_by_side = {0: 0, 1: 0}
         for side, qty in qty_by_side.items():
             if qty <= 0:
                 continue
             produced_totals[side] += qty
-            terminal_surplus[side] += _consume_twin_output(
-                events_by_side[side],
-                qty,
-            )
+            coverage, surplus = _consume_twin_output(events_by_side[side], qty)
+            coverage_by_side[side] = coverage
+            surplus_by_side[side] = surplus
+            terminal_surplus[side] += surplus
         if current.remaining > 0 or (partner is not None and partner.remaining > 0):
             raise RuntimeError("Falha ao consumir o evento controlador de gémeas.")
 
         active_by_side = {event.side: event for event in active_events}
-        output_milestones = []
-        for side, op in enumerate((op_a, op_b)):
-            event = active_by_side.get(side)
-            if event is not None:
-                output_milestones.append(
-                    _output_milestone(op, run_qty, event.milestones)
-                )
-            else:
-                output_milestones.append(
-                    _coproduced_surplus_milestone(
-                        op,
-                        run_qty,
-                        current.milestones,
+        if material_version >= 2:
+            output_milestones = _twin_delivery_outputs(
+                (op_a, op_b),
+                coverage_by_side,
+                surplus_by_side,
+                active_events,
+                current,
+                material_version,
+            )
+        else:
+            output_milestones = []
+            for side, op in enumerate((op_a, op_b)):
+                event = active_by_side.get(side)
+                if event is not None:
+                    output_milestones.append(
+                        _output_milestone(op, run_qty, event.milestones)
                     )
-                )
+                else:
+                    output_milestones.append(
+                        _coproduced_surplus_milestone(
+                            op,
+                            run_qty,
+                            current.milestones,
+                        )
+                    )
         milestone_fields = _aggregate_milestones(output_milestones)
         primary_event = min(
             active_events,
@@ -435,17 +485,78 @@ def _twin_event_priority(event: _TwinDemandEvent) -> tuple[int, int, int, int, s
     )
 
 
-def _consume_twin_output(events: list[_TwinDemandEvent], qty: int) -> int:
-    """Apply one output FIFO and return surplus beyond the visible demand."""
+def _consume_twin_output(
+    events: list[_TwinDemandEvent], qty: int,
+) -> tuple[list[tuple[_TwinDemandEvent, int]], int]:
+    """Apply one side's output FIFO.
+
+    Returns the deliveries covered, in order, with the quantity each one
+    receives, and the surplus beyond the visible demand.
+    """
 
     remaining_output = int(qty)
+    coverage: list[tuple[_TwinDemandEvent, int]] = []
     for event in events:
         if remaining_output <= 0:
             break
         consumed = min(event.remaining, remaining_output)
+        if consumed <= 0:
+            continue
         event.remaining -= consumed
         remaining_output -= consumed
-    return remaining_output
+        coverage.append((event, consumed))
+    return coverage, remaining_output
+
+
+def _twin_delivery_outputs(
+    ops: tuple[EOp, EOp],
+    coverage_by_side: dict[int, list[tuple[_TwinDemandEvent, int]]],
+    surplus_by_side: dict[int, int],
+    active_events: list[_TwinDemandEvent],
+    controlling: _TwinDemandEvent,
+    version: int,
+) -> list[dict[str, object]]:
+    """Per-delivery outputs of one twin cycle (material version 2).
+
+    Side A's outputs come first, then side B's, each in delivery order with
+    its surplus last. The deliveries that formed the cycle (the controlling
+    one and its partner) share the cycle release ``min(R)``; every other
+    covered delivery keeps its own ``R`` (AGENTS §2).
+    """
+
+    paired = {id(event) for event in active_events}
+    cycle_release = min(
+        event.milestones.material_release_day for event in active_events
+    )
+    outputs: list[dict[str, object]] = []
+    for side, op in enumerate(ops):
+        side_outputs: list[dict[str, object]] = []
+        for event, qty in coverage_by_side[side]:
+            output = _output_milestone(op, qty, event.milestones)
+            if id(event) in paired:
+                output["cycle_material_release_day"] = cycle_release
+            side_outputs.append(output)
+        surplus = surplus_by_side[side]
+        if surplus > 0:
+            if side_outputs:
+                # Dated as the side's last covered delivery, with that
+                # delivery's own R: the surplus never shares the cycle
+                # release, even when that delivery is the paired one.
+                extra = dict(side_outputs[-1])
+                extra.pop("cycle_material_release_day", None)
+                extra["qty"] = surplus
+                extra["is_economic_surplus"] = True
+            else:
+                # No delivery of this side is covered (only possible without
+                # a partner): co-produced stock. It is dated as the
+                # controlling delivery for traceability only; it never
+                # drives the release (``material_quantities._twin_curve``).
+                extra = _coproduced_surplus_milestone(op, surplus, controlling.milestones)
+            side_outputs.append(extra)
+        outputs.extend(side_outputs)
+    for output in outputs:
+        output["quantity_material_version"] = version
+    return outputs
 
 
 def _op_after_committed_supply(op: EOp, data: EngineData) -> EOp:

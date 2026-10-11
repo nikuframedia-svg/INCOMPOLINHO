@@ -588,6 +588,14 @@ def _fix_orphan_continuations(
     return segments
 
 
+CLOSEOUT_REJECTED_WARNING = (
+    "Não foi possível tirar do plano algumas mudanças de ferramenta repetidas "
+    "(a mesma ferramenta já estava montada). O plano fica como foi construído "
+    "e pode ter algumas mudanças de ferramenta (setups) a mais. As entregas "
+    "não mudam."
+)
+
+
 def _remove_redundant_retained_tool_setups(
     segments: list[Segment],
     *,
@@ -1680,7 +1688,11 @@ def _stabilize_earliest_legal_starts(
 ) -> list[Segment]:
     """Reach one deterministic fixed point for priority, setup and idle gaps."""
 
+    from backend.scheduler.resources import protected_mounting_segments
+
     protected = planning_protected_lot_ids(data, protected_lot_ids)
+    # Protected work of a frozen recalculation is evidence of a tool change.
+    fixed_mountings = protected_mounting_segments(data)
     current = sorted(
         [replace(segment) for segment in segments],
         key=lambda item: (item.day_idx, item.start_min, item.machine_id),
@@ -1749,6 +1761,7 @@ def _stabilize_earliest_legal_starts(
         _remove_redundant_retained_tool_setups(
             current,
             protected_lot_ids=protected,
+            fixed_segments=fixed_mountings,
         )
         if _segment_schedule_signature(current) == before_signature:
             break
@@ -4215,7 +4228,8 @@ def schedule_all(
     from backend.scheduler.resources import protected_mounting_segments
 
     if has_quantity_releases(lots):
-        segments, lots = schedule_quantity_releases(lots, data, config)
+        notes: list[str] = []
+        segments, lots = schedule_quantity_releases(lots, data, config, notes=notes)
         # Close-out: a setup the campaign builder could not avoid at allocation
         # time but that a later placement made redundant (same tool still
         # mounted) is not a physical tool change.
@@ -4237,6 +4251,7 @@ def schedule_all(
                 # The builder's plan was already validated: keep it rather
                 # than fail the recalculation over an optional clean-up.
                 logger.warning("Fecho de setups retidos rejeitado: %s", error)
+                notes.append(CLOSEOUT_REJECTED_WARNING)
                 for segment, start, setup, run_setup in built:
                     segment.start_min, segment.setup_min = start, setup
                     segment.run_setup_min = run_setup
@@ -4248,7 +4263,8 @@ def schedule_all(
         return ScheduleResult(
             segments=segments, lots=lots, score=score,
             time_ms=(time.perf_counter() - t0) * 1000,
-            warnings=journal.to_warnings(),
+            # Builder notes first: the API shows only the first warnings.
+            warnings=[*notes, *journal.to_warnings()],
             operator_alerts=compute_operator_alerts(segments, data, config),
             journal=journal.to_dicts(),
             gate_report=build_gate_report(
@@ -4603,6 +4619,7 @@ def schedule_all(
     final_segments = _remove_redundant_retained_tool_setups(
         final_segments,
         protected_lot_ids=set(data.preserved_lot_proofs),
+        fixed_segments=protected_mounting_segments(data),
     )
 
     # ``compact_enabled`` remains serializable for old plans. The historical
@@ -4769,6 +4786,7 @@ def schedule_all(
     final_segments = _remove_redundant_retained_tool_setups(
         final_segments,
         protected_lot_ids=set(data.preserved_lot_proofs),
+        fixed_segments=protected_mounting_segments(data),
     )
     if sum(segment.setup_min for segment in final_segments) < setup_before_cleanup:
         # This late cleanup changes the physical duration. Close the released

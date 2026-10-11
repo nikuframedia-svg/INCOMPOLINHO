@@ -1794,13 +1794,22 @@ class TestScheduleAll:
 
         assert len(lots) == 2
         assert all(lot.twin_outputs == [(op_a.id, "A", 1000), (op_b.id, "B", 1000)] for lot in lots)
-        b_milestones = [
-            output
+        # Per delivery (material version 2): the first cycle's 200 extra B
+        # pieces cover part of the day-4 delivery; the second cycle covers the
+        # rest of it plus 400 of B surplus. No B delivery is counted twice.
+        b_outputs = [
+            [
+                (output["customer_delivery_day"], output["qty"],
+                 bool(output.get("is_economic_surplus")))
+                for output in lot.output_milestones or []
+                if output["op_id"] == op_b.id
+            ]
             for lot in lots
-            for output in lot.output_milestones or []
-            if output["op_id"] == op_b.id
         ]
-        assert sorted(output["customer_delivery_day"] for output in b_milestones) == [1, 4]
+        assert b_outputs == [
+            [(1, 800, False), (4, 200, False)],
+            [(4, 600, False), (4, 400, True)],
+        ]
 
         result = schedule_all(data)
         urgent = min(result.lots, key=lambda lot: (lot.production_due_day, lot.id))

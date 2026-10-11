@@ -34,7 +34,7 @@ from backend.scheduler.improvement import (
 )
 from backend.scheduler.priority import run_priority_key
 from backend.scheduler.protection import protected_lot_ids
-from backend.scheduler.resources import clone_run_for_machine
+from backend.scheduler.resources import clone_run_for_machine, protected_mounting_segments
 from backend.scheduler.setup_identity import (
     fixed_mounting_gaps,
     lot_setup_identity,
@@ -502,6 +502,8 @@ def _local_stay_proposals(
 
     from backend.scheduler.scheduler import _remove_redundant_retained_tool_setups
 
+    # Protected work of a frozen recalculation is evidence of a tool change.
+    fixed_mountings = protected_mounting_segments(data)
     subject = hop.subject()
     displaced, reason = _local_displaced_runs(
         hop, segments, run_map, protected, data, config,
@@ -534,6 +536,7 @@ def _local_stay_proposals(
         candidate = _remove_redundant_retained_tool_setups(
             [replace(segment) for segment in state_segments],
             protected_lot_ids=protected,
+            fixed_segments=fixed_mountings,
         )
         setups = physical_setups(candidate)
         if setups.count > current_setups.count or setups.minutes > current_setups.minutes:
@@ -564,6 +567,8 @@ def consolidation_proposals(
     from backend.scheduler.scheduler import _remove_redundant_retained_tool_setups
 
     protected = protected_lot_ids(data)
+    # Protected work of a frozen recalculation is evidence of a tool change.
+    fixed_mountings = protected_mounting_segments(data)
     run_map = _resolve_runs(segments, lots, None)
     # A third machine can release shared operators or setup crews. Until the
     # complete dependency closure is known, any state change invalidates skips.
@@ -651,6 +656,7 @@ def consolidation_proposals(
             candidate = _remove_redundant_retained_tool_setups(
                 [replace(segment) for segment in state_segments],
                 protected_lot_ids=protected,
+                fixed_segments=fixed_mountings,
             )
             setups = physical_setups(candidate)
             if setups.count > current_setups.count or setups.minutes > current_setups.minutes:

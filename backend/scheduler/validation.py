@@ -1176,6 +1176,12 @@ def _duplicate_twin_output_qty(lots: list[Lot]) -> int:
         for output in lot.output_milestones or []:
             if bool(output.get("is_coproduced_surplus")):
                 continue
+            # Per-delivery twin outputs (material version 2, Fase B2): carry-
+            # forward legitimately splits one delivery over several cycles,
+            # like any economic lot. Their totals per delivery are reconciled
+            # by the source contract (canonical obligations) and demand coverage.
+            if int(output.get("quantity_material_version") or 0) >= 2:
+                continue
             qty = int(output.get("qty", 0) or 0)
             if qty <= 0:
                 continue

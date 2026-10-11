@@ -31,7 +31,7 @@ from backend.scheduler.canonical import (
 from backend.scheduler.lot_sizing import create_lots
 from backend.scheduler.types import Lot, ScheduleResult, Segment
 from backend.types import CommittedSupply, EngineData, EOp, MachineInfo
-from tests.test_delivery_views_agree import FIXTURES, OP_ID, START
+from tests.test_delivery_views_agree import FIXTURES, OP_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 REV121 = ROOT / "tests" / "fixtures" / "private" / "rev121.json.gz"
@@ -164,8 +164,19 @@ def test_rev121_validation_identical_with_cache_on_and_off(rev121):
 
     data, config, result = rev121
     view = result_validation_data(data, result)
-    for kwargs in ({}, {"require_current_material": True}):
-        assert _violations_both_ways(result.segments, result.lots, view, config, **kwargs) == []
+    assert _violations_both_ways(result.segments, result.lots, view, config) == []
+    # Revision 121 was saved under material version 1 (twin cycles released
+    # whole). Under the current contract (Fase B2) only its twin cycles break
+    # their per-delivery windows, so it is a legacy plan to rebuild.
+    from backend.scheduler.canonical import legacy_material_plan
+
+    current = _violations_both_ways(
+        result.segments, result.lots, view, config, require_current_material=True,
+    )
+    twins = {lot.id for lot in result.lots if lot.is_twin}
+    assert current and {item["field"] for item in current} == {"material_quantity"}
+    assert {item["lot_id"] for item in current} <= twins
+    assert legacy_material_plan(result.lots, view, config)
     off = validate_plan(result.segments, view, config, lots=result.lots)
     with planning_scope(timeout_s=120.0):
         on = validate_plan(result.segments, view, config, lots=result.lots)

@@ -15,6 +15,25 @@ the ISOP demand and the factory calendar):
   and is back ``lead`` working days later (never at the end of the lot).
 - Explicit stock in an order (``order_qty - |NP|``) is served from the
   opening stock first; net NP never deducts stock twice.
+- Twin cycles: each side is its own SKU, served from that side's pieces
+  (``twin_outputs``) like any other production.
+
+Material window (``oracle_window_violations``, AGENTS §2 "Janela por
+entrega", Fase B2): the release ``R`` of every delivery is recomputed here
+from its customer day and the operation's subcontract lead and buffer
+(``R = M - 5`` working days, ``M`` the customer day or the planned dispatch).
+Of a lot, only the quantity of deliveries with ``R <= d`` may be set up for or
+produced by day ``d``; the economic surplus takes the ``R`` of the last
+delivery its side covers (never a shared cycle ``R``). Which deliveries a lot
+covers is rebuilt here from the ISOP demand, first in first out over the
+lots of each operation, with the quantity each side really makes
+(``twin_outputs``); the lot's own delivery days, surplus flags and pair
+claims are never read. Twin cycle: on day ``d`` the cycle may make as many
+pieces as the larger of its two sides' released quantities. The cycle pair is
+the first delivery each side covers, when both exist with customer days at
+most ``ORACLE_TWIN_PAIR_GAP_DAYS`` apart; only that pair shares ``min(R)``.
+Co-produced stock (a side with no delivery of its own in the cycle) never
+drives the release: the cycle follows the other side.
 """
 
 from __future__ import annotations
@@ -207,3 +226,197 @@ def oracle_first_rupture(segments, lots, data) -> dict[str, int | None]:
         op_id: next((c.due_day for c in checkpoints if c.late), None)
         for op_id, checkpoints in oracle_checkpoints(segments, lots, data).items()
     }
+
+
+# ── Material window per delivery (independent of lot sizing's dates) ─────
+
+
+def _on_or_previous_workday(calendar: WorkCalendar, day: int) -> int:
+    while not calendar.is_workday(day):
+        day -= 1
+    return day
+
+
+def oracle_release_day(op, customer_day: int, calendar: WorkCalendar) -> int:
+    """``R`` of one delivery of ``op`` due on ``customer_day`` (AGENTS §2)."""
+
+    subcontracted, lead, buffer = _subcontract(op)
+    reference = int(customer_day)
+    if subcontracted:
+        latest = _on_or_previous_workday(calendar, calendar.subtract(reference, lead))
+        reference = calendar.subtract(latest, buffer)
+    return calendar.subtract(reference, 5)
+
+
+@dataclass
+class WindowViolation:
+    lot_id: str
+    day: int
+    produced: int  # cumulative (cycles for a twin lot) up to and including ``day``
+    allowed: int  # released by ``day``
+    setup_only: bool
+
+
+ORACLE_TWIN_PAIR_GAP_DAYS = 5  # AGENTS §2: deliveries of one cycle pair
+
+
+def _released(lot, releases: list[tuple[str, int, int]], day: int) -> int:
+    """Released quantity on ``day``: per side for a twin cycle, the larger."""
+
+    by_side: dict[str, int] = defaultdict(int)
+    for side, qty, release in releases:
+        if release <= day:
+            by_side[side] += qty
+    if not lot.is_twin:
+        return sum(by_side.values())
+    return max(by_side.values(), default=0)
+
+
+def _net_deliveries(op, data) -> list[list[int]]:
+    """``[customer day, qty]`` of every ISOP delivery of ``op``, in day order.
+
+    ``op.d`` is the net NP (the opening stock is already deducted from the
+    first order, so it is never deducted twice); a committed supply serves
+    the deliveries due on or after its available day, first in first out.
+    """
+
+    supplies = sorted(
+        (int(s.available_day), int(s.qty)) for s in data.committed_supplies
+        if s.op_id == op.id and s.qty > 0
+    )
+    available, next_supply = 0, 0
+    deliveries = []
+    for day, qty in enumerate(op.d):
+        while next_supply < len(supplies) and supplies[next_supply][0] <= day:
+            available += supplies[next_supply][1]
+            next_supply += 1
+        if qty <= 0:
+            continue
+        credit = min(int(qty), available)
+        available -= credit
+        if qty - credit > 0:
+            deliveries.append([day, int(qty) - credit])
+    return deliveries
+
+
+def _side_quantities(lot) -> list[tuple[str, int]]:
+    """Pieces of each side the lot makes (``twin_outputs``; else the lot)."""
+
+    if lot.is_twin and lot.twin_outputs:
+        return [(str(op_id), int(qty)) for op_id, _sku, qty in lot.twin_outputs]
+    return [(str(lot.op_id), int(lot.qty))]
+
+
+def oracle_coverage(lots, data) -> dict[str, dict[str, list[tuple[int | None, int]]]]:
+    """``{lot id: {side: [(customer day, qty), ...]}}`` rebuilt from the ISOP.
+
+    The surplus of a side is listed last, with day ``None``.
+
+    Each operation's deliveries are served first in first out by its lots in
+    the plan's lot order (earlier lots first), each with the quantity it
+    really makes of that side. The lot's own delivery, surplus and co-produced
+    labels are never read; what a side makes beyond its covered deliveries is
+    its surplus.
+    """
+
+    ops = {op.id: op for op in data.ops}
+    pending: dict[str, list[list[int]]] = {}
+    coverage: dict[str, dict[str, list[tuple[int | None, int]]]] = {}
+    for lot in lots:
+        sides = coverage.setdefault(lot.id, {})
+        for side, qty in _side_quantities(lot):
+            op = ops.get(side)
+            if op is None:
+                continue
+            queue = pending.setdefault(side, _net_deliveries(op, data))
+            covered = sides.setdefault(side, [])
+            while qty > 0 and queue:
+                take = min(qty, queue[0][1])
+                covered.append((queue[0][0], take))
+                qty -= take
+                queue[0][1] -= take
+                if queue[0][1] == 0:
+                    queue.pop(0)
+            if qty > 0:
+                covered.append((None, qty))  # surplus beyond the visible demand
+    return coverage
+
+
+def oracle_lot_releases(lot, data, calendar=None, lots=None) -> list[tuple[str, int, int]]:
+    """``(side, qty, R)`` of every quantity of ``lot`` that drives its release.
+
+    The coverage of each side is rebuilt from the ISOP (``oracle_coverage``
+    over ``lots``, default ``[lot]``; pass the plan's lots so earlier lots of
+    the operation consume their deliveries first). ``R`` is recomputed from
+    each covered delivery's customer day. The surplus of a side takes the own
+    ``R`` of the last delivery that side covers; a side covering no delivery
+    is co-produced stock and never drives the release. Twin cycle pair: the
+    first delivery each side covers, when both exist with customer days at
+    most ``ORACLE_TWIN_PAIR_GAP_DAYS`` apart, share ``min(R)``. No recorded
+    date, surplus flag or pair claim of the lot is read.
+    """
+
+    calendar = calendar or WorkCalendar(data)
+    ops = {op.id: op for op in data.ops}
+    plan_lots = list(lots) if lots is not None else [lot]
+    if all(other.id != lot.id for other in plan_lots):
+        plan_lots.append(lot)
+    sides = oracle_coverage(plan_lots, data).get(lot.id, {})
+    own: dict[str, list[tuple[int, int, bool]]] = {}
+    for side, covered in sides.items():
+        rows, last = [], None
+        for day, qty in covered:
+            if day is not None:
+                last = oracle_release_day(ops[side], day, calendar)
+                rows.append((qty, last, False))
+            elif last is not None:
+                rows.append((qty, last, True))
+        own[side] = rows
+    firsts = {
+        side: next(day for day, _qty in covered if day is not None)
+        for side, covered in sides.items()
+        if any(day is not None for day, _qty in covered)
+    }
+    if (
+        lot.is_twin and len(firsts) == 2
+        and max(firsts.values()) - min(firsts.values()) <= ORACLE_TWIN_PAIR_GAP_DAYS
+    ):
+        pair_release = min(own[side][0][1] for side in firsts)
+        for side in firsts:
+            qty, _release, surplus = own[side][0]
+            own[side][0] = (qty, pair_release, surplus)
+    return [(side, qty, release) for side, rows in own.items() for qty, release, _s in rows]
+
+
+def oracle_window_violations(segments, lots, data) -> list[WindowViolation]:
+    """Segments that prepare or make pieces before their delivery's ``R``.
+
+    Lots without per-delivery outputs (``quantity_material_version``) are not
+    judged here. Production counts on the segment's day; a setup on a day
+    when nothing more is released is a violation too.
+    """
+
+    calendar = WorkCalendar(data)
+    by_lot = defaultdict(list)
+    for segment in segments:
+        if segment.end_min > segment.start_min:
+            by_lot[segment.lot_id].append(segment)
+    result: list[WindowViolation] = []
+    for lot in lots:
+        outputs = list(lot.output_milestones or [])
+        if not outputs or not any(o.get("quantity_material_version") for o in outputs):
+            continue
+        releases = oracle_lot_releases(lot, data, calendar, lots)
+        produced = 0
+        for segment in sorted(by_lot.get(lot.id, []), key=lambda s: (s.day_idx, s.start_min)):
+            if lot.is_twin and segment.twin_outputs:
+                made = max(int(q) for _op, _sku, q in segment.twin_outputs)
+            else:
+                made = int(segment.qty)
+            allowed = _released(lot, releases, segment.day_idx)
+            setup_only = segment.setup_min > 0 and produced >= allowed and produced < lot.qty
+            produced += made
+            if produced > allowed or setup_only:
+                result.append(WindowViolation(lot.id, segment.day_idx, produced, allowed,
+                                              setup_only))
+    return result

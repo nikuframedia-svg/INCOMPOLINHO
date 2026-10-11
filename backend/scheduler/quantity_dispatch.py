@@ -8,11 +8,14 @@ lot.
 
 - **Portions** (``material_portions``): consecutive outputs released on the
   same day; the economic surplus closes the last portion. A portion uses the
-  milestones and the target start of its own deliveries.
+  milestones and the target start of its own deliveries. A twin cycle has one
+  portion per increment of its release curve (Fase B2): each side makes the
+  portion's cycles, in one execution.
 - **Ready queue:** portion ``k`` of a lot is ready only after portion ``k-1``
   is placed, so the first-in-first-out assignment of pieces to deliveries
   stays valid. The most urgent ready portion (``lot_priority_key``, with the
-  quantity of the customer delivery it serves) is placed next.
+  quantity of the customer delivery it serves among those due on its due
+  day) is placed next.
 - **Deliveries first** (AGENTS §1.2): a portion's delays are measured against
   the production due day of each of its deliveries. A less urgent portion due
   the same day goes first when that saves its delivery and costs no delivery
@@ -32,15 +35,20 @@ lot.
   more over all its remaining portions, measured against its position before
   the chain of continuations started (small steps never add up past 60 min).
 - **Retained tool:** the allocator does not insert other work into an idle gap
-  on which a setup-free continuation depends. The only exception: the inserted
-  portion gains 60 min or more and every portion of the dependent campaign
-  loses less than 60 min (it is placed again, with its setup).
+  on which a setup-free continuation depends, unless the insertion is worth a
+  break (``_break_accepted``): the dependent campaign is placed again, with
+  its setup. A break is refused only when some delivery gets later (the
+  dependent portions, the portions of those lots not placed yet, the inserted
+  lot and its later portions), or, with no delivery of the inserted lot
+  getting earlier, when that lot gains less than 60 min, or some portion
+  loses 60 min or more and the inserted lot gains less than that (rule 2).
 - Portions of one lot that run back to back share one run; portion boundaries
   remain segment boundaries.
 - Protected work of a frozen recalculation (``protected_mounting_segments``)
   is physical evidence of the mounted tool.
 - **Fallback:** if the campaign builder fails, the previous behaviour (one run
-  per portion, no continuation) is tried before the recalculation fails.
+  per portion, no continuation) is tried before the recalculation fails, and
+  the plan carries a plain warning (``FALLBACK_WARNING``).
 """
 
 from __future__ import annotations
@@ -54,7 +62,7 @@ from backend.config.shifts import ordered_shifts
 from backend.planning_control import planning_checkpoint
 from backend.scheduler.alternative_repair import _schedule_run_earliest
 from backend.scheduler.lot_sizing import _aggregate_milestones
-from backend.scheduler.material_quantities import material_portions
+from backend.scheduler.material_quantities import material_portions, releases_in_portions
 from backend.scheduler.policy import ANTICIPATION_TOLERANCE_MIN, anticipation_compare
 from backend.scheduler.priority import lot_priority_key
 from backend.scheduler.resources import clone_run_for_machine, protected_mounting_segments
@@ -89,11 +97,12 @@ _KEEP = object()
 
 
 def has_quantity_releases(lots):
-    return any(
-        not lot.is_twin
-        and len({output.get("material_release_day") for output in lot.output_milestones or []}) > 1
-        for lot in lots
-    )
+    """Whether some lot releases its material in more than one portion.
+
+    Twin cycles count since Fase B2 (their release curve, AGENTS §2).
+    """
+
+    return any(releases_in_portions(lot) for lot in lots)
 
 
 def _run(lot, identity):
@@ -118,14 +127,25 @@ def _is_surplus(output: dict) -> bool:
     return bool(output.get("is_coproduced_surplus") or output.get("is_economic_surplus"))
 
 
-def _portion_lot(lot: Lot, qty: int, outputs: tuple[dict, ...], single: bool) -> Lot:
-    """The lot restricted to one portion: its quantity, deliveries and window."""
+def _portion_lot(
+    lot: Lot, qty: int, outputs: tuple[dict, ...], single: bool,
+    release_day: int | None = None,
+) -> Lot:
+    """The lot restricted to one portion: its quantity, deliveries and window.
+
+    A twin portion is ``qty`` cycles: each side makes ``qty`` pieces and the
+    time is one execution (the lot minutes in proportion, never a sum).
+    """
 
     if single:
         return copy.deepcopy(lot)
     trial = replace(lot, qty=qty, prod_min=lot.prod_min * qty / lot.qty)
+    if lot.twin_outputs:
+        trial.twin_outputs = [(op_id, sku, qty) for op_id, sku, _qty in lot.twin_outputs]
     for name, value in _aggregate_milestones(list(outputs)).items():
         setattr(trial, name, value)
+    if release_day is not None:
+        trial.material_release_day = int(release_day)
     trial.edd = int(trial.production_due_day)
     trial.original_edd = trial.delivery_day = int(trial.customer_delivery_day)
     trial.internal_deadline = int(trial.internal_target_day)
@@ -200,32 +220,36 @@ class _MachineOption:
 
 
 def _portion_delays(portion: _Portion, created: list[Segment]) -> tuple[int, ...]:
-    """Days late of each delivery of the portion (first-in-first-out pieces)."""
+    """Days late of each delivery of the portion (first-in-first-out pieces).
 
+    Each operation (each side of a twin cycle) serves its own deliveries.
+    """
+
+    lot = portion.lot
     ordered = sorted(
-        (segment for segment in created if segment.qty > 0),
-        key=lambda segment: (segment.day_idx, segment.end_min),
+        created, key=lambda segment: (segment.day_idx, segment.end_min),
     )
-    last_day = ordered[-1].day_idx if ordered else None
-    if portion.lot.is_twin:
-        # One cycle delivers every side together (until Fase B2).
-        due = portion.lot.production_due_day
-        if due is None:
-            return ()
-        return (max(0, int(last_day if last_day is not None else 10**6) - int(due)),)
+    made: dict[object, list[tuple[int, int]]] = defaultdict(list)
+    for segment in ordered:
+        for op_id, _sku, qty in segment.twin_outputs or [(lot.op_id, lot.sku, segment.qty)]:
+            if int(qty) > 0:
+                made[op_id].append((segment.day_idx, int(qty)))
+    last_day = max((day for items in made.values() for day, _qty in items), default=None)
+    needed: dict[object, int] = defaultdict(int)
+    position: dict[object, int] = defaultdict(int)
+    produced: dict[object, int] = defaultdict(int)
     delays: list[int] = []
-    needed = 0
-    position = 0
-    produced = 0
-    for output in portion.lot.output_milestones or []:
-        needed += int(output.get("qty") or 0)
+    for output in lot.output_milestones or []:
+        op_id = output.get("op_id") or lot.op_id
+        needed[op_id] += int(output.get("qty") or 0)
         if _is_surplus(output) or output.get("production_due_day") is None:
             continue
-        while position < len(ordered) and produced < needed:
-            produced += int(ordered[position].qty)
-            position += 1
-        if produced >= needed and position:
-            day = ordered[position - 1].day_idx
+        items = made.get(op_id, [])
+        while position[op_id] < len(items) and produced[op_id] < needed[op_id]:
+            produced[op_id] += items[position[op_id]][1]
+            position[op_id] += 1
+        if produced[op_id] >= needed[op_id] and position[op_id]:
+            day = items[position[op_id] - 1][0]
         else:
             day = last_day if last_day is not None else 10**6
         delays.append(max(0, int(day) - int(output["production_due_day"])))
@@ -238,6 +262,47 @@ def _later_delivery(candidate: tuple[int, ...], reference: tuple[int, ...]) -> b
     return any(after > before for after, before in zip(candidate, reference, strict=True))
 
 
+def _delays(placements: list[_Placement]) -> tuple[int, ...]:
+    return tuple(day for item in placements for day in item.delays)
+
+
+def _shift(before: _Placement, after: _Placement) -> float:
+    """Minutes ``after`` starts or ends later than ``before`` (the larger).
+
+    ``_shift(after, before)`` is then the gain of ``after`` over ``before``.
+    """
+
+    return max(after.start - before.start, after.end - before.end)
+
+
+def _break_accepted(
+    own: list[tuple[_Placement, _Placement]],
+    others: list[tuple[_Placement, _Placement]],
+) -> bool:
+    """Owner rule 2 for a retention break, once no delivery gets later.
+
+    ``own`` pairs (before, after) the inserted portion and the later portions
+    of its lot; ``others`` the dependent portions placed again and the
+    portions of those lots not placed yet. A break whose lot gets a delivery
+    earlier is always accepted (deliveries first, AGENTS §1.2). Otherwise the
+    inserted lot must gain 60 min or more, and if some portion loses 60 min
+    or more the inserted lot must gain at least as much: losses under the
+    tolerance never decide (AGENTS §1.3).
+    """
+
+    if any(
+        after < before
+        for old, new in own
+        for after, before in zip(new.delays, old.delays, strict=True)
+    ):
+        return True
+    gain = max(_shift(new, old) for old, new in own)
+    if gain < ANTICIPATION_TOLERANCE_MIN:
+        return False
+    loss = max((_shift(old, new) for old, new in [*own, *others]), default=0.0)
+    return loss < ANTICIPATION_TOLERANCE_MIN or gain >= loss
+
+
 def _order_id(output: dict) -> tuple[object, object]:
     return output.get("op_id") or output.get("sku"), output.get("customer_delivery_day")
 
@@ -247,8 +312,6 @@ def _order_quantities(lots: list[Lot]) -> dict[tuple[object, object], int]:
 
     totals: dict[tuple[object, object], int] = defaultdict(int)
     for lot in lots:
-        if lot.is_twin:
-            continue
         for output in lot.output_milestones or []:
             if not _is_surplus(output):
                 totals[_order_id(output)] += int(output.get("qty") or 0)
@@ -262,7 +325,7 @@ class _Chain:
         self.base = segments
         self._before: dict[str, _MachineOption | None] = {}
 
-    def before(self, builder: "_CampaignBuilder", lot_id: str) -> "_MachineOption | None":
+    def before(self, builder: _CampaignBuilder, lot_id: str) -> _MachineOption | None:
         if lot_id not in self._before:
             self._before[lot_id] = builder.best_outlook(lot_id, self.base)
         return self._before[lot_id]
@@ -280,7 +343,9 @@ def _machine_better(candidate: _MachineOption, best: _MachineOption, primary: st
         return (candidate.setups, candidate.setup_min) < (best.setups, best.setup_min)
     if candidate.windows != best.windows:
         return tuple(candidate.windows) < tuple(best.windows)
-    return (candidate.machine != primary, candidate.machine) < (best.machine != primary, best.machine)
+    return (candidate.machine != primary, candidate.machine) < (
+        best.machine != primary, best.machine,
+    )
 
 
 class _CampaignBuilder:
@@ -298,7 +363,9 @@ class _CampaignBuilder:
             parts = material_portions(lot)
             portions = []
             for part in parts:
-                trial = _portion_lot(lot, part.qty, part.outputs, len(parts) == 1)
+                trial = _portion_lot(
+                    lot, part.qty, part.outputs, len(parts) == 1, part.material_release_day,
+                )
                 portions.append(_Portion(
                     lot.id, part.index, trial, self.portion_key(trial),
                     lot_setup_identity(trial), trial.material_release_day,
@@ -332,15 +399,17 @@ class _CampaignBuilder:
         pieces are fungible). Ranking it by its share would put part of a
         large delivery behind a smaller delivery due the same day and make
         the large one late for nothing; the delivery's own quantity is used.
+        Only the deliveries due on the key's own due day count: a larger
+        delivery due later never ranks a portion among those due earlier.
         """
 
         key = lot_priority_key(trial)
-        if trial.is_twin:
-            return key
         served = [
             self.order_qty.get(_order_id(output), 0)
             for output in trial.output_milestones or []
             if not _is_surplus(output)
+            and output.get("production_due_day") is not None
+            and int(output["production_due_day"]) == key[0]
         ]
         if not served:
             return key
@@ -481,7 +550,7 @@ class _CampaignBuilder:
             return machines[0], None
         return best.machine, best.first
 
-    def loses(self, portion: _Portion, placement: _Placement, chain: "_Chain") -> bool:
+    def loses(self, portion: _Portion, placement: _Placement, chain: _Chain) -> bool:
         """Would the more urgent lot of ``portion`` lose to ``placement``?
 
         Measured over every remaining portion of that lot, on its best
@@ -492,7 +561,10 @@ class _CampaignBuilder:
         """
 
         machine = placement.machine
-        if machine not in self.machines(portion.lot_id) or self.release_abs(portion) >= placement.end:
+        if (
+            machine not in self.machines(portion.lot_id)
+            or self.release_abs(portion) >= placement.end
+        ):
             return False
         before = chain.before(self, portion.lot_id)
         if before is None:
@@ -508,7 +580,7 @@ class _CampaignBuilder:
             return True
         return anticipation_compare(after.windows, before.windows) > 0
 
-    def vetoed(self, candidate: _Portion, placement: _Placement, chain: "_Chain") -> bool:
+    def vetoed(self, candidate: _Portion, placement: _Placement, chain: _Chain) -> bool:
         return any(
             self.loses(other, placement, chain)
             for other in self.ready()
@@ -597,8 +669,9 @@ class _CampaignBuilder:
                 return False  # a later portion of that lot already follows it
         removed = {id(segment) for item in tail for segment in item.created}
         base = [segment for segment in self.segments if id(segment) not in removed]
-        inserted = self.place(placement.portion, placement.machine, base)
-        if inserted is None or anticipation_compare([inserted.window], [placement.window]) >= 0:
+        portion = placement.portion
+        inserted = self.place(portion, placement.machine, base)
+        if inserted is None or _later_delivery(inserted.delays, placement.delays):
             return False
         segments = [*base, *inserted.created]
         cursors: dict[str, float | None] = {}
@@ -607,24 +680,68 @@ class _CampaignBuilder:
             if lot_id not in cursors:
                 before = self.placed.get((lot_id, item.portion.index - 1))
                 cursors[lot_id] = before.end if before is not None else None
+        # Every placement the break changes, as (before, after) pairs.
+        pairs: list[tuple[_Placement, _Placement]] = []
         replaced = []
         for item in tail:
             lot_id = item.portion.lot_id
             again = self.place(item.portion, item.machine, segments, cursor=cursors[lot_id])
-            if (
-                again is None
-                or _later_delivery(again.delays, item.delays)
-                or anticipation_compare([again.window], [item.window]) > 0
-            ):
+            if again is None or _later_delivery(again.delays, item.delays):
                 return False
             segments.extend(again.created)
             cursors[lot_id] = again.end
             replaced.append(again)
+            pairs.append((item, again))
+        # Deliveries first: the portions of those lots not placed yet must not
+        # get later either (the tail now ends later).
+        for lot_id in dict.fromkeys(item.portion.lot_id for item in tail):
+            machine = self.locked[lot_id]
+            kept = self._unplaced(lot_id, machine, self.segments, self.cursor.get(lot_id))
+            if kept is None:
+                continue
+            moved = self._unplaced(lot_id, machine, segments, cursors[lot_id])
+            if moved is None or _later_delivery(_delays(moved), _delays(kept)):
+                return False
+            pairs.extend(zip(kept, moved, strict=True))
+        # The inserted lot's own later portions follow it: their deliveries
+        # count as gains, and none may get later.
+        own = [(placement, inserted)]
+        after = portion.index + 1
+        kept = self._unplaced(
+            portion.lot_id, placement.machine, [*self.segments, *placement.created],
+            placement.end, start=after,
+        )
+        if kept:
+            moved = self._unplaced(
+                portion.lot_id, placement.machine, segments, inserted.end, start=after,
+            )
+            if moved is None or _later_delivery(_delays(moved), _delays(kept)):
+                return False
+            own.extend(zip(kept, moved, strict=True))
+        if not _break_accepted(own, pairs):
+            return False
         self.segments = base
         self.commit(inserted)
         for again in replaced:
             self.commit(again)
         return True
+
+    def _unplaced(
+        self, lot_id, machine, segments, cursor, *, start: int | None = None,
+    ) -> list[_Placement] | None:
+        """The lot's portions not placed yet (from ``start``), placed in order."""
+
+        trial_segments = list(segments)
+        placements: list[_Placement] = []
+        first = self.next_index[lot_id] if start is None else start
+        for portion in self.portions[lot_id][first:]:
+            placed = self.place(portion, machine, trial_segments, cursor=cursor)
+            if placed is None:
+                return None
+            trial_segments.extend(placed.created)
+            cursor = placed.end
+            placements.append(placed)
+        return placements
 
     def continue_campaign(self, head: _Placement) -> None:
         chain = head
@@ -789,13 +906,22 @@ class _CampaignBuilder:
         return segments, result_lots
 
 
-def schedule_quantity_releases(lots, data, config):
+FALLBACK_WARNING = (
+    "Não foi possível juntar a produção em campanhas por ferramenta. O plano "
+    "monta a ferramenta uma vez por cada parte de entrega e pode ter mais "
+    "mudanças de ferramenta (setups). As entregas e as datas do material "
+    "continuam verificadas."
+)
+
+
+def schedule_quantity_releases(lots, data, config, *, notes: list[str] | None = None):
     """Schedule released portions as campaigns, using the shared allocator.
 
     Temporary portions are never returned as new lots. Each economic lot keeps
     one chosen machine, its full quantity and its original delivery identity.
     A portion that needs a new mounting starts a new physical run; one that
-    continues a mounted tool joins that run without setup.
+    continues a mounted tool joins that run without setup. ``notes`` receives
+    the plain warning shown with the plan when the fallback is used.
     """
 
     try:
@@ -805,9 +931,12 @@ def schedule_quantity_releases(lots, data, config):
     except ValueError as error:  # includes PlanValidationError; never a timeout
         # A builder defect must not turn into a failed recalculation while the
         # previous behaviour (one run per portion) still gives a valid plan.
+        # The planner sees it with the plan, not only in the server log.
         logger.warning(
             "Campanhas por partes falharam (%s); plano por partes separadas.", error,
         )
+        if notes is not None:
+            notes.append(FALLBACK_WARNING)
     segments, result_lots = _CampaignBuilder(lots, data, config, campaigns=False).build()
     assert_plan_valid(segments, data, config, lots=result_lots)
     return segments, result_lots
