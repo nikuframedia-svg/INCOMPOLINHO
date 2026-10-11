@@ -180,6 +180,10 @@ class EngineData:
     setup_crew_reservations: list[dict] = field(default_factory=list)
     # Physical mounting evidence for protected work in a residual calculation.
     protected_mounting_segments: list[dict] = field(default_factory=list)
+    # Residual calculation only (AGENTS §2, rule 4): the rest of each started
+    # lot, already sized, which lot sizing returns as it is (the whole lot is
+    # credited in ``committed_supplies``, so it is never sized twice).
+    residual_lot_remainders: list[dict] = field(default_factory=list)
     current_machine_states: list[CurrentMachineState] = field(default_factory=list)
     input_warnings: list[str] = field(default_factory=list)
     committed_supplies: list[CommittedSupply] = field(default_factory=list)

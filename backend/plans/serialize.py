@@ -57,6 +57,8 @@ def _jsonable(value: Any) -> Any:
         # an existing durable plan merely because the application was upgraded.
         if isinstance(value, EngineData) and not value.protected_mounting_segments:
             raw.pop("protected_mounting_segments", None)
+        if isinstance(value, EngineData) and not value.residual_lot_remainders:
+            raw.pop("residual_lot_remainders", None)
         return _jsonable(raw)
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}

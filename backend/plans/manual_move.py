@@ -823,7 +823,7 @@ def _allocate_existing_lots(
     if baseline_result is not None:
         protected_segments, protected_lots, _ = _protected_lots(
             baseline_result, _current_planning_day(candidate_data, config),
-            candidate_data, config,
+            candidate_data, config, mount_suppliers=True,
         )
         _install_frozen_reservations(
             residual_data, protected_segments, protected_lots,

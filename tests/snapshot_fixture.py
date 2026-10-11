@@ -44,13 +44,8 @@ class FrozenSnapshot:
         return view, self.freeze_day * 1440
 
 
-def load_snapshot(name: str, *, clock: str | None = None) -> FrozenSnapshot:
-    """Load a frozen snapshot, protected as of the manifest date.
-
-    ``clock`` replays the plan as it stood at an earlier date: protection
-    proofs recorded later are dropped from this detached copy and recomputed
-    for that date (plan §8.1: history is never released in the real plan).
-    """
+def load_payload(name: str) -> tuple[dict, dict]:
+    """``(manifest, payload)`` of a frozen snapshot; skips when it is absent."""
     manifest = json.loads((FIXTURES / "snapshots" / f"{name}.json").read_text())
     path = FIXTURES.parent.parent / manifest["private_fixture"]
     if not path.exists():
@@ -59,6 +54,17 @@ def load_snapshot(name: str, *, clock: str | None = None) -> FrozenSnapshot:
     assert hashlib.sha256(raw.encode("utf-8")).hexdigest() == manifest["payload_sha256"]
     payload = json.loads(raw)
     assert_snapshot_integrity(payload)
+    return manifest, payload
+
+
+def load_snapshot(name: str, *, clock: str | None = None) -> FrozenSnapshot:
+    """Load a frozen snapshot, protected as of the manifest date.
+
+    ``clock`` replays the plan as it stood at an earlier date: protection
+    proofs recorded later are dropped from this detached copy and recomputed
+    for that date (plan §8.1: history is never released in the real plan).
+    """
+    manifest, payload = load_payload(name)
     restored = deserialize_snapshot(payload)
     data, config, result = restored["engine_data"], restored["config"], restored["result"]
     freeze_day = manifest["freeze_day"]

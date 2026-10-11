@@ -168,6 +168,7 @@ def test_empty_mounting_context_preserves_legacy_engine_identity():
     data = scenario()
     legacy = asdict(data)
     legacy.pop("protected_mounting_segments")
+    legacy.pop("residual_lot_remainders")
     assert value_fingerprint(data) == value_fingerprint(legacy)
 
 

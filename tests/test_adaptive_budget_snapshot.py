@@ -1,12 +1,13 @@
 """Compare cached and cold searches against the same private, frozen plan."""
 
 import copy
+from collections import Counter
 
 from backend.planning_control import planning_scope
-from backend.plans.frozen import compact_preserving_started_lots
+from backend.plans.frozen import _protected_plan, compact_preserving_started_lots
 from backend.plans.serialize import schedule_fingerprint
 from backend.scheduler import alternative_repair, canonical, improvement
-from backend.scheduler.improvement import contract_verdict
+from backend.scheduler.improvement import _segment_physical_row, contract_verdict
 from backend.scheduler.validation import plan_anchor_violations, validate_plan
 from tests.snapshot_fixture import load_snapshot
 
@@ -34,11 +35,15 @@ def test_cached_real_search_matches_cold_search_and_preserves_history(monkeypatc
                                 candidate_lots=result.lots, reference_lots=before.lots).admissible
         assert canonical.production_lot_obligations(result.lots) == (
             canonical.production_lot_obligations(before.lots))
+        # History is what started (AGENTS §2, rule 4): those segments and the
+        # started lots themselves are unchanged; their later portions may move.
+        started = _protected_plan(before, snapshot.freeze_day, data, config)
+        rows = Counter(_segment_physical_row(s) for s in result.segments)
+        assert not Counter(_segment_physical_row(s) for s in started.segments) - rows
         protected = {lot.id for lot in snapshot.protected_lots}
-        assert schedule_fingerprint(
-            [s for s in result.segments if s.lot_id in protected],
-            [lot for lot in result.lots if lot.id in protected],
-        ) == schedule_fingerprint(snapshot.protected_segments, snapshot.protected_lots)
+        assert {lot.id: lot for lot in result.lots if lot.id in protected} == {
+            lot.id: lot for lot in before.lots if lot.id in protected
+        }
         assert result.improvement_report["stop_reason"] == "search_limit"
         assert result.improvement_report["moves_accepted"] >= 3
         assert (snapshot.data, snapshot.config, snapshot.result) == original

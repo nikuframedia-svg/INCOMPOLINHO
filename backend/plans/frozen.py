@@ -1,10 +1,27 @@
-"""Preserve whole lots started before the current planning day."""
+"""Preserve what has started before the current planning day (AGENTS §2, rule 4).
+
+A lot that has started keeps exactly the production that started: every
+segment before the planning day plus the run that is mounted at that boundary
+and continues without a new setup. Its later portions stay in the residual
+problem and are replanned, but the lot is never re-sized: the residual
+receives the rest of the same economic lot as a pre-sized lot
+(``EngineData.residual_lot_remainders``) while the whole lot is credited as
+committed supply, so lot sizing never sizes it a second time. The complete
+plan joins both parts back into the original lot.
+
+Frozen work never depends on movable work: a frozen segment that continues a
+mounted tool without setup keeps its mount supplier frozen too (with the
+earlier production of that supplier's lot).
+"""
 
 from __future__ import annotations
 
 import copy
 import json
 import time
+from collections import Counter
+from dataclasses import asdict, dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -17,17 +34,40 @@ class NoValidCandidateError(ValueError):
 
 
 def preserved_lots_warning(started: int, freeze_day: int) -> str:
-    """One wording for every path that keeps started lots unchanged."""
+    """One wording for every path that keeps started production unchanged."""
 
     if started == 1:
         return (
-            f"Plano anterior preservado: 1 lote iniciado antes do dia {freeze_day} "
-            "mantido sem alterações."
+            f"Plano anterior preservado: 1 lote iniciado antes do dia {freeze_day}; "
+            "a produção já iniciada mantém-se sem alterações."
         )
     return (
-        f"Plano anterior preservado: {started} lotes iniciados antes do dia {freeze_day} "
-        "mantidos sem alterações."
+        f"Plano anterior preservado: {started} lotes iniciados antes do dia {freeze_day}; "
+        "a produção já iniciada mantém-se sem alterações."
     )
+
+
+@dataclass
+class ProtectedPlan:
+    """What a replan keeps exactly as in the baseline (AGENTS §2, rule 4).
+
+    ``segments``: every frozen segment (whole lots and the started part of
+    partial lots). ``lots``: lots kept whole (all their production started,
+    manual anchors, lots of an older material contract, mount suppliers).
+    ``partial``: ``(original lot, remainder lot)`` of started lots whose later
+    portions are replanned; the remainder is the rest of the same economic
+    lot, never re-sized. ``started``: lots with production before the planning
+    day, for the plan warning.
+    """
+
+    segments: list = dataclass_field(default_factory=list)
+    lots: list = dataclass_field(default_factory=list)
+    partial: list = dataclass_field(default_factory=list)
+    anchored: set = dataclass_field(default_factory=set)
+    started: set = dataclass_field(default_factory=set)
+
+    def __bool__(self) -> bool:
+        return bool(self.lots or self.partial)
 
 def _current_planning_day(engine_data, config, *, now: datetime | None = None) -> int:
     workdays = list(getattr(engine_data, "workdays", []) or [])
@@ -73,7 +113,12 @@ _HISTORICAL_LOT_FIELDS = (
 def historical_schedule_changes(
     before: dict, after: dict, *, today: str | None = None,
 ) -> list[str]:
-    """Detect changed whole lots that had started before today in this dataset."""
+    """Started lots whose history changed (same dataset), or new past production.
+
+    History is what happened before today: the production of a started lot
+    before today and the lot itself (never re-sized). Its later portions may
+    be replanned (AGENTS §2, rule 4).
+    """
 
     before_id = str((before.get("dataset_info") or {}).get("id") or "")
     after_id = str((after.get("dataset_info") or {}).get("id") or "")
@@ -98,19 +143,22 @@ def historical_schedule_changes(
     }
     def lot_rows(snapshot: dict, lot_id: str):
         snapshot_days = list((snapshot.get("engine_data") or {}).get("workdays") or [])
+
+        def calendar_date(segment):
+            day = int(segment["day_idx"])
+            return str(snapshot_days[day])[:10] if 0 <= day < len(snapshot_days) else None
+
         segments = [
             json.dumps(
                 {
                     **{field: segment.get(field) for field in _HISTORICAL_SEGMENT_FIELDS},
-                    "calendar_date": (
-                        str(snapshot_days[int(segment["day_idx"])])[:10]
-                        if 0 <= int(segment["day_idx"]) < len(snapshot_days) else None
-                    ),
+                    "calendar_date": calendar_date(segment),
                 },
                 sort_keys=True, separators=(",", ":"),
             )
             for segment in snapshot.get("segments", [])
             if segment.get("lot_id") == lot_id
+            and (calendar_date(segment) is None or calendar_date(segment) < current_day)
         ]
         lots = [
             json.dumps(
@@ -159,8 +207,15 @@ def _honoured_anchor_lot_ids(baseline_result, engine_data, config) -> set[str]:
     }
 
 
-def _protected_lots(baseline_result, freeze_day: int, engine_data, config):
+def _protected_lots(
+    baseline_result, freeze_day: int, engine_data, config, *, mount_suppliers: bool = False,
+):
     """Started lots plus manually anchored lots, kept exactly as in the baseline.
+
+    Whole lots (manual moves). ``mount_suppliers``: for a calculation that
+    re-allocates the other lots, also keep whole every lot whose mounted tool
+    a protected setup-free continuation needs (transitively). Improvement
+    alone does not need it: it validates the complete plan.
 
     An anchor is a saved manual decision. The constructive solver can only
     honour it inside the CP-SAT model; when that model times out the fallback
@@ -182,13 +237,328 @@ def _protected_lots(baseline_result, freeze_day: int, engine_data, config):
             *lots,
             *(copy.deepcopy(lot) for lot in baseline_result.lots if lot.id in anchored),
         ]
+    # A protected setup-free continuation needs the lot that mounted its tool:
+    # keep that supplier whole too (never leave a frozen continuation without
+    # its mounting, AGENTS §4).
+    if not lots or not mount_suppliers:
+        return segments, lots, anchored
+    protected = {lot.id for lot in lots}
+    suppliers = set()
+    previous = _machine_order(baseline_result.segments)
+    while True:
+        selected = {
+            index for index, segment in enumerate(baseline_result.segments)
+            if segment.lot_id in protected | suppliers
+        }
+        missing = {
+            baseline_result.segments[supplier].lot_id
+            for supplier in _mount_suppliers(baseline_result.segments, selected, previous)
+        } - protected - suppliers
+        if not missing:
+            break
+        suppliers |= missing
+    if suppliers:
+        segments = [
+            *segments,
+            *(copy.deepcopy(s) for s in baseline_result.segments if s.lot_id in suppliers),
+        ]
+        lots = [
+            *lots,
+            *(copy.deepcopy(lot) for lot in baseline_result.lots if lot.id in suppliers),
+        ]
     return segments, lots, anchored
 
 
+def _machine_order(segments) -> dict[int, int | None]:
+    """Index of the previous productive segment on the same machine."""
+
+    previous: dict[int, int | None] = {}
+    last_by_machine: dict[str, int] = {}
+    order = sorted(
+        (index for index, segment in enumerate(segments) if segment.end_min > segment.start_min),
+        key=lambda index: (
+            segments[index].day_idx, segments[index].start_min, segments[index].end_min,
+        ),
+    )
+    for index in order:
+        machine = segments[index].machine_id
+        previous[index] = last_by_machine.get(machine)
+        last_by_machine[machine] = index
+    return previous
+
+
+def _mount_suppliers(segments, selected: set[int], previous=None) -> set[int]:
+    """Unselected segments whose mounted tool a selected one continues.
+
+    A setup-free segment relies on the preceding segment of the same machine
+    when it has the same setup identity (the mounting is retained).
+    """
+    from backend.scheduler.setup_identity import segment_setup_identity
+
+    previous = _machine_order(segments) if previous is None else previous
+    suppliers = set()
+    for index in selected:
+        segment = segments[index]
+        before = previous.get(index)
+        if (
+            before is not None and before not in selected and segment.setup_min <= 0
+            and segment_setup_identity(segments[before]) == segment_setup_identity(segment)
+        ):
+            suppliers.add(before)
+    return suppliers
+
+
+def _running_continuations(segments, freeze_day: int, previous) -> list[tuple[int, list[int]]]:
+    """Per machine, the run mounted at the planning-day boundary that goes on.
+
+    Starting from the last segment before ``freeze_day`` (the boundary), the
+    following segments of the same machine with the same setup identity and
+    no new setup (or the rest of a setup split before the boundary) are the
+    same physical run continuing. Returns ``(boundary, continuation)`` pairs.
+    """
+    from backend.scheduler.setup_identity import segment_setup_identity
+
+    following: dict[int, int] = {
+        before: index for index, before in previous.items() if before is not None
+    }
+    chains = []
+    last_started: dict[str, int] = {}
+    for index in previous:
+        segment = segments[index]
+        if segment.day_idx < freeze_day:
+            current = last_started.get(segment.machine_id)
+            if current is None or (
+                (segment.day_idx, segment.start_min, segment.end_min)
+                > (segments[current].day_idx, segments[current].start_min,
+                   segments[current].end_min)
+            ):
+                last_started[segment.machine_id] = index
+    for boundary in last_started.values():
+        chain = []
+        before = boundary
+        index = following.get(before)
+        while index is not None:
+            segment, mounted = segments[index], segments[before]
+            if segment_setup_identity(segment) != segment_setup_identity(mounted) or not (
+                segment.setup_min <= 0 or mounted.prod_min <= 0
+            ):
+                break
+            chain.append(index)
+            before, index = index, following.get(index)
+        if chain:
+            chains.append((boundary, chain))
+    return chains
+
+
+def _blocked_continuations(segments, chains, engine_data, config) -> set[int]:
+    """Continuation segments the current inputs no longer allow (e.g. an outage).
+
+    A running run stops where the new calendar or a resource block makes it
+    impossible; from there on it is replanned like any later portion.
+    """
+    from backend.scheduler.validation import validate_plan
+
+    candidates = [index for _boundary, chain in chains for index in chain]
+    if not candidates or engine_data is None:
+        return set()
+    by_key = {
+        (segments[index].lot_id, segments[index].machine_id, segments[index].day_idx,
+         segments[index].start_min, segments[index].end_min): index
+        for index in candidates
+    }
+    # The boundary segments are the mounting evidence of their continuations.
+    checked = [segments[index] for boundary, chain in chains for index in (boundary, *chain)]
+    invalid = set()
+    for violation in validate_plan(checked, engine_data, config, memo=False):
+        for item in (violation, violation.get("other") or {}):
+            key = (item.get("lot_id"), item.get("machine_id"), item.get("day_idx"),
+                   item.get("start_min"), item.get("end_min"))
+            if key in by_key:
+                invalid.add(by_key[key])
+    blocked = set()
+    for _boundary, chain in chains:
+        cut = next((position for position, index in enumerate(chain) if index in invalid), None)
+        if cut is not None:
+            blocked.update(chain[cut:])
+    return blocked
+
+
+def _protected_plan(baseline_result, freeze_day: int, engine_data, config) -> ProtectedPlan:
+    """Frozen segments and lots of a replan under AGENTS §2, rule 4.
+
+    Frozen: every segment before ``freeze_day``, the run mounted at that
+    boundary while it continues without a new setup (unless the current
+    inputs block it), manually anchored lots, and — closed under these two
+    rules until nothing changes — the earlier production of each touched lot
+    (a frozen part is always a prefix of its lot) and the mount supplier of
+    every frozen setup-free continuation. A touched lot whose rest cannot be
+    replanned on its own (older material contract, anchored, nothing left)
+    is kept whole.
+    """
+    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
+    from backend.scheduler.material_quantities import lot_material_version
+
+    if baseline_result is None:
+        return ProtectedPlan()
+    segments = list(baseline_result.segments)
+    lots_by_id = {lot.id: lot for lot in baseline_result.lots}
+    anchored = _honoured_anchor_lot_ids(baseline_result, engine_data, config)
+    previous = _machine_order(segments)
+    started_ids = set()
+    selected: set[int] = set()
+    if freeze_day > 0:
+        for index, segment in enumerate(segments):
+            if segment.day_idx < freeze_day and segment.end_min > segment.start_min:
+                selected.add(index)
+                started_ids.add(segment.lot_id)
+        chains = _running_continuations(segments, freeze_day, previous)
+        blocked = _blocked_continuations(segments, chains, engine_data, config)
+        selected.update(
+            index for _boundary, chain in chains for index in chain if index not in blocked
+        )
+    selected.update(
+        index for index, segment in enumerate(segments) if segment.lot_id in anchored
+    )
+    if not selected:
+        return ProtectedPlan(anchored=set())
+    by_lot: dict[str, list[int]] = {}
+    for index, segment in enumerate(segments):
+        by_lot.setdefault(segment.lot_id, []).append(index)
+    for indexes in by_lot.values():
+        indexes.sort(key=lambda index: (
+            segments[index].day_idx, segments[index].start_min, segments[index].end_min,
+        ))
+
+    def keeps_whole(lot_id: str) -> bool:
+        lot = lots_by_id.get(lot_id)
+        if lot is None or lot_id in anchored:
+            return True
+        if lot_material_version(lot) < QUANTITY_MATERIAL_VERSION:
+            return True
+        frozen_qty = sum(int(segments[index].qty) for index in by_lot[lot_id] if index in selected)
+        return frozen_qty >= int(lot.qty)
+
+    while True:
+        before = len(selected)
+        for lot_id in {segments[index].lot_id for index in selected}:
+            indexes = by_lot[lot_id]
+            if keeps_whole(lot_id):
+                selected.update(indexes)
+                continue
+            last = max(position for position, index in enumerate(indexes) if index in selected)
+            selected.update(indexes[: last + 1])
+        selected |= _mount_suppliers(segments, selected, previous)
+        if len(selected) == before:
+            break
+
+    touched = {segments[index].lot_id for index in selected}
+    whole = {lot_id for lot_id in touched if set(by_lot[lot_id]) <= selected}
+    frozen_segments = [
+        copy.deepcopy(segment) for index, segment in enumerate(segments) if index in selected
+    ]
+    frozen_lots = [copy.deepcopy(lots_by_id[lot_id]) for lot_id in sorted(whole)
+                   if lot_id in lots_by_id]
+    partial = []
+    for lot_id in sorted(touched - whole):
+        lot = lots_by_id[lot_id]
+        started = [segments[index] for index in by_lot[lot_id] if index in selected]
+        partial.append((copy.deepcopy(lot), _remainder_lot(lot, started, engine_data, config)))
+    return ProtectedPlan(
+        segments=frozen_segments, lots=frozen_lots, partial=partial,
+        anchored=anchored - started_ids, started=started_ids,
+    )
+
+
+def _trim_outputs(outputs: list[dict], made: dict[str, int]) -> list[dict]:
+    """Outputs left after the pieces already made, first in, first out per side."""
+
+    left = dict(made)
+    remaining = []
+    for output in outputs:
+        side = str(output.get("op_id"))
+        qty = int(output.get("qty", 0))
+        used = min(qty, left.get(side, 0))
+        left[side] = left.get(side, 0) - used
+        if qty - used > 0:
+            remaining.append({**copy.deepcopy(output), "qty": qty - used})
+    return remaining
+
+
+def _remainder_lot(lot, started_segments, engine_data, config):
+    """The rest of a started economic lot, as one pre-sized lot (never re-sized).
+
+    Same identity, operation, tool and machine (a started lot never changes
+    machine, rule 3); its quantity and deliveries are what the started part
+    did not make, first in, first out (the readiness rule). Durations follow
+    the source contract for that quantity on that machine.
+    """
+    from backend.config.types import FactoryConfig
+    from backend.scheduler.lot_sizing import _aggregate_milestones
+    from backend.scheduler.resources import (
+        build_setup_override_map,
+        effective_oee,
+        resolve_setup_hours,
+    )
+
+    config = config or FactoryConfig()
+    rest = copy.deepcopy(lot)
+    made_cycles = sum(int(segment.qty) for segment in started_segments)
+    rest.qty = int(lot.qty) - made_cycles
+    machine = next(
+        (s.machine_id for s in started_segments if s.prod_min > 0), lot.machine_id,
+    )
+    rest.machine_id, rest.alt_machine_id = machine, None
+    if lot.twin_outputs:
+        made = {str(op_id): 0 for op_id, _sku, _qty in lot.twin_outputs}
+        for segment in started_segments:
+            for op_id, _sku, qty in segment.twin_outputs or []:
+                made[str(op_id)] = made.get(str(op_id), 0) + int(qty)
+        rest.twin_outputs = [
+            (op_id, sku, int(qty) - made.get(str(op_id), 0))
+            for op_id, sku, qty in lot.twin_outputs
+        ]
+    else:
+        made = {str(lot.op_id): made_cycles}
+    if lot.output_milestones:
+        outputs = _trim_outputs(list(lot.output_milestones), made)
+        for name, value in _aggregate_milestones(outputs).items():
+            setattr(rest, name, value)
+        rest.edd = int(rest.production_due_day)
+        rest.original_edd = rest.delivery_day = int(rest.customer_delivery_day)
+        rest.internal_deadline = int(rest.internal_target_day)
+        demand_days = [
+            int(output["customer_delivery_day"]) for output in outputs
+            if not (output.get("is_economic_surplus") or output.get("is_coproduced_surplus"))
+        ]
+        if demand_days and lot.target_start_day is not None:
+            rest.target_start_day = max(0, min(demand_days) - int(lot.start_buffer_days or 0))
+    ops = {op.id: op for op in getattr(engine_data, "ops", None) or []}
+    overrides = build_setup_override_map(config)
+    times, setups = [], []
+    for op_id, _sku, qty in rest.twin_outputs or [(rest.op_id, rest.sku, rest.qty)]:
+        op = ops.get(op_id)
+        if op is None:
+            continue
+        oee = effective_oee(op, machine, config)
+        times.append(qty / (op.pH * oee) * 60.0 if op.pH > 0 and oee > 0 else 0.0)
+        setups.append(resolve_setup_hours(op.sku, machine, op.sH, config, overrides) * 60)
+    if times:
+        rest.prod_min = max([config.min_prod_min, *times])
+        rest.setup_min = max(setups, default=0.0)
+    else:
+        rest.prod_min = lot.prod_min * rest.qty / lot.qty if lot.qty else 0.0
+    return rest
+
+
 def _install_frozen_reservations(
-    engine_data, frozen_segments, frozen_lots, freeze_day: int, config=None,
+    engine_data, frozen_segments, frozen_lots, freeze_day: int, config=None, partial=(),
 ) -> dict:
-    """Temporarily reserve whole-lot output and all future resource occupancy."""
+    """Temporarily reserve frozen output and all future resource occupancy.
+
+    ``partial``: ``(original, remainder)`` of started lots whose rest is
+    replanned. The whole original lot is credited (lot sizing must not size
+    it again) and the remainder is handed to lot sizing as a pre-sized lot.
+    """
     from backend.scheduler.operators import segment_operator_demand
 
     snapshot = {
@@ -198,14 +568,14 @@ def _install_frozen_reservations(
             "operator_blocked_intervals", "committed_supplies",
             "machine_blocked_days", "tool_blocked_days",
             "setup_crew_reservations", "plan_anchors", "protected_mounting_segments",
+            "residual_lot_remainders",
         )
     }
     # Protected lots are spliced back unchanged; the residual problem must
     # not be asked to place them again.
     protected_ids = {lot.id for lot in frozen_lots}
-    from dataclasses import asdict
-
     engine_data.protected_mounting_segments.extend(asdict(s) for s in frozen_segments)
+    engine_data.residual_lot_remainders.extend(asdict(rest) for _lot, rest in partial)
     engine_data.plan_anchors = [
         anchor for anchor in engine_data.plan_anchors if anchor.lot_id not in protected_ids
     ]
@@ -304,7 +674,7 @@ def _install_frozen_reservations(
     available_at = (
         f"{str(engine_data.workdays[0])[:10]}T00:00:00" if engine_data.workdays else ""
     )
-    for lot in frozen_lots:
+    for lot in [*frozen_lots, *(original for original, _rest in partial)]:
         segment = first_by_lot.get(lot.id)
         if segment is None:
             continue
@@ -322,11 +692,19 @@ def _restore_frozen_reservations(engine_data, snapshot: dict) -> None:
         setattr(engine_data, field, value)
 
 
-def _splice_frozen_started_lots(result, frozen_segments, frozen_lots):
+def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=()):
+    """Join the residual plan with the frozen work into the complete plan.
+
+    A partial lot's residual segments rejoin its original lot: the remainder
+    record is replaced by the original economic lot and the segments carry
+    the lot's own metadata, as the builder writes it.
+    """
     from backend.scheduler.canonical import preserved_lot_proofs
+    from backend.scheduler.quantity_dispatch import _LOT_FIELDS
 
     frozen_ids = {lot.id for lot in frozen_lots}
-    if not frozen_ids:
+    originals = {original.id: original for original, _rest in partial}
+    if not frozen_ids and not originals:
         return result
     # Run identifiers are deterministic within one optimizer execution. A
     # residual plan can therefore reuse an identifier already present in the
@@ -353,15 +731,53 @@ def _splice_frozen_started_lots(result, frozen_segments, frozen_lots):
         for segment in result.segments:
             if segment.lot_id not in frozen_ids and segment.run_id in replacements:
                 segment.run_id = replacements[segment.run_id]
-    result.segments = [s for s in result.segments if s.lot_id not in frozen_ids]
+    def rejoined(segment):
+        original = originals.get(segment.lot_id)
+        if original is None:
+            return segment
+        segment = copy.copy(segment)
+        segment.lot_qty = original.qty
+        segment.output_milestones = copy.deepcopy(original.output_milestones)
+        for name in _LOT_FIELDS:
+            setattr(segment, name, getattr(original, name))
+        return segment
+
+    result.segments = [rejoined(s) for s in result.segments if s.lot_id not in frozen_ids]
     result.segments.extend(copy.deepcopy(frozen_segments))
     result.segments.sort(key=lambda s: (
         s.day_idx, s.start_min, s.machine_id, s.tool_id, s.lot_id,
     ))
-    result.lots = [lot for lot in result.lots if lot.id not in frozen_ids]
+    result.lots = [
+        copy.deepcopy(originals[lot.id]) if lot.id in originals else lot
+        for lot in result.lots if lot.id not in frozen_ids
+    ]
     result.lots.extend(copy.deepcopy(frozen_lots))
-    result.preserved_lot_proofs = preserved_lot_proofs(frozen_segments, frozen_lots)
+    result.preserved_lot_proofs = preserved_lot_proofs(
+        [s for s in frozen_segments if s.lot_id in frozen_ids], frozen_lots,
+    )
     return result
+
+
+def _residual_of(result, protected: ProtectedPlan):
+    """The residual part of a complete plan: what a replan may still move."""
+    from backend.scheduler.improvement import _segment_physical_row
+
+    whole = {lot.id for lot in protected.lots}
+    rests = {rest.id: rest for _original, rest in protected.partial}
+    frozen_rows = Counter(
+        _segment_physical_row(s) for s in protected.segments if s.lot_id in rests
+    )
+    segments = []
+    for segment in result.segments:
+        if segment.lot_id in whole:
+            continue
+        row = _segment_physical_row(segment) if segment.lot_id in rests else None
+        if row is not None and frozen_rows[row] > 0:
+            frozen_rows[row] -= 1
+            continue
+        segments.append(segment)
+    lots = [rests.get(lot.id, lot) for lot in result.lots if lot.id not in whole]
+    return segments, lots
 
 
 def _recalculation_context(engine_data, config, baseline_result, recalculate_from_start):
@@ -405,13 +821,11 @@ def _compact_preserving_started_lots(
         engine_data, config, baseline_result, recalculate_from_start,
     )
     result = copy.deepcopy(baseline_result)
-    frozen_segments, frozen_lots, anchored = _protected_lots(
-        result, freeze_day, engine_data, config,
-    )
+    protected = _protected_plan(result, freeze_day, engine_data, config)
     result, improvement = improve_preserving_protected_lots(
         result, engine_data, copy.deepcopy(engine_data), config,
-        frozen_segments, frozen_lots, freeze_day,
-        time_budget_s=improvement_time_budget(60.0),
+        protected.segments, protected.lots, freeze_day,
+        time_budget_s=improvement_time_budget(60.0), partial=protected.partial,
     )
     result.improvement_report = improvement
     engine_data = result_validation_data(engine_data, result)
@@ -429,15 +843,29 @@ def _compact_preserving_started_lots(
     assert_plan_valid(result.segments, engine_data, config, lots=result.lots)
     result.time_ms = round((time.perf_counter() - started_at) * 1000, 1)
     result.warnings = [
-        *list(result.warnings),
+        *_without_protection_warnings(result.warnings),
         "Capacidade libertada: o plano ativo foi novamente compactado.",
     ]
-    started = len(frozen_lots) - len(anchored)
-    if started:
-        result.warnings.append(preserved_lots_warning(started, freeze_day))
-    if anchored:
-        result.warnings.append(_anchor_warning(anchored))
+    result.warnings.extend(_protection_warnings(protected, freeze_day))
     return result
+
+
+def _without_protection_warnings(warnings) -> list[str]:
+    """Drop protection notes of an earlier calculation (they are restated)."""
+
+    return [
+        warning for warning in warnings
+        if not warning.startswith(("Plano anterior preservado:", "Posições manuais preservadas:"))
+    ]
+
+
+def _protection_warnings(protected: ProtectedPlan, freeze_day: int) -> list[str]:
+    warnings = []
+    if protected.started:
+        warnings.append(preserved_lots_warning(len(protected.started), freeze_day))
+    if protected.anchored:
+        warnings.append(_anchor_warning(protected.anchored))
+    return warnings
 
 
 def _anchor_warning(anchored: set[str]) -> str:
@@ -449,14 +877,16 @@ def _anchor_warning(anchored: set[str]) -> str:
 
 def improve_preserving_protected_lots(
     result, engine_data, original_data, config, protected_segments, protected_lots,
-    freeze_day: int, *, time_budget_s: float,
+    freeze_day: int, *, time_budget_s: float, partial=(),
 ):
     """Run the no-loss improvement cycle on the residual plan only.
 
-    Started and anchored lots stay reserved exactly as in the complete
-    candidate. The improved residual is spliced back and the merged plan is
-    re-validated on the original inputs; on any failure the complete candidate
-    is kept unchanged. Returns ``(result, report)``.
+    Frozen work (``protected_segments``: whole protected lots and the started
+    part of ``partial`` lots) stays reserved exactly as in the complete
+    candidate; the rest of a partial lot is residual work. The improved
+    residual is spliced back and the merged plan is re-validated on the
+    original inputs; on any failure the complete candidate is kept unchanged.
+    Returns ``(result, report)``.
     """
     from backend.scheduler.canonical import result_validation_data
     from backend.scheduler.gates import build_gate_report
@@ -471,7 +901,7 @@ def improve_preserving_protected_lots(
         # Consumers read the complete plan exactly as they read an unprotected
         # candidate (never mutating it), so no deep copy is needed (B4.3).
         # Nothing protected: the residual already is the complete plan.
-        if not protected_lots:
+        if not protected_lots and not partial:
             return segments, lots, result_validation_data(original_data, result)
         # The splice only rewrites ``run_id`` of residual segments whose run
         # id collides with a protected run: copy just those, so the
@@ -482,14 +912,16 @@ def improve_preserving_protected_lots(
             for segment in segments
         ]
         complete.lots = list(lots)
-        complete = _splice_frozen_started_lots(complete, protected_segments, protected_lots)
+        complete = _splice_frozen_started_lots(
+            complete, protected_segments, protected_lots, partial,
+        )
         return complete.segments, complete.lots, result_validation_data(original_data, complete)
 
-    protected_ids = {lot.id for lot in protected_lots}
-    residual_segments = [s for s in result.segments if s.lot_id not in protected_ids]
-    residual_lots = [lot for lot in result.lots if lot.id not in protected_ids]
+    residual_segments, residual_lots = _residual_of(
+        result, ProtectedPlan(list(protected_segments), list(protected_lots), list(partial)),
+    )
     snapshot = _install_frozen_reservations(
-        engine_data, protected_segments, protected_lots, freeze_day, config,
+        engine_data, protected_segments, protected_lots, freeze_day, config, partial,
     )
     try:
         segments, lots, report = improve_plan(
@@ -516,8 +948,10 @@ def improve_preserving_protected_lots(
 
     improved = copy.copy(result)
     improved.segments, improved.lots = segments, lots
-    if protected_lots:
-        improved = _splice_frozen_started_lots(improved, protected_segments, protected_lots)
+    if protected_lots or partial:
+        improved = _splice_frozen_started_lots(
+            improved, protected_segments, protected_lots, partial,
+        )
     view = result_validation_data(original_data, improved)
     if validate_plan(improved.segments, view, config, lots=improved.lots):
         return reject_merged("merged_validation_failed")
@@ -543,8 +977,10 @@ def optimize_preserving_started_lots(
     engine_data, config, baseline_result, *, mode="normal", audit=False, cancel_event=None,
     optimizer=None, recalculate_from_start=False,
 ):
-    """Optimize a detached input, preserving every segment of already-started lots.
+    """Optimize a detached input, preserving the production that has started.
 
+    Only what started is frozen (AGENTS §2, rule 4, ``_protected_plan``); the
+    rest of a started lot is replanned as the same, pre-sized lot.
     Temporary reservations are always removed. The optimizer and final merged
     validation share one budget and propagate PlanningCancelled/PlanningTimeout.
     """
@@ -578,9 +1014,8 @@ def optimize_preserving_started_lots(
         engine_data, baseline_result, freeze_day = _recalculation_context(
             engine_data, config, baseline_result, recalculate_from_start,
         )
-        segments, lots, anchored = _protected_lots(
-            baseline_result, freeze_day, engine_data, config,
-        )
+        protected = _protected_plan(baseline_result, freeze_day, engine_data, config)
+        segments, lots, partial = protected.segments, protected.lots, protected.partial
         original_data = copy.deepcopy(engine_data)
         complete = None
         complete_fingerprint = None
@@ -592,7 +1027,7 @@ def optimize_preserving_started_lots(
                 for field in ("solver_status", "feasibility", "time_ms", "journal"):
                     setattr(complete, field, copy.deepcopy(getattr(candidate, field)))
                 complete.warnings = list(dict.fromkeys([*complete.warnings, *candidate.warnings]))
-                if not lots:
+                if not protected:
                     complete.score = copy.deepcopy(candidate.score)
                 if "solver_trace" in (candidate.gate_report or {}):
                     complete.gate_report["solver_trace"] = copy.deepcopy(
@@ -602,22 +1037,14 @@ def optimize_preserving_started_lots(
             merged = copy.deepcopy(candidate)
             if recalculate_from_start:
                 merged.preserved_lot_proofs = {}
-            if lots:
-                merged = _splice_frozen_started_lots(merged, segments, lots)
+            if protected:
+                merged = _splice_frozen_started_lots(merged, segments, lots, partial)
                 view = result_validation_data(original_data, merged)
                 merged.score = compute_score(merged.segments, merged.lots, view, config=config)
                 merged.operator_alerts = compute_operator_alerts(
                     merged.segments, view, config=config
                 )
-                started = len(lots) - len(anchored)
-                warnings = [
-                    *(
-                        [preserved_lots_warning(started, freeze_day)]
-                        if started else []
-                    ),
-                    *([_anchor_warning(anchored)] if anchored else []),
-                ]
-                for warning in warnings:
+                for warning in _protection_warnings(protected, freeze_day):
                     if warning not in merged.warnings:
                         merged.warnings.append(warning)
             else:
@@ -632,7 +1059,9 @@ def optimize_preserving_started_lots(
             planning_checkpoint()
             complete, complete_fingerprint = merged, fingerprint
 
-        snapshot = _install_frozen_reservations(engine_data, segments, lots, freeze_day, config)
+        snapshot = _install_frozen_reservations(
+            engine_data, segments, lots, freeze_day, config, partial,
+        )
         try:
             planning_checkpoint()
             remaining = remaining_time()
@@ -679,7 +1108,7 @@ def optimize_preserving_started_lots(
         if budget > 0:
             result, report = improve_preserving_protected_lots(
                 result, engine_data, original_data, config, segments, lots, freeze_day,
-                time_budget_s=budget,
+                time_budget_s=budget, partial=partial,
             )
         else:
             report = {"status": "not_evaluated", "stop_reason": "no_time_left"}

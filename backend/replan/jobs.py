@@ -42,10 +42,19 @@ logger = logging.getLogger(__name__)
 
 REPLAN_TOTAL_BUDGET_S = 60.0
 # Time the bounded local calendar repair leaves for the complete constructor
-# (optimize_preserving_started_lots) when the repair cannot finish. Measured on
-# revision 121 (1 core): the constructor's first complete validated candidate
-# takes ~7 s; the rest is improvement, which stops on its own budget.
-LOCAL_REPAIR_OPTIMIZER_RESERVE_S = 25.0
+# (optimize_preserving_started_lots) when the repair cannot finish. The
+# constructor's own scope keeps a closing reserve (10 s) for merging and
+# validation, so its first complete candidate gets this minus 10 s. Measured
+# on revision 124 (11/10/2026, per-delivery campaigns, 1 core): the residual
+# build takes 6-11 s and the first validated candidate ~13-17 s, slower with
+# other calculations on the machine; 25 s left only ~15 s and timed out.
+LOCAL_REPAIR_OPTIMIZER_RESERVE_S = 35.0
+# The quick repair only adjusts the segments a calendar edit invalidated. A
+# wider edit (revision 124: an outage of PRM031 for three weeks invalidates 40
+# segments, PRM019 for a week 11) goes straight to the complete constructor,
+# which then has the whole budget. A work bound, not a time bound: the same
+# edit of the same plan always takes the same path.
+LOCAL_REPAIR_MAX_INVALID_SEGMENTS = 10
 
 # Failed jobs carry a stable code and plain Portuguese text. Raw exception text
 # (often English, e.g. "Planning deadline expired") never reaches the screen.
@@ -115,6 +124,43 @@ def _baseline_needs_material_rebuild(restored_baseline: dict) -> bool:
         restored_baseline["engine_data"],
         restored_baseline["config"],
     )
+
+
+# The rebuild note of a job and the restore note of a legacy plan.
+LEGACY_MATERIAL_PREFIXES = (
+    "O plano ativo foi calculado antes de o material",
+    "Este plano foi calculado antes de o material",
+)
+
+
+def _without_stale_legacy_warnings(warnings, lots, current: list[str]) -> list[str]:
+    """Drop a carried-over "recalculado de raiz" note from a current plan.
+
+    ``current``: the notes this calculation wrote, always kept.
+    """
+    from backend.scheduler.canonical import quantity_material_version
+    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
+
+    if quantity_material_version(lots) < QUANTITY_MATERIAL_VERSION:
+        return list(warnings)
+    return [
+        warning for warning in warnings
+        if warning in current or not warning.startswith(LEGACY_MATERIAL_PREFIXES)
+    ]
+
+
+class _WideCalendarEdit(Exception):
+    """The edit invalidates too much of the plan for the quick repair."""
+
+
+def _invalidated_segments(error) -> int:
+    """Segments a calendar edit invalidated (0 when the error names none)."""
+
+    return len({
+        (item.get("lot_id"), item.get("machine_id"), item.get("day_idx"), item.get("start_min"))
+        for item in getattr(error, "violations", None) or []
+        if isinstance(item, dict) and item.get("lot_id") is not None
+    })
 
 
 def _valid_delivery_floor(baseline, engine_data, config):
@@ -961,7 +1007,7 @@ class ReplanJobManager:
                         config,
                         lots=baseline_result.lots,
                     )
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as invalid:
                     self.store.update(
                         job_id,
                         progress=65,
@@ -969,7 +1015,10 @@ class ReplanJobManager:
                         message="A ajustar apenas os segmentos afetados",
                     )
                     local_budget = self._optional_budget(LOCAL_REPAIR_OPTIMIZER_RESERVE_S)
+                    invalidated = _invalidated_segments(invalid)
                     try:
+                        if invalidated > LOCAL_REPAIR_MAX_INVALID_SEGMENTS:
+                            raise _WideCalendarEdit(invalidated)
                         if local_budget <= 0:
                             raise PlanningTimeout("No budget left for local repair.")
                         repaired, alternative_moves = self._local_calendar_repair(
@@ -1000,6 +1049,17 @@ class ReplanJobManager:
                             repaired.segments,
                             engine_data,
                             config=config,
+                        )
+                    except _WideCalendarEdit:
+                        logger.info(
+                            "Replan %s: %d segments invalidated; complete constructor",
+                            job_id, invalidated,
+                        )
+                        baseline_result = None
+                        rebuild_warnings.append(
+                            f"A alteração afeta {invalidated} "
+                            f"{'segmento' if invalidated == 1 else 'segmentos'} do plano "
+                            "ativo; o plano foi recalculado por completo."
                         )
                     except PlanningTimeout:
                         # Only the local scope expired: the outer deadline or a
@@ -1100,6 +1160,12 @@ class ReplanJobManager:
                 if self._is_cancelled(job_id):
                     return
 
+            # Notes about an earlier calculation travel with a kept plan; the
+            # legacy-material note is true only of the calculation that wrote
+            # it, never of a plan already under the current material contract.
+            result.warnings = _without_stale_legacy_warnings(
+                result.warnings, result.lots, rebuild_warnings,
+            )
             if rebuild_warnings and selected_source == "optimized":
                 result.warnings = [*rebuild_warnings, *list(result.warnings)]
             if frozen_lots and selected_source == "optimized":
@@ -1218,6 +1284,11 @@ class ReplanJobManager:
             )
             if frozen_lots:
                 frozen_warning = preserved_lots_warning(len(frozen_lots), freeze_day)
+                result.warnings = [
+                    warning for warning in result.warnings
+                    if not warning.startswith("Plano anterior preservado:")
+                    or warning == frozen_warning
+                ]
                 if frozen_warning not in result.warnings:
                     result.warnings.append(frozen_warning)
             can_reuse_optimizer_gate = bool(

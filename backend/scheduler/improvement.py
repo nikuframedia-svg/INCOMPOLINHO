@@ -620,6 +620,10 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
             complete_segments, complete_lots, complete_data = evaluation_plan(segments, lots)
             residual_ids = {lot.id for lot in lots}
             protected_ids = {lot.id for lot in complete_lots} - residual_ids
+            frozen_rows = _frozen_residual_rows(complete_segments, segments, residual_ids)
+            # A started lot whose rest is residual: the canonical compaction
+            # moves whole lots, so it keeps that lot as it is.
+            kept = protected_ids | {row[0] for row in frozen_rows}
             # The complete inputs have no elapsed-day reservations; without
             # the replanning floor the compaction would move residual work
             # into the past and the whole proposal would be invalid.
@@ -627,11 +631,13 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
                 complete_segments,
                 _with_replanning_floor(complete_lots, residual_ids, complete_data, floor_day),
                 complete_data, config,
-                annotate=False, protected_lot_ids=protected_ids,
+                annotate=False, protected_lot_ids=kept,
             )
-            if _lot_rows(normalized, protected_ids) != _lot_rows(complete_segments, protected_ids):
+            if _lot_rows(normalized, kept) != _lot_rows(complete_segments, kept):
                 return Proposal(segments, lots)
-            return Proposal([item for item in normalized if item.lot_id in residual_ids], lots)
+            return Proposal(_without_rows(
+                [item for item in normalized if item.lot_id in residual_ids], frozen_rows,
+            ), lots)
         return Proposal(
             normalize_earliest_legal_plan(segments, lots, data, config, annotate=False),
             lots,
@@ -807,6 +813,14 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
         protected_rows = _lot_rows(complete_segments, protected_ids)
         protected_lots = {lot.id: copy.deepcopy(lot) for lot in complete_lots
                           if lot.id in protected_ids}
+        # Started lots whose rest is residual (AGENTS §2, rule 4): their
+        # started segments are frozen; the complete plan holds the original
+        # lot, the residual its rest.
+        frozen_rows = _frozen_residual_rows(complete_segments, segments, residual_ids)
+        partial_ids = {row[0] for row in frozen_rows}
+        partial_lots = {lot.id: copy.deepcopy(lot) for lot in complete_lots
+                        if lot.id in partial_ids}
+        residual_lots = {lot.id: lot for lot in lots if lot.id in partial_ids}
         complete_data = copy.copy(complete_data)
         complete_data.preserved_lot_proofs = {
             **(complete_data.preserved_lot_proofs or {}),
@@ -825,14 +839,23 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
                 _lot_rows(proposal.segments, protected_ids) != protected_rows
                 or {lot.id: lot for lot in proposal.lots if lot.id in protected_ids}
                 != protected_lots
+                or frozen_rows - Counter(
+                    _segment_physical_row(item) for item in proposal.segments
+                    if item.lot_id in partial_ids
+                )
+                or {lot.id: lot for lot in proposal.lots if lot.id in partial_ids}
+                != partial_lots
             ):
                 yield SkippedProposal(proposal.subject or {}, "protected_context_changed")
             else:
                 yield replace(
                     proposal,
-                    segments=[item for item in proposal.segments
-                              if item.lot_id not in protected_ids],
-                    lots=[lot for lot in proposal.lots if lot.id not in protected_ids],
+                    segments=_without_rows(
+                        [item for item in proposal.segments if item.lot_id not in protected_ids],
+                        frozen_rows,
+                    ),
+                    lots=[residual_lots.get(lot.id, lot) for lot in proposal.lots
+                          if lot.id not in protected_ids],
                 )
 
     # Local changes first, group moves last (§5.3). The first generator is
@@ -895,6 +918,35 @@ class _Protection:
     preserved_rows: dict[str, tuple[tuple[object, ...], ...]]
     violated_anchor_lots: frozenset[str]
     production_obligations: dict[str, tuple]
+
+
+def _frozen_residual_rows(complete_segments, residual_segments, residual_ids) -> Counter:
+    """Frozen segments of residual lots: the started part of a partial lot.
+
+    The complete plan is the residual plus the frozen work; what it has
+    beyond the residual, for a lot that is also residual, is frozen.
+    """
+    rows = Counter(
+        _segment_physical_row(item) for item in complete_segments if item.lot_id in residual_ids
+    )
+    rows.subtract(_segment_physical_row(item) for item in residual_segments)
+    return +rows
+
+
+def _without_rows(segments: list[Segment], rows: Counter) -> list[Segment]:
+    """``segments`` without one occurrence of each physical row in ``rows``."""
+
+    if not rows:
+        return segments
+    left = Counter(rows)
+    kept = []
+    for segment in segments:
+        row = _segment_physical_row(segment)
+        if left[row] > 0:
+            left[row] -= 1
+            continue
+        kept.append(segment)
+    return kept
 
 
 def _lot_rows(segments: Iterable[Segment], lot_ids: set[str]) -> dict[str, tuple]:

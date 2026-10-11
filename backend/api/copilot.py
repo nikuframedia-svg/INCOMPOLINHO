@@ -35,6 +35,7 @@ from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
 from backend.copilot.tools import TOOLS
 from backend.planning_control import PlanningCancelled, PlanningTimeout
+from backend.scheduler.validation import PlanValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -123,10 +124,26 @@ async def planning_timeout_handler(_request: Request, _exc: PlanningTimeout):
         content={
             "detail": {
                 "code": "planning_timeout",
-                "message": "O calculo excedeu o tempo limite; o plano ativo nao foi alterado.",
+                "message": "O cálculo excedeu o tempo limite; o plano ativo não foi alterado.",
             }
         },
     )
+
+
+@app.exception_handler(PlanValidationError)
+async def plan_validation_handler(_request: Request, exc: PlanValidationError):
+    """A refused plan is a clear 409, never an "Internal Server Error".
+
+    The commit check rejects plans that break physics or, for plans saved
+    before per-delivery material, asks for «Recalcular plano» (review of
+    11/10/2026). The active plan is left untouched by the rollback.
+    """
+    detail = {
+        "code": getattr(exc, "code", "invalid_plan"),
+        "message": f"{exc} O plano ativo não foi alterado.",
+        "requires_recalculation": bool(getattr(exc, "requires_recalculation", False)),
+    }
+    return JSONResponse(status_code=409, content={"detail": detail})
 
 
 @app.exception_handler(PlanningCancelled)
@@ -136,7 +153,7 @@ async def planning_cancelled_handler(_request: Request, _exc: PlanningCancelled)
         content={
             "detail": {
                 "code": "planning_cancelled",
-                "message": "O calculo foi cancelado; o plano ativo nao foi alterado.",
+                "message": "O cálculo foi cancelado; o plano ativo não foi alterado.",
             }
         },
     )

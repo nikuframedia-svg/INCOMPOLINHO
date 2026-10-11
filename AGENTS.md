@@ -161,7 +161,10 @@ continua HARD por SKU. A prontidão é por lado e por entrega, como em qualquer
 lote. Versão do contrato de material: `QUANTITY_MATERIAL_VERSION = 2`
 (`lot_sizing.py`); planos guardados na versão 1 (ou sem versão) leem-se pelo
 modelo registado, mas só se reativam se cumprirem as janelas atuais; caso
-contrário pedem «Recalcular plano» (`canonical.legacy_material_plan`).
+contrário pedem «Recalcular plano» (`canonical.legacy_material_plan`). Ao
+repor um plano destes (incluindo no arranque) o plano mantém-se como foi
+guardado e leva um aviso simples a pedir «Recalcular plano»
+(`restore.legacy_material_warning`).
 
 Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
 
@@ -179,8 +182,19 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
 3. **Mudar de máquina leva o lote inteiro**, com todas as suas partes; um lote
    nunca fica repartido entre máquinas.
 4. **Lote começado:** só congela o que já começou. As partes futuras continuam
-   otimizáveis e o lote nunca é redimensionado (por implementar; até lá vale o
-   congelamento do lote inteiro de `plans/frozen.py`).
+   otimizáveis e o lote nunca é redimensionado. Implementado a 11/10/2026
+   (`plans/frozen._protected_plan`): congela-se a produção antes do dia de
+   planeamento e a execução montada nessa fronteira enquanto continua sem novo
+   setup (uma avaria ou bloqueio novo para-a aí); o resto do lote vai ao
+   problema residual como o mesmo lote, já dimensionado
+   (`EngineData.residual_lot_remainders`, com o lote inteiro creditado para o
+   dimensionamento não o repetir), na mesma máquina, e o plano completo junta
+   as duas partes no lote original. Uma continuação congelada sem setup leva
+   sempre consigo o lote que montou a ferramenta (a produção anterior desse
+   lote incluída); um lote de um contrato de material anterior, ancorado ou já
+   todo feito fica inteiro. A proteção do histórico na gravação compara só a
+   produção anterior a hoje e o próprio lote. Movimentos manuais continuam a
+   proteger lotes inteiros (com os fornecedores de montagem quando realocam).
 
 Construtor por partes (`quantity_dispatch.py`, B1a):
 
@@ -353,6 +367,11 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   iguais. O gate é por tamanho (determinístico), nunca por tempo; conta as
   operações que chegam ao optimizador (no recálculo, depois de filtrar o
   histórico). `deep`/`max` continuam a pesquisar; `quick` não muda.
+- Replaneamento por calendário (11/10/2026): o ajuste rápido só corre quando
+  a alteração invalida no máximo `replan.jobs.LOCAL_REPAIR_MAX_INVALID_SEGMENTS`
+  segmentos (limite de trabalho, não de tempo); acima disso vai direto ao
+  construtor completo. Quando corre, deixa ao construtor
+  `LOCAL_REPAIR_OPTIMIZER_RESERVE_S` (35 s, medido na revisão 124).
 - Um deadline exterior abrange preparação, pesquisa, fecho, validação e escrita.
   Subfases nunca reiniciam o relógio. Preservar a reserva de fecho existente.
 - Guardar o último candidato completo validado fora do solver. Timeout de uma

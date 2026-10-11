@@ -100,6 +100,7 @@ def _lot_sizing_inputs(data, config, quantity_material):
         data.ops,
         data.twin_groups,
         data.committed_supplies,
+        data.residual_lot_remainders,
         data.holidays,
         data.workdays,
         data.calendar_extra_workdays,
@@ -127,7 +128,7 @@ def contract_lots(data, config, *, quantity_material=True):
     inputs = _lot_sizing_inputs(data, config, quantity_material)
     key = (
         id(data.ops), len(data.ops), len(data.committed_supplies),
-        material_version(quantity_material),
+        len(data.residual_lot_remainders), material_version(quantity_material),
     )
     entry = cache.get(key)
     if entry is not None and entry[0] == inputs:

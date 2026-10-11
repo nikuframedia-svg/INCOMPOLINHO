@@ -426,7 +426,7 @@ def test_improvement_reserve_closes_budget(monkeypatch, path, mode):
                 now[0] = total - 12
                 return copy.deepcopy(baseline)
 
-            def improve(result, *_args, time_budget_s):
+            def improve(result, *_args, time_budget_s, **_kwargs):
                 observed["improvement"] = time_budget_s
                 return result, {"moves_accepted": 0, "status": "partial"}
 

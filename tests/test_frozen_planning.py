@@ -62,7 +62,9 @@ def test_started_lot_includes_all_future_segments_but_not_unstarted_lots(frozen_
     assert baseline.segments[0].qty == 10
 
 
-def test_historical_guard_keeps_future_continuations_but_allows_metadata(frozen_plan):
+def test_historical_guard_protects_started_history_not_future_portions(frozen_plan):
+    """AGENTS §2, rule 4: what started is history; later portions may move,
+    but the lot itself is never re-sized."""
     from dataclasses import asdict
 
     data, config, result = frozen_plan
@@ -77,6 +79,11 @@ def test_historical_guard_keeps_future_continuations_but_allows_metadata(frozen_
     after["segments"][1]["left_shift_blockers"] = ["new explanation"]
     assert frozen.historical_schedule_changes(before, after, today="2026-09-17") == []
     after["segments"][1]["start_min"] += 10
+    assert frozen.historical_schedule_changes(before, after, today="2026-09-17") == []
+    resized = copy.deepcopy(after)
+    resized["lots"][0]["qty"] += 10
+    assert frozen.historical_schedule_changes(before, resized, today="2026-09-17") == ["L1"]
+    after["segments"][0]["start_min"] += 10
     assert frozen.historical_schedule_changes(before, after, today="2026-09-17") == ["L1"]
     after["dataset_info"]["id"] = "new-isop"
     assert frozen.historical_schedule_changes(before, after, today="2026-09-17") == []

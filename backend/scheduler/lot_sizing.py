@@ -7,6 +7,7 @@ Fix 5: prod_min minimum = MIN_PROD_MIN to avoid micro-lots.
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, replace
 
@@ -129,7 +130,17 @@ def create_lots(
                 )
             )
 
+    # Residual replan (AGENTS §2, rule 4): the rest of each started lot was
+    # sized with the lot; it is returned as it is, never sized again.
+    lots.extend(_carried_lot(raw) for raw in data.residual_lot_remainders)
     return lots
+
+
+def _carried_lot(raw: dict) -> Lot:
+    values = copy.deepcopy(raw)
+    if values.get("twin_outputs") is not None:
+        values["twin_outputs"] = [tuple(item) for item in values["twin_outputs"]]
+    return Lot(**values)
 
 
 def _create_solo_lots(

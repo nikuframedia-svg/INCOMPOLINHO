@@ -395,6 +395,9 @@ class _CampaignBuilder:
         # Frozen recalculation: protected work is physical evidence on the
         # machines (mountings, tool changes), never part of this plan.
         self.fixed = protected_mounting_segments(data)
+        # A started lot's rest keeps its lot id (AGENTS §2, rule 4): its new
+        # runs must not reuse the run ids of its frozen part.
+        self.fixed_run_ids = {segment.run_id for segment in self.fixed}
         self.active = {
             machine.id
             for machine in data.machines
@@ -435,6 +438,16 @@ class _CampaignBuilder:
         if not served:
             return key
         return (*key[:6], -max(max(served), -key[6]), *key[7:])
+
+    def run_id(self, portion: _Portion) -> str:
+        """Identifier of a new run for ``portion``, never one of frozen work."""
+
+        base = run_id = f"quantity:{portion.lot_id}:{portion.index}"
+        suffix = 1
+        while run_id in self.fixed_run_ids:
+            run_id = f"{base}:rest{suffix}"
+            suffix += 1
+        return run_id
 
     def ready(self) -> list[_Portion]:
         return [
@@ -480,7 +493,7 @@ class _CampaignBuilder:
         floor = self.cursor.get(portion.lot_id) if cursor is _KEEP else cursor
         bounds = [value for value in (floor, not_before) if value is not None]
         scheduled = _schedule_run_earliest(
-            _run(trial, f"quantity:{portion.lot_id}:{portion.index}"),
+            _run(trial, self.run_id(portion)),
             machine,
             segments,
             self.data,
@@ -620,7 +633,7 @@ class _CampaignBuilder:
         previous = self.retained(placement) if self.campaigns else None
         run_id = (
             previous.run_id if previous is not None
-            else f"quantity:{portion.lot_id}:{portion.index}"
+            else self.run_id(portion)
         )
         parent = self.parent(portion.lot_id, placement.machine)
         productive = sum(s.prod_min for s in placement.created)

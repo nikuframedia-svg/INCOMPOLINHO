@@ -226,3 +226,36 @@ def test_source_contract_message_says_loaded_isop_data():
         assert "RENAMED" not in item["message"]
         if "não coincide" in item["message"]:
             assert item["message"].endswith("não coincide com os dados carregados (ISOP).")
+
+
+def test_startup_restore_of_a_legacy_plan_says_to_recalculate():
+    """The active plan is kept as saved, with a plain note to recalculate."""
+    import copy
+
+    from backend.copilot.state import CopilotState
+    from backend.plans.restore import restore_plan_into_state
+
+    data, segments, lots = _legacy_plan()
+    payload = _payload(data, segments, lots)
+    target = CopilotState(engine_data=_scenario(), config=copy.deepcopy(CONFIG))
+    restore_plan_into_state(
+        {"id": "legacy", "name": "Plano ativo", "origin": "isop.xlsx", "payload": payload},
+        target, approve_exceptions=True, prefer_current_config=True,
+        preserve_exact=True, recover_existing=True,
+    )
+    assert target.segments == segments
+    note = target.warnings[0]
+    assert note.startswith(
+        "Este plano foi calculado antes de o material passar a ser libertado por entrega."
+    )
+    assert "«Recalcular plano»" in note and "regras por entrega" in note
+
+
+def test_current_plan_restore_has_no_recalculation_note():
+    from backend.plans.restore import legacy_material_warning
+
+    data = _scenario()
+    result = schedule_all(data, config=CONFIG)
+    assert legacy_material_warning(result.lots, data, CONFIG) is None
+    _data, _segments, lots = _legacy_plan()
+    assert legacy_material_warning(lots, data, CONFIG)

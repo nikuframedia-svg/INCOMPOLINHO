@@ -266,6 +266,10 @@ def restore_plan_into_state(
             *result.warnings,
         ]
         recovered_from_jit = True
+    if not recovered_from_jit:
+        legacy_note = legacy_material_warning(result.lots, engine_data, candidate_config)
+        if legacy_note and legacy_note not in result.warnings:
+            result.warnings = [legacy_note, *result.warnings]
     prior_approvals = list(restored.get("approvals", []))
     if recovered_from_jit or not exact_plan_inputs:
         # The approval belongs to the obsolete schedule, not its replacement.
@@ -361,6 +365,23 @@ def restore_plan_into_state(
         "improvement_report": result.improvement_report,
         "plan_revision": target_state.plan_revision,
     }
+
+
+def legacy_material_warning(lots, engine_data, config) -> str | None:
+    """Plain note for a plan built before the per-delivery material rules.
+
+    Such a plan is kept as saved (restoring never recalculates), but the
+    planner must know that only «Recalcular plano» applies the current rules.
+    """
+    from backend.scheduler.canonical import legacy_material_plan, legacy_material_reason
+
+    if not legacy_material_plan(lots, engine_data, config):
+        return None
+    return (
+        f"Este plano foi calculado {legacy_material_reason(lots)}. Para aplicar as "
+        "regras por entrega é preciso usar «Recalcular plano»; até lá, o plano "
+        "mantém-se como foi guardado."
+    )
 
 
 def _is_jit_only_blocked(report: dict | None) -> bool:

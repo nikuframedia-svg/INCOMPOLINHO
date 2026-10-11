@@ -1139,3 +1139,84 @@ def test_one_legacy_material_rule(monkeypatch):
         {"result": Result(), "engine_data": "D", "config": "C"}
     ) is True
     assert seen == [(["L"], "D", "C")]
+
+
+def test_wide_calendar_edit_goes_straight_to_the_complete_constructor(ready_replan, monkeypatch):
+    """An edit that invalidates more segments than the quick repair handles
+    gives the complete constructor the whole budget (rehearsal of 11/10/2026)."""
+    from backend.planning_control import planning_scope, remaining_time
+    from backend.replan import jobs
+    from backend.scheduler.scoring import compute_score
+
+    live, manager, _, result, _ = ready_replan
+    baseline = serialize_snapshot(live)
+    config = copy.deepcopy(live.config)
+    config.machine_unavailability = [{
+        "id": "stop", "resource": "M1",
+        "start_at": "2026-03-17T00:00+00:00", "end_at": "2026-03-18T00:00+00:00",
+    }]
+    budgets = []
+
+    def no_quick_repair(*_args, **_kwargs):
+        raise AssertionError("the quick repair must not run for a wide edit")
+
+    def complete_pipeline(data, config, history, **kwargs):
+        budgets.append(remaining_time())
+        candidate = copy.deepcopy(result)
+        candidate.segments[0].day_idx = 1
+        candidate.score = compute_score(candidate.segments, candidate.lots, data, config=config)
+        return candidate
+
+    monkeypatch.setattr(jobs, "LOCAL_REPAIR_MAX_INVALID_SEGMENTS", 0)
+    monkeypatch.setattr(jobs.ReplanJobManager, "_local_calendar_repair",
+                        staticmethod(no_quick_repair))
+    monkeypatch.setattr(jobs, "_current_planning_day", lambda *_: 0)
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", complete_pipeline)
+    clock = [0.0]
+    job = manager.store.create("wide edit", "fixture", 1)
+    with planning_scope(timeout_s=60.0, clock=lambda: clock[0]):
+        manager._run(
+            job["id"], copy.deepcopy(live.engine_data), config,
+            "fixture", 1, "wide edit", live.dataset_info,
+            baseline_snapshot=baseline, prefer_unchanged_baseline=True,
+        )
+    current = manager.store.get(job["id"])
+    assert current["status"] == "ready", current
+    assert current["result"]["selected_source"] == "optimized"
+    assert "A alteração afeta 1 segmento do plano ativo; o plano foi recalculado por completo." in (
+        current["warnings"]
+    )
+    # Everything but the closing reserve (10 s of 60 s) goes to the constructor.
+    assert budgets == [pytest.approx(50.0)]
+
+
+def test_invalidated_segments_counts_distinct_segments():
+    from backend.replan.jobs import _invalidated_segments
+    from backend.scheduler.validation import PlanValidationError
+
+    one = {"lot_id": "L1", "machine_id": "M1", "day_idx": 3, "start_min": 420}
+    error = PlanValidationError([one, dict(one, kind="other"), {**one, "start_min": 600},
+                                 {"kind": "coverage", "message": "sem segmento"}])
+    assert _invalidated_segments(error) == 2
+    assert _invalidated_segments(TypeError("x")) == 0
+
+
+def test_stale_legacy_note_is_dropped_from_a_current_plan():
+    from backend.replan.jobs import _without_stale_legacy_warnings
+    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
+
+    note = ("O plano ativo foi calculado antes de o material das peças gémeas passar a ser "
+            "libertado por entrega; por isso foi recalculado de raiz.")
+    restore_note = "Este plano foi calculado antes de o material passar a ser libertado por entrega."
+    other = "Plano anterior preservado: 1 lote iniciado antes do dia 2."
+    current = Lot("L1", "OP1", "T1", "M1", None, 100, 60, 30, 0, False, output_milestones=[
+        {"qty": 100, "quantity_material_version": QUANTITY_MATERIAL_VERSION},
+    ])
+    legacy = Lot("L1", "OP1", "T1", "M1", None, 100, 60, 30, 0, False)
+    warnings = [note, other, restore_note]
+    # A kept plan already under the current contract: the old note is stale.
+    assert _without_stale_legacy_warnings(warnings, [current], []) == [other]
+    # The calculation that rebuilt it keeps its own note.
+    assert _without_stale_legacy_warnings(warnings, [current], [note]) == [note, other]
+    # Still a legacy plan: the notes stay true.
+    assert _without_stale_legacy_warnings(warnings, [legacy], []) == warnings

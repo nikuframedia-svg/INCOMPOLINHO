@@ -48,7 +48,7 @@ def test_short_parent_deadline_is_not_extended(monkeypatch, timeout):
     budgets = []
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_: 0)
 
-    def improve(result, *_args, time_budget_s):
+    def improve(result, *_args, time_budget_s, **_kwargs):
         budgets.append(time_budget_s)
         return result, {"moves_accepted": 0}
 
