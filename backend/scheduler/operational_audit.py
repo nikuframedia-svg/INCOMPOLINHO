@@ -13,25 +13,25 @@ from typing import Any
 from backend.config.types import FactoryConfig
 from backend.scheduler.gap_filling import PartialGapOpportunity, find_gap_opportunities
 from backend.scheduler.jit_policy import calendar_holidays, earliest_allowed_start
-from backend.scheduler.priority import lot_priority_key
-from backend.scheduler.priority_normalization import (
-    classify_priority_order_anomalies,
-    find_priority_order_anomalies,
-)
+from backend.scheduler.material_quantities import factory_readiness, output_release_day
+from backend.scheduler.policy import measured_outputs
+from backend.scheduler.priority import lot_priority_key, output_priority_key
+from backend.scheduler.priority_normalization import _build_priority_rotation_candidates
 from backend.scheduler.types import Lot, Segment
 from backend.types import EngineData
 
 # Work budget for the one slow part of the audit: proving, by validated
-# counterfactual rotations, which priority-order anomalies are avoidable.  It
-# is a count of anomalies to classify, not a wall-clock cap, so the same plan
-# always gets the same status whatever the machine load.  Each classification
-# rebuilds and validates candidate runs (~55 ms, up to ~0.2 s, on revision 121
-# with one core); 16 keeps a complete audit near 1 s on top of the ~0.3 s of
-# cheap metrics.  A plan with more anomalies keeps every cheap metric exact and
-# reports the classification as pending ("por avaliar"), never as a pass.  The
-# cheap metrics (gaps, campaign interruptions, tool inversions and the anomaly
-# count itself) are always computed in full.
-PRIORITY_CLASSIFICATION_MAX_ANOMALIES = 16
+# counterfactual rotations judged with the improvement loop's own contract,
+# which priority-order anomalies are avoidable.  It is a count of anomalies to
+# classify, not a wall-clock cap, so the same plan always gets the same status
+# whatever the machine load.  A plan with more anomalies still gets its 32
+# most urgent movable anomalies classified (proven findings first), keeps
+# every cheap metric exact and reports the rest as pending ("por avaliar"),
+# never as a pass.  The cheap metrics (gaps, campaign interruptions, tool
+# inversions and the anomaly count itself) are always computed in full.
+# 32 (was 16) covers the 14-20 anomalies the loop leaves on the real cases
+# (review b3r2 #3); the audit time is measured in the B3/B4 notes (< 2 s).
+PRIORITY_CLASSIFICATION_MAX_ANOMALIES = 32
 _UNSET: Any = object()
 
 
@@ -87,35 +87,406 @@ def build_operational_audit(
     return result
 
 
+# ── Priority-order anomalies, per delivery (B4.4) ─────────────────────────
+#
+# A run is ranked by the most urgent delivery it actually makes, with that
+# delivery's own material release, the unit the builder places (a portion,
+# ``quantity_dispatch._portion_lot``).  Ranking a run by its whole lot (first
+# delivery, first release) reported every later delivery run of a lot as
+# "urgent work blocked" by whatever ran before it, although its material was
+# not yet released: 86% of the 1800-4700 anomalies of the real plans.
+# Lots measured as a whole (``policy.measured_outputs`` is ``None``: legacy,
+# twin v1, at most one delivery per side) keep exactly the lot view, so a plan
+# without per-delivery lots gets the anomalies of
+# ``priority_normalization.find_priority_order_anomalies`` unchanged.
+
+
+# A run whose pieces are all surplus (economic or co-produced stock) makes no
+# delivery (``policy._delivery_windows``): it ranks after every delivery, so
+# placed before released urgent work it is reported as the blocking run, and
+# it is never itself "urgent work blocked".  Its output is ``"surplus"`` and
+# its rupture day ``None`` in the anomaly detail.
+_SURPLUS = "surplus"
+_NO_DAY = 2**62
+_SURPLUS_KEY = (_NO_DAY, _NO_DAY, 0, _NO_DAY, _NO_DAY, _NO_DAY, 0)
+
+
+def _run_units(
+    segments: list[Segment],
+    lots_by_id: dict[str, Lot],
+    holidays: set[int],
+) -> dict[tuple[str, str], list[tuple[tuple, int, Lot, int | str | None]]]:
+    """(machine, run) -> [(priority key, release floor, lot, output index)].
+
+    A lot measured as a whole is one unit (index ``None``). A lot measured
+    per delivery gives one unit per demand delivery the run makes pieces of,
+    pieces assigned first-in-first-out per side exactly as
+    ``material_quantities.delivery_readiness``. The pieces of a surplus
+    output belong to no delivery, as in ``policy._delivery_windows``: a run
+    that makes only surplus gets one unit ranked after every delivery
+    (index ``"surplus"``, see ``_SURPLUS_KEY``); a run that also makes a
+    delivery is ranked and released by its deliveries alone.
+    """
+
+    measured = {
+        lot_id: lot for lot_id, lot in lots_by_id.items()
+        if measured_outputs(lot) is not None
+    }
+    runs: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for index, segment in enumerate(segments):
+        if segment.prod_min > 0 and segment.lot_id in lots_by_id:
+            runs[(segment.machine_id, segment.run_id)].append(index)
+    served: dict[int, set[tuple[str, int]]] = defaultdict(set)
+    surplus: dict[int, set[tuple[str, int]]] = defaultdict(set)
+    if measured:
+        records = factory_readiness(
+            list(measured.values()),
+            [segment for segment in segments if segment.lot_id in measured],
+            missing_day=0,
+        )
+        # Indexes of ``factory_readiness`` are into the filtered list.
+        positions = [
+            index for index, segment in enumerate(segments) if segment.lot_id in measured
+        ]
+        for record in records:
+            target = served if record.is_demand else surplus
+            for piece in record.slices:
+                if piece.qty > 0:
+                    target[positions[piece.segment_index]].add((record.lot_id, record.index))
+
+    units: dict[tuple[str, str], list[tuple[tuple, int, Lot, int | str | None]]] = {}
+    for key, indexes in runs.items():
+        found: dict[tuple[str, int | None], tuple[tuple, int, Lot, int | str | None]] = {}
+        surplus_only: dict[str, tuple[tuple, int, Lot, int | str | None]] = {}
+        for index in indexes:
+            lot = lots_by_id[segments[index].lot_id]
+            if lot.id in measured:
+                outputs = served.get(index)
+                if not outputs and surplus.get(index):
+                    if lot.id not in surplus_only:
+                        surplus_only[lot.id] = (
+                            (*_SURPLUS_KEY, str(lot.id), -1),
+                            min(
+                                _output_floor(lot, _milestone(lot, position), holidays)
+                                for _lot_id, position in surplus[index]
+                            ),
+                            lot, _SURPLUS,
+                        )
+                    continue
+            else:
+                outputs = None
+            if not outputs:
+                if (lot.id, None) not in found:
+                    found[(lot.id, None)] = (
+                        output_priority_key(lot), earliest_allowed_start(lot, holidays),
+                        lot, None,
+                    )
+                continue
+            for lot_id, position in outputs:
+                if (lot_id, position) in found:
+                    continue
+                output = (lot.output_milestones or [])[position]
+                found[(lot_id, position)] = (
+                    output_priority_key(lot, position),
+                    _output_floor(lot, output, holidays),
+                    lot, position,
+                )
+        units[key] = list(found.values()) or list(surplus_only.values())
+    return units
+
+
+def _milestone(lot: Lot, position: int) -> dict:
+    """Output milestone at ``position``; ``{}`` for undeclared production."""
+
+    outputs = lot.output_milestones or []
+    return outputs[position] if 0 <= position < len(outputs) else {}
+
+
+def _output_floor(lot: Lot, output: dict, holidays: set[int]) -> int:
+    """Earliest productive start of one delivery: its own material release."""
+
+    try:
+        return output_release_day(output)
+    except (KeyError, TypeError, ValueError):
+        return earliest_allowed_start(lot, holidays)
+
+
+def find_output_priority_anomalies(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+) -> list[dict[str, Any]]:
+    """Less urgent run before a more urgent one that could have gone first.
+
+    Same pairs and fields as ``find_priority_order_anomalies``, with each run
+    ranked by its most urgent delivery and released by the earliest release
+    among the deliveries it makes (see ``_run_units``). ``urgent_output`` and
+    ``blocking_output`` name the deciding delivery (its position in the lot's
+    milestones, ``None`` for a lot ranked as a whole).
+    """
+
+    lots_by_id = {lot.id: lot for lot in lots}
+    holidays = calendar_holidays(
+        data,
+        min((segment.day_idx for segment in segments), default=0) - 7,
+        data.n_days + 7,
+    )
+    by_run: dict[tuple[str, str], list[Segment]] = defaultdict(list)
+    for segment in segments:
+        if segment.prod_min > 0:
+            by_run[(segment.machine_id, segment.run_id)].append(segment)
+    units = _run_units(segments, lots_by_id, holidays)
+    timelines: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for (machine_id, run_id), run_segments in by_run.items():
+        run_units = units.get((machine_id, run_id))
+        if not run_units:
+            continue
+        key, _floor, lot, output = min(run_units, key=lambda unit: unit[0])
+        timelines[machine_id].append(
+            {
+                "run_id": run_id,
+                "key": key,
+                "lot": lot,
+                "output": output,
+                "start": min(_position(segment) for segment in run_segments),
+                "floor": min(unit[1] for unit in run_units),
+            }
+        )
+
+    detail: list[dict[str, Any]] = []
+    for machine_id, runs in timelines.items():
+        ordered = sorted(runs, key=lambda run: (run["start"], run["run_id"]))
+        for index, earlier in enumerate(ordered):
+            for later in ordered[index + 1 :]:
+                # Dates and explicit business priority only: quantity and id
+                # are tie-breakers, never a commercial inversion.
+                if later["key"][:5] >= earlier["key"][:5]:
+                    continue
+                if later["floor"] > earlier["floor"]:
+                    continue
+                detail.append(
+                    {
+                        "machine_id": machine_id,
+                        "urgent_run_id": later["run_id"],
+                        "urgent_lot_id": later["lot"].id,
+                        "urgent_output": later["output"],
+                        "blocking_run_id": earlier["run_id"],
+                        "blocking_lot_id": earlier["lot"].id,
+                        "blocking_output": earlier["output"],
+                        "urgent_rupture_day": later["key"][0],
+                        "blocking_rupture_day": _rupture_day(earlier),
+                        "urgent_release_day": later["floor"],
+                        "blocking_release_day": earlier["floor"],
+                        "blocking_reason": None,
+                        "blocking_reasons": [],
+                        "verification_status": "counterfactual_required",
+                    }
+                )
+    return sorted(
+        detail,
+        key=lambda item: (
+            item["urgent_rupture_day"],
+            item["machine_id"],
+            item["urgent_lot_id"],
+            item["blocking_lot_id"],
+        ),
+    )
+
+
+def _rupture_day(run: dict[str, Any]) -> int | None:
+    return None if run["output"] == _SURPLUS else run["key"][0]
+
+
+def classify_priority_order_anomalies(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig,
+    *,
+    anomalies: list[dict[str, Any]] | None = None,
+    max_classifications: int | None = None,
+) -> list[dict[str, Any]]:
+    """Prove whether each per-delivery anomaly is movable or blocked.
+
+    An anomaly is avoidable (``permutable``) only when a rotation of the runs
+    is a move the improvement loop itself would accept (AGENTS §1, see
+    ``_loop_verdict``) and leaves fewer anomalies. Only the first
+    ``max_classifications`` of ``anomalies`` (default: every anomaly of the
+    plan) are classified; the rest are returned ``not_evaluated`` with
+    reason ``audit_budget``, never as a pass (AGENTS §6).
+    """
+
+    every = find_output_priority_anomalies(segments, lots, data)
+    details = every if anomalies is None else anomalies
+    before_count = len(every)
+    limit = len(details) if max_classifications is None else max(0, int(max_classifications))
+    contract = _LoopContract(segments, lots, data, config) if details[:limit] else None
+    classified: list[dict[str, Any]] = []
+    for index, detail in enumerate(details):
+        if index >= limit:
+            classified.append({**detail, **_PENDING})
+            continue
+        status = "counterfactual_unavailable"
+        reasons: list[str] = []
+        candidates = _build_priority_rotation_candidates(segments, lots, data, config, detail)
+        for candidate in candidates or []:
+            status, reasons = contract.verdict(candidate)
+            if status is not None:
+                continue
+            if len(find_output_priority_anomalies(candidate, lots, data)) < before_count:
+                status, reasons = "permutable", []
+                break
+            status = "counterfactual_required"
+            reasons = ["counterfactual_did_not_reduce_priority_anomalies"]
+        classified.append(
+            {
+                **detail,
+                "verification_status": status,
+                "blocking_reason": reasons[0] if reasons else None,
+                "blocking_reasons": reasons,
+            }
+        )
+    return classified
+
+
+class _LoopContract:
+    """The improvement loop's acceptance rule, applied to one rotation.
+
+    The same functions ``improvement.improve_plan`` accepts a move with, in
+    the order of AGENTS §1: physics and quantity conservation (the checks of
+    ``_physically_valid``) with protected rows and manual anchors unchanged;
+    no individual order loses quantity or gains lateness
+    (``no_loss_verdict``); then the plan must be better under
+    the canonical comparator (``improvement_better``: delivery, then the
+    per-delivery anticipation with the policy tolerance, then setups). An
+    aggregate delivery figure never decides on its own. The current plan is
+    evaluated once and every rotation is validated once.
+    """
+
+    def __init__(self, segments, lots, data, config) -> None:
+        from backend.scheduler import improvement
+        from backend.scheduler.policy import anticipation_order
+
+        self._improvement = improvement
+        self._segments, self._lots, self._data, self._config = segments, lots, data, config
+        self._order = anticipation_order(lots)
+        # Every rotation keeps exactly these lots, so the loop's check that
+        # production obligations are unchanged always holds here; only the
+        # protected rows and the manual anchors are checked per rotation.
+        preserved = set(getattr(data, "preserved_lot_proofs", None) or {})
+        self._preserved_rows = improvement._lot_rows(segments, preserved)
+        self._violated_anchors = improvement._anchor_violation_lots(segments, data, config)
+        self._current = improvement._evaluate(
+            segments, lots, data, config, segments, self._order,
+        )
+
+    def verdict(self, candidate: list[Segment]) -> tuple[str | None, list[str]]:
+        """``(None, [])`` when the loop would accept ``candidate``."""
+
+        from backend.scheduler.validation import coverage_metrics, validate_plan
+
+        improvement = self._improvement
+        # The checks of ``improvement._physically_valid``; a rotation is a new
+        # plan by construction, so it skips the memo key (B4.2).
+        violations = validate_plan(
+            candidate, self._data, self._config, lots=self._lots, memo=False,
+        )
+        kinds = sorted({str(item.get("kind", "physical")) for item in violations})
+        coverage = coverage_metrics(candidate, self._lots)
+        if any(int(coverage.get(key, 0) or 0) for key in improvement._COVERAGE_KEYS):
+            kinds.append("quantity_conservation")
+        if improvement._lot_rows(candidate, set(self._preserved_rows)) != self._preserved_rows:
+            kinds.append("preserved_lot_moved")
+        if (
+            improvement._anchor_violation_lots(candidate, self._data, self._config)
+            - self._violated_anchors
+        ):
+            kinds.append("plan_anchor")
+        if kinds:
+            return "resource_blocked", kinds
+        evaluated = improvement._evaluate(
+            candidate, self._lots, self._data, self._config, self._segments,
+            self._order, violations,
+        )
+        loss = improvement.no_loss_verdict(evaluated.facts, self._current.facts)
+        if not loss.admissible:
+            return "delivery_blocked", list(loss.reasons)
+        if improvement.improvement_better(evaluated.key, self._current.key):
+            return None, []
+        if evaluated.key[0] != self._current.key[0]:  # delivery ranks first
+            return "delivery_blocked", ["blocked_by_delivery_objective"]
+        return "counterfactual_required", ["counterfactual_not_earlier"]
+
+
+_PENDING = {
+    "verification_status": "not_evaluated",
+    "blocking_reason": "audit_budget",
+    "blocking_reasons": ["audit_budget"],
+}
+
+
 def _classified_priority_anomalies(
     segments: list[Segment],
     lots: list[Lot],
     data: EngineData,
     config: FactoryConfig,
     budget: int | None,
+    *,
+    preserved_lot_ids: set[str],
+    anchored_lot_ids: set[str],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Return (anomalies, classified); over budget, all are marked pending.
+    """Return (anomalies, every anomaly explained or classified).
 
-    The decision depends only on the plan (its anomaly count), never on time.
-    An outer deadline or a cancellation still stops a classification that
-    runs, through the checkpoints inside it.
+    Pairs with a protected lot are explained first (history and manual
+    positions are never moved by a recalculation), so the work budget is
+    spent only on pairs a recalculation could change. Over budget, the
+    ``budget`` most urgent movable pairs are classified (proven findings
+    first) and the rest stay ``not_evaluated``: the audit stays pending
+    ("por avaliar", AGENTS §6), never a pass. The split depends only on the
+    plan, never on time; an outer deadline or a cancellation still stops a
+    classification through the checkpoints inside it.
     """
 
-    if budget is not None:
-        anomalies = find_priority_order_anomalies(segments, lots, data)
-        if not anomalies:
-            return [], True
-        if len(anomalies) > max(0, int(budget)):
-            return [
-                {
-                    **detail,
-                    "verification_status": "not_evaluated",
-                    "blocking_reason": "audit_budget",
-                    "blocking_reasons": ["audit_budget"],
-                }
-                for detail in anomalies
-            ], False
-    return classify_priority_order_anomalies(segments, lots, data, config), True
+    frozen_lot_ids = preserved_lot_ids | anchored_lot_ids
+    anomalies = find_output_priority_anomalies(segments, lots, data)
+    movable: list[dict[str, Any]] = []
+    protected: dict[int, dict[str, Any]] = {}
+    for position, item in enumerate(anomalies):
+        pair = {item.get("urgent_lot_id"), item.get("blocking_lot_id")}
+        if not pair & frozen_lot_ids:
+            movable.append(item)
+            continue
+        # Anchored lots also carry a preservation proof in a protected
+        # replan; the explicit manual position is the reason to report.
+        historical = bool(pair & (preserved_lot_ids - anchored_lot_ids))
+        reason = "historical_lot_locked" if historical else "manual_anchor"
+        protected[position] = {
+            **item,
+            "verification_status": "historical_locked" if historical else "manual_locked",
+            "blocking_reason": reason,
+            "blocking_reasons": [reason],
+        }
+    if budget is None:
+        # Unbounded audit: every anomaly is classified, then explained.
+        checked = classify_priority_order_anomalies(segments, lots, data, config)
+        return [protected.get(position, item) for position, item in enumerate(checked)], True
+    limit = max(0, int(budget))
+    complete = len(movable) <= limit
+    if not movable:
+        checked = []
+    elif limit == 0 and not complete:
+        checked = [{**item, **_PENDING} for item in movable]
+    else:
+        checked = classify_priority_order_anomalies(
+            segments, lots, data, config,
+            anomalies=movable,
+            max_classifications=None if complete else limit,
+        )
+    merged = iter(checked)
+    return [
+        protected[position] if position in protected else next(merged)
+        for position in range(len(anomalies))
+    ], complete
 
 
 def _build_operational_audit(
@@ -165,6 +536,8 @@ def _build_operational_audit(
         data,
         config or FactoryConfig(),
         classification_budget,
+        preserved_lot_ids=preserved_lot_ids,
+        anchored_lot_ids=anchored_lot_ids,
     )
     tool_priority_detail = released_tool_priority_inversion_detail(
         segments,
@@ -173,21 +546,14 @@ def _build_operational_audit(
         config or FactoryConfig(),
         frozen_lot_ids=frozen_lot_ids,
     )
-    for item in priority_detail:
-        if (
-            item.get("urgent_lot_id") in frozen_lot_ids
-            or item.get("blocking_lot_id") in frozen_lot_ids
-        ):
-            pair = {item.get("urgent_lot_id"), item.get("blocking_lot_id")}
-            historical = bool(pair & (preserved_lot_ids - anchored_lot_ids))
-            item["verification_status"] = "historical_locked" if historical else "manual_locked"
-            item["blocking_reason"] = "historical_lot_locked" if historical else "manual_anchor"
-            item["blocking_reasons"] = [item["blocking_reason"]]
     # Only a validated rotation that reduces the anomaly count proves the
     # current order avoidable. A neutral counterfactual remains useful audit
     # evidence, but must not block an otherwise executable plan.
     avoidable_priority = sum(
         item["verification_status"] == "permutable" for item in priority_detail
+    )
+    pending_priority = sum(
+        item["verification_status"] == "not_evaluated" for item in priority_detail
     )
     status: dict[str, Any] = (
         {"status": "evaluated"}
@@ -196,6 +562,9 @@ def _build_operational_audit(
             "status": "not_evaluated",
             "stop_reason": "audit_budget",
             "unevaluated_metrics": ["avoidable_priority_order_anomalies"],
+            # The avoidable count is then a lower bound: only the most
+            # urgent anomalies, up to the work budget, were classified.
+            "unevaluated_priority_order_anomalies": pending_priority,
         }
     )
     return {

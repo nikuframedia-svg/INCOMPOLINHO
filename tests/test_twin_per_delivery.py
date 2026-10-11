@@ -15,6 +15,7 @@ days 14, 15, 28 and 30 release material on days 7, 8, 21 and 23.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import gzip
 import json
 from datetime import date, timedelta
@@ -46,6 +47,7 @@ from backend.types import ClientDemandEntry, EngineData, EOp, MachineInfo, TwinG
 from tests.oracle_delivery import (
     WorkCalendar,
     oracle_coverage,
+    oracle_lot_order,
     oracle_first_rupture,
     oracle_lot_releases,
     oracle_orders,
@@ -341,6 +343,28 @@ def test_oracle_coverage_counts_earlier_lots_of_the_operation():
     assert oracle_lot_releases(later, data, lots=lots) == [(A_ID, 1000, 9), (A_ID, 2000, 21)]
 
 
+def test_oracle_lot_order_breaks_ties_on_the_lot_index_as_a_number():
+    """``…_10`` comes after ``…_9`` (review B3 finding 4), and a duplicate
+    twin id (``…_3_12``) after its first cycle (``…_3``)."""
+
+    data = _data({14: 3000}, {15: 3000})
+    (lot,) = create_lots(data, CONFIG)
+    named = [
+        dataclasses.replace(lot, id=name)
+        for name in ("LOT_TWIN_T_10", "LOT_TWIN_T_9", "LOT_TWIN_T_3_12", "LOT_TWIN_T_3")
+    ]
+    assert [item.id for item in oracle_lot_order(named, data)] == [
+        "LOT_TWIN_T_3", "LOT_TWIN_T_3_12", "LOT_TWIN_T_9", "LOT_TWIN_T_10",
+    ]
+
+
+def test_oracle_lot_order_never_follows_the_list_order():
+    data = _data({14: 3000, 16: 1000, 28: 2000}, {15: 3000}, eco_lot=3000)
+    lots = create_lots(data, CONFIG)
+    assert [lot.id for lot in oracle_lot_order(lots[::-1], data)] == [lot.id for lot in lots]
+    assert oracle_coverage(lots[::-1], data) == oracle_coverage(lots, data)
+
+
 def test_co_produced_stock_never_drives_the_release():
     """A: 1000 (day 10), 1000 (day 24), 500 (day 30). B: no demand.
 
@@ -457,6 +481,55 @@ def test_real_twin_cycles_follow_each_delivery_release(name, lot_id, curve):
                 twin.id, day)
     result = schedule_all(copy.deepcopy(data), config=config)
     assert oracle_window_violations(result.segments, result.lots, data) == []
+
+
+def _creation_order(data, config, version, monkeypatch):
+    """Lots in the order ``create_lots`` makes them, and the lots it returns."""
+    import backend.scheduler.lot_sizing as lot_sizing
+
+    made = []
+    original = lot_sizing.Lot
+
+    def record(*args, **kwargs):
+        made.append(original(*args, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(lot_sizing, "Lot", record)
+    lots = create_lots(data, config, quantity_material=version)
+    assert {lot.id for lot in made} == {lot.id for lot in lots}
+    return made, lots
+
+
+def _sides(lot):
+    if lot.is_twin and lot.twin_outputs:
+        return [str(op_id) for op_id, _sku, _qty in lot.twin_outputs]
+    return [str(lot.op_id)]
+
+
+@pytest.mark.parametrize("version", [True, 1, 0])
+@pytest.mark.parametrize("name", ["rev82", "rev85", "rev87", "rev90", "rev121"])
+def test_oracle_lot_order_is_the_lot_sizing_order_on_every_side(name, version, monkeypatch):
+    """Each side of each operation consumes its deliveries in creation order;
+    the oracle rebuilds exactly that order from a shuffled list."""
+
+    data, config = _fixture(name)
+    made, lots = _creation_order(data, config, version, monkeypatch)
+    shuffled = lots[1::2] + lots[::2]
+    ordered = oracle_lot_order(shuffled, data)
+    for side in {side for lot in made for side in _sides(lot)}:
+        truth = [lot.id for lot in made if side in _sides(lot)]
+        assert [lot.id for lot in ordered if side in _sides(lot)] == truth, side
+    if version is True:
+        # And it rebuilds the coverage lot sizing recorded, lot by lot.
+        coverage = oracle_coverage(shuffled, data)
+        for lot in lots:
+            recorded: dict[str, list] = {}
+            for output in lot.output_milestones:
+                surplus = output.get("is_economic_surplus") or output.get("is_coproduced_surplus")
+                recorded.setdefault(str(output["op_id"]), []).append(
+                    (None if surplus else int(output["customer_delivery_day"]), int(output["qty"]))
+                )
+            assert coverage[lot.id] == recorded, lot.id
 
 
 def test_rev90_released_twin_portion_fills_a_retained_gap_to_save_its_deliveries():

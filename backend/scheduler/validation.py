@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import math
 from datetime import datetime
+from operator import attrgetter
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -327,13 +330,139 @@ def _transition_setup_minutes(
     return total
 
 
+# ── B4.2: each candidate is validated once per calculation ─────────────────
+#
+# One improvement candidate used to be validated three times with the same
+# inputs: by its generator, by the evaluator's physical check and inside its
+# score.  ``validate_plan`` is a pure function of the plan content, the
+# scenario and the configuration, so inside one planning calculation the
+# verdict is memoised (transparent to every caller).  An entry is reused only
+# after exact equality of:
+#   * every field of every segment, in list order, compared by ``repr`` of
+#     the record's whole field tuple: the value AND its type (420 and 420.0,
+#     True and 1, 0.0 and -0.0 never share an entry), nested values included
+#     (the types inside ``twin_outputs``, milestones, left-shift blockers).
+#     ``repr`` is at least as strict as the ``schedule_fingerprint``
+#     (``json.dumps``) a frozen recalculation uses to prove each preserved
+#     lot, so a value change that can change the verdict always changes the
+#     key (tests/test_validation_once.py has the cases);
+#   * every field of every lot, in list order, by the same rule;
+#   * the whole scenario (``EngineData`` equality against a private deep copy,
+#     so preserved-lot proofs, anchors, calendars and supplies are all part of
+#     the identity) and the configuration (same rule).
+# ``repr`` can only miss, never collide, for the values these records carry
+# (numbers, text, booleans, None, tuples, lists, flat dicts): a different
+# dict key order or an object with an identity ``repr`` just validates again.
+# Outside a planning scope nothing is cached.  Callers receive a private copy
+# of the violations, so mutating one never alters another caller's verdict.
+
+_MEMO_PLANS = 16
+_MEMO_CONTEXTS = 4
+
+
+def _record_getter(cls):
+    return attrgetter(*(item.name for item in dataclasses.fields(cls)))
+
+
+# Built from the dataclass fields, so a new field is part of the key at once.
+_segment_fields = _record_getter(Segment)
+_lot_fields = _record_getter(Lot)
+
+
+def _plan_key(segments, lots):
+    """Exact content of the plan as validation reads it, values and types."""
+
+    segment_key = (
+        tuple(map(type, segments)),
+        tuple(map(repr, map(_segment_fields, segments))),
+    )
+    if lots is None:
+        return segment_key, None
+    return segment_key, (
+        tuple(map(type, lots)),
+        tuple(map(repr, map(_lot_fields, lots))),
+    )
+
+
+def _context_token(memo: dict, data, config) -> int:
+    """Index of a private snapshot equal to (data, config); new one if none."""
+
+    contexts = memo.setdefault("contexts", [])
+    for token, snapshot_data, snapshot_config in contexts:
+        if snapshot_config == config and snapshot_data == data:
+            return token
+    token = memo.get("next_token", 0)
+    memo["next_token"] = token + 1
+    contexts.append((token, copy.deepcopy(data), copy.deepcopy(config)))
+    if len(contexts) > _MEMO_CONTEXTS:
+        stale = contexts.pop(0)[0]
+        plans = memo.get("plans", {})
+        for key in [key for key in plans if key[1] == stale]:
+            del plans[key]
+    return token
+
+
+def validation_counts() -> dict[str, int]:
+    """Calls and real validations in the current planning calculation."""
+
+    from backend.planning_control import execution_cache
+
+    memo = execution_cache("validate_plan")
+    return {"calls": memo.get("calls", 0), "validations": memo.get("validations", 0)}
+
+
 def validate_plan(
     segments: list[Segment],
     data: EngineData | None = None,
     config: FactoryConfig | None = None,
     lots: list[Lot] | None = None,
+    *,
+    memo: bool = True,
 ) -> list[dict[str, Any]]:
-    """Return hard physical violations for a schedule plan."""
+    """Return hard physical violations for a schedule plan.
+
+    Memoised inside one planning calculation (B4.2, see above); the verdict
+    and its details are identical with and without the memo. ``memo=False``
+    is for callers whose plans are new by construction (one-off
+    counterfactuals): it skips the key cost but still counts the validation.
+    """
+
+    from backend.planning_control import current_planning_control, execution_cache
+
+    if current_planning_control() is None:
+        return _validate_plan(segments, data, config, lots)
+    if not memo:
+        counts = execution_cache("validate_plan")
+        counts["calls"] = counts.get("calls", 0) + 1
+        counts["validations"] = counts.get("validations", 0) + 1
+        return _validate_plan(segments, data, config, lots)
+    memo = execution_cache("validate_plan")
+    memo["calls"] = memo.get("calls", 0) + 1
+    plans = memo.setdefault("plans", {})
+    try:
+        key = (_plan_key(segments, lots), _context_token(memo, data, config))
+        cached = plans.pop(key, None)
+    except (AttributeError, TypeError):
+        # Not plain segments/lots, or unhashable output fields: no memo.
+        key = cached = None
+    if cached is not None:
+        plans[key] = cached  # most recently used last
+        return copy.deepcopy(cached)
+    memo["validations"] = memo.get("validations", 0) + 1
+    violations = _validate_plan(segments, data, config, lots)
+    if key is not None:
+        if len(plans) >= _MEMO_PLANS:
+            del plans[next(iter(plans))]
+        plans[key] = copy.deepcopy(violations)
+    return violations
+
+
+def _validate_plan(
+    segments: list[Segment],
+    data: EngineData | None,
+    config: FactoryConfig | None,
+    lots: list[Lot] | None,
+) -> list[dict[str, Any]]:
     if data is not None:
         from backend.transform.calendars import calendar_window
 

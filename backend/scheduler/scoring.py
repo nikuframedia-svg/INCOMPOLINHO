@@ -30,7 +30,11 @@ from backend.scheduler.material_quantities import (
 )
 from backend.scheduler.operational_audit import build_operational_audit
 from backend.scheduler.types import Lot, Segment
-from backend.scheduler.validation import coverage_metrics, validate_plan_metrics
+from backend.scheduler.validation import (
+    coverage_metrics,
+    hard_gate_metrics,
+    validate_plan_metrics,
+)
 from backend.types import EngineData
 
 
@@ -42,12 +46,17 @@ def compute_score(
     *,
     include_operational_audit: bool = True,
     operational_audit: dict | None = None,
+    violations: list[dict] | None = None,
 ) -> dict:
     """Compute all KPIs for a schedule.
 
     Candidate-repair loops may skip the expensive operational audit because
     they validate the proposed move directly. Public/final scores keep the
     audit enabled so the score contract and acceptance gate remain complete.
+
+    ``violations`` is the result of ``validate_plan`` for exactly these
+    segments, lots, data and config, when the caller already has it (B4.2);
+    omitted, the plan is validated here.
     """
 
     lot_start: dict[str, int] = productive_start_days(segments)
@@ -251,12 +260,15 @@ def compute_score(
     if machine_work_min:
         bottleneck_machine = max(machine_work_min, key=machine_work_min.get)
 
-    violations, physical_metrics = validate_plan_metrics(
-        segments,
-        engine_data,
-        config,
-        lots=lots,
-    )
+    if violations is None:
+        violations, physical_metrics = validate_plan_metrics(
+            segments,
+            engine_data,
+            config,
+            lots=lots,
+        )
+    else:
+        physical_metrics = hard_gate_metrics(violations)
     hard_violation_count = len(violations)
     coverage = coverage_metrics(segments, lots)
 

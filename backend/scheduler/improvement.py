@@ -7,11 +7,14 @@ no subcontract dispatch milestone may slip. Candidates that trade one of these
 for an aggregate gain are kept as trade-offs, never applied silently.
 
 Among admissible candidates one canonical order decides (AGENTS.md §1):
-delivery, then real anticipation (production start and finish of every lot,
-in commercial priority order), then physical setups, setup minutes,
-transfers and plan disturbance. Extra setups are a tie-break, never a veto:
-an anticipation that adds a setup while preserving every order is accepted
-(decision of 02/10/2026).
+delivery, then real anticipation (production start and finish of every
+delivery of every lot, in commercial priority order: ``policy``, v3 per
+output), then physical setups, setup minutes, transfers and plan
+disturbance. Extra setups are a tie-break, never a veto: an anticipation
+that adds a setup while preserving every order is accepted (decision of
+02/10/2026). A proposal that provably cannot win on any element of that
+order is pruned before validation (``cannot_gain``) and counted in the
+report (``proposals_pruned``).
 """
 
 from __future__ import annotations
@@ -27,14 +30,22 @@ from dataclasses import dataclass, field, replace
 from backend.scheduler.material_quantities import delivery_portions
 from backend.scheduler.policy import (  # noqa: F401  (re-exported)
     AnticipationKey,
+    AnticipationOrder,
     anticipation_better,
     anticipation_compare,
     anticipation_key,
+    anticipation_order,
+    output_windows,
     production_windows,
     tolerant_better,
     tolerant_tiebreak,
 )
-from backend.scheduler.priority import delivery_priority_key
+from backend.scheduler.priority import (
+    delivery_is_complete,
+    delivery_priority_key,
+    order_delivery_metrics,
+    sku_planning_priorities,
+)
 from backend.scheduler.setup_identity import segment_setup_identity
 from backend.scheduler.types import Lot, Segment
 from backend.types import ClientDemandEntry, EngineData
@@ -288,15 +299,38 @@ def plan_facts(
     lots: list[Lot],
     data: EngineData,
     score: Mapping[str, object],
+    *,
+    order: AnticipationOrder | None = None,
 ) -> PlanFacts:
+    """``order`` (``policy.anticipation_order`` of the same lots) may be
+    passed to reuse it across the candidates of one scenario.
+
+    ``facts.score`` is a copy of ``score`` with the per-order delivery
+    metrics (``priority.order_delivery_metrics``) of the same allocation as
+    the no-loss contract, so ``improvement_key`` ranks delivery per order.
+    """
+
+    orders = order_service(segments, lots, data)
     return PlanFacts(
-        orders=order_service(segments, lots, data),
+        orders=orders,
         subcontract_lateness=subcontract_lateness(segments, lots, data),
         setups=physical_setups(segments),
-        score=score,
+        score={
+            **dict(score or {}),
+            **order_delivery_metrics(orders, sku_planning_priorities(data)),
+        },
         signature=physical_signature(segments, lots),
-        anticipation=anticipation_key(segments, lots),
+        anticipation=anticipation_key(segments, lots, order=_order_for(lots, order)),
     )
+
+
+def _order_for(lots: list[Lot], order: AnticipationOrder | None) -> AnticipationOrder | None:
+    """``order`` when it lists exactly ``lots``; else ``None`` (recompute)."""
+
+    if order is None:
+        return None
+    listed = {lot_id for _element, lot_id in order.elements}
+    return order if listed == {lot.id for lot in lots} else None
 
 
 # ── Contract ─────────────────────────────────────────────────────────────
@@ -342,7 +376,8 @@ def improvement_key(
 ) -> tuple[object, ...]:
     """Canonical lexicographic order among admissible candidates (smaller wins).
 
-    Delivery, then anticipation, then setups/minutes, transfers and plan
+    Delivery per order (late orders, order days late, then OTD-D; lot
+    tardiness is an indicator only), then anticipation, then setups/minutes, transfers and plan
     disturbance. Compare keys only between plans with the same lots, and
     only through ``improvement_better``: inside the anticipation tolerance
     the setups rank before the exact anticipation minutes (contract v3).
@@ -495,6 +530,19 @@ def is_verified(
 # ── Single improvement cycle (plan §5) ───────────────────────────────────
 
 MAX_IMPROVEMENT_ROUNDS = 64
+# The compaction (first generator) costs as much as dozens of candidates on a
+# real ISOP: ``normalize_earliest_legal_plan`` re-runs the canonical repairs
+# to a fixed point. It is not run after every accepted move but once, when
+# the other generators stop (no admissible move, or the search part of the
+# budget is spent); if it is accepted and time is left, the search resumes
+# on the compacted plan. The search keeps a reserve for that closing pass:
+# the measured duration of the last compaction times the margin, or a share
+# of the budget before the first one has run.
+CLOSING_COMPACTION_SHARE = 0.3
+CLOSING_COMPACTION_MARGIN = 1.25
+# Also compact after this many accepted moves, only while the search budget
+# still holds twice the reserve (``None``: only the closing pass).
+COMPACTION_EVERY_ACCEPTED: int | None = None
 # Generic generators are capped per call. Finite reinsertion neighbourhoods
 # exhaust their hypotheses subject to the shared deadline/evaluation budget.
 MAX_PROPOSALS_PER_CALL = 12
@@ -506,6 +554,7 @@ _COVERAGE_KEYS = (
     "duplicate_twin_output_qty", "twin_output_mismatches",
 )
 _SUMMARY_KEYS = (
+    "orders_late", "order_late_days", "otd_d_failures",
     "otd", "otd_d", "tardy_count", "total_tardiness", "setups", "setup_time_min",
     "production_time_cost", "left_shift_opportunities",
 )
@@ -545,6 +594,9 @@ class Generator:
     propose: object  # Callable[[list[Segment], list[Lot]], Proposal]
     # None is reserved for finite enumerations; the shared deadline still applies.
     proposal_limit: int | None = MAX_PROPOSALS_PER_CALL
+    # Tried at the start of every round, before the rotation of the others
+    # (a cheap neighbourhood whose hypotheses later moves can create).
+    leading: bool = False
 
 
 @dataclass(slots=True)
@@ -554,6 +606,8 @@ class _Evaluated:
     facts: PlanFacts
     key: tuple[object, ...]
     transfers: int
+    # The complete plan the facts were measured on (protected work joined).
+    full_segments: list[Segment] | None = None
 
 
 def default_generators(data: EngineData, config, *, evaluation_plan=None) -> list[Generator]:
@@ -593,6 +647,57 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
             ), segments, lots,
         )
 
+    rotations_tried: set[tuple] = set()
+
+    def priority_rotation(segments, lots):
+        """The operational audit's per-delivery anomalies (a less urgent run
+        before a more urgent one that was released in time, on the same
+        machine) proposed as the audit's own rotations. Read-only use of
+        the audit: the evaluator alone decides, so a rotation the contract
+        accepts is found by the loop instead of being left as "avoidable"."""
+
+        from backend.scheduler.operational_audit import find_output_priority_anomalies
+        from backend.scheduler.priority_normalization import (
+            _build_priority_rotation_candidates,
+        )
+
+        def propose(complete_segments, complete_lots, complete_data):
+            timelines: dict[str, list[tuple]] = defaultdict(list)
+            for segment in complete_segments:
+                timelines[segment.machine_id].append(_segment_physical_row(segment))
+            for anomaly in find_output_priority_anomalies(
+                complete_segments, complete_lots, complete_data,
+            ):
+                # The generator runs in every round: a rotation already
+                # proposed on the same machine timeline is not rebuilt (the
+                # evaluator judged it; moves elsewhere rarely change that).
+                tried_key = (
+                    anomaly["machine_id"], anomaly["urgent_run_id"],
+                    anomaly["blocking_run_id"],
+                    tuple(sorted(timelines.get(anomaly["machine_id"], ()))),
+                )
+                if tried_key in rotations_tried:
+                    continue
+                rotations_tried.add(tried_key)
+                subject = {
+                    "key": (
+                        f"priority_rotation:{anomaly['machine_id']}:"
+                        f"{anomaly['urgent_run_id']}<{anomaly['blocking_run_id']}"
+                    ),
+                    "machine_id": anomaly["machine_id"],
+                    "urgent_lot_id": anomaly["urgent_lot_id"],
+                    "blocking_lot_id": anomaly["blocking_lot_id"],
+                }
+                candidates = _build_priority_rotation_candidates(
+                    complete_segments, complete_lots, complete_data, config, anomaly,
+                )
+                if not candidates:
+                    yield SkippedProposal(subject, "counterfactual_unavailable")
+                for candidate in candidates:
+                    yield Proposal(candidate, complete_lots, subject=subject)
+
+        return allocate_in_complete_context(propose, segments, lots)
+
     def campaign_tail(segments, lots):
         from backend.scheduler.campaign_tail import repair_short_runs_after_merged_campaigns
 
@@ -617,6 +722,16 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
 
         return allocate_in_complete_context(
             lambda complete_segments, complete_lots, complete_data: anticipation_proposals(
+                complete_segments, complete_lots, complete_data, config,
+                not_before_abs=floor_day * 1440 if floor_day else None,
+            ), segments, lots,
+        )
+
+    def lot_machine(segments, lots):
+        from backend.scheduler.alternative_repair import lot_machine_proposals
+
+        return allocate_in_complete_context(
+            lambda complete_segments, complete_lots, complete_data: lot_machine_proposals(
                 complete_segments, complete_lots, complete_data, config,
                 not_before_abs=floor_day * 1440 if floor_day else None,
             ), segments, lots,
@@ -722,12 +837,16 @@ def default_generators(data: EngineData, config, *, evaluation_plan=None) -> lis
 
     # Local changes first, group moves last (§5.3). The first generator is
     # also the closing compaction pass (see ``improve_plan``). N0-N3:
-    # same-machine compaction, then reinsertion of one, two and three
-    # consecutive runs on every eligible machine; setup/transfer-focused
+    # same-machine compaction, the audit's per-delivery priority rotations
+    # (few, cheap to build), reinsertion of one run on every eligible
+    # machine, a whole lot (all its portions) on another machine (owner
+    # rule 3), then two and three consecutive runs; setup/transfer-focused
     # neighbourhoods follow.
     return [
         Generator("earliest_legal", earliest_legal),
+        Generator("priority_rotation", priority_rotation, proposal_limit=None, leading=True),
         Generator("alternative_anticipation", alternative_anticipation, proposal_limit=None),
+        Generator("lot_machine", lot_machine, proposal_limit=None),
         Generator("pair_reinsertion", group_reinsertion(2), proposal_limit=None),
         Generator("triple_reinsertion", group_reinsertion(3), proposal_limit=None),
         Generator("local_cpsat", local_cpsat, proposal_limit=None),
@@ -757,10 +876,16 @@ def _with_replanning_floor(lots, movable_ids, data, floor_day: int):
     ]
 
 
-def _score_plan(segments, lots, data, config) -> dict:
+def _score_plan(segments, lots, data, config, violations=None) -> dict:
+    """``violations``: ``validate_plan`` of exactly this plan and data, when
+    the evaluator already has it (each candidate is validated once, B4)."""
+
     from backend.scheduler.scoring import compute_score
 
-    return compute_score(segments, lots, data, config=config, include_operational_audit=False)
+    return compute_score(
+        segments, lots, data, config=config, include_operational_audit=False,
+        violations=violations,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -800,13 +925,22 @@ def _protection(segments, lots, data, config) -> _Protection:
     )
 
 
-def _physically_valid(segments, lots, data, config, protection=None) -> list[str]:
+def _physically_valid(
+    segments, lots, data, config, protection=None, *, verdict: list | None = None,
+) -> list[str]:
+    """Kinds of physical, conservation and protection failures (empty: valid).
+
+    ``verdict``, when given, receives the raw ``validate_plan`` violations,
+    so the score of the same plan does not validate it again.
+    """
+
     from backend.scheduler.canonical import production_lot_obligations
     from backend.scheduler.validation import coverage_metrics, validate_plan
 
-    kinds = sorted({str(v.get("kind", "physical")) for v in validate_plan(
-        segments, data, config, lots=lots,
-    )})
+    violations = validate_plan(segments, data, config, lots=lots)
+    if verdict is not None:
+        verdict.extend(violations)
+    kinds = sorted({str(v.get("kind", "physical")) for v in violations})
     coverage = coverage_metrics(segments, lots)
     if any(int(coverage.get(key, 0) or 0) for key in _COVERAGE_KEYS):
         kinds.append("quantity_conservation")
@@ -826,9 +960,21 @@ def _physically_valid(segments, lots, data, config, protection=None) -> list[str
     return kinds
 
 
-def _evaluate(segments, lots, data, config, reference_segments) -> _Evaluated:
-    score = _score_plan(segments, lots, data, config)
-    facts = plan_facts(segments, lots, data, score)
+def _complete_plan_violations(complete_plan, config) -> list[dict]:
+    """``validate_plan`` of the complete plan (protected work joined), on the
+    data the merged result is validated with (``plans.frozen``)."""
+
+    from backend.scheduler.validation import validate_plan
+
+    segments, lots, data = complete_plan
+    return validate_plan(segments, data, config, lots=lots)
+
+
+def _evaluate(
+    segments, lots, data, config, reference_segments, order=None, violations=None,
+) -> _Evaluated:
+    score = _score_plan(segments, lots, data, config, violations)
+    facts = plan_facts(segments, lots, data, score, order=order)
     changed, displacement = lot_changes(segments, reference_segments)
     transfers = tool_transfers(segments)
     key = improvement_key(
@@ -837,7 +983,112 @@ def _evaluate(segments, lots, data, config, reference_segments) -> _Evaluated:
         changed_lots=changed,
         displacement_min=displacement,
     )
-    return _Evaluated(segments, lots, facts, key, transfers)
+    return _Evaluated(segments, lots, facts, key, transfers, segments)
+
+
+# ── Pruning before validation (Fase B3) ──────────────────────────────────
+
+
+def _loses_an_order(complete_plan, current: _Evaluated, reference: _Evaluated) -> bool:
+    """Would the candidate lose an order against ``current`` or ``reference``?
+
+    Such a proposal is never pruned: it goes through validation and the
+    contract as before, so its rejection keeps the reason ``contract`` and
+    its trade-off, which the explanations of the final plan read (e.g. why
+    a tool transfer stays). Only the per-order facts are computed here.
+    """
+
+    segments, lots, data = complete_plan
+    facts = PlanFacts(
+        orders=order_service(segments, lots, data),
+        subcontract_lateness=subcontract_lateness(segments, lots, data),
+        setups=SetupSummary(0, 0.0), score={}, signature="",
+    )
+    return not (
+        no_loss_verdict(facts, current.facts).admissible
+        and no_loss_verdict(facts, reference.facts).admissible
+    )
+
+
+def _daily_production(segments: Iterable[Segment]) -> dict[tuple[str, str, int], int]:
+    """Pieces made per (lot, side, day); one side ``""`` for non-twin rows."""
+
+    made: dict[tuple[str, str, int], int] = defaultdict(int)
+    for segment in segments:
+        if segment.twin_outputs:
+            for op_id, _sku, qty in segment.twin_outputs:
+                if int(qty) > 0:
+                    made[(segment.lot_id, str(op_id), segment.day_idx)] += int(qty)
+        elif segment.qty > 0:
+            made[(segment.lot_id, "", segment.day_idx)] += int(segment.qty)
+    return made
+
+
+def delivery_cannot_improve(
+    candidate_segments: Iterable[Segment],
+    current_segments: Iterable[Segment],
+    current_score: Mapping[str, object],
+) -> bool:
+    """Sufficient proof that ``delivery_priority_key`` cannot improve.
+
+    True when the current plan already delivers everything on time (the
+    key is at its minimum), or when no lot has, on any day, more pieces of
+    any side produced by that day than in the current plan. Every delivery
+    measure (lot and order readiness, OTD-D, subcontract dispatch) counts
+    pieces by day, first in first out, so none of them can then get
+    earlier. Operational-audit metrics are not covered: a plan scored with
+    them is never pruned.
+    """
+
+    if float(current_score.get("released_tool_priority_inversions") or 0) > 0:
+        return False
+    if delivery_is_complete(current_score):
+        return True
+    changes: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+    for (lot_id, side, day), qty in _daily_production(candidate_segments).items():
+        changes[(lot_id, side)].append((day, qty))
+    for (lot_id, side, day), qty in _daily_production(current_segments).items():
+        changes[(lot_id, side)].append((day, -qty))
+    for events in changes.values():
+        events.sort()
+        ahead = 0
+        for position, (day, delta) in enumerate(events):
+            ahead += delta
+            last_of_day = position + 1 == len(events) or events[position + 1][0] != day
+            if last_of_day and ahead > 0:
+                return False
+    return True
+
+
+def cannot_gain(
+    candidate_segments: list[Segment],
+    candidate_lots: list[Lot],
+    current: _Evaluated,
+    reference_segments: list[Segment],
+    order: AnticipationOrder | None = None,
+) -> bool:
+    """No element of ``improvement_key`` can make the candidate a strict
+    gain over ``current``: its delivery cannot improve and the rest of its
+    key (anticipation, setups, transfers, disturbance; all cheap, no
+    validation) does not win under ``improvement_better``. Such a candidate
+    would be rejected as ``no_strict_gain`` (or worse) after validation."""
+
+    if current.full_segments is None or not delivery_cannot_improve(
+        candidate_segments, current.full_segments, current.facts.score,
+    ):
+        return False
+    setups = physical_setups(candidate_segments)
+    changed, displacement = lot_changes(candidate_segments, reference_segments)
+    return not tolerant_better(
+        anticipation_key(
+            candidate_segments, candidate_lots, order=_order_for(candidate_lots, order),
+        ),
+        current.key[1],
+        (setups.count, setups.minutes),
+        (current.key[2], current.key[3]),
+        (tool_transfers(candidate_segments), changed, round(displacement, 3)),
+        tuple(current.key[4:]),
+    )
 
 
 def _summary(evaluated: _Evaluated) -> dict[str, object]:
@@ -905,6 +1156,7 @@ def improve_plan(
     evaluation_plan: Callable[
         [list[Segment], list[Lot]], tuple[list[Segment], list[Lot], EngineData]
     ] | None = None,
+    compaction_every: int | None = None,
 ) -> tuple[list[Segment], list[Lot], dict[str, object]]:
     """Incorporate every admissible no-loss improvement found in scope.
 
@@ -918,7 +1170,13 @@ def improve_plan(
     a proof of global optimality.
 
     ``max_evaluations`` bounds the number of evaluated candidates (a budget
-    that does not depend on machine load); ``time_budget_s`` stays a safety cap.
+    that does not depend on machine load), the compaction's included;
+    ``time_budget_s`` stays a safety cap.
+    The first of several generators is the compaction: it runs once the
+    others stop, inside a closing reserve (of time, and of one evaluation:
+    under ``max_evaluations`` the search stops one evaluation early), and
+    every ``compaction_every`` accepted moves when time and evaluations
+    allow (default ``COMPACTION_EVERY_ACCEPTED``).
     Each outcome for a proposal with a ``subject`` is logged against the plan
     state it was judged on, so explanations are never reused for another state.
     ``evaluation_plan`` joins protected production for the no-loss comparison;
@@ -948,6 +1206,10 @@ def improve_plan(
         "stop_reason": None,
         "scopes": [generator.name for generator in generators],
         "candidates_evaluated": 0,
+        # Proposals rejected before validation because no element of the
+        # improvement key could win (``cannot_gain``).
+        "proposals_pruned": 0,
+        "pruned_by_scope": {},
         "moves_accepted": 0,
         "accepted_by_scope": {},
         "duplicates_skipped": 0,
@@ -959,12 +1221,6 @@ def improve_plan(
         "tradeoffs": {"count": 0, "items": []},
         "duration_ms": 0.0,
     }
-
-    def out_of_time() -> bool:
-        if time_budget_s is not None and time.monotonic() - started >= time_budget_s:
-            return True
-        left = remaining_time()
-        return left is not None and left <= 0
 
     def reject(reason: str) -> None:
         rejections = report["rejections"]
@@ -1015,19 +1271,33 @@ def improve_plan(
     full_reference, full_reference_lots, reference_data = materialize(
         reference_segments, reference_lots,
     )
+    # The anticipation elements depend only on the lots: ranked once.
+    order = anticipation_order(full_reference_lots)
 
-    def evaluate(candidate_segments, candidate_lots, complete_plan):
+    def evaluate(candidate_segments, candidate_lots, complete_plan, violations=None):
         full_segments, full_lots, full_data = complete_plan
-        evaluated = _evaluate(full_segments, full_lots, full_data, config, full_reference)
+        evaluated = _evaluate(
+            full_segments, full_lots, full_data, config, full_reference, order, violations,
+        )
         # Generators allocate only the residual; facts and ranking use the
         # actual complete plan, not the D0 supplies used to reserve demand.
         evaluated.segments, evaluated.lots = candidate_segments, candidate_lots
         return evaluated
 
-    reference = evaluate(reference_segments, reference_lots,
-                         (full_reference, full_reference_lots, reference_data))
+    reference_plan = (full_reference, full_reference_lots, reference_data)
+    reference_violations = (
+        [] if evaluation_plan is None else _complete_plan_violations(reference_plan, config)
+    )
+    if reference_violations:
+        # The merged plan must validate (``plans.frozen``): no move on top of
+        # an invalid complete plan could be kept.
+        report["stop_reason"] = "reference_invalid"
+        return segments, lots, report
+    reference = evaluate(reference_segments, reference_lots, reference_plan, [])
     current = reference
     visited = {reference.facts.signature}
+    # Physically rejected plans: signature -> exact fingerprints.
+    invalid: dict[str, set[str]] = {}
     report["reference"] = _summary(reference)
     stop_reason = "no_admissible_improvement"
     evaluations = 0
@@ -1054,18 +1324,53 @@ def improve_plan(
         if signature in visited:
             report["duplicates_skipped"] += 1
             return False
-        visited.add(signature)
+        exact = None
+        if signature in invalid:
+            from backend.plans.serialize import schedule_fingerprint
+
+            exact = schedule_fingerprint(proposal.segments, proposal.lots)
+            if exact in invalid[signature]:
+                report["duplicates_skipped"] += 1
+                return False
+        if cannot_gain(
+            complete_plan[0], complete_plan[1], current, full_reference, order,
+        ) and not _loses_an_order(complete_plan, current, reference):
+            visited.add(signature)
+            report["proposals_pruned"] += 1
+            count("pruned_by_scope", scope)
+            reject(f"{scope}:pruned")
+            note(scope, proposal.subject, "rejected", "no_strict_gain", ("pruned",))
+            return False
         evaluations += 1
         report["candidates_evaluated"] += 1
         count("evaluations_by_scope", scope)
+        # One validation per plan the evaluator judges: the residual (and,
+        # with protected work, the complete plan the result is merged into);
+        # the score reuses that verdict. Generators do not validate.
+        verdict: list[dict] = []
         physical = _physically_valid(
-            proposal.segments, proposal.lots, data, config, protection,
+            proposal.segments, proposal.lots, data, config, protection, verdict=verdict,
         )
+        if not physical and evaluation_plan is not None:
+            verdict = _complete_plan_violations(complete_plan, config)
+            physical = [f"complete_plan:{kind}" for kind in sorted(
+                {str(item.get("kind", "physical")) for item in verdict}
+            )]
         if physical:
+            # Not marked visited: validity also depends on fields the
+            # signature leaves out (runs, continuation flags), so another
+            # generator may propose the same times validly. Only the exact
+            # same plan is skipped as a duplicate.
+            if exact is None:
+                from backend.plans.serialize import schedule_fingerprint
+
+                exact = schedule_fingerprint(proposal.segments, proposal.lots)
+            invalid.setdefault(signature, set()).add(exact)
             reject(f"{scope}:physical")
             note(scope, proposal.subject, "rejected", "physical", physical)
             return False
-        candidate = evaluate(proposal.segments, proposal.lots, complete_plan)
+        visited.add(signature)
+        candidate = evaluate(proposal.segments, proposal.lots, complete_plan, verdict)
         losses = list(dict.fromkeys([
             *no_loss_verdict(candidate.facts, current.facts).reasons,
             *no_loss_verdict(candidate.facts, reference.facts).reasons,
@@ -1087,63 +1392,135 @@ def improve_plan(
         count("accepted_by_scope", scope)
         return True
 
-    # The first generator is the compaction (earliest legal start). Every
-    # other accepted move is immediately followed by it, so the candidate
-    # handed back never keeps time released by a group move unused. If the
-    # budget ends before that compaction, the last settled candidate is
-    # returned instead of a partially verified one (§5.6, §9.3).
-    compacting = generators[0] if generators else None
-    settled = {"candidate": current, "moves": 0, "accepted_by_scope": {}, "proposal_log": {}}
+    # The first generator is the compaction (earliest legal start) when
+    # others follow it. It is costly, so it runs when the other generators
+    # stop, inside a reserve kept at the end of the budget, and the search
+    # resumes on the compacted plan while time is left (see
+    # ``CLOSING_COMPACTION_SHARE``). Every accepted candidate is complete and
+    # validated, so a budget that ends before or during that pass still
+    # returns a verified plan (§5.6, §9.3); ``closing_compaction`` says what
+    # the last pass did.
+    compacting = generators[0] if len(generators) > 1 else None
+    searching = list(generators[1:]) if compacting is not None else list(generators)
+    every = compaction_every if compaction_every is not None else COMPACTION_EVERY_ACCEPTED
+    progress = {"compaction_s": None, "since_compaction": 0, "compacted": None, "rounds": 0}
+    report["compactions"] = 0
+    report["closing_compaction"] = "not_run"
 
-    def settle() -> None:
-        settled["candidate"] = current
-        settled["moves"] = report["moves_accepted"]
-        settled["accepted_by_scope"] = dict(report["accepted_by_scope"])
-        settled["proposal_log"] = copy.deepcopy(report["proposal_log"])
+    def phase_limit() -> float | None:
+        limits = []
+        if time_budget_s is not None:
+            limits.append(time_budget_s - (time.monotonic() - started))
+        try:
+            left = remaining_time()
+        except PlanningTimeout:
+            left = 0.0
+        if left is not None:
+            limits.append(left)
+        return max(0.0, min(limits)) if limits else None
 
-    def compact() -> None:
+    # Fixed here, outside the search's own (shorter) scope.
+    phase_budget = phase_limit()
+    phase_end = None if phase_budget is None else time.monotonic() + phase_budget
+
+    def time_left() -> float | None:
+        """Seconds left in this phase (``None``: no limit)."""
+
+        return None if phase_end is None else max(0.0, phase_end - time.monotonic())
+
+    def reserve() -> float:
+        if compacting is None or phase_budget is None:
+            return 0.0
+        if progress["compaction_s"] is not None:
+            return progress["compaction_s"] * CLOSING_COMPACTION_MARGIN
+        return phase_budget * CLOSING_COMPACTION_SHARE
+
+    def evaluations_left(*, for_search: bool) -> bool:
+        """Under ``max_evaluations``: the search keeps one evaluation for
+        the closing compaction; the compaction may use the last one."""
+
+        if max_evaluations is None:
+            return True
+        kept = 1 if for_search and compacting is not None else 0
+        return evaluations < max_evaluations - kept
+
+    def search_out_of_time() -> bool:
+        left = time_left()
+        return left is not None and left <= reserve()
+
+    def search_scope():
+        left = time_left()
+        if left is None:
+            return nullcontext()
+        return planning_scope(timeout_s=max(0.0, left - reserve()))
+
+    def compact() -> tuple[bool, bool]:
+        """One compaction pass on the current plan: (accepted, limited).
+
+        A plan already compacted (the last pass ran on it or produced it)
+        is not compacted again: the compaction reaches a fixed point.
+        """
+
+        if compacting is None or progress["compacted"] == current.facts.signature:
+            return False, False
+        if not evaluations_left(for_search=False):
+            return False, False
+        report["closing_compaction"] = "interrupted"
+        began = time.monotonic()
+        accepted = limited = False
         produced = compacting.propose(*_working_copy(current))
-        limited = False
         try:
             for proposal in _bounded_proposals(produced, limit=compacting.proposal_limit):
+                planning_checkpoint()
+                if not evaluations_left(for_search=False):
+                    limited = True
+                    break
                 if isinstance(proposal, SkippedProposal) and proposal.scope_limited:
                     limited = True
                 if consider(compacting.name, proposal):
+                    accepted = True
                     break
         except _ProposalLimitReached:
-            count("limited_by_scope", compacting.name)
-            raise
+            limited = True
         if limited:
             count("limited_by_scope", compacting.name)
-            raise _ProposalLimitReached
-        settle()
+        progress["compaction_s"] = time.monotonic() - began
+        progress["since_compaction"] = 0
+        progress["compacted"] = current.facts.signature
+        report["compactions"] += 1
+        report["closing_compaction"] = "accepted" if accepted else "no_gain"
+        return accepted, limited
 
     def search() -> str:
         """Rounds of generators until none finds an admissible improvement.
 
         After an acceptance the next round starts with the generator that
         just succeeded (its consequences are explored first, e.g. the next
-        transfer), then every other generator in order (§5.5). A round only
-        ends the search when all generators failed on the current plan.
+        transfer), then every other generator in order (§5.5); ``leading``
+        generators go first in every round. A round only ends the search
+        when all generators failed on the current plan.
         """
 
+        leading = [generator for generator in searching if generator.leading]
+        rotating = [generator for generator in searching if not generator.leading]
         start = 0
-        for _round in range(max_rounds):
+        while progress["rounds"] < max_rounds:
+            progress["rounds"] += 1
             accepted = False
             limited = False
-            order = [*generators[start:], *generators[:start]]
+            order = [*leading, *rotating[start:], *rotating[:start]]
             for position, generator in enumerate(order):
                 planning_checkpoint()
-                if out_of_time():
+                if search_out_of_time():
                     return "budget"
                 produced = generator.propose(*_working_copy(current))
                 scope_limited = False
                 try:
                     for proposal in _bounded_proposals(produced, limit=generator.proposal_limit):
                         planning_checkpoint()
-                        if out_of_time():
+                        if search_out_of_time():
                             return "budget"
-                        if max_evaluations is not None and evaluations >= max_evaluations:
+                        if not evaluations_left(for_search=True):
                             return "evaluation_limit"
                         if isinstance(proposal, SkippedProposal) and proposal.scope_limited:
                             scope_limited = True
@@ -1156,11 +1533,16 @@ def improve_plan(
                     count("limited_by_scope", generator.name)
                     limited = True
                 if accepted:
-                    if generator is compacting:
-                        settle()
-                    else:
+                    report["closing_compaction"] = "not_run"  # on the new plan
+                    progress["since_compaction"] += 1
+                    left = time_left()
+                    if (
+                        every and progress["since_compaction"] >= every
+                        and (left is None or left >= 3 * reserve())
+                    ):
                         compact()
-                    start = (start + position) % len(generators)
+                    if position >= len(leading):
+                        start = (start + position - len(leading)) % len(rotating)
                     break
             if not accepted:
                 return "search_limit" if limited else "no_admissible_improvement"
@@ -1169,7 +1551,26 @@ def improve_plan(
     try:
         with budget_scope(time_budget_s):
             try:
-                stop_reason = search()
+                while True:
+                    try:
+                        with search_scope():
+                            stop_reason = search()
+                    except PlanningTimeout:
+                        if not time_left():  # the phase itself (or no limit of ours)
+                            raise
+                        stop_reason = "budget"  # the search part of the budget
+                    accepted, limited = compact()
+                    if limited and stop_reason == "no_admissible_improvement":
+                        stop_reason = "search_limit"
+                    # Search again when the compaction released time, or when
+                    # only the reserve stopped the search and the measured
+                    # compaction left time over (the next pass closes again).
+                    if not (
+                        (stop_reason == "budget"
+                         or (accepted and stop_reason == "no_admissible_improvement"))
+                        and progress["rounds"] < max_rounds and not search_out_of_time()
+                    ):
+                        break
             finally:
                 cache = execution_cache("run_placement")
                 report["allocation_cache"] = {
@@ -1179,16 +1580,20 @@ def improve_plan(
         stop_reason = "budget"
     except _ProposalLimitReached:
         stop_reason = "search_limit"
-    if current is not settled["candidate"]:
-        report["rolled_back_moves"] = report["moves_accepted"] - settled["moves"]
-        report["moves_accepted"] = settled["moves"]
-        report["accepted_by_scope"] = settled["accepted_by_scope"]
-        report["proposal_log"] = settled["proposal_log"]
-        current = settled["candidate"]
-
     report["stop_reason"] = stop_reason
     report["status"] = "completed" if stop_reason == "no_admissible_improvement" else "partial"
     report["final"] = _summary(current)
+    # Final plan against the phase reference (the builder's plan) under the
+    # tolerant per-delivery measure: -1 earlier, 0 no element moved by the
+    # tolerance, 1 later. ``regresses_reference`` forbids 1 only while the
+    # delivery key equals the reference's; an accepted move that improves
+    # delivery per order (fewer late orders or order days late, OTD-D) may
+    # make the plan later, since delivery ranks first (AGENTS §1.2 before
+    # §1.3). So 1 means order delivery improved; a lot-tardiness gain alone
+    # no longer counts (it is an indicator, not a delivery criterion).
+    report["anticipation_vs_reference"] = anticipation_compare(
+        current.key[1], reference.key[1],
+    )
     report["final_signature"] = current.facts.signature
     report["duration_ms"] = round((time.monotonic() - started) * 1000, 1)
     return current.segments, current.lots, report

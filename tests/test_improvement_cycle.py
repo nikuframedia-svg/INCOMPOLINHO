@@ -438,7 +438,10 @@ def test_limit_of_an_old_state_does_not_mark_the_new_state_incomplete(plan):
     assert report["status"] == "completed"
 
 
-def test_incomplete_closing_pass_returns_the_last_settled_candidate(plan):
+def test_incomplete_closing_pass_keeps_the_validated_move_and_is_partial(plan):
+    """Every accepted move is validated in full: a closing compaction that
+    cannot complete its scope never discards it, it only marks the search
+    partial (§5.6, §9.3)."""
     from backend.scheduler.improvement import SkippedProposal
 
     segments, lots, data, config = plan
@@ -452,9 +455,11 @@ def test_incomplete_closing_pass_returns_the_last_settled_candidate(plan):
     improved, _, report = improve_plan(
         segments, lots, data, config, generators=[Generator("compact", closing), earlier],
     )
-    assert improved == segments
-    assert report["moves_accepted"] == 0
-    assert report["rolled_back_moves"] == 1
+    assert next(s.day_idx for s in improved if s.lot_id == "LB") == 3
+    assert report["moves_accepted"] == 1
+    assert "rolled_back_moves" not in report
+    assert report["limited_by_scope"] == {"compact": 1}
+    assert report["closing_compaction"] == "no_gain"
     assert report["status"] == "partial"
     assert report["stop_reason"] == "search_limit"
 
@@ -473,32 +478,95 @@ def test_log_is_bound_to_the_state_it_was_judged_on(plan):
     assert report["final"]["tool_transfers"] == 0
 
 
-def test_rolled_back_group_move_is_not_logged_as_an_applied_move(plan):
-    from backend.scheduler.improvement import SkippedProposal
+def test_compaction_runs_once_when_the_search_stops_not_after_every_move(plan):
+    """The compaction is costly: accepted moves follow one another and the
+    compaction closes the search once, on the final candidate."""
+
+    segments, lots, data, config = plan
+    calls = []
+
+    def compact(segs, candidate_lots):
+        calls.append(sorted((s.lot_id, s.day_idx, s.start_min) for s in segs))
+        return Proposal(segs, candidate_lots)
+
+    def steps(segs, candidate_lots):
+        lb = next(s for s in segs if s.lot_id == "LB")
+        if (lb.day_idx, lb.start_min) == (4, 600):
+            return Proposal(_moved(segs, "LB", start_min=420, end_min=510), candidate_lots)
+        if lb.day_idx == 4:
+            return Proposal(_moved(segs, "LB", day_idx=3, start_min=510, end_min=600),
+                            candidate_lots)
+        return Proposal(segs, candidate_lots)
+
+    shifted = _moved(segments, "LB", start_min=600, end_min=690)
+    improved, _, report = improve_plan(
+        shifted, lots, data, config,
+        generators=[Generator("compact", compact), Generator("steps", steps)],
+    )
+    assert next(s.day_idx for s in improved if s.lot_id == "LB") == 3
+    assert report["accepted_by_scope"] == {"steps": 2}
+    assert report["compactions"] == 1
+    assert calls == [[("LA", 3, 420), ("LB", 3, 510)]]
+    assert report["closing_compaction"] == "no_gain"
+    assert report["status"] == "completed"
+
+
+def test_accepted_closing_compaction_resumes_the_search(plan):
+    """Time released by the compaction is searched again; the result is
+    completed only when neither the generators nor the compaction gain."""
 
     segments, lots, data, config = plan
 
-    def closing(segs, candidate_lots):
-        if next(s.day_idx for s in segs if s.lot_id == "LB") == 3:
-            return SkippedProposal({"key": "closing-limit"}, "scope_limited", scope_limited=True)
+    def compact(segs):
+        if next(s for s in segs if s.lot_id == "LA").day_idx == 2:
+            return _moved(segs, "LB", day_idx=3, start_min=420, end_min=510)
+        return [dataclasses.replace(s) for s in segs]
+
+    def after_compaction(segs):
+        lb = next(s for s in segs if s.lot_id == "LB")
+        if (lb.day_idx, lb.start_min) == (3, 420):
+            return _moved(segs, "LB", day_idx=2, start_min=510, end_min=600)
+        return _moved(segs, "LA", day_idx=2)
+
+    improved, _, report = improve_plan(
+        segments, lots, data, config,
+        generators=[_gen("compact", compact), _gen("group", after_compaction)],
+    )
+    assert [(s.lot_id, s.day_idx) for s in improved] == [("LA", 2), ("LB", 2)]
+    assert report["accepted_by_scope"] == {"group": 2, "compact": 1}
+    assert report["compactions"] == 2
+    assert report["status"] == "completed"
+
+
+def test_compaction_every_k_accepted_moves(plan):
+    segments, lots, data, config = plan
+    calls = []
+
+    def compact(segs, candidate_lots):
+        calls.append(next(s.start_min for s in segs if s.lot_id == "LB"))
         return Proposal(segs, candidate_lots)
 
-    def earlier(segs, candidate_lots):
-        return Proposal(_moved(segs, "LB", day_idx=3, start_min=510, end_min=600),
-                        candidate_lots, subject={"key": "group"})
+    def steps(segs, candidate_lots):
+        lb = next(s for s in segs if s.lot_id == "LB")
+        if lb.day_idx == 4 and lb.start_min > 420:
+            return Proposal(_moved(segs, "LB", start_min=lb.start_min - 30,
+                                   end_min=lb.end_min - 30), candidate_lots)
+        return Proposal(segs, candidate_lots)
 
-    after, _, report = improve_plan(
-        segments, lots, data, config,
-        generators=[Generator("compact", closing), Generator("group", earlier)],
+    shifted = _moved(segments, "LB", start_min=600, end_min=690)
+    _, _, report = improve_plan(
+        shifted, lots, data, config,
+        generators=[Generator("compact", compact), Generator("steps", steps)],
+        compaction_every=2,
     )
-    assert after == segments
-    assert report["moves_accepted"] == 0
-    assert report["rolled_back_moves"] == 1
-    assert not any(entry["outcome"] == "accepted" for entry in report["proposal_log"].values())
+    assert report["accepted_by_scope"] == {"steps": 6}
+    # After the 2nd, 4th and 6th accepted move; the closing pass finds the
+    # last plan already compacted.
+    assert calls == [540, 480, 420]
 
 
-def test_group_move_is_immediately_compacted(plan):
-    """§5.6: time released by a group move is used before anything else."""
+def test_group_move_is_compacted_before_the_plan_is_returned(plan):
+    """§5.6: time released by a group move is used before the plan is returned."""
 
     segments, lots, data, config = plan
 
@@ -512,27 +580,50 @@ def test_group_move_is_immediately_compacted(plan):
     improved, _lots, report = improve_plan(
         segments, lots, data, config,
         generators=[_gen("compact", compact), _gen("group", group)],
-        max_evaluations=1,
+        max_evaluations=2,
     )
 
-    # The evaluation limit stops the search, but only after the compaction
-    # that follows the accepted group move.
+    # The evaluation limit stops the search one evaluation early; the
+    # closing compaction still runs on the accepted group move, inside the
+    # limit (the compaction's evaluation counts).
     assert report["stop_reason"] == "evaluation_limit"
     assert report["accepted_by_scope"] == {"group": 1, "compact": 1}
+    assert report["candidates_evaluated"] == 2
     assert [(s.lot_id, s.day_idx) for s in improved] == [("LA", 2), ("LB", 3)]
 
 
-def test_interrupted_compaction_rolls_back_to_the_settled_plan(plan):
+@pytest.mark.parametrize("limit", [0, 1, 2, 3])
+def test_compaction_never_exceeds_the_evaluation_limit(plan, limit):
+    """``max_evaluations`` bounds every evaluated candidate, the closing
+    compaction's included (it keeps one evaluation of the limit)."""
+
+    segments, lots, data, config = plan
+
+    def compact(segs):
+        if next(s for s in segs if s.lot_id == "LA").day_idx == 2:
+            return _moved(segs, "LB", day_idx=3, start_min=420, end_min=510)
+        return [dataclasses.replace(s) for s in segs]
+
+    group = lambda segs: _moved(segs, "LA", day_idx=2)  # noqa: E731
+
+    _improved, _lots, report = improve_plan(
+        segments, lots, data, config,
+        generators=[_gen("compact", compact), _gen("group", group)],
+        max_evaluations=limit,
+    )
+
+    assert report["candidates_evaluated"] <= limit
+    if limit >= 2:
+        assert report["accepted_by_scope"] == {"group": 1, "compact": 1}
+
+
+def test_interrupted_compaction_keeps_the_last_validated_candidate(plan):
     from backend.planning_control import PlanningTimeout
 
     segments, lots, data, config = plan
-    calls = {"compact": 0}
 
     def compact(segs):
-        calls["compact"] += 1
-        if calls["compact"] > 1:
-            raise PlanningTimeout("budget ended during compaction")
-        return [dataclasses.replace(s) for s in segs]
+        raise PlanningTimeout("budget ended during compaction")
 
     group = lambda segs: _moved(segs, "LA", day_idx=2)  # noqa: E731
 
@@ -542,7 +633,76 @@ def test_interrupted_compaction_rolls_back_to_the_settled_plan(plan):
     )
 
     assert report["stop_reason"] == "budget"
-    assert report["rolled_back_moves"] == 1
-    assert report["moves_accepted"] == 0
-    assert report["accepted_by_scope"] == {}
-    assert [(s.day_idx, s.start_min) for s in improved] == [(3, 420), (4, 420)]
+    assert report["status"] == "partial"
+    assert report["closing_compaction"] == "interrupted"
+    assert "rolled_back_moves" not in report
+    assert report["moves_accepted"] == 1
+    assert report["accepted_by_scope"] == {"group": 1}
+    assert [(s.day_idx, s.start_min) for s in improved] == [(2, 420), (4, 420)]
+
+
+def test_search_keeps_a_reserve_for_the_closing_compaction(plan, monkeypatch):
+    """When the search part of the budget is spent the compaction still
+    runs, inside the reserve, on the last accepted candidate."""
+    from backend.scheduler import improvement as module
+
+    segments, lots, data, config = plan
+    clock = {"now": 0.0}
+    monkeypatch.setattr(module, "CLOSING_COMPACTION_SHARE", 0.5)
+
+    import time as time_module
+    monkeypatch.setattr(time_module, "monotonic", lambda: clock["now"])
+    compacted = []
+
+    def compact(segs, candidate_lots):
+        compacted.append(next(s.day_idx for s in segs if s.lot_id == "LB"))
+        return Proposal(segs, candidate_lots)
+
+    def earlier(segs, candidate_lots):
+        clock["now"] += 4.0  # the search part (10 s of 20 s) ends in the third call
+        lb = next(s for s in segs if s.lot_id == "LB")
+        return Proposal(_moved(segs, "LB", day_idx=lb.day_idx - 1, start_min=510, end_min=600),
+                        candidate_lots)
+
+    shifted = _moved(segments, "LB", day_idx=6)
+    _, _, report = improve_plan(
+        shifted, lots, data, config,
+        generators=[Generator("compact", compact), Generator("earlier", earlier)],
+        time_budget_s=20.0,
+    )
+    assert report["stop_reason"] == "budget"
+    # Two moves, the compaction inside the reserve; it took no time on this
+    # clock, so the search resumed with the time left and made one more move
+    # before the phase ended (that last plan is not compacted).
+    assert report["accepted_by_scope"] == {"earlier": 3}
+    assert compacted == [4]
+    assert report["compactions"] == 1
+    assert report["closing_compaction"] == "not_run"
+
+
+def test_leading_generator_opens_every_round(plan):
+    """A ``leading`` generator (the priority rotations) is tried first in
+    every round, also after another generator succeeded."""
+
+    segments, lots, data, config = plan
+    calls: list[str] = []
+
+    def leading(segs, candidate_lots):
+        calls.append("leading")
+        return iter(())
+
+    def earlier(segs, candidate_lots):
+        calls.append("earlier")
+        return Proposal(_moved(segs, "LB", day_idx=3, start_min=510, end_min=600), candidate_lots)
+
+    _improved, _lots, report = improve_plan(
+        segments, lots, data, config,
+        generators=[
+            _gen("compact", lambda segs: segs),
+            Generator("earlier", earlier),
+            Generator("leading", leading, leading=True),
+        ],
+    )
+
+    assert report["accepted_by_scope"] == {"earlier": 1}
+    assert calls[:4] == ["leading", "earlier", "leading", "earlier"]

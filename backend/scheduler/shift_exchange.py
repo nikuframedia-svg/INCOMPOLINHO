@@ -251,8 +251,6 @@ def repair_shift_capacity_exchange(
                 after_score = compute_score(
                     candidate, lots, data, config=config, include_operational_audit=False,
                 )
-                if not delivery_not_worse(after_score, before_score):
-                    continue
                 if any(
                     after_score.get(key, 0) > before_score.get(key, 0)
                     for key in (
@@ -264,6 +262,10 @@ def repair_shift_capacity_exchange(
                 candidate_facts = plan_facts(candidate, lots, data, after_score)
                 if reference_facts is None:
                     reference_facts = plan_facts(segments, lots, data, before_score)
+                # Delivery per order, as the improvement evaluator ranks it
+                # (``facts.score`` carries the order metrics).
+                if not delivery_not_worse(candidate_facts.score, reference_facts.score):
+                    continue
                 verdict = no_loss_verdict(candidate_facts, reference_facts)
                 # Same comparator as the improvement evaluator (contract v3):
                 # callers apply this repair directly, so it must be a

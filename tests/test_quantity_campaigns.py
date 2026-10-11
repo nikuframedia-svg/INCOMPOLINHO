@@ -26,6 +26,7 @@ from backend.scheduler.quantity_dispatch import (
     _break_accepted,
     _CampaignBuilder,
     _Placement,
+    _Portion,
     _portion_lot,
 )
 from backend.scheduler.priority import lot_priority_key
@@ -193,28 +194,57 @@ def test_retained_tool_yields_to_a_gain_of_60_min_when_the_dependent_loses_less(
     assert a1.created[0].run_id != builder.placed[("LOT_TA_M1_A_13", 0)].created[0].run_id
 
 
-def _at(start, end, delays=(0,)):
-    return _Placement(None, "M1", [], float(start), float(end), 0.0, tuple(delays))
+def _at(start, end, delays=(0,), *, rank=1, setup=0.0, lot="X"):
+    """A placement of a portion of priority ``rank`` (smaller is more urgent)."""
+
+    portion = _Portion(lot, 0, None, (rank,), None, None)
+    return _Placement(portion, "M1", [], float(start), float(end), float(setup), tuple(delays))
 
 
+# X is the inserted lot, D the dependent one re-mounted by the break. The
+# break is judged by the evaluator's comparator (contract v3) on the moved
+# portions in priority order, never by comparing sizes.
 @pytest.mark.parametrize(("own", "others", "accepted"), [
-    # The inserted lot gains 59 min and no delivery: nothing worth a setup.
-    ([(_at(1000, 1100), _at(941, 1041))], [], False),
-    # The dependent loses 30 min (under the tolerance): never decides.
-    ([(_at(1000, 1100), _at(900, 1000))], [(_at(1100, 1200), _at(1130, 1230))], True),
-    # The dependent loses 120 min, the inserted lot gains only 100: refused.
-    ([(_at(1000, 1100), _at(900, 1000))], [(_at(1100, 1200), _at(1220, 1320))], False),
-    # ... and accepted when the inserted lot gains at least as much.
-    ([(_at(1000, 1100), _at(800, 900))], [(_at(1100, 1200), _at(1220, 1320))], True),
+    # X gains 59 min and no delivery, D must be mounted again: the extra
+    # setup decides inside the tolerance.
+    (
+        [(_at(1000, 1100, setup=30), _at(941, 1041, setup=30))],
+        [(_at(1100, 1200, rank=0, lot="D"), _at(1100, 1200, rank=0, setup=30, lot="D"))],
+        False,
+    ),
+    # D (more urgent) loses 30 min (under the tolerance): X gaining 100 decides.
+    (
+        [(_at(1000, 1100, setup=30), _at(900, 1000, setup=30))],
+        [(_at(1100, 1200, rank=0, lot="D"), _at(1130, 1230, rank=0, setup=30, lot="D"))],
+        True,
+    ),
+    # D (more urgent) loses 90 min while X gains 120: refused (D ranks first).
+    (
+        [(_at(1000, 1100, rank=2, setup=30), _at(880, 980, rank=2, setup=30))],
+        [(_at(1100, 1200, rank=1, lot="D"), _at(1190, 1290, rank=1, setup=30, lot="D"))],
+        False,
+    ),
+    # X (more urgent) gains 60 while D loses 600: accepted (X ranks first).
+    (
+        [(_at(1000, 1100, rank=1, setup=30), _at(940, 1040, rank=1, setup=30))],
+        [(_at(1100, 1200, rank=2, lot="D"), _at(1700, 1800, rank=2, setup=30, lot="D"))],
+        True,
+    ),
+    # Sizes do not decide: X gains as much as the more urgent D loses.
+    (
+        [(_at(1000, 1100, rank=2, setup=30), _at(800, 900, rank=2, setup=30))],
+        [(_at(1100, 1200, rank=1, lot="D"), _at(1220, 1320, rank=1, setup=30, lot="D"))],
+        False,
+    ),
     # A later portion of the inserted lot gains a delivery: always accepted
     # once no delivery gets later, whatever the minutes.
     (
         [(_at(1000, 1100), _at(990, 1090)), (_at(5000, 9000, (2,)), _at(3000, 7000, (0,)))],
-        [(_at(1100, 1200), _at(1500, 1600))],
+        [(_at(1100, 1200, rank=0, lot="D"), _at(1500, 1600, rank=0, lot="D"))],
         True,
     ),
 ])
-def test_retention_break_weighs_rule_2_both_ways(own, others, accepted):
+def test_retention_break_weighs_rule_2_by_urgency(own, others, accepted):
     assert _break_accepted(own, others) is accepted
 
 

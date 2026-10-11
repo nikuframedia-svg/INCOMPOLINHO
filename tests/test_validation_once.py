@@ -4,6 +4,13 @@ B4.1: ``canonical.contract_lots`` memoises ``create_lots`` inside one planning
 calculation. The entry is reused only for exactly equal lot-sizing inputs, so
 results with the cache on (inside a planning scope) and off (outside) match.
 
+B4.2: ``validate_plan`` is memoised inside one planning calculation on the
+exact content of the plan (every segment and lot field, in order), the
+scenario and the configuration; ``compute_score(..., violations=)`` reuses a
+verdict the caller already has. Results are identical with the memo on and
+off, and the evaluator never validates a candidate a second time for its
+score.
+
 B4.3: the protected-lot evaluation plan no longer deep-copies every candidate;
 it copies only the segments the splice renames and never changes the
 candidate itself.
@@ -29,7 +36,10 @@ from backend.scheduler.canonical import (
     source_contract_violations,
 )
 from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler import validation
+from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Lot, ScheduleResult, Segment
+from backend.scheduler.validation import validate_plan, validation_counts
 from backend.types import CommittedSupply, EngineData, EOp, MachineInfo
 from tests.test_delivery_views_agree import FIXTURES, OP_ID
 
@@ -190,6 +200,280 @@ def test_rev121_validation_identical_with_cache_on_and_off(rev121):
     with planning_scope(timeout_s=120.0):
         on = validate_plan(broken, view, config, lots=result.lots)
     assert off and off == on
+
+
+# ── B4.2: each plan is validated once per calculation ───────────────────
+
+
+def _overlapping(segments):
+    """Same plan with the second productive block moved onto the first."""
+    broken = copy.deepcopy(segments)
+    productive = sorted((s for s in broken if s.prod_min > 0),
+                        key=lambda s: (s.day_idx, s.start_min))
+    first, second = productive[0], productive[1]
+    second.day_idx, second.start_min = first.day_idx, first.start_min
+    second.end_min = first.start_min + (second.end_min - second.start_min)
+    second.machine_id = first.machine_id
+    return broken
+
+
+@pytest.mark.parametrize("name", sorted(FIXTURES))
+def test_memo_is_transparent_and_validates_once(name):
+    segments, lots, data = FIXTURES[name]()
+    config = FactoryConfig()
+    broken = _overlapping(segments)
+    expected = [validate_plan(plan, data, config, lots=lots) for plan in (segments, broken)]
+    assert expected[1], "the overlapping plan must be invalid"
+    with planning_scope(timeout_s=60.0):
+        for _ in range(3):
+            got = [validate_plan(plan, data, config, lots=lots) for plan in (segments, broken)]
+            assert got == expected
+        assert validation_counts() == {"calls": 6, "validations": 2}
+    # Outside a calculation there is no memo (and no counter).
+    assert validation_counts() == {"calls": 0, "validations": 0}
+
+
+def test_in_place_edit_after_validation_is_validated_again():
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    with planning_scope(timeout_s=60.0):
+        clean = validate_plan(segments, data, config, lots=lots)
+        overlapped = _overlapping(segments)
+        # Same list and objects, edited in place to the overlapping plan.
+        for segment, edited in zip(segments, overlapped):
+            for field in ("day_idx", "start_min", "end_min", "machine_id"):
+                setattr(segment, field, getattr(edited, field))
+        after = validate_plan(segments, data, config, lots=lots)
+        assert after == validation._validate_plan(segments, data, config, lots) != clean
+        lots[0].qty += 1
+        resized = validate_plan(segments, data, config, lots=lots)
+        assert resized == validation._validate_plan(segments, data, config, lots) != after
+        assert validation_counts()["validations"] == 3
+
+
+def test_integer_and_float_minutes_never_share_an_entry():
+    """Messages print the stored numbers: 420 and 420.0 are different texts."""
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    broken = _overlapping(segments)
+    floats = copy.deepcopy(broken)
+    for segment in floats:
+        segment.start_min, segment.end_min = float(segment.start_min), float(segment.end_min)
+    with planning_scope(timeout_s=60.0):
+        as_int = validate_plan(broken, data, config, lots=lots)
+        as_float = validate_plan(floats, data, config, lots=lots)
+        assert validation_counts()["validations"] == 2
+    assert as_int == validate_plan(broken, data, config, lots=lots)
+    assert [str(item) for item in as_float] == [
+        str(item) for item in validate_plan(floats, data, config, lots=lots)
+    ]
+
+
+def test_mutating_a_returned_verdict_never_changes_the_next_one():
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    broken = _overlapping(segments)
+    expected = validate_plan(broken, data, config, lots=lots)
+    with planning_scope(timeout_s=60.0):
+        first = validate_plan(broken, data, config, lots=lots)
+        first[0]["kind"] = "edited"
+        first.clear()
+        assert validate_plan(broken, data, config, lots=lots) == expected
+
+
+@pytest.mark.parametrize("change", ["holiday", "machine_block", "proofs", "config"])
+def test_scenario_and_config_are_part_of_the_identity(change):
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    with planning_scope(timeout_s=60.0):
+        validate_plan(segments, data, config, lots=lots)
+        if change == "holiday":
+            data.holidays.append(min(s.day_idx for s in segments))
+        elif change == "machine_block":
+            data.machine_blocked_days = {"M1": {s.day_idx for s in segments}}
+        elif change == "proofs":
+            data = copy.copy(data)
+            data.preserved_lot_proofs = preserved_lot_proofs(segments, lots)
+        elif change == "config":
+            config = replace(config, min_prod_min=config.min_prod_min + 5)
+        changed = validate_plan(segments, data, config, lots=lots)
+        assert validation_counts()["validations"] == 2
+    assert changed == validate_plan(segments, data, config, lots=lots)
+
+
+@pytest.mark.parametrize("field", ["output_milestones", "left_shift_blockers"])
+def test_segment_explanation_fields_are_part_of_the_identity(field):
+    """A frozen recalculation proves preserved lots over their whole segments.
+
+    ``source_contract_violations`` fingerprints every field of a preserved
+    lot's segments, explanation copies included, so changing only one of them
+    can change the verdict. The memo must validate that plan again (review
+    counterexample b3rev/cx/memo_proof.py).
+    """
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    lots = copy.deepcopy(lots)
+    lot = lots[0]
+    lot.edd += 3  # preserved contract differs from today's source
+    data = copy.copy(data)
+    data.preserved_lot_proofs = preserved_lot_proofs(segments, lots)
+    edited = copy.deepcopy(segments)
+    segment = next(item for item in edited if item.lot_id == lot.id)
+    if field == "output_milestones":
+        segment.output_milestones = [{"note": "explanation copy changed"}]
+    else:
+        segment.left_shift_blockers = ["blocked_by_material_release"]
+    direct = [
+        validation._validate_plan(plan, data, config, lots)
+        for plan in (segments, edited)
+    ]
+    assert direct[0] != direct[1], "the explanation field must change the proof"
+    with planning_scope(timeout_s=60.0):
+        got = [validate_plan(plan, data, config, lots=lots) for plan in (segments, edited)]
+        assert validation_counts() == {"calls": 2, "validations": 2}
+    assert got == direct
+
+
+@pytest.mark.parametrize(
+    "field, retype",
+    [
+        ("edd", float),
+        ("is_continuation", int),
+        ("run_qty", float),
+        ("twin_outputs", "float_qty"),
+    ],
+)
+def test_scalar_value_types_are_part_of_the_identity(field, retype):
+    """``1`` and ``True``, ``5`` and ``5.0`` must not share a verdict.
+
+    The preserved-lot proof (``schedule_fingerprint``, ``json.dumps``) tells
+    them apart, so the true verdict can change. Review counterexample
+    b3r2/rv/cx/memo_type.py: proven plan P1, a third plan replaces the
+    per-lot proof cache, then P2 (P1 with one value of another type) must be
+    validated again, never served P1's verdict.
+    """
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    lots = copy.deepcopy(lots)
+    lot = lots[0]
+    lot.edd += 3  # preserved contract differs from today's source
+    if retype == "float_qty":
+        # P1 carries integer twin quantities; P2 the same numbers as floats.
+        for item in segments:
+            if item.lot_id == lot.id and not item.twin_outputs:
+                item.twin_outputs = [(OP_ID, item.sku, int(item.qty))]
+    data = copy.copy(data)
+    data.preserved_lot_proofs = preserved_lot_proofs(segments, lots)
+    retyped = copy.deepcopy(segments)
+    segment = next(item for item in retyped if item.lot_id == lot.id)
+    if retype == "float_qty":
+        segment.twin_outputs = [
+            (op, sku, float(qty)) for op, sku, qty in segment.twin_outputs
+        ]
+    else:
+        setattr(segment, field, retype(getattr(segment, field)))
+    other = copy.deepcopy(segments)
+    next(item for item in other if item.lot_id == lot.id).output_milestones = [{"x": 1}]
+    direct = validation._validate_plan(retyped, data, config, lots)
+    assert direct != validation._validate_plan(segments, data, config, lots), (
+        "the retyped value must change the preserved-lot proof"
+    )
+    with planning_scope(timeout_s=60.0):
+        validate_plan(segments, data, config, lots=lots)
+        validate_plan(other, data, config, lots=lots)
+        got = validate_plan(retyped, data, config, lots=lots)
+        assert validation_counts() == {"calls": 3, "validations": 3}
+    assert got == direct
+
+
+def test_lot_value_types_are_part_of_the_identity():
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    retyped = copy.deepcopy(lots)
+    retyped[0].is_twin = int(retyped[0].is_twin)
+    retyped[0].start_buffer_days = float(retyped[0].start_buffer_days)
+    with planning_scope(timeout_s=60.0):
+        validate_plan(segments, data, config, lots=lots)
+        validate_plan(segments, data, config, lots=retyped)
+        assert validation_counts() == {"calls": 2, "validations": 2}
+
+
+def test_equal_explanation_fields_still_share_an_entry():
+    segments, lots, data = FIXTURES["F5"]()
+    config = FactoryConfig()
+    data = copy.copy(data)
+    data.preserved_lot_proofs = preserved_lot_proofs(segments, lots)
+    with planning_scope(timeout_s=60.0):
+        first = validate_plan(segments, data, config, lots=lots)
+        again = validate_plan(copy.deepcopy(segments), data, config, lots=lots)
+        assert validation_counts() == {"calls": 2, "validations": 1}
+    assert first == again
+
+
+@pytest.mark.parametrize("name", sorted(FIXTURES))
+def test_score_with_precomputed_violations_is_the_same_score(name):
+    segments, lots, data = FIXTURES[name]()
+    config = FactoryConfig()
+    for plan in (segments, _overlapping(segments)):
+        violations = validate_plan(plan, data, config, lots=lots)
+        for audit in (False, True):
+            assert compute_score(
+                plan, lots, data, config, include_operational_audit=audit,
+                violations=violations,
+            ) == compute_score(plan, lots, data, config, include_operational_audit=audit)
+
+
+def test_score_with_precomputed_violations_does_not_validate(monkeypatch):
+    segments, lots, data = FIXTURES["F5"]()
+    violations = validate_plan(segments, data, FactoryConfig(), lots=lots)
+    monkeypatch.setattr(
+        validation, "_validate_plan",
+        lambda *_a, **_k: pytest.fail("the score must reuse the given verdict"),
+    )
+    compute_score(segments, lots, data, FactoryConfig(), include_operational_audit=False,
+                  violations=violations)
+
+
+def test_improvement_validates_each_candidate_once_for_physics_and_score(monkeypatch):
+    """The evaluator's score never re-validates the candidate it just checked."""
+    from tests.test_anticipation_neighbourhood import _on_time_plan
+
+    from backend.scheduler.improvement import improve_plan
+
+    def run():
+        segments, lots, data, config = _on_time_plan("A", "T1")
+        return improve_plan(segments, lots, data, config)
+
+    def comparable(outcome):
+        segments, lots, report = outcome
+        report = {key: value for key, value in report.items()
+                  if key not in {"duration_ms", "allocation_cache"}}
+        return segments, lots, report
+
+    off = run()
+    real = validation._validate_plan
+    callers = []
+
+    def spy(*args, **kwargs):
+        import sys
+
+        frame = sys._getframe(1)
+        while frame.f_code.co_filename.endswith(("validation.py", "scoring.py")):
+            frame = frame.f_back
+        callers.append(frame.f_code.co_name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(validation, "_validate_plan", spy)
+    with planning_scope(timeout_s=60.0):
+        on = run()
+        counts = validation_counts()
+    assert comparable(on) == comparable(off)
+    evaluated = on[2]["candidates_evaluated"]
+    assert evaluated >= 1 and on[2]["moves_accepted"] == 1
+    # Reference + every candidate: one physical validation each, no score one.
+    assert callers.count("_physically_valid") <= evaluated + 1
+    assert "_score_plan" not in callers
+    assert counts["calls"] > counts["validations"] == len(callers)
 
 
 # ── B4.3: the protected evaluation plan copies only what it renames ──────

@@ -144,9 +144,15 @@ def test_rejected_merged_plan_clears_accepted_summary(plan, monkeypatch, boundar
         *args, **kwargs, generators=[Generator("earlier", earlier)],
     ))
     if boundary == "validation":
+        import sys
+
+        # Only the merged boundary check fails: the evaluator's own check of
+        # the complete plan is covered by the next test.
         monkeypatch.setattr("backend.scheduler.validation.validate_plan", lambda segments, *a, **k: (
             [{"kind": "injected_merged_failure"}]
-            if any(s.lot_id == "PROTECTED" for s in segments) else []
+            if any(s.lot_id == "PROTECTED" for s in segments)
+            and sys._getframe(1).f_code.co_name == "improve_preserving_protected_lots"
+            else []
         ))
     else:
         monkeypatch.setattr("backend.scheduler.gates.build_gate_report", lambda *a, **k: {
@@ -165,3 +171,45 @@ def test_rejected_merged_plan_clears_accepted_summary(plan, monkeypatch, boundar
     assert report["final_signature"] == physical_signature(before.segments, before.lots)
     assert report["rolled_back_moves"] == 1
     assert not any(entry["outcome"] == "accepted" for entry in report["proposal_log"].values())
+
+
+def test_evaluator_rejects_a_move_whose_complete_plan_is_invalid(plan, monkeypatch):
+    """With protected work the evaluator validates the complete plan the
+    result is merged into, so the move is rejected (reason ``physical``)
+    instead of being accepted and rolled back at the merge."""
+
+    data, config, before = plan
+    real_improve = improvement.improve_plan
+    real_validate = __import__(
+        "backend.scheduler.validation", fromlist=["validate_plan"],
+    ).validate_plan
+
+    def earlier(segments, lots):
+        return Proposal([
+            replace(segment, day_idx=3) if segment.lot_id == "FUTURE-B" else segment
+            for segment in segments
+        ], lots, subject={"key": "invalid-complete"})
+
+    def validate(segments, *args, **kwargs):
+        moved = any(s.lot_id == "FUTURE-B" and s.day_idx == 3 for s in segments)
+        if moved and any(s.lot_id == "PROTECTED" for s in segments):
+            return [{"kind": "injected_complete_failure"}]
+        return real_validate(segments, *args, **kwargs)
+
+    monkeypatch.setattr(improvement, "improve_plan", lambda *args, **kwargs: real_improve(
+        *args, **kwargs, generators=[Generator("earlier", earlier)],
+    ))
+    monkeypatch.setattr("backend.scheduler.validation.validate_plan", validate)
+
+    after, report = improve_preserving_protected_lots(
+        copy.deepcopy(before), data, copy.deepcopy(data), config,
+        copy.deepcopy(before.segments[:1]), copy.deepcopy(before.lots[:1]),
+        3, time_budget_s=10,
+    )
+    assert after == before
+    assert report["moves_accepted"] == 0
+    assert "rolled_back_moves" not in report
+    assert report["rejections"] == {"earlier:physical": 1}
+    entry = report["proposal_log"]["invalid-complete"]
+    assert entry["reason"] == "physical"
+    assert entry["details"] == ["complete_plan:injected_complete_failure"]

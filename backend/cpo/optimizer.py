@@ -20,6 +20,7 @@ import logging
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import cmp_to_key
 
 from backend.config.types import FactoryConfig
@@ -45,6 +46,8 @@ from backend.scheduler.priority import (
     DELIVERY_PRIORITY_KEYS,
     delivery_is_complete,
     delivery_priority_key,
+    has_order_delivery,
+    with_order_delivery,
 )
 from backend.scheduler.scheduler import normalize_earliest_legal_plan, schedule_all
 from backend.scheduler.scoring import compute_score
@@ -373,10 +376,11 @@ def optimize(
         timeout_s=float(MODE_CONFIG[mode].get("time_budget_s", 60.0)),
         cancel_event=cancel_event,
     ):
-        result = _optimize(
-            copy.deepcopy(engine_data), mode, config, seed, audit,
-            reserve_improvement=(improve or reserve_improvement) and mode != "quick",
-        )
+        with _order_delivery_scope(engine_data):
+            result = _optimize(
+                copy.deepcopy(engine_data), mode, config, seed, audit,
+                reserve_improvement=(improve or reserve_improvement) and mode != "quick",
+            )
         if improve:
             _apply_improvement_phase(
                 result, engine_data, config or FactoryConfig(), mode=mode, seed=seed,
@@ -1353,7 +1357,7 @@ def _delivery_repair_triage(
             "decision": "not_applicable",
             "reason": "candidate already violates hard gates",
         }
-    if not _delivery_regresses(score, incumbent.score or {}):
+    if not _delivery_regresses(_delivery_score(candidate), _delivery_score(incumbent)):
         return {
             "name": "delivery_left_shift_repair",
             "decision": "not_applicable",
@@ -3153,11 +3157,47 @@ def _jsonable(value: object) -> object:
     return str(value)
 
 
+# Delivery is ranked per order (AGENTS §1.2): the candidates of one
+# ``optimize`` call are compared on the order lateness of the scenario's
+# demand (``priority.with_order_delivery``), not on lot tardiness. Scores
+# alone (trace items) keep the historical lot key.
+_ORDER_DELIVERY: ContextVar[tuple[EngineData, dict] | None] = ContextVar(
+    "cpo_order_delivery", default=None,
+)
+
+
+@contextmanager
+def _order_delivery_scope(engine_data: EngineData):
+    token = _ORDER_DELIVERY.set((engine_data, {}))
+    try:
+        yield
+    finally:
+        _ORDER_DELIVERY.reset(token)
+
+
+def _delivery_score(result: ScheduleResult) -> dict:
+    """``result.score`` with the per-order delivery metrics of its plan, when
+    an ``optimize`` call supplies the scenario (else the score as is)."""
+
+    score = result.score or {}
+    scope = _ORDER_DELIVERY.get()
+    if scope is None or has_order_delivery(score):
+        return score
+    data, cache = scope
+    cached = cache.get(id(result))
+    if cached is not None and cached[1] is result.segments and cached[2] is result.score:
+        return cached[3]
+    enriched = with_order_delivery(score, result.segments, result.lots, data)
+    # Holding ``result`` keeps its id from being reused inside the scope.
+    cache[id(result)] = (result, result.segments, result.score, enriched)
+    return enriched
+
+
 def _preserves_trust(candidate: ScheduleResult, reference: ScheduleResult) -> bool:
     """True when candidate does not regress physical or delivery trust metrics."""
 
-    c_score = candidate.score or {}
-    r_score = reference.score or {}
+    c_score = _delivery_score(candidate)
+    r_score = _delivery_score(reference)
     if _hard_violation_count(c_score) > 0:
         return False
     if _hard_violation_count(c_score) > _hard_violation_count(r_score):
@@ -3168,7 +3208,10 @@ def _preserves_trust(candidate: ScheduleResult, reference: ScheduleResult) -> bo
 def _delivery_regresses(candidate_score: dict, reference_score: dict) -> bool:
     if _hard_violation_count(candidate_score) > _hard_violation_count(reference_score):
         return True
-    return delivery_priority_key(candidate_score) > delivery_priority_key(reference_score)
+    per_order = has_order_delivery(candidate_score) and has_order_delivery(reference_score)
+    return delivery_priority_key(candidate_score, per_order=per_order) > delivery_priority_key(
+        reference_score, per_order=per_order,
+    )
 
 
 def _is_better_candidate(candidate: ScheduleResult, reference: ScheduleResult) -> bool:
@@ -3218,7 +3261,7 @@ def _result_rank(result: ScheduleResult) -> tuple[object, ...]:
     """Same structure as ``_trust_rank`` with the canonical per-lot
     anticipation vector of the improvement contract in its place."""
 
-    score = result.score or {}
+    score = _delivery_score(result)
     setups = physical_setups(result.segments)
     return (
         _trust_prefix(score),
@@ -3270,7 +3313,7 @@ def _comparable_ranks(
 
     if {lot.id for lot in candidate.lots} == {lot.id for lot in reference.lots}:
         return _result_rank(candidate), _result_rank(reference)
-    return _trust_rank(candidate.score or {}), _trust_rank(reference.score or {})
+    return _trust_rank(_delivery_score(candidate)), _trust_rank(_delivery_score(reference))
 
 
 def _earliness_excess(score: dict) -> float:
@@ -3361,7 +3404,9 @@ def _physical_violation_count(score: dict) -> int:
 
 
 def _candidate_rejection_reason(candidate: ScheduleResult, reference: ScheduleResult) -> str:
-    regressions = _trust_regression_reasons(candidate.score or {}, reference.score or {})
+    regressions = _trust_regression_reasons(
+        _delivery_score(candidate), _delivery_score(reference),
+    )
     if regressions:
         return "; ".join(regressions[:3])
     candidate_rank, reference_rank = _comparable_ranks(candidate, reference)
@@ -3385,9 +3430,21 @@ def _trust_regression_reasons(candidate_score: dict, reference_score: dict) -> l
     elif c_hard > r_hard:
         reasons.append(f"hard_violations {c_hard} > {r_hard}")
 
-    if delivery_priority_key(candidate_score) <= delivery_priority_key(reference_score):
+    per_order = has_order_delivery(candidate_score) and has_order_delivery(reference_score)
+    if delivery_priority_key(candidate_score, per_order=per_order) <= delivery_priority_key(
+        reference_score, per_order=per_order,
+    ):
         return reasons
 
+    if per_order:
+        for key in ("orders_late", "orders_unready", "order_late_days"):
+            current = float(candidate_score.get(key, 0.0) or 0.0)
+            previous = float(reference_score.get(key, 0.0) or 0.0)
+            if current > previous:
+                reasons.append(f"{key} {_format_metric(current)} > {_format_metric(previous)}")
+                break
+            if current < previous:
+                break
     c_otd = float(candidate_score.get("otd", 0.0) or 0.0)
     r_otd = float(reference_score.get("otd", 0.0) or 0.0)
     c_otd_d = float(candidate_score.get("otd_d", 0.0) or 0.0)

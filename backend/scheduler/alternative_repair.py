@@ -13,10 +13,11 @@ lower-urgency blockers. Only a strict delivery improvement is accepted.
 from __future__ import annotations
 
 import copy
+import hashlib
 import math
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 from backend.config.shifts import ordered_shifts
@@ -35,7 +36,13 @@ from backend.scheduler.jit_policy import (
     earliest_allowed_start,
     production_due_day,
 )
-from backend.scheduler.policy import tolerant_better
+from backend.scheduler.policy import (
+    anticipation_exact,
+    anticipation_key,
+    anticipation_order,
+    production_windows,
+    tolerant_better,
+)
 from backend.scheduler.priority import (
     delivery_improves,
     delivery_is_complete,
@@ -44,6 +51,7 @@ from backend.scheduler.priority import (
     lot_priority_key,
     lot_rupture_day,
     run_priority_key,
+    with_order_delivery,
 )
 from backend.scheduler.protection import protected_lot_ids
 from backend.scheduler.resources import clone_run_for_machine
@@ -54,7 +62,7 @@ from backend.scheduler.setup_identity import (
     segment_setup_identity,
 )
 from backend.scheduler.types import Lot, Segment, ToolRun
-from backend.scheduler.validation import PlanValidationError, assert_plan_valid, validate_plan
+from backend.scheduler.validation import PlanValidationError, assert_plan_valid
 from backend.types import EngineData
 
 
@@ -78,6 +86,17 @@ MAX_COORDINATED_GROUP_SIZE = 6
 PLACEMENT_CACHE_LIMIT = 512
 
 
+def _content_key(value: Any) -> bytes:
+    """Exact content key of a plan object (segment, run) for the placement
+    cache: a digest of its ``repr``, which lists every dataclass field. It
+    tells apart what the JSON fingerprint tells apart (and more: ``1`` and
+    ``1.0``, list and tuple), so it can only cause extra misses, never a
+    wrong reuse; it costs a fraction of the JSON fingerprint, which mattered
+    because every generator call keys the whole plan (B4)."""
+
+    return hashlib.blake2b(repr(value).encode(), digest_size=16).digest()
+
+
 class _PlacementSearch:
     """Reuse identical allocations and permutation prefixes in this execution.
 
@@ -95,19 +114,19 @@ class _PlacementSearch:
         self.stats = cache.setdefault("stats", {"hits": 0, "misses": 0})
         # Only the immutable neighbourhood reference is indexed. Holding all
         # temporary permutation prefixes here would make memory grow with work.
-        self.segment_keys = {id(segment): value_fingerprint(segment) for segment in segments}
-        self.run_keys = {id(run): value_fingerprint(run) for run in runs}
+        self.segment_keys = {id(segment): _content_key(segment) for segment in segments}
+        self.run_keys = {id(run): _content_key(run) for run in runs}
         self.horizons = {}
 
-    def _segment_key(self, segment: Segment) -> str:
+    def _segment_key(self, segment: Segment) -> bytes:
         cached = self.segment_keys.get(id(segment))
-        return cached if cached is not None else value_fingerprint(segment)
+        return cached if cached is not None else _content_key(segment)
 
     def place(self, run, machine_id, fixed, *, not_before_abs=None):
         planning_checkpoint()
         run_key = self.run_keys.get(id(run))
         if run_key is None:
-            run_key = value_fingerprint(run)
+            run_key = _content_key(run)
         key = (self.context, run_key, machine_id, not_before_abs)
         if key in self.entries:
             placed, through_day, dependencies = self.entries[key]
@@ -196,12 +215,18 @@ def repair_alternative_machine_delivery(
 
     current_segments = _sorted_segments(copy.deepcopy(segments))
     current_lots = copy.deepcopy(lots)
-    before_score = compute_score(
+    # Delivery is compared per order (AGENTS §1.2), as in the evaluator.
+    before_score = with_order_delivery(
+        compute_score(
+            current_segments,
+            current_lots,
+            data,
+            config=config,
+            include_operational_audit=False,
+        ),
         current_segments,
         current_lots,
         data,
-        config=config,
-        include_operational_audit=False,
     )
     result = AlternativeRepairResult(
         segments=current_segments,
@@ -387,12 +412,66 @@ def _reference_setups(ordered: list[Segment]):
     return setups
 
 
+def _run_production_windows(segments: Iterable[Segment]) -> dict[str, tuple[float, float]]:
+    """First productive minute and production end of each run (absolute)."""
+
+    by_run: dict[str, list[Segment]] = {}
+    for segment in segments:
+        by_run.setdefault(segment.run_id, []).append(segment)
+    windows: dict[str, tuple[float, float]] = {}
+    for run_id, run_segments in by_run.items():
+        lots = production_windows(run_segments).values()
+        if lots:
+            windows[run_id] = (min(w[0] for w in lots), max(w[1] for w in lots))
+    return windows
+
+
+class _OwnWindows:
+    """Anticipation of the lots a local move touches, as the evaluator sees it.
+
+    The pre-checks compare the same vector as ``improvement_key`` (policy
+    v3: per delivery of each lot, in the global priority order), restricted
+    to the moved lots. Their other portions stay in place and are part of
+    the measure, so a portion is never compared with its whole lot.
+    """
+
+    def __init__(self, ordered: list[Segment], lots: list[Lot]) -> None:
+        self.lots = lots
+        self.order = anticipation_order(lots)
+        self.by_lot: dict[str, list[Segment]] = {}
+        for segment in ordered:
+            self.by_lot.setdefault(segment.lot_id, []).append(segment)
+
+    def key(self, lot_ids, segments: Iterable[Segment]) -> tuple[tuple[float, float], ...]:
+        return anticipation_exact(anticipation_key(
+            segments, self.lots, order=self.order, lot_ids=set(lot_ids),
+        ))
+
+    def before(self, lot_ids) -> tuple[tuple[float, float], ...]:
+        return self.key(lot_ids, (s for lot_id in lot_ids for s in self.by_lot.get(lot_id, ())))
+
+    def after(self, lot_ids, kept: list[Segment], created: Iterable[Segment]):
+        """``kept``: the lots' segments left in place; ``created``: the move."""
+
+        wanted = set(lot_ids)
+        return self.key(wanted, [*kept, *(s for s in created if s.lot_id in wanted)])
+
+
 @dataclass(frozen=True, slots=True)
 class _Placement:
     after: tuple[tuple[float, float], ...]
     setups: tuple[int, float]
     order: Any
     payload: Any
+
+
+def _named_run_key(run: ToolRun) -> tuple:
+    """``run_priority_key`` with the lot ids before the run id as the final
+    tie-break: run ids are renamed by every rebuild, lot ids are the stable
+    final tie-break of the contract (AGENTS §1.3), so equal runs are tried
+    in the same order whatever their run ids."""
+
+    return (*run_priority_key(run)[:-1], tuple(sorted(lot.id for lot in run.lots)), run.id)
 
 
 def _best_first(placements: list[_Placement]) -> list[_Placement]:
@@ -431,25 +510,25 @@ def anticipation_proposals(
     commercial priority order and a placement is proposed only if it wins
     under the evaluator's comparator on the run's own lots and the touched
     machines' setups (contract v3: saving a setup while no lot loses 60 min
-    counts); the improvement evaluator decides with the complete plan.
+    counts); the improvement evaluator validates the proposal and decides
+    with the complete plan (generators never validate: one evaluator).
     ``not_before_abs`` is the replanning boundary.
     """
-
-    from backend.scheduler.improvement import production_windows
 
     ordered = _sorted_segments(segments)
     run_map = _resolve_runs(ordered, lots, None)
     data = _neighbourhood_calendar(ordered, run_map, data, config)
     search = _PlacementSearch(data, config, ordered, run_map.values())
     protected = protected_lot_ids(data)
-    windows = production_windows(ordered)
+    own = _OwnWindows(ordered, lots)
     reference_setups = _reference_setups(ordered)
-    for run in sorted(run_map.values(), key=run_priority_key):
+    for run in sorted(run_map.values(), key=_named_run_key):
         if any(lot.id in protected for lot in run.lots):
             continue
-        run_lots = sorted(run.lots, key=lot_priority_key)
-        before = tuple(windows.get(lot.id, (math.inf, math.inf)) for lot in run_lots)
+        run_lot_ids = {lot.id for lot in run.lots}
+        before = own.before(run_lot_ids)
         fixed = [segment for segment in ordered if segment.run_id != run.id]
+        kept = [segment for segment in fixed if segment.lot_id in run_lot_ids]
         run_machines = frozenset(
             segment.machine_id for segment in ordered if segment.run_id == run.id
         )
@@ -461,8 +540,7 @@ def anticipation_proposals(
             )
             if scheduled is None:
                 continue
-            placed = production_windows(scheduled[1])
-            after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in run_lots)
+            after = own.after(run_lot_ids, kept, scheduled[1])
             touched = run_machines | {machine_id}
             setups = _machine_setups([*fixed, *scheduled[1]], touched)
             if tolerant_better(after, before, setups, reference_setups(touched)):
@@ -481,13 +559,6 @@ def anticipation_proposals(
             }
             candidate_segments = _sorted_segments([*fixed, *created])
             candidate_lots = _replace_lots(lots, rebound_run.lots)
-            violations = validate_plan(candidate_segments, data, config, lots=candidate_lots)
-            if violations:
-                yield SkippedProposal(
-                    subject, "physical",
-                    tuple(sorted({str(item.get("kind", "physical")) for item in violations})),
-                )
-                continue
             yield Proposal(candidate_segments, candidate_lots, subject=subject)
 
 
@@ -512,13 +583,11 @@ def group_reinsertion_proposals(
     starts after its own floor (material release or replanning boundary) can
     gain and are tried, most urgent group first. A proposal must win under
     the evaluator's comparator (contract v3) on the group's lots and the
-    touched machines' setups; the improvement evaluator decides on the
-    complete plan.
+    touched machines' setups; the improvement evaluator validates the
+    proposal and decides on the complete plan.
     """
 
     from itertools import permutations
-
-    from backend.scheduler.improvement import production_windows
 
     shifts = ordered_shifts(config)
     if not shifts or size < 2:
@@ -528,9 +597,12 @@ def group_reinsertion_proposals(
     data = _neighbourhood_calendar(ordered, run_map, data, config)
     search = _PlacementSearch(data, config, ordered, run_map.values())
     protected = protected_lot_ids(data)
-    windows = production_windows(ordered)
+    own = _OwnWindows(ordered, lots)
     reference_setups = _reference_setups(ordered)
     holidays = _extended_holidays(data, -20, data.n_days + 400)
+    # The run's own production, not its lot's: a later portion of a lot is
+    # judged against its own floor (the run's lots are its tranches).
+    run_windows = _run_production_windows(ordered)
 
     def has_slack(run: ToolRun) -> bool:
         floor = max(
@@ -538,8 +610,8 @@ def group_reinsertion_proposals(
             + int(shifts[0].start_min),
             int(not_before_abs or 0),
         )
-        starts = [windows[lot.id][0] for lot in run.lots if lot.id in windows]
-        return bool(starts) and min(starts) > floor
+        window = run_windows.get(run.id)
+        return window is not None and window[0] > floor
 
     movable = {
         run_id: run for run_id, run in run_map.items()
@@ -595,17 +667,17 @@ def group_reinsertion_proposals(
                 )
 
     for group in sorted(groups, key=lambda item: (lot_priority_key(group_lots(item)[0]), item)):
-        member_lots = group_lots(group)
-        before = tuple(windows.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
+        member_ids = {lot.id for lot in group_lots(group)}
+        before = own.before(member_ids)
         fixed = [segment for segment in ordered if segment.run_id not in group]
+        kept = [segment for segment in fixed if segment.lot_id in member_ids]
         group_machines = frozenset(
             segment.machine_id for segment in ordered if segment.run_id in group
         )
         placements = []
         for order in permutations(group):
             for created, rebound, assignments in chains(list(order), fixed, [], [], ()):
-                placed = production_windows(created)
-                after = tuple(placed.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
+                after = own.after(member_ids, kept, created)
                 touched = group_machines | {machine for _run, machine in assignments}
                 setups = _machine_setups([*fixed, *created], touched)
                 if tolerant_better(after, before, setups, reference_setups(touched)):
@@ -621,13 +693,180 @@ def group_reinsertion_proposals(
             }
             candidate_segments = _sorted_segments([*fixed, *created])
             candidate_lots = _replace_lots(lots, rebound_lots)
-            violations = validate_plan(candidate_segments, data, config, lots=candidate_lots)
-            if violations:
-                yield SkippedProposal(
-                    subject, "physical",
-                    tuple(sorted({str(item.get("kind", "physical")) for item in violations})),
-                )
-                continue
+            yield Proposal(candidate_segments, candidate_lots, subject=subject)
+
+
+# Largest set of runs moved together by ``lot_machine_proposals`` (bounded
+# work). A larger coupled set is reported as limited scope.
+MAX_LOT_MOVE_RUNS = 8
+# Lot fields a moved portion carries from its whole lot (as
+# ``_schedule_run_earliest`` copies them when the lot stays elsewhere).
+_WHOLE_LOT_SEGMENT_FIELDS = (
+    "lot_qty", "output_milestones", "edd", "original_edd",
+    "delivery_day", "internal_deadline", "customer_delivery_day",
+    "production_due_day", "internal_target_day",
+    "material_reference_day", "material_release_day",
+)
+
+
+def _coupled_lots(
+    ordered: list[Segment], run_map: dict[str, ToolRun],
+) -> list[tuple[frozenset[str], tuple[str, ...]]]:
+    """Lots joined by shared runs, with their runs in time order.
+
+    A lot may be split in several runs (its material portions) and a run
+    may continue another lot on the mounted tool; moving a lot alone would
+    leave the other lot split, or unmounted. Each set is closed: every
+    segment of its lots is in its runs and every lot of its runs is in it.
+    """
+
+    runs_of_lot: dict[str, set[str]] = {}
+    lots_of_run: dict[str, set[str]] = {}
+    first_start: dict[str, tuple[int, int]] = {}
+    for segment in ordered:
+        if segment.run_id not in run_map:
+            continue
+        runs_of_lot.setdefault(segment.lot_id, set()).add(segment.run_id)
+        lots_of_run.setdefault(segment.run_id, set()).add(segment.lot_id)
+        first_start.setdefault(segment.run_id, (segment.day_idx, segment.start_min))
+    seen: set[str] = set()
+    result = []
+    for lot_id in runs_of_lot:
+        if lot_id in seen:
+            continue
+        members, runs, stack = {lot_id}, set(), [lot_id]
+        while stack:
+            for run_id in runs_of_lot[stack.pop()]:
+                if run_id in runs:
+                    continue
+                runs.add(run_id)
+                for other in lots_of_run[run_id]:
+                    if other not in members:
+                        members.add(other)
+                        stack.append(other)
+        seen |= members
+        result.append((
+            frozenset(members),
+            tuple(sorted(runs, key=lambda run_id: (first_start[run_id], run_id))),
+        ))
+    return result
+
+
+def _rebound_lot(lot: Lot, machine_id: str, data: EngineData, config: FactoryConfig) -> Lot:
+    """The whole lot with the times of ``machine_id`` (setup, pH, OEE)."""
+
+    run = ToolRun(
+        id=f"lot_machine:{lot.id}", tool_id=lot.tool_id, machine_id=lot.machine_id,
+        alt_machine_id=lot.alt_machine_id, lots=[lot], setup_min=lot.setup_min,
+        total_prod_min=lot.prod_min, total_min=lot.prod_min + lot.setup_min, edd=lot.edd,
+    )
+    rebound = clone_run_for_machine(run, machine_id, data, config).lots[0]
+    rebound.machine_id = machine_id
+    return rebound
+
+
+def lot_machine_proposals(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig,
+    *,
+    not_before_abs: int | None = None,
+    max_runs: int = MAX_LOT_MOVE_RUNS,
+) -> Iterator[Proposal | SkippedProposal]:
+    """Move a whole lot, with all its portions, to another machine (rule 3).
+
+    Owner rule 3 (10/10/2026): a machine change takes the whole lot; a lot
+    is never split between machines. One-run reinsertion (N1) cannot move a
+    lot released in several portions, because each run must stay with the
+    lot's other runs. Here every run of a set of coupled lots
+    (``_coupled_lots``) is placed again, in its time order and each after
+    the previous one, at the earliest legal slot of one other machine
+    eligible for all of them; all other work stays fixed. Only sets of two
+    or more runs are tried (one run is N1's), most urgent first. A move is
+    proposed only if it wins under the evaluator's comparator (contract v3)
+    on the moved lots, per delivery, and the touched machines' setups; the
+    improvement evaluator validates the proposal and decides with the
+    complete plan.
+    ``not_before_abs`` is the replanning boundary.
+    """
+
+    ordered = _sorted_segments(segments)
+    run_map = _resolve_runs(ordered, lots, None)
+    data = _neighbourhood_calendar(ordered, run_map, data, config)
+    search = _PlacementSearch(data, config, ordered, run_map.values())
+    protected = protected_lot_ids(data)
+    own = _OwnWindows(ordered, lots)
+    reference_setups = _reference_setups(ordered)
+    lots_by_id = {lot.id: lot for lot in lots}
+    original_segment: dict[str, Segment] = {}
+    for segment in ordered:
+        original_segment.setdefault(segment.lot_id, segment)
+
+    # A segment whose lot is not in ``lots`` belongs to no movable lot (a
+    # plan already wrong); its set is left alone instead of failing.
+    coupled = [
+        (members, runs) for members, runs in _coupled_lots(ordered, run_map)
+        if len(runs) >= 2 and not members & protected and members <= lots_by_id.keys()
+    ]
+    coupled.sort(key=lambda item: (
+        min(lot_priority_key(lots_by_id[lot_id]) for lot_id in item[0]), item[1],
+    ))
+    for members, run_ids in coupled:
+        subject_lots = "+".join(sorted(members))
+        if len(run_ids) > max_runs:
+            yield SkippedProposal(
+                {"key": f"lot_machine:{subject_lots}", "kind": "lot_machine"},
+                "scope_limited", scope_limited=True,
+            )
+            continue
+        runs = [run_map[run_id] for run_id in run_ids]
+        fixed = [segment for segment in ordered if segment.run_id not in run_ids]
+        current = {segment.machine_id for segment in ordered if segment.run_id in run_ids}
+        eligible = [_eligible_machines(run, data, config, fixed) for run in runs]
+        targets = [
+            machine_id for machine_id in eligible[0]
+            if all(machine_id in options for options in eligible[1:])
+            and {machine_id} != current
+        ]
+        before = own.before(members)
+        placements = []
+        for machine_id in targets:
+            created: list[Segment] = []
+            floor = int(not_before_abs) if not_before_abs is not None else None
+            for run in runs:
+                planning_checkpoint()
+                placed = search.place(run, machine_id, [*fixed, *created], not_before_abs=floor)
+                if placed is None:
+                    break
+                for segment in placed[1]:
+                    source = original_segment.get(segment.lot_id)
+                    if source is not None:
+                        for name in _WHOLE_LOT_SEGMENT_FIELDS:
+                            setattr(segment, name, copy.deepcopy(getattr(source, name)))
+                created.extend(placed[1])
+                end = max(segment.day_idx * 1440 + segment.end_min for segment in placed[1])
+                floor = end if floor is None else max(floor, end)
+            else:
+                after = own.after(members, [], created)
+                touched = frozenset(current | {machine_id})
+                setups = _machine_setups([*fixed, *created], touched)
+                if tolerant_better(after, before, setups, reference_setups(touched)):
+                    placements.append(_Placement(after, setups, str(machine_id), created))
+        for placement in _best_first(placements):
+            machine_id, created = placement.order, placement.payload
+            subject = {
+                "key": f"lot_machine:{subject_lots}>{machine_id}",
+                "kind": "lot_machine",
+                "lot_ids": sorted(members),
+                "run_ids": list(run_ids),
+                "to_machine": str(machine_id),
+            }
+            candidate_segments = _sorted_segments([*fixed, *created])
+            candidate_lots = [
+                _rebound_lot(lot, machine_id, data, config) if lot.id in members else lot
+                for lot in lots
+            ]
             yield Proposal(candidate_segments, candidate_lots, subject=subject)
 
 
@@ -658,6 +897,38 @@ def _non_dominated_tool_targets(
     return selected
 
 
+_FLAT = frozenset({str, int, float, bool, type(None)})
+
+
+def _detached_value(value: Any) -> Any:
+    kind = type(value)
+    if kind in _FLAT:
+        return value
+    if kind is dict:
+        if all(type(item) in _FLAT for item in value.values()):
+            return dict(value)
+        return {key: _detached_value(item) for key, item in value.items()}
+    if kind is list:
+        return [_detached_value(item) for item in value]
+    if kind is tuple and all(type(item) in _FLAT for item in value):
+        return value
+    return copy.deepcopy(value)
+
+
+def _detached_copy(lot: Lot) -> Lot:
+    """A copy of ``lot`` sharing nothing mutable with it, like
+    ``copy.deepcopy``, without walking immutable scalars and tuples (the
+    milestones of a lot are lists of flat dicts; deep-copying them was most
+    of the cost of resolving the runs on every generator call, B4)."""
+
+    clone = copy.copy(lot)
+    for item in fields(lot):
+        value = getattr(lot, item.name)
+        if type(value) not in _FLAT:
+            setattr(clone, item.name, _detached_value(value))
+    return clone
+
+
 def _resolve_runs(
     segments: list[Segment],
     lots: list[Lot],
@@ -666,8 +937,10 @@ def _resolve_runs(
     lots_by_id = {lot.id: lot for lot in lots}
     source_by_id = {run.id: run for run in source_runs or []}
     segments_by_run: dict[str, list[Segment]] = {}
+    segments_by_lot: dict[str, list[Segment]] = {}
     for segment in segments:
         segments_by_run.setdefault(segment.run_id, []).append(segment)
+        segments_by_lot.setdefault(segment.lot_id, []).append(segment)
 
     resolved: dict[str, ToolRun] = {}
     for run_id, run_segments in segments_by_run.items():
@@ -704,8 +977,8 @@ def _resolve_runs(
 
             first = min((s.day_idx, s.start_min) for s in physical)
             offset = sum(
-                s.qty for s in segments
-                if s.lot_id == lot.id and (s.day_idx, s.start_min) < first
+                s.qty for s in segments_by_lot.get(lot.id, ())
+                if (s.day_idx, s.start_min) < first
             )
             # A twin tranche is ``quantity`` cycles: the same slice of each
             # side's deliveries (side order, first-in-first-out).
@@ -722,7 +995,7 @@ def _resolve_runs(
                     if take:
                         outputs.append({**output, "qty": take})
                         left -= take
-            portion = copy.deepcopy(lot)
+            portion = _detached_copy(lot)
             portion.qty = quantity
             portion.prod_min = lot.prod_min * quantity / lot.qty
             if lot.twin_outputs:
@@ -978,9 +1251,14 @@ def _neighbourhood_calendar(
 ) -> EngineData:
     """One calendar projection covering every run a neighbourhood may place."""
 
+    if not run_map:
+        return _projected_calendar(data, config, 2)
+    # ``_repair_horizon`` of every run, with the parts that do not depend on
+    # the run (holidays, fixed work, blocked days) computed once.
+    holidays, latest_segment, latest_blocked = _horizon_context(segments, data)
     horizon = max(
-        (_repair_horizon(run, segments, data, config) for run in run_map.values()),
-        default=0,
+        _run_horizon(run, holidays, latest_segment, latest_blocked, data, config)
+        for run in run_map.values()
     )
     return _projected_calendar(data, config, horizon + 2)
 
@@ -1017,8 +1295,17 @@ def _repair_horizon(
     data: EngineData,
     config: FactoryConfig,
 ) -> int:
+    holidays, latest_segment, latest_blocked = _horizon_context(fixed_segments, data)
+    return _run_horizon(run, holidays, latest_segment, latest_blocked, data, config)
+
+
+def _horizon_context(
+    fixed_segments: Iterable[Segment], data: EngineData,
+) -> tuple[set[int], int, int]:
+    """Run-independent parts of ``_repair_horizon``: holidays, the last day
+    of fixed work and the last blocked day."""
+
     holidays = _extended_holidays(data, -20, data.n_days + 400)
-    latest_due = max((production_due_day(lot, holidays) for lot in run.lots), default=0)
     latest_segment = max((segment.day_idx for segment in fixed_segments), default=0)
     blocked_days = [
         int(block.get("start_day", 0))
@@ -1033,12 +1320,24 @@ def _repair_horizon(
         for days in (*data.machine_blocked_days.values(), *data.tool_blocked_days.values())
         for day in days
     )
+    return holidays, latest_segment, max(blocked_days, default=0)
+
+
+def _run_horizon(
+    run: ToolRun,
+    holidays: set[int],
+    latest_segment: int,
+    latest_blocked: int,
+    data: EngineData,
+    config: FactoryConfig,
+) -> int:
+    latest_due = max((production_due_day(lot, holidays) for lot in run.lots), default=0)
     duration_days = math.ceil(max(1.0, run.total_min) / max(1, config.day_capacity_min))
     return max(
         data.n_days + duration_days + 30,
         latest_due + duration_days + 30,
         latest_segment + duration_days + 30,
-        max(blocked_days, default=0) + duration_days + 2,
+        latest_blocked + duration_days + 2,
     )
 
 
@@ -1052,12 +1351,17 @@ def _validated_score(
         assert_plan_valid(segments, data, config, lots=lots)
     except (PlanValidationError, TypeError, ValueError):
         return None
-    score = compute_score(
+    score = with_order_delivery(
+        compute_score(
+            segments,
+            lots,
+            data,
+            config=config,
+            include_operational_audit=False,
+        ),
         segments,
         lots,
         data,
-        config=config,
-        include_operational_audit=False,
     )
     score["released_tool_priority_inversions"] = _tool_priority_inversion_count(
         segments,
@@ -1299,8 +1603,10 @@ def _coordinated_groups(
     late_runs = _delivery_risk_run_ids(segments, run_map, data)
     late_runs.update(_inverted_urgent_run_ids(segments, run_map, data))
     segments_by_run: dict[str, list[Segment]] = {}
+    segments_by_lot: dict[str, list[Segment]] = {}
     for segment in segments:
         segments_by_run.setdefault(segment.run_id, []).append(segment)
+        segments_by_lot.setdefault(segment.lot_id, []).append(segment)
     targets = [
         run
         for run in sorted(run_map.values(), key=run_priority_key)

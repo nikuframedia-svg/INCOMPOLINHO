@@ -26,7 +26,8 @@ Of a lot, only the quantity of deliveries with ``R <= d`` may be set up for or
 produced by day ``d``; the economic surplus takes the ``R`` of the last
 delivery its side covers (never a shared cycle ``R``). Which deliveries a lot
 covers is rebuilt here from the ISOP demand, first in first out over the
-lots of each operation, with the quantity each side really makes
+lots of each operation in lot-sizing order (``oracle_lot_order``, never the
+plan's list order), with the quantity each side really makes
 (``twin_outputs``); the lot's own delivery days, surplus flags and pair
 claims are never read. Twin cycle: on day ``d`` the cycle may make as many
 pieces as the larger of its two sides' released quantities. The cycle pair is
@@ -307,22 +308,77 @@ def _side_quantities(lot) -> list[tuple[str, int]]:
     return [(str(lot.op_id), int(lot.qty))]
 
 
+def _protected_lot_ids(data) -> set[str]:
+    """Lots kept from the stored plan: preserved history and manual anchors."""
+
+    return {str(lot_id) for lot_id in (getattr(data, "preserved_lot_proofs", None) or {})} | {
+        str(anchor.lot_id) for anchor in (getattr(data, "plan_anchors", None) or [])
+    }
+
+
+def _lot_index(lot_id: str) -> tuple[int, ...]:
+    """Numeric parts of a lot id: the demand day, then a duplicate counter.
+
+    Lots of one operation share every other part of the id
+    (``LOT_<tool>_<machine>_<sku>_<day>``, ``LOT_TWIN_<tool>_<day>[_<n>]``),
+    so this orders them numerically, never as text (``_10`` after ``_9``).
+    """
+
+    return tuple(int(part) for part in str(lot_id).split("_") if part.isdigit())
+
+
+def oracle_lot_order(lots, data) -> list:
+    """The order in which lots consume each operation's deliveries.
+
+    Never the plan's list order: a frozen recalculation lists the protected
+    lots last, although they were sized first and cover the earliest
+    deliveries. Protected lots (preserved history, anchors) come first.
+    Within each group, the order lot sizing creates them in:
+
+    * a solo operation makes one lot per rupture day, at increasing days;
+    * a twin group makes its cycles at increasing priority of the delivery
+      that controls each cycle (production due day, then customer day), and
+      each side consumes its own deliveries first in first out in that same
+      creation order. So one order serves both sides: a cycle's ``edd`` (the
+      earliest due day it serves) never decreases along the creation order,
+      on either side.
+
+    Hence: due day (``edd``), customer rupture (``original_edd``), then the
+    numeric parts of the id (demand day, duplicate counter), then the id.
+    Equal to the creation order of ``create_lots`` on every side of the
+    real fixtures (revisions 82, 85, 87, 90, 121; material versions 0-2),
+    see ``tests/test_twin_per_delivery.py``. Ordering by each side's first
+    recorded delivery is not: it reads the lot's labels, which twin cycles
+    of version 0/1 record only for the paired deliveries. The order only
+    decides which lot comes first; which deliveries a lot covers is still
+    rebuilt from the ISOP.
+    """
+
+    protected = _protected_lot_ids(data)
+
+    def rank(lot):
+        rupture = lot.original_edd if lot.original_edd is not None else lot.edd
+        return (lot.id not in protected, int(lot.edd), int(rupture), _lot_index(lot.id), str(lot.id))
+
+    return sorted(lots, key=rank)
+
+
 def oracle_coverage(lots, data) -> dict[str, dict[str, list[tuple[int | None, int]]]]:
     """``{lot id: {side: [(customer day, qty), ...]}}`` rebuilt from the ISOP.
 
     The surplus of a side is listed last, with day ``None``.
 
     Each operation's deliveries are served first in first out by its lots in
-    the plan's lot order (earlier lots first), each with the quantity it
-    really makes of that side. The lot's own delivery, surplus and co-produced
-    labels are never read; what a side makes beyond its covered deliveries is
-    its surplus.
+    lot-sizing order (``oracle_lot_order``: protected lots first, then the
+    creation order of lot sizing), each with the quantity it really makes of that
+    side. The lot's own delivery, surplus and co-produced labels are never
+    read; what a side makes beyond its covered deliveries is its surplus.
     """
 
     ops = {op.id: op for op in data.ops}
     pending: dict[str, list[list[int]]] = {}
     coverage: dict[str, dict[str, list[tuple[int | None, int]]]] = {}
-    for lot in lots:
+    for lot in oracle_lot_order(lots, data):
         sides = coverage.setdefault(lot.id, {})
         for side, qty in _side_quantities(lot):
             op = ops.get(side)

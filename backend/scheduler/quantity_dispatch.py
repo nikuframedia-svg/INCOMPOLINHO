@@ -37,11 +37,13 @@ lot.
 - **Retained tool:** the allocator does not insert other work into an idle gap
   on which a setup-free continuation depends, unless the insertion is worth a
   break (``_break_accepted``): the dependent campaign is placed again, with
-  its setup. A break is refused only when some delivery gets later (the
+  its setup. A break is refused when some delivery gets later (the
   dependent portions, the portions of those lots not placed yet, the inserted
-  lot and its later portions), or, with no delivery of the inserted lot
-  getting earlier, when that lot gains less than 60 min, or some portion
-  loses 60 min or more and the inserted lot gains less than that (rule 2).
+  lot and its later portions). With no delivery of the inserted lot getting
+  earlier it is judged by the evaluator's comparator
+  (``policy.tolerant_better``) over the moved portions in priority order:
+  a portion may lose 60 min or more only if a more urgent one gains as much,
+  and inside the tolerance the extra setup refuses it (rule 2).
 - Portions of one lot that run back to back share one run; portion boundaries
   remain segment boundaries.
 - Protected work of a frozen recalculation (``protected_mounting_segments``)
@@ -63,7 +65,11 @@ from backend.planning_control import planning_checkpoint
 from backend.scheduler.alternative_repair import _schedule_run_earliest
 from backend.scheduler.lot_sizing import _aggregate_milestones
 from backend.scheduler.material_quantities import material_portions, releases_in_portions
-from backend.scheduler.policy import ANTICIPATION_TOLERANCE_MIN, anticipation_compare
+from backend.scheduler.policy import (
+    ANTICIPATION_TOLERANCE_MIN,
+    anticipation_compare,
+    tolerant_better,
+)
 from backend.scheduler.priority import lot_priority_key
 from backend.scheduler.resources import clone_run_for_machine, protected_mounting_segments
 from backend.scheduler.setup_identity import (
@@ -266,13 +272,22 @@ def _delays(placements: list[_Placement]) -> tuple[int, ...]:
     return tuple(day for item in placements for day in item.delays)
 
 
-def _shift(before: _Placement, after: _Placement) -> float:
-    """Minutes ``after`` starts or ends later than ``before`` (the larger).
+def _urgency(placement: _Placement) -> tuple:
+    """Rank of a portion in the anticipation vector: its priority key."""
 
-    ``_shift(after, before)`` is then the gain of ``after`` over ``before``.
-    """
+    portion = placement.portion
+    return portion.key, portion.lot_id, portion.index
 
-    return max(after.start - before.start, after.end - before.end)
+
+def _ranked_windows(placements: list[_Placement]) -> tuple[tuple[float, float], ...]:
+    return tuple(item.window for item in sorted(placements, key=_urgency))
+
+
+def _setup_summary(placements) -> tuple[int, float]:
+    return (
+        sum(1 for item in placements if item.setup > 0),
+        sum(max(0.0, item.setup) for item in placements),
+    )
 
 
 def _break_accepted(
@@ -284,10 +299,14 @@ def _break_accepted(
     ``own`` pairs (before, after) the inserted portion and the later portions
     of its lot; ``others`` the dependent portions placed again and the
     portions of those lots not placed yet. A break whose lot gets a delivery
-    earlier is always accepted (deliveries first, AGENTS §1.2). Otherwise the
-    inserted lot must gain 60 min or more, and if some portion loses 60 min
-    or more the inserted lot must gain at least as much: losses under the
-    tolerance never decide (AGENTS §1.3).
+    earlier is always accepted (deliveries first, AGENTS §1.2). Otherwise
+    the break is judged by the evaluator's own comparator
+    (``policy.tolerant_better``, contract v3) on every portion it moves, in
+    priority order (``_Portion.key``): a portion may lose 60 min or more
+    only if a more urgent one gains as much; inside the tolerance fewer
+    setups decide (the break re-mounts the dependent tool), then the exact
+    minutes. So the builder never keeps a break the improvement cycle would
+    undo, nor refuses one it would take.
     """
 
     if any(
@@ -296,11 +315,13 @@ def _break_accepted(
         for after, before in zip(new.delays, old.delays, strict=True)
     ):
         return True
-    gain = max(_shift(new, old) for old, new in own)
-    if gain < ANTICIPATION_TOLERANCE_MIN:
-        return False
-    loss = max((_shift(old, new) for old, new in [*own, *others]), default=0.0)
-    return loss < ANTICIPATION_TOLERANCE_MIN or gain >= loss
+    pairs = sorted([*own, *others], key=lambda pair: _urgency(pair[0]))
+    before = [old for old, _new in pairs]
+    after = [new for _old, new in pairs]
+    return tolerant_better(
+        tuple(item.window for item in after), tuple(item.window for item in before),
+        _setup_summary(after), _setup_summary(before),
+    )
 
 
 def _order_id(output: dict) -> tuple[object, object]:
@@ -578,7 +599,10 @@ class _CampaignBuilder:
             return True
         if _later_delivery(after.delays, before.delays):
             return True
-        return anticipation_compare(after.windows, before.windows) > 0
+        # The evaluator's order: the lot's portions by priority (rule 2).
+        return anticipation_compare(
+            _ranked_windows(after.placements), _ranked_windows(before.placements),
+        ) > 0
 
     def vetoed(self, candidate: _Portion, placement: _Placement, chain: _Chain) -> bool:
         return any(

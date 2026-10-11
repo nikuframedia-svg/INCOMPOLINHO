@@ -30,20 +30,22 @@ from backend.scheduler.alternative_repair import (
     _eligible_machines,
     _extended_holidays,
     _machine_setups,
+    _named_run_key,
     _neighbourhood_calendar,
+    _OwnWindows,
     _replace_lots,
     _resolve_runs,
     _retained_setup_successors,
+    _run_production_windows,
     _schedule_run_earliest,
     _sorted_segments,
 )
-from backend.scheduler.improvement import Proposal, SkippedProposal, production_windows
+from backend.scheduler.improvement import Proposal, SkippedProposal
 from backend.scheduler.jit_policy import earliest_allowed_start
 from backend.scheduler.policy import tolerant_better
-from backend.scheduler.priority import lot_priority_key, run_priority_key
+from backend.scheduler.priority import run_priority_key
 from backend.scheduler.resources import clone_run_for_machine
 from backend.scheduler.types import Lot, Segment, ToolRun
-from backend.scheduler.validation import validate_plan
 from backend.types import EngineData
 
 MAX_GROUP = 6
@@ -124,7 +126,11 @@ def local_cpsat_proposals(
     movable = {rid: run for rid, run in run_map.items()
                if not any(lot.id in protected for lot in run.lots)}
     holidays = _extended_holidays(data, -20, data.n_days + 400)
-    windows = production_windows(ordered)
+    # The run's own production (a later portion of a lot is judged against
+    # its own floor) and, for the pre-check, the evaluator's per-delivery
+    # vector restricted to the group's lots (``_OwnWindows``).
+    run_windows = _run_production_windows(ordered)
+    own = _OwnWindows(ordered, lots)
     segments_by_run: dict[str, list[Segment]] = {}
     for segment in ordered:
         segments_by_run.setdefault(segment.run_id, []).append(segment)
@@ -140,8 +146,8 @@ def local_cpsat_proposals(
 
     targets = sorted(
         (run for rid, run in movable.items() if eligible[rid]
-         and min(windows[lot.id][0] for lot in run.lots if lot.id in windows) > floor_abs(run)),
-        key=run_priority_key,
+         and rid in run_windows and run_windows[rid][0] > floor_abs(run)),
+        key=_named_run_key,
     )
     seen: set[tuple[str, ...]] = set()
     for target in targets:
@@ -159,10 +165,10 @@ def local_cpsat_proposals(
                             floor_abs, group_of, solve_seconds, cp_model)
         if plan is None:
             continue
-        member_lots = sorted((lot for rid in group for lot in movable[rid].lots),
-                             key=lot_priority_key)
-        before = tuple(windows.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
+        member_ids = {lot.id for rid in group for lot in movable[rid].lots}
+        before = own.before(member_ids)
         fixed = [s for s in ordered if s.run_id not in group]
+        kept = [s for s in fixed if s.lot_id in member_ids]
         created: list[Segment] = []
         rebound: list[Lot] = []
         for run_id, machine_id in plan:
@@ -177,10 +183,10 @@ def local_cpsat_proposals(
             rebound.extend(placed[0].lots)
         if not created:
             continue
-        after_windows = production_windows(created)
-        after = tuple(after_windows.get(lot.id, (math.inf, math.inf)) for lot in member_lots)
-        # Same comparator as the evaluator (contract v3): a group that saves a
-        # setup while no lot loses the tolerance is still proposed.
+        after = own.after(member_ids, kept, created)
+        # Same comparator and per-delivery vector as the evaluator (contract
+        # v3, policy v3): a group that saves a setup while no delivery loses
+        # the tolerance is still proposed.
         touched = frozenset(
             s.machine_id for s in ordered if s.run_id in group
         ) | {machine_id for _run_id, machine_id in plan}
@@ -194,14 +200,11 @@ def local_cpsat_proposals(
             "kind": "local_cpsat",
             "assignments": [list(item) for item in plan],
         }
-        candidate_segments = _sorted_segments([*fixed, *created])
-        candidate_lots = _replace_lots(lots, rebound)
-        violations = validate_plan(candidate_segments, data, config, lots=candidate_lots)
-        if violations:
-            yield SkippedProposal(subject, "physical", tuple(sorted(
-                {str(item.get("kind", "physical")) for item in violations})))
-            continue
-        yield Proposal(candidate_segments, candidate_lots, subject=subject)
+        # Not validated here: the improvement evaluator validates every
+        # proposal (one evaluator, AGENTS §6).
+        yield Proposal(
+            _sorted_segments([*fixed, *created]), _replace_lots(lots, rebound), subject=subject,
+        )
 
 
 def _solve_group(group, movable, eligible, ordered, data, config, axis, floor_abs, group_of,

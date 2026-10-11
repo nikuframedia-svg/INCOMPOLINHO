@@ -144,7 +144,9 @@ def test_shift_exchange_applies_the_evaluator_order(delta, wins):
 
 
 def _stub_validation(monkeypatch, module):
-    monkeypatch.setattr(module, "validate_plan", lambda *args, **kwargs: [])
+    # The generators no longer validate (the evaluator does); only the
+    # machine choice is stubbed.
+    assert not hasattr(module, "validate_plan")
     monkeypatch.setattr(module, "_eligible_machines", lambda *args, **kwargs: ["M1"])
 
 

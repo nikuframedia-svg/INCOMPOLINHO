@@ -155,7 +155,11 @@ def repair_same_reference_interruptions(
         except PlanValidationError:
             continue
         before = compute_score(current, lots, data, config=config, include_operational_audit=False)
-        after = compute_score(candidate, lots, data, config=config, include_operational_audit=False)
+        # assert_plan_valid passed: validate_plan found no violation (B4.2).
+        after = compute_score(
+            candidate, lots, data, config=config, include_operational_audit=False,
+            violations=[],
+        )
         if not delivery_not_worse(after, before) or any(
             after[key] < before[key] for key in ("otd", "otd_d")
         ):
@@ -613,6 +617,8 @@ def _score(
     lots: list[Lot],
     data: EngineData,
     config: FactoryConfig,
+    *,
+    violations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     from backend.scheduler.scoring import compute_score
 
@@ -622,6 +628,7 @@ def _score(
         data,
         config=config,
         include_operational_audit=False,
+        violations=violations,
     )
 
 
@@ -645,7 +652,8 @@ def _candidate_rejection(
     if candidate is None:
         return "counterfactual_unavailable", [], None, before_score
 
-    violations = validate_plan(candidate, data, config, lots=lots)
+    # A rotation counterfactual is a new plan by construction: no memo key.
+    violations = validate_plan(candidate, data, config, lots=lots, memo=False)
     coverage = coverage_metrics(candidate, lots)
     coverage_invalid = any(
         int(coverage.get(key, 0) or 0) > 0
@@ -669,7 +677,8 @@ def _candidate_rejection(
             reasons.append("quantity_conservation")
         return "resource_blocked", reasons, None, before_score
 
-    after_score = _score(candidate, lots, data, config)
+    # Validated just above: the score reuses the verdict (B4.2).
+    after_score = _score(candidate, lots, data, config, violations=violations)
     if not delivery_not_worse(after_score, before_score):
         reason = (
             "blocked_by_delivery_objective"
@@ -720,14 +729,34 @@ def classify_priority_order_anomalies(
     lots: list[Lot],
     data: EngineData,
     config: FactoryConfig,
+    *,
+    max_classifications: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Prove whether each suspicious pair is movable or legitimately blocked."""
+    """Prove whether each suspicious pair is movable or legitimately blocked.
+
+    ``max_classifications`` is a work budget (a count, never time): only the
+    first anomalies in priority order (most urgent first, the order of
+    :func:`find_priority_order_anomalies`) are classified; the rest are
+    returned as ``not_evaluated`` with reason ``audit_budget``. Pending is
+    never a pass (AGENTS §6): the caller keeps the audit "por avaliar".
+    """
 
     details = find_priority_order_anomalies(segments, lots, data)
     before_count = len(details)
-    before_score = _score(segments, lots, data, config)
+    limit = len(details) if max_classifications is None else max(0, int(max_classifications))
+    before_score = _score(segments, lots, data, config) if details[:limit] else None
     classified: list[dict[str, Any]] = []
-    for detail in details:
+    for index, detail in enumerate(details):
+        if index >= limit:
+            classified.append(
+                {
+                    **detail,
+                    "verification_status": "not_evaluated",
+                    "blocking_reason": "audit_budget",
+                    "blocking_reasons": ["audit_budget"],
+                }
+            )
+            continue
         candidates = _build_priority_rotation_candidates(
             segments,
             lots,

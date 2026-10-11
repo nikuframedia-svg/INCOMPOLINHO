@@ -28,6 +28,20 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    um plano válido do mesmo cenário, nenhuma encomenda individual pode perder
    quantidade no prazo ou ganhar atraso; preservar também os marcos externos.
    Um KPI agregado não compensa uma encomenda prejudicada.
+   **Entrega medida por encomenda no comparador (decidido a 11/10/2026,
+   Fase B3).** Entre planos admissíveis, a entrega ordena-se por encomenda,
+   lida da mesma prontidão `material_quantities.delivery_readiness` (via
+   `improvement.order_service`): prioridades explícitas das encomendas
+   atrasadas, depois número de encomendas atrasadas, encomendas nunca
+   prontas, total de dias de atraso das encomendas e só depois falhas e
+   faltas de OTD-D e expedição para subcontratação
+   (`priority.delivery_priority_key` com `priority.order_delivery_metrics`).
+   O atraso por lote (`tardy_count`, `total_tardiness`, OTD de lotes) é só
+   indicador: um ganho nele não paga um plano mais tarde. O ciclo de
+   melhoria, as reparações de máquina alternativa, a troca de turno e as
+   ordenações do CPO usam esta medida; um score sem as métricas por
+   encomenda (`priority.with_order_delivery`) é comparado pela regra antiga
+   dos dois lados, nunca misturado.
 3. **Primeiro objetivo entre candidatos admissíveis: antecipação real.**
    Escolher o primeiro início produtivo viável após a libertação de material,
    considerando todas as máquinas elegíveis e os recursos partilhados. Entre
@@ -49,7 +63,20 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    esse lote perca menos de 60 min; com 60 min ou mais, o lote urgente passa
    à frente e paga-se o setup. A regra de não perda por encomenda (ponto 2)
    continua acima de tudo (`improvement.CONTRACT_VERSION = 3`,
-   `policy.POLICY_VERSION = earliest-lexicographic-tolerant-setups-v3`).
+   `policy.POLICY_VERSION = per-output-earliest-lexicographic-tolerant-setups-v3`).
+   **Medida por entrega (Fase B3, policy v3):** a antecipação mede-se por
+   output, não por lote. Num lote que cobre várias entregas do mesmo lado,
+   cada entrega é um elemento próprio: as suas peças são atribuídas FIFO por
+   quantidade acumulada (a regra de `delivery_readiness`), começa no
+   primeiro minuto produtivo que faz peças suas e acaba quando a última peça
+   sua fica feita, isto é, na sua prontidão. O excedente económico e o stock
+   coproduzido não são elementos nem mexem na janela de nenhuma entrega.
+   Os elementos ordenam-se pela prioridade da própria entrega
+   (`priority.output_priority_key`, com a quantidade da entrega ao cliente).
+   Um lote com no máximo uma entrega por lado continua a ser um só elemento,
+   como na v2 (`policy.output_windows`, `policy.anticipation_key`). As
+   pré-verificações das vizinhanças (N1–N4 e lote inteiro) usam este mesmo
+   vetor, restrito aos lotes que movem.
 4. **Objetivos seguintes:** menos setups físicos/minutos (já decididos dentro da
    tolerância, ponto 3), menos transferências, menor alteração do plano. Não
    podem fazer perder uma antecipação de 60 min ou mais.
@@ -170,10 +197,14 @@ Construtor por partes (`quantity_dispatch.py`, B1a):
   se aceita se nenhuma entrega das partes que recoloca, nem das partes ainda
   por colocar desses lotes, nem do lote inserido (incluindo as suas partes
   seguintes), ficar mais atrasada. Cumprido isso, aceita-se sempre que uma
-  entrega do lote inserido fique mais cedo. Sem esse ganho, pesa-se a regra 2:
-  recusa-se se o lote inserido ganhar menos de 60 min, ou se alguma parte
-  perder 60 min ou mais e o lote inserido ganhar menos do que essa perda;
-  perdas abaixo de 60 min nunca decidem (`quantity_dispatch._break_accepted`).
+  entrega do lote inserido fique mais cedo. Sem esse ganho, decide o mesmo
+  comparador do avaliador (`policy.tolerant_better`, §1.3) sobre todas as
+  partes que a inserção mexe, por ordem de urgência da parte: uma parte só
+  pode perder 60 min ou mais se outra mais urgente ganhar o mesmo; dentro da
+  tolerância decidem menos setups (a inserção obriga a remontar a ferramenta
+  retida) e só depois os minutos exatos (`quantity_dispatch._break_accepted`).
+  Assim o construtor nunca faz uma inserção que o ciclo de melhoria
+  desfaria, nem recusa uma que ele faria.
 - Se o construtor por campanhas falhar, usa-se o anterior (uma execução por
   parte) e o plano leva um aviso simples; o mesmo quando o fecho de setups
   retidos é rejeitado pela validação.
@@ -277,8 +308,32 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
 - Começar por inserção no primeiro intervalo viável e procura em todas as
   máquinas elegíveis; depois trocas locais e pequenos grupos acoplados por
   máquina, ferramenta ou equipa. CP-SAT local trata os casos restantes.
+- Vizinhança `priority_rotation` (Fase B3, 11/10/2026): as anomalias por
+  entrega da auditoria operacional (`operational_audit.find_output_priority_anomalies`:
+  uma execução menos urgente antes de outra mais urgente já libertada, na
+  mesma máquina) são propostas ao avaliador como as rotações da própria
+  auditoria (só leitura). Corre no início de cada ronda (`leading`), antes
+  das outras vizinhanças, porque os movimentos aceites criam anomalias
+  novas; uma rotação já proposta sobre a mesma sequência da máquina não é
+  reconstruída. O avaliador decide com o contrato de sempre, por isso uma
+  rotação que o contrato aceita deixa de ficar como "evitável".
 - Geradores propõem; um único avaliador aplica o mesmo contrato a planeamento,
   melhoria, movimento, explicação e persistência. Não duplicar prioridades.
+  Os geradores não validam: o avaliador valida cada candidato uma vez (o
+  plano residual e, com produção protegida, o plano completo em que o
+  resultado é integrado) e o score reutiliza esse veredicto; a rejeição
+  fica com o motivo `physical` e os tipos de violação.
+- Compactação no ciclo de melhoria (Fase B3): `earliest_legal` (a
+  normalização canónica) custa tanto como dezenas de candidatos num ISOP
+  real, por isso não corre depois de cada movimento aceite. Corre uma vez
+  quando os outros geradores param, numa reserva no fim do orçamento da
+  fase (`improvement.CLOSING_COMPACTION_SHARE`, depois a duração medida);
+  se for aceite e houver tempo, a pesquisa continua sobre o plano
+  compactado. Cada candidato aceite já é completo e validado, por isso um
+  orçamento que acaba antes ou durante a compactação devolve o último
+  aceite (`closing_compaction` no relatório diz o que aconteceu). Um limite
+  de avaliações (`max_evaluations`) conta também as da compactação: a
+  pesquisa para uma avaliação antes, para a compactação final caber.
 - Começar com um worker do solver; medir antes de aumentar. O código atual já
   usa um worker. GA/ML não são o caminho operacional e não são necessários
   para corrigir a falha reproduzida.
@@ -347,7 +402,8 @@ Mapa atual: datas em `scheduler/jit_policy.py`; montagem em
 `scheduler/validation.py`; medida canónica de antecipação em
 `scheduler/policy.py`; prontidão por entrega em
 `scheduler/material_quantities.py` (partes em `scheduler/quantity_dispatch.py`); avaliação e ciclo em `scheduler/improvement.py`;
-vizinhanças N1–N3 e alocador "primeiro intervalo viável" em
+vizinhanças N1–N3, lote inteiro noutra máquina (`lot_machine_proposals`,
+regra 3) e alocador "primeiro intervalo viável" em
 `scheduler/alternative_repair.py`; N4 em `scheduler/local_cpsat.py`; proteção em
 `plans/frozen.py`; orçamento em `planning_control.py` (todos sob `backend/`).
 GA/MAP-Elites só offline em `cpo/offline_ga.py`.
@@ -355,5 +411,7 @@ GA/MAP-Elites só offline em `cpo/offline_ga.py`.
 Verificação: fixtures reais congeladas em `tests/fixtures/private/` (fora do
 git; manifestos em `tests/fixtures/snapshots/`, criados por
 `scripts/freeze_snapshot_fixture.py`); casos §8.1 em
-`tests/test_acceptance_cases.py`; oráculos independentes em `tests/oracle.py` e `tests/oracle_delivery.py`;
+`tests/test_acceptance_cases.py`; oráculos independentes em `tests/oracle.py` e
+`tests/oracle_delivery.py` (ordem dos lotes própria, `oracle_lot_order`: não
+confia na ordem da lista do plano);
 benchmark repetível em `scripts/benchmark_solver.py`.
