@@ -1,0 +1,21 @@
+[Unit]
+Description=INCOMPOLINHO public frontend (versão final compilada em frontend/dist)
+After=network.target incompolinho-backend.service
+
+# Serve só a versão compilada (vite preview): sem recarregamentos automáticos
+# e sem acesso aos ficheiros-fonte. A compilação é um passo de publicação
+# (scripts/deploy/build_frontend.sh); ver deploy/README.md.
+
+[Service]
+Type=simple
+WorkingDirectory=/home/luis/projects/INCOMPOLINHO/frontend
+Environment=NODE_ENV=production
+ExecStartPre=/usr/bin/test -f /home/luis/projects/INCOMPOLINHO/frontend/dist/index.html
+ExecStart=/usr/bin/node /home/luis/projects/INCOMPOLINHO/frontend/node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 53868 --strictPort
+Restart=always
+RestartSec=2
+StandardOutput=append:/home/luis/projects/INCOMPOLINHO/.run-logs/frontend.log
+StandardError=append:/home/luis/projects/INCOMPOLINHO/.run-logs/frontend.log
+
+[Install]
+WantedBy=default.target

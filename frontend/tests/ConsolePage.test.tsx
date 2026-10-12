@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleData, GateReport, Score } from "../src/api/types";
 import { useAppStore } from "../src/stores/useAppStore";
@@ -417,18 +417,6 @@ describe("ConsolePage", () => {
     expect(screen.queryByText(/Sem problemas/i)).toBeNull();
 	  });
 
-  it("abre no último dia consultado em vez de voltar sempre a Hoje", async () => {
-    localStorage.setItem("pp1ConsoleLastDay", "2");
-    mockConsoleEndpoints();
-
-    render(<ConsolePage />);
-
-    await waitFor(() => {
-      expect(endpointMocks.getConsole).toHaveBeenCalledWith(2);
-    });
-    expect(await screen.findByDisplayValue("2026-03-07")).toBeTruthy();
-  });
-
   it("permite escolher o dia clicando na data", async () => {
     mockConsoleEndpoints();
 
@@ -440,7 +428,102 @@ describe("ConsolePage", () => {
     await waitFor(() => {
       expect(endpointMocks.getConsole).toHaveBeenLastCalledWith(1);
     });
-    expect(localStorage.getItem("pp1ConsoleLastDay")).toBe("1");
+    expect(JSON.parse(sessionStorage.getItem("pp1ConsoleDay") ?? "null")).toMatchObject({
+      today: "2026-03-05", date: "2026-03-06", day: 1,
+    });
+    expect(localStorage.getItem("pp1ConsoleLastDay")).toBeNull();
+  });
+});
+
+describe("ConsolePage — dia de abertura", () => {
+  // Uso de 12/10/2026: aberto no domingo 11/10, continuava a abrir no domingo.
+  const octoberDays = ["2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"];
+  const sundayChoice = {
+    today: "2026-10-11", local: "2026-10-11", date: "2026-10-11", day: 2,
+  };
+
+  function mockMonday() {
+    mockConsoleEndpoints();
+    endpointMocks.getToday.mockResolvedValue({ today_idx: 3, date: "2026-10-12" });
+    endpointMocks.getWorkdays.mockResolvedValue(octoberDays);
+    endpointMocks.getConsole.mockImplementation((day: number) => Promise.resolve({
+      ...consoleData, date: octoberDays[day],
+    } as ConsoleData));
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("abre no hoje do servidor mesmo com domingo guardado por versões antigas", async () => {
+    vi.setSystemTime(new Date(2026, 9, 12, 11, 21));
+    localStorage.setItem("pp1ConsoleLastDay", "2");
+    sessionStorage.setItem("pp1ConsoleDay", JSON.stringify(sundayChoice));
+    mockMonday();
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByDisplayValue("2026-10-12")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Hoje" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(endpointMocks.getConsole).toHaveBeenCalledWith(3);
+    expect(endpointMocks.getConsole).not.toHaveBeenCalledWith(2);
+    expect(localStorage.getItem("pp1ConsoleLastDay")).toBeNull();
+  });
+
+  it("valores guardados inválidos são ignorados", async () => {
+    vi.setSystemTime(new Date(2026, 9, 12, 9, 0));
+    sessionStorage.setItem("pp1ConsoleDay", "2");
+    mockMonday();
+
+    render(<ConsolePage />);
+
+    expect(await screen.findByDisplayValue("2026-10-12")).toBeTruthy();
+    expect(endpointMocks.getConsole).toHaveBeenCalledWith(3);
+  });
+
+  it("mantém o dia escolhido à mão na mesma sessão do separador e Hoje volta ao dia de hoje", async () => {
+    vi.setSystemTime(new Date(2026, 9, 12, 9, 0));
+    mockMonday();
+
+    const first = render(<ConsolePage />);
+    fireEvent.change(await screen.findByLabelText("Escolher data"), { target: { value: "2026-10-13" } });
+    expect(await screen.findByDisplayValue("2026-10-13")).toBeTruthy();
+    first.unmount();
+
+    // Recarregar a página no mesmo separador mantém a escolha.
+    endpointMocks.getConsole.mockClear();
+    render(<ConsolePage />);
+    expect(await screen.findByDisplayValue("2026-10-13")).toBeTruthy();
+    expect(endpointMocks.getConsole).not.toHaveBeenCalledWith(3);
+    expect(screen.getByText("Dia 4")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hoje" }));
+    expect(await screen.findByDisplayValue("2026-10-12")).toBeTruthy();
+    expect(sessionStorage.getItem("pp1ConsoleDay")).toBeNull();
+  });
+
+  it("a escolha de ontem não passa para hoje, mesmo no mesmo separador", async () => {
+    vi.setSystemTime(new Date(2026, 9, 11, 22, 0));
+    mockConsoleEndpoints();
+    endpointMocks.getToday.mockResolvedValue({ today_idx: 2, date: "2026-10-11" });
+    endpointMocks.getWorkdays.mockResolvedValue(octoberDays);
+    endpointMocks.getConsole.mockImplementation((day: number) => Promise.resolve({
+      ...consoleData, date: octoberDays[day],
+    } as ConsoleData));
+
+    render(<ConsolePage />);
+    fireEvent.change(await screen.findByLabelText("Escolher data"), { target: { value: "2026-10-09" } });
+    expect(await screen.findByDisplayValue("2026-10-09")).toBeTruthy();
+
+    // O separador fica aberto durante a noite; na segunda-feira volta a ficar visível.
+    vi.setSystemTime(new Date(2026, 9, 12, 7, 30));
+    endpointMocks.getToday.mockResolvedValue({ today_idx: 3, date: "2026-10-12" });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(await screen.findByDisplayValue("2026-10-12")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Hoje" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -513,6 +596,20 @@ describe("Shell", () => {
     expect(within(banner).getByText("Aviso do plano")).toBeTruthy();
     expect(banner.textContent).toContain("«Recalcular plano»");
     expect(useDataStore.getState().planNotices).toEqual([notice]);
+  });
+
+  it("mostra no topo o aviso de plano feito com um ISOP de um dia anterior", async () => {
+    mockShellEndpoints();
+    const planView = await endpointMocks.getPlanView();
+    const notice = "O plano usa o ISOP de 09/10. Os dias anteriores a hoje são considerados já "
+      + "produzidos. Carregue o ISOP de hoje para atualizar o plano.";
+    endpointMocks.getPlanView.mockResolvedValue({ ...planView, plan_notices: [notice] });
+
+    render(<Shell />);
+
+    const banner = await screen.findByRole("status", { name: "Aviso sobre o plano ativo" });
+    expect(within(banner).getByText("Aviso do plano")).toBeTruthy();
+    expect(within(banner).getByText(notice)).toBeTruthy();
   });
 
   it("sem avisos do plano não mostra a faixa", async () => {

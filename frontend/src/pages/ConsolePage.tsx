@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { usePlanQuery } from "../hooks/usePlanQuery";
 import { T } from "../theme/tokens";
 import { getConsole, getToday, getWorkdays } from "../api/endpoints";
@@ -10,6 +10,13 @@ import { Dot } from "../components/ui/Dot";
 import { Divider } from "../components/ui/Divider";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { useAppStore } from "../stores/useAppStore";
+import {
+  readConsoleDayChoice,
+  rememberConsoleDayChoice,
+  resolveConsoleDay,
+  useLocalDate,
+  type ConsoleDayChoice,
+} from "../lib/consoleDay";
 import {
   lateOrderRows,
   plural,
@@ -48,27 +55,6 @@ type ConsoleDayOverview = {
     expeditions_summary?: string;
   };
 };
-
-const LAST_CONSOLE_DAY_KEY = "pp1ConsoleLastDay";
-
-function readStoredDay() {
-  try {
-    const raw = window.localStorage.getItem(LAST_CONSOLE_DAY_KEY);
-    if (raw === null) return null;
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberDay(day: number) {
-  try {
-    window.localStorage.setItem(LAST_CONSOLE_DAY_KEY, String(day));
-  } catch {
-    // Best effort only. Navigation must keep working if storage is unavailable.
-  }
-}
 
 function riskStatusColor(status: RiskStatus | null) {
   return status === "late" ? T.red : status === "at_limit" ? T.orange : T.yellow;
@@ -211,11 +197,16 @@ function UnavailableSummary({ lines }: { lines: AvailabilityLine[] }) {
 const loadConsoleCalendar = () => Promise.all([getToday(), getWorkdays()]);
 
 export function ConsolePage() {
-  const [selectedDay, setDay] = useState<number | null>(readStoredDay);
-  const { data: calendar, error: calendarError } = usePlanQuery("calendar", loadConsoleCalendar);
+  // Opens on the server's today; a day picked by hand lasts for this tab and this day only.
+  const [choice, setChoice] = useState<ConsoleDayChoice | null>(readConsoleDayChoice);
+  const localDay = useLocalDate();
+  const { data: calendar, error: calendarError } = usePlanQuery(`calendar:${localDay}`, loadConsoleCalendar);
   const todayDay = calendar?.[0].today_idx ?? 0;
   const workdays = calendar?.[1] ?? [];
-  const day = calendar ? Math.min(selectedDay ?? todayDay, Math.max(0, workdays.length - 1)) : null;
+  const lastDay = Math.max(0, workdays.length - 1);
+  const day = calendar
+    ? Math.min(resolveConsoleDay(choice, calendar[0], workdays, localDay), lastDay)
+    : null;
   const loadConsole = useCallback(() => day === null ? Promise.resolve(null) : getConsole(day), [day]);
   const { data, error: queryError } = usePlanQuery(JSON.stringify(day), loadConsole);
   const error = calendarError ?? queryError;
@@ -223,10 +214,6 @@ export function ConsolePage() {
   const score = useDataStore((s) => s.score);
   const gateReport = useDataStore((s) => s.gateReport);
   const setPage = useAppStore((s) => s.setPage);
-
-  useEffect(() => {
-    if (day !== null) rememberDay(day);
-  }, [day]);
 
   if (error) return <div style={{ color: T.red, padding: 24 }}>{error}</div>;
   if (day === null || !data) return <div style={{ color: T.secondary, padding: 24 }}>A carregar...</div>;
@@ -283,7 +270,15 @@ export function ConsolePage() {
   const firstPickerDate = workdays[0] ?? undefined;
   const lastPickerDate = workdays.length ? workdays[workdays.length - 1] : undefined;
   const setConsoleDay = (next: number) => {
-    setDay(next);
+    const target = Math.min(next, lastDay);
+    const picked: ConsoleDayChoice | null = !calendar || target === todayDay ? null : {
+      today: calendar[0].date,
+      local: localDay,
+      date: target >= 0 ? workdays[target] ?? null : null,
+      day: target,
+    };
+    setChoice(picked);
+    rememberConsoleDayChoice(picked);
     setDatePickerError(null);
   };
   const selectCalendarDate = (value: string) => {

@@ -842,15 +842,24 @@ async def get_lots():
 def _plan_notices(lots, engine_data, config) -> list[str]:
     """Plain pt-PT notes about the active plan itself, shown above every screen.
 
-    Today only the legacy material note: a plan saved before the per-delivery
-    material rules is kept as saved, cannot be committed again (moves and
-    edits are refused) and only «Recalcular plano» applies the current rules.
-    Computed from the plan, so it disappears as soon as the plan is rebuilt.
+    - Legacy material note: a plan saved before the per-delivery material
+      rules is kept as saved, cannot be committed again (moves and edits are
+      refused) and only «Recalcular plano» applies the current rules.
+    - Old ISOP note: the plan's ISOP starts at least one working day before
+      today, so the days before today count as already produced until the
+      ISOP of today is loaded.
+
+    Computed from the plan and today's date on every read, never stored, and
+    never changes the plan: each note disappears as soon as its cause does.
     """
     from backend.plans.restore import legacy_material_warning
+    from backend.plans.stale_isop import stale_isop_notice
 
-    note = legacy_material_warning(lots, engine_data, config)
-    return [note] if note else []
+    notes = (
+        legacy_material_warning(lots, engine_data, config),
+        stale_isop_notice(engine_data, config),
+    )
+    return [note for note in notes if note]
 
 
 @router.get("/plan-view")

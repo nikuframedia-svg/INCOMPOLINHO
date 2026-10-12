@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=/home/luis/projects/INCOMPOLINHO
 Environment=PYTHONHASHSEED=0
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/home/luis/projects/INCOMPOLINHO/.venv/bin/python -m uvicorn backend.api.copilot:app --host 127.0.0.1 --port 8010
+ExecStart=/home/luis/projects/INCOMPOLINHO/.venv/bin/python -m uvicorn backend.api.copilot:app --host 127.0.0.1 --port 8010 --log-config /home/luis/projects/INCOMPOLINHO/deploy/uvicorn-logging.json
 Restart=always
 RestartSec=2
 StandardOutput=append:/home/luis/projects/INCOMPOLINHO/.run-logs/backend.log

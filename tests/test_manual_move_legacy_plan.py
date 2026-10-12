@@ -113,12 +113,16 @@ def test_current_plan_is_not_refused_as_legacy(legacy_state, monkeypatch):
     assert "legacy_material_plan" not in response.text
 
 
-def test_plan_view_shows_the_legacy_note_until_the_plan_is_rebuilt(legacy_state):
+def test_plan_view_shows_the_legacy_note_until_the_plan_is_rebuilt(legacy_state, monkeypatch):
     """The planner sees why moves are refused (rehearsal: the note stayed in
     ``state.warnings`` only). The note follows the plan, not a stored flag."""
     from backend.scheduler.scheduler import schedule_all
     from tests.test_legacy_material_plan import _scenario
+    from tests.test_stale_isop_notice import _pin_today
 
+    # Today = the ISOP's first day, so only the legacy note is under test
+    # (the old-ISOP note is covered in tests/test_stale_isop_notice.py).
+    _pin_today(monkeypatch, "2026-10-07")
     client = TestClient(app)
     try:
         legacy = client.get("/api/data/plan-view")
