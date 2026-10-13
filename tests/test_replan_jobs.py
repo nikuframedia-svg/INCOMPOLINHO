@@ -1288,3 +1288,236 @@ def test_stale_legacy_note_is_dropped_from_a_current_plan():
     assert _without_stale_legacy_warnings(warnings, [current], [note]) == [note, other]
     # Still a legacy plan: the notes stay true.
     assert _without_stale_legacy_warnings(warnings, [legacy], []) == warnings
+
+
+# ── Capacity released with late deliveries (13/10/2026, revision 127) ────
+# The 35 s are kept for the constructor only when a late delivery has idle
+# capacity (``jobs._late_with_idle_capacity``); the helper stands it in.
+
+STALE_REBUILD_NOTE = (
+    "A alteração afeta 18 segmentos do plano ativo; o plano foi recalculado por completo."
+)
+
+
+def _late_active_plan(live, result):
+    """The active plan with its only order a day late, as after an outage."""
+    from dataclasses import replace
+
+    from backend.scheduler.scoring import compute_score
+
+    live.engine_data.ops[0].stk = 0
+    late = copy.deepcopy(result)
+    late.segments = [replace(result.segments[0], day_idx=1)]
+    late.score = compute_score(late.segments, late.lots, live.engine_data, config=live.config)
+    late.warnings = [STALE_REBUILD_NOTE]
+    live.update_schedule(late)
+    on_time = copy.deepcopy(result)
+    on_time.score = compute_score(
+        on_time.segments, on_time.lots, live.engine_data, config=live.config,
+    )
+    return late, on_time
+
+
+def _late(plan, engine_data) -> bool:
+    from backend.scheduler.priority import delivery_is_complete, with_order_delivery
+
+    return not delivery_is_complete(
+        with_order_delivery(plan.score, plan.segments, plan.lots, engine_data),
+    )
+
+
+def _release_capacity(
+    live, manager, monkeypatch, *, compaction, constructor, clock=None, idle=None,
+):
+    """Release capacity through the job. ``idle(plan)`` stands for the
+    idle-capacity check (default: every late plan has idle capacity, as the
+    fixture's late order on day 1 leaves day 0 free)."""
+    from backend.planning_control import planning_scope, remaining_time
+    from backend.replan import jobs
+
+    budgets = []
+    engine_data = live.engine_data
+    idle = idle if idle is not None else (lambda plan: _late(plan, engine_data))
+    monkeypatch.setattr(jobs, "_late_with_idle_capacity", lambda plan, *_args: idle(plan))
+
+    def compact(data, config, plan, **_kwargs):
+        budgets.append(("compaction", remaining_time()))
+        assert STALE_REBUILD_NOTE not in plan.warnings
+        compacted = compaction(plan)
+        compacted.warnings = [
+            *compacted.warnings, "Capacidade libertada: o plano ativo foi novamente compactado.",
+        ]
+        return compacted
+
+    def rebuild(*_args, **_kwargs):
+        budgets.append(("constructor", remaining_time()))
+        return constructor()
+
+    monkeypatch.setattr(jobs, "compact_preserving_started_lots", compact)
+    monkeypatch.setattr(jobs, "optimize_preserving_started_lots", rebuild)
+    baseline = serialize_snapshot(live)
+    job = manager.store.create("capacity released", "fixture", live.plan_revision)
+    clock = clock if clock is not None else [0.0]
+    # One more operator: capacity released, so the inputs differ from the plan's.
+    config = copy.deepcopy(live.config)
+    config.operators[("Grandes", "A")] += 1
+    with planning_scope(timeout_s=60.0, clock=lambda: clock[0]):
+        manager._run(
+            job["id"], copy.deepcopy(live.engine_data), config,
+            "fixture", live.plan_revision, "capacity released", copy.deepcopy(live.dataset_info),
+            baseline_snapshot=baseline, reoptimize_relaxed_baseline=True,
+        )
+    current = manager.store.get(job["id"])
+    assert current["status"] == "ready", current
+    assert STALE_REBUILD_NOTE not in current["warnings"]
+    return current, budgets
+
+
+def test_capacity_release_rebuilds_when_compaction_leaves_orders_late(ready_replan, monkeypatch):
+    """The compaction keeps time for the constructor; the constructor's plan
+    is taken because the single comparator prefers it with no order losing."""
+    from backend.plans.serialize import deserialize_snapshot
+
+    live, manager, _, result, _ = ready_replan
+    late, on_time = _late_active_plan(live, result)
+
+    current, budgets = _release_capacity(
+        live, manager, monkeypatch,
+        compaction=copy.deepcopy, constructor=lambda: copy.deepcopy(on_time),
+    )
+
+    assert current["result"]["selected_source"] == "optimized_after_capacity_release"
+    restored = deserialize_snapshot(manager.store.get_candidate(current["id"]))
+    assert restored["result"].segments == on_time.segments
+    # 60 s minus the closing reserve (10 s); the compaction leaves 35 s.
+    assert budgets == [("compaction", pytest.approx(15.0)), ("constructor", pytest.approx(50.0))]
+    assert any(w.startswith("Capacidade libertada: o recálculo completo") for w in current["warnings"])
+
+
+def test_capacity_release_keeps_the_compaction_unless_the_rebuild_is_better(
+    ready_replan, monkeypatch,
+):
+    from backend.plans.serialize import deserialize_snapshot
+
+    live, manager, _, result, _ = ready_replan
+    late, _on_time = _late_active_plan(live, result)
+
+    current, budgets = _release_capacity(
+        live, manager, monkeypatch,
+        compaction=copy.deepcopy, constructor=lambda: copy.deepcopy(late),
+    )
+
+    assert current["result"]["selected_source"] == "compacted_baseline_after_capacity_release"
+    assert [name for name, _budget in budgets] == ["compaction", "constructor"]
+    restored = deserialize_snapshot(manager.store.get_candidate(current["id"]))
+    assert restored["result"].segments == late.segments
+    assert not any("recálculo completo" in w for w in current["warnings"])
+
+
+def test_capacity_release_keeps_the_compaction_when_the_rebuild_times_out(
+    ready_replan, monkeypatch,
+):
+    from backend.planning_control import planning_checkpoint, remaining_time
+    from backend.plans.serialize import deserialize_snapshot
+
+    live, manager, _, result, _ = ready_replan
+    late, _on_time = _late_active_plan(live, result)
+    clock = [0.0]
+
+    def timed_out():
+        clock[0] += remaining_time() + 0.001
+        planning_checkpoint()
+
+    current, _budgets = _release_capacity(
+        live, manager, monkeypatch, compaction=copy.deepcopy, constructor=timed_out, clock=clock,
+    )
+
+    assert current["result"]["selected_source"] == "compacted_baseline_after_capacity_release"
+    restored = deserialize_snapshot(manager.store.get_candidate(current["id"]))
+    assert restored["result"].segments == late.segments
+
+
+def test_capacity_release_without_late_orders_left_compacts_again(ready_replan, monkeypatch):
+    """Nothing late after the compaction: the constructor does not run and the
+    compaction goes on with the time it kept for it."""
+    from backend.plans.serialize import deserialize_snapshot
+
+    live, manager, _, result, _ = ready_replan
+    _late, on_time = _late_active_plan(live, result)
+    passes = []
+
+    def compaction(plan):
+        passes.append(plan.segments)
+        return copy.deepcopy(on_time)
+
+    def constructor():
+        raise AssertionError("nothing is late: the constructor must not run")
+
+    current, budgets = _release_capacity(
+        live, manager, monkeypatch, compaction=compaction, constructor=constructor,
+    )
+
+    assert current["result"]["selected_source"] == "compacted_baseline_after_capacity_release"
+    assert budgets == [("compaction", pytest.approx(15.0)), ("compaction", pytest.approx(50.0))]
+    assert passes[1] == on_time.segments  # the second pass starts from the first
+    restored = deserialize_snapshot(manager.store.get_candidate(current["id"]))
+    assert restored["result"].segments == on_time.segments
+
+
+def test_structural_lateness_gives_the_compaction_the_whole_budget(ready_replan, monkeypatch):
+    """Late only for lack of capacity (no idle time before the deadline): the
+    constructor has nothing to recover, so no time is kept for it (rehearsal
+    of 13/10/2026 on revision 128: the reserve cost 3 setups)."""
+    live, manager, _, result, _ = ready_replan
+    _late_active_plan(live, result)
+
+    def constructor():
+        raise AssertionError("no idle capacity: the constructor must not run")
+
+    _current, budgets = _release_capacity(
+        live, manager, monkeypatch, compaction=copy.deepcopy, constructor=constructor,
+        idle=lambda _plan: False,
+    )
+
+    assert budgets == [("compaction", pytest.approx(50.0))]
+
+
+def test_failing_idle_capacity_check_reserves_nothing(ready_replan, monkeypatch):
+    from backend.replan import jobs
+    from backend.scheduler import idle_capacity
+
+    live, _manager, _, result, _ = ready_replan
+    late, _on_time = _late_active_plan(live, result)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(idle_capacity, "late_with_idle_capacity", broken)
+    assert jobs._late_with_idle_capacity(late, live.engine_data, live.config, 0) is False
+
+
+def test_on_time_active_plan_gives_the_compaction_the_whole_budget(ready_replan, monkeypatch):
+    live, manager, _, result, _ = ready_replan
+    live.engine_data.ops[0].stk = 0
+
+    def constructor():
+        raise AssertionError("nothing is late: the constructor must not run")
+
+    _current, budgets = _release_capacity(
+        live, manager, monkeypatch, compaction=copy.deepcopy, constructor=constructor,
+    )
+
+    assert budgets == [("compaction", pytest.approx(50.0))]
+
+
+def test_calculation_notes_of_an_earlier_plan_are_dropped():
+    from backend.plans.frozen import without_calculation_notes
+
+    kept = ["Plano anterior preservado: 1 lote iniciado antes do dia 2.", "Outro aviso."]
+    stale = [
+        STALE_REBUILD_NOTE,
+        "O ajuste rápido não terminou a tempo; o plano foi recalculado por completo.",
+        "Calendário aplicado com um ajuste rápido do plano ativo.",
+        "Capacidade libertada: o plano ativo foi novamente compactado.",
+    ]
+    assert without_calculation_notes([*stale, *kept]) == kept

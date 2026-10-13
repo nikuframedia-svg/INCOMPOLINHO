@@ -10,6 +10,7 @@ operational audit that ran out of time is "por avaliar", never a pass.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +37,7 @@ from backend.scheduler.validation import (
 from backend.telemetry import measured
 from backend.types import EngineData
 
+logger = logging.getLogger(__name__)
 UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
 HARD_GATE_KEYS = (
     "setup_crew_overlaps",
@@ -181,8 +183,9 @@ def build_gate_report(
     # Audits stored before the status field existed were complete.
     operational_audit_status = str(audit_result.get("status") or "evaluated")
     operational_audit_evaluated = operational_audit_status != "not_evaluated"
+    service = _order_service(segments, lots, data) if data is not None else None
     order_metrics, late_order_detail = (
-        _order_delivery(segments, lots, data) if data is not None else ({}, [])
+        _order_delivery(segments, lots, data, service) if data is not None else ({}, [])
     )
     metrics = {
         **physical_metrics,
@@ -310,6 +313,11 @@ def build_gate_report(
         if data is not None
         else []
     )
+    idle_capacity_late = (
+        _idle_capacity_late(segments, lots, data, config, service)
+        if data is not None
+        else []
+    )
 
     return {
         "status": status,
@@ -335,6 +343,9 @@ def build_gate_report(
         "late_order_detail": late_order_detail,
         "jit_window_detail": jit_window_detail,
         "subcontract_dispatch_detail": subcontract_dispatch_detail,
+        # Informational only: late deliveries with idle machine time before
+        # their deadline (the plan can be improved); never decides approval.
+        "idle_capacity_late": idle_capacity_late,
         "setup_overlap_detail": setup_overlap_detail,
         "operational_audit": audit_result,
         "proposals": _build_proposals(metrics, violations, proposal_late_detail),
@@ -568,10 +579,18 @@ def authorize_application(
 LATE_ORDER_DETAIL_LIMIT = 50
 
 
+def _order_service(segments: list[Segment], lots: list[Lot], data: EngineData):
+    # Local import: improvement must stay free to import gate helpers later.
+    from backend.scheduler.improvement import order_service
+
+    return order_service(segments, lots, data)
+
+
 def _order_delivery(
     segments: list[Segment],
     lots: list[Lot],
     data: EngineData,
+    service=None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Order-level service, from the same allocation as the no-loss criterion.
 
@@ -583,10 +602,8 @@ def _order_delivery(
     metric and are informational.
     """
 
-    # Local import: improvement must stay free to import gate helpers later.
-    from backend.scheduler.improvement import order_service
-
-    service = order_service(segments, lots, data)
+    if service is None:
+        service = _order_service(segments, lots, data)
     produced_by_sku = _production_by_sku(segments)
     planned_machine = {op.sku: op.m for op in data.ops if getattr(op, "m", None)}
     late: list[dict[str, Any]] = []
@@ -767,6 +784,28 @@ def _subcontract_dispatch_detail(
         )
     )
     return _with_calendar_dates(details, data)
+
+
+def _idle_capacity_late(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData,
+    config: FactoryConfig | None,
+    service,
+) -> list[dict[str, Any]]:
+    """Late deliveries with idle capacity (``idle_capacity``), with dates.
+
+    Read-only and informational: a failure is logged and gives no cases, so
+    it can never stop a plan.
+    """
+    from backend.scheduler.idle_capacity import late_with_idle_capacity
+
+    try:
+        cases = late_with_idle_capacity(segments, lots, data, config, service=service)
+    except Exception:  # informational check, never blocks a plan
+        logger.exception("Idle-capacity check failed")
+        return []
+    return _with_calendar_dates(cases, data)
 
 
 def _setup_overlap_detail(violation: dict[str, Any]) -> dict[str, Any]:

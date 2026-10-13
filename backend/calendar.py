@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date as dt_date
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,6 +13,35 @@ from backend.config.types import FactoryConfig, ShiftConfig
 from backend.scheduler.constants import DAY_CAP, OPERATOR_CAP
 from backend.scheduler.operators import effective_operator_capacity
 from backend.types import EngineData
+
+# Free shift time shorter than this is the gap between two segments, not
+# capacity a run could use (rule 4 contiguity, idle-capacity check).
+MIN_FREE_INTERVAL_MIN = 30
+
+
+def factory_now(config: FactoryConfig | None, *, now: datetime | None = None) -> datetime:
+    """The current time in the factory's time zone (``now`` replaces the clock)."""
+
+    zone = ZoneInfo(str(getattr(config, "timezone", None) or "Europe/Lisbon"))
+    return (now or datetime.now(zone)).astimezone(zone)
+
+
+def elapsed_minutes(
+    day_idx: int, data: EngineData, config: FactoryConfig | None, *, now: datetime | None = None,
+) -> int:
+    """Minutes of plan day ``day_idx`` already gone at ``now`` (factory time).
+
+    The current minute of the day when ``day_idx`` is today, 0 on any other
+    day: the days before the planning day are elapsed as a whole by the
+    planning day itself, and a plan replayed on another date has no current
+    minute.
+    """
+
+    day = _day_date(day_idx, data)
+    current = factory_now(config, now=now)
+    if day is None or day != current.date():
+        return 0
+    return current.hour * 60 + current.minute
 
 
 def current_factory_day(data: EngineData, config: FactoryConfig, *, now=None) -> int:
@@ -238,3 +268,91 @@ def total_machine_capacity(
         available_machine_capacity(machine_id, day_idx, data, config)
         for day_idx in day_indices
     )
+
+
+def _subtract_intervals(
+    interval: tuple[int, int], busy: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    pieces = [interval]
+    for left, right in busy:
+        if right <= left:
+            continue
+        pieces = [
+            part
+            for start, end in pieces
+            for part in ((start, min(end, left)), (max(start, right), end))
+            if part[1] > part[0]
+        ]
+    return pieces
+
+
+def free_shift_intervals(
+    machine_id: str,
+    tool_id: str,
+    day_idx: int,
+    data: EngineData,
+    config: FactoryConfig,
+    *,
+    segments: list | tuple = (),
+    required_operators: int = 1,
+    start_min: float = 0,
+    end_min: float = 1440,
+) -> list[tuple[int, int]]:
+    """Free shift time of a machine and tool on one day, within ``[start_min, end_min)``.
+
+    Free: inside a shift of a factory working day; outside the machine and
+    tool unavailabilities; not taken by a segment of ``segments`` (that day's
+    plan) on the machine or with the tool on another machine; with
+    ``required_operators`` operators of the machine's group still available
+    (``operators.operator_free_windows``). Pieces shorter than
+    ``MIN_FREE_INTERVAL_MIN`` are gaps, not usable time. The single
+    definition of free time for rule 4 (``plans.frozen``) and the
+    idle-capacity check (``scheduler.idle_capacity``).
+    """
+    from backend.config.shifts import ordered_shifts
+    from backend.scheduler.operators import operator_free_windows
+    from backend.transform.calendars import calendar_window
+
+    view = calendar_window(data, config, day_idx, from_day=day_idx)
+    if not is_factory_workday(day_idx, view, config):
+        return []
+    if (day_idx in view.machine_blocked_days.get(machine_id, set())
+            or day_idx in view.tool_blocked_days.get(tool_id, set())):
+        return []
+    day_segments = [segment for segment in segments if segment.day_idx == day_idx]
+    busy = [
+        (int(block.get("start_min", 0)), int(block.get("end_min", 1440)))
+        for block in [
+            *view.machine_blocked_intervals.get(machine_id, []),
+            *view.tool_blocked_intervals.get(tool_id, []),
+        ]
+        if int(block.get("start_day", -1)) == day_idx
+    ]
+    busy += [
+        (math.floor(segment.start_min), math.ceil(segment.end_min))
+        for segment in day_segments
+        if segment.end_min > segment.start_min
+        and (segment.machine_id == machine_id or segment.tool_id == tool_id)
+    ]
+    group = (getattr(config, "machine_groups", None) or {}).get(machine_id) or next(
+        (machine.group for machine in data.machines if machine.id == machine_id), None,
+    )
+    intervals: list[tuple[int, int]] = []
+    for shift in ordered_shifts(config):
+        low = math.ceil(max(float(start_min), float(shift.start_min)))
+        high = math.floor(min(float(end_min), float(shift.end_min)))
+        if high - low < MIN_FREE_INTERVAL_MIN:
+            continue
+        staffed = (
+            operator_free_windows(
+                day_segments, data, config, day=day_idx, shift=shift.id, group=group,
+                required=max(1, int(required_operators)), start=low, end=high,
+            )
+            if group else [(low, high)]
+        )
+        for start, end in staffed:
+            intervals.extend(
+                (left, right) for left, right in _subtract_intervals((start, end), busy)
+                if right - left >= MIN_FREE_INTERVAL_MIN
+            )
+    return intervals

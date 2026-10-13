@@ -181,6 +181,19 @@ describe("GanttPage", () => {
       "Cobre até dia 14 (27/10) — 3 entregas no total",
     ]);
   });
+  it("diz no tooltip quando o lote subcontratado volta", () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment, is_subcontracted: true,
+      delivery_allocations: [{ sku: "SKU1", client: "Cliente B", qty: 10,
+        delivery_day: 1, delivery_date: "2026-03-17", customer_ready_day: 1 }],
+      unallocated_output: [],
+    }]);
+    const title = view.container.querySelector('[title*="Subcontratado"]')?.getAttribute("title") ?? "";
+    expect(title.split("\n").slice(1)).toEqual([
+      "Subcontratado — volta a 17/03",
+      "Próxima entrega: dia 1 (17/03) · Cliente B · 10 pç",
+    ]);
+  });
   it("mostra no tooltip só o excedente quando o segmento vai todo para stock", () => {
     const view = renderGantt(undefined, undefined, [{
       ...segment, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],

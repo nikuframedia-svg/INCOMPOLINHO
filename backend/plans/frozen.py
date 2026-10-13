@@ -2,7 +2,8 @@
 
 A lot that has started keeps exactly the production that started: every
 segment before the planning day plus the run that is mounted at that boundary
-and continues without a new setup. Its later portions stay in the residual
+and continues without a new setup and without free working time in between
+(``free_working_time_between``). Its later portions stay in the residual
 problem and are replanned, but the lot is never re-sized: the residual
 receives the rest of the same economic lot as a pre-sized lot
 (``EngineData.residual_lot_remainders``) while the whole lot is credited as
@@ -308,16 +309,69 @@ def _mount_suppliers(segments, selected: set[int], previous=None) -> set[int]:
     return suppliers
 
 
-def _running_continuations(segments, freeze_day: int, previous) -> list[tuple[int, list[int]]]:
+def free_working_time_between(
+    machine_id: str, tool_id: str, start: tuple[int, float], end: tuple[int, float],
+    freeze_day: int, engine_data, config, *, segments=(), required_operators: int = 1,
+    now: datetime | None = None,
+) -> bool:
+    """Whether ``[start, end)`` holds free shift time the machine and tool could work.
+
+    ``start``/``end`` are ``(day, minute)``. Judged on the current inputs by
+    ``backend.calendar.free_shift_intervals``, the same definition as the
+    idle-capacity check: only a free interval of at least
+    ``MIN_FREE_INTERVAL_MIN`` counts. Not free: elapsed time (days before
+    ``freeze_day`` and, today, the minutes before the current factory minute,
+    ``now`` replacing the clock), time outside the shifts, weekends and
+    holidays, machine and tool unavailabilities, the tool at work on another
+    machine and time without ``required_operators`` operators of the
+    machine's group left by ``segments`` (the plan). The interval holds no
+    other productive segment of the machine (it is the gap between two
+    consecutive ones).
+    """
+    from backend.calendar import elapsed_minutes, free_shift_intervals
+    from backend.config.types import FactoryConfig
+
+    config = config or FactoryConfig()
+    start_day, start_min = start
+    end_day, end_min = end
+    by_day: dict[int, list] = {}
+    for segment in segments:
+        by_day.setdefault(segment.day_idx, []).append(segment)
+    for day in range(max(int(start_day), int(freeze_day)), int(end_day) + 1):
+        low = float(start_min) if day == start_day else 0.0
+        high = float(end_min) if day == end_day else 1440.0
+        low = max(low, float(elapsed_minutes(day, engine_data, config, now=now)))
+        if high <= low:
+            continue
+        if free_shift_intervals(
+            machine_id, tool_id, day, engine_data, config, segments=by_day.get(day, []),
+            required_operators=required_operators, start_min=low, end_min=high,
+        ):
+            return True
+    return False
+
+
+def _running_continuations(
+    segments, freeze_day: int, previous, engine_data, config, *, now: datetime | None = None,
+) -> list[tuple[int, list[int]]]:
     """Per machine, the run mounted at the planning-day boundary that goes on.
 
     Starting from the last segment before ``freeze_day`` (the boundary), the
     following segments of the same machine with the same setup identity and
     no new setup (or the rest of a setup split before the boundary) are the
-    same physical run continuing. Returns ``(boundary, continuation)`` pairs.
+    same physical run continuing, while no free working time separates them
+    (``free_working_time_between``, decided 13/10/2026): nights, weekends,
+    holidays, unavailabilities, elapsed time and gaps shorter than
+    ``MIN_FREE_INTERVAL_MIN`` do not interrupt a run; idle shift time does,
+    and the rest of the lot is replanned. ``engine_data`` (the current
+    calendar) is required: without it every gap would look free. Returns
+    ``(boundary, continuation)`` pairs.
     """
+    from backend.scheduler.operators import segment_operator_demand
     from backend.scheduler.setup_identity import segment_setup_identity
 
+    if engine_data is None:
+        raise ValueError("Rule 4 contiguity needs the current calendar (EngineData).")
     following: dict[int, int] = {
         before: index for index, before in previous.items() if before is not None
     }
@@ -333,6 +387,7 @@ def _running_continuations(segments, freeze_day: int, previous) -> list[tuple[in
                    segments[current].end_min)
             ):
                 last_started[segment.machine_id] = index
+    productive = [segment for segment in segments if segment.end_min > segment.start_min]
     for boundary in last_started.values():
         chain = []
         before = boundary
@@ -341,6 +396,13 @@ def _running_continuations(segments, freeze_day: int, previous) -> list[tuple[in
             segment, mounted = segments[index], segments[before]
             if segment_setup_identity(segment) != segment_setup_identity(mounted) or not (
                 segment.setup_min <= 0 or mounted.prod_min <= 0
+            ):
+                break
+            if free_working_time_between(
+                segment.machine_id, segment.tool_id,
+                (mounted.day_idx, mounted.end_min), (segment.day_idx, segment.start_min),
+                freeze_day, engine_data, config, segments=productive,
+                required_operators=segment_operator_demand(segment, engine_data), now=now,
             ):
                 break
             chain.append(index)
@@ -383,17 +445,20 @@ def _blocked_continuations(segments, chains, engine_data, config) -> set[int]:
     return blocked
 
 
-def _protected_plan(baseline_result, freeze_day: int, engine_data, config) -> ProtectedPlan:
+def _protected_plan(
+    baseline_result, freeze_day: int, engine_data, config, *, now: datetime | None = None,
+) -> ProtectedPlan:
     """Frozen segments and lots of a replan under AGENTS §2, rule 4.
 
     Frozen: every segment before ``freeze_day``, the run mounted at that
-    boundary while it continues without a new setup (unless the current
-    inputs block it), manually anchored lots, and — closed under these two
-    rules until nothing changes — the earlier production of each touched lot
-    (a frozen part is always a prefix of its lot) and the mount supplier of
-    every frozen setup-free continuation. A touched lot whose rest cannot be
-    replanned on its own (older material contract, anchored, nothing left)
-    is kept whole.
+    boundary while it continues without a new setup and without free working
+    time in between (unless the current inputs block it), manually anchored
+    lots, and — closed under these two rules until nothing changes — the
+    earlier production of each touched lot (a frozen part is always a prefix
+    of its lot) and the mount supplier of every frozen setup-free continuation.
+    A touched lot whose rest cannot be replanned on its own (older material
+    contract, anchored, nothing left) is kept whole. ``now`` replaces the
+    factory clock (today's elapsed minutes are not free time).
     """
     from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
     from backend.scheduler.material_quantities import lot_material_version
@@ -411,7 +476,9 @@ def _protected_plan(baseline_result, freeze_day: int, engine_data, config) -> Pr
             if segment.day_idx < freeze_day and segment.end_min > segment.start_min:
                 selected.add(index)
                 started_ids.add(segment.lot_id)
-        chains = _running_continuations(segments, freeze_day, previous)
+        chains = _running_continuations(
+            segments, freeze_day, previous, engine_data, config, now=now,
+        )
         blocked = _blocked_continuations(segments, chains, engine_data, config)
         selected.update(
             index for _boundary, chain in chains for index in chain if index not in blocked
@@ -869,11 +936,37 @@ def _compact_preserving_started_lots(
     assert_plan_valid(result.segments, engine_data, config, lots=result.lots)
     result.time_ms = round((time.perf_counter() - started_at) * 1000, 1)
     result.warnings = [
-        *_without_protection_warnings(result.warnings),
+        *without_calculation_notes(_without_protection_warnings(result.warnings)),
         "Capacidade libertada: o plano ativo foi novamente compactado.",
     ]
     result.warnings.extend(_protection_warnings(protected, freeze_day))
     return result
+
+
+# Notes on how one calculation was made (complete rebuild, quick adjustment,
+# compaction, fallbacks of a replan job). A later calculation that keeps or
+# compacts that plan writes its own; it never inherits these.
+CALCULATION_NOTE_PREFIXES = (
+    "A alteração afeta ",
+    "A alteração apenas liberta capacidade",
+    "O ajuste rápido não terminou",
+    "Calendário aplicado com um ajuste rápido",
+    "Troca entre turnos validada",
+    "Capacidade libertada:",
+    "O recálculo completo não terminou",
+    "Foi mantido o melhor plano de base",
+    "O plano ativo deixou de ser uma referência válida",
+    "Tempo de melhoria esgotado",
+)
+
+
+def without_calculation_notes(warnings) -> list[str]:
+    """Drop the notes of an earlier calculation (``CALCULATION_NOTE_PREFIXES``)."""
+
+    return [
+        warning for warning in warnings or []
+        if not str(warning).startswith(CALCULATION_NOTE_PREFIXES)
+    ]
 
 
 def _without_protection_warnings(warnings) -> list[str]:

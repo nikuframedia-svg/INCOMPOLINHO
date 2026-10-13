@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from backend.config.planning import planning_milestones_for_op
 from backend.scheduler.jit_policy import calendar_holidays
 from backend.scheduler.material_quantities import (
+    DeliveryPortion,
     delivery_portions,
     factory_readiness,
     production_by_op,
@@ -35,6 +36,12 @@ class StockDay:
     stock: int  # cum_produced - cum_demand (NP já desconta stock inicial)
     machine: str | None  # where it was produced (None if nothing produced)
     is_buffer: bool = False
+    # Subcontracted SKUs: pieces stamped on this day that go to the
+    # subcontractor (counted in ``produced`` only on their return day) and the
+    # returns that make up ``produced`` here, each with its stamping days and
+    # machines.
+    subcontract_sent: int = 0
+    subcontract_returns: list[dict] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -73,10 +80,60 @@ def build_production_by_op(
             for item in record.slices:
                 prod[record.op_id][item.day_idx] += item.qty
         return prod
-    prod = production_by_op(delivery_portions(lots, segments, engine_data))
+    return _customer_production(delivery_portions(lots, segments, engine_data), engine_data)
+
+
+def _customer_production(
+    portions: list[DeliveryPortion],
+    engine_data: EngineData,
+) -> dict[str, dict[int, int]]:
+    prod = production_by_op(portions)
     for supply in engine_data.committed_supplies:
         prod[supply.op_id][supply.available_day] += supply.qty
     return prod
+
+
+def _subcontract_movements(
+    portions: list[DeliveryPortion],
+    segments: list[Segment],
+) -> tuple[dict[str, dict[int, int]], dict[str, dict[int, list[dict]]]]:
+    """Pieces sent to and returned from the subcontractor, per (op_id, day).
+
+    A subcontracted portion's pieces are shown leaving on the days they are
+    stamped (its slices) and back together on its customer-ready day (the
+    shared evaluator's credit), with the days and machines they were stamped
+    on. Portions stamped on the same days and machines that come back on the
+    same day are one return.
+    """
+    sent: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    returns: dict[str, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    by_origin: dict[tuple, dict] = {}
+    for portion in portions:
+        if not portion.is_subcontracted or not portion.produced_qty:
+            continue
+        for item in portion.slices:
+            sent[portion.op_id][item.day_idx] += item.qty
+        stamped = [item.day_idx for item in portion.slices]
+        machines = sorted({
+            segments[item.segment_index].machine_id
+            for item in portion.slices
+            if 0 <= item.segment_index < len(segments)
+        })
+        first = min(stamped, default=portion.factory_day)
+        last = max(stamped, default=portion.factory_day)
+        for day, qty in portion.credits():
+            key = (portion.op_id, day, first, last, tuple(machines))
+            if key in by_origin:
+                by_origin[key]["qty"] += qty
+                continue
+            by_origin[key] = {
+                "qty": qty,
+                "stamped_from_day": first,
+                "stamped_to_day": last,
+                "machines": machines,
+            }
+            returns[portion.op_id][day].append(by_origin[key])
+    return sent, returns
 
 
 def compute_stock_projections(
@@ -86,7 +143,9 @@ def compute_stock_projections(
     buffer_days: int = 0,
 ) -> list[StockProjection]:
     """Compute stock projection for every EOp."""
-    prod = build_production_by_op(segments, lots, engine_data)
+    portions = delivery_portions(lots, segments, engine_data)
+    prod = _customer_production(portions, engine_data)
+    sub_sent, sub_returns = _subcontract_movements(portions, segments)
 
     # Build machine-by-(op_id, day) for the machine field
     op_machine: dict[str, dict[int, str]] = defaultdict(dict)
@@ -173,6 +232,7 @@ def compute_stock_projections(
                 )
             )
 
+        _attach_subcontract_movements(days, sub_sent.get(op.id, {}), sub_returns.get(op.id, {}))
         coverage = _calc_coverage(days)
 
         projections.append(
@@ -202,6 +262,26 @@ def compute_stock_projections(
         )
 
     return projections
+
+
+def _attach_subcontract_movements(
+    days: list[StockDay],
+    sent: dict[int, int],
+    returns: dict[int, list[dict]],
+) -> None:
+    if not sent and not returns:
+        return
+    date_of = {day.day_idx: day.date for day in days}
+    for day in days:
+        day.subcontract_sent = sent.get(day.day_idx, 0)
+        day.subcontract_returns = [
+            {
+                **item,
+                "stamped_from_date": date_of.get(item["stamped_from_day"], ""),
+                "stamped_to_date": date_of.get(item["stamped_to_day"], ""),
+            }
+            for item in returns.get(day.day_idx, [])
+        ]
 
 
 def _calc_coverage(days: list[StockDay]) -> float:

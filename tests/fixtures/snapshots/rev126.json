@@ -1,0 +1,25 @@
+{
+  "name": "rev126",
+  "snapshot_id": "815fbc5a94a64b87aa7db468520bebf3",
+  "plan_revision": 126,
+  "payload_sha256": "c492912eb5208e5edebe8b3d885e253a7401babed03249318ef14f2a20efcb80",
+  "as_of": "2026-10-12",
+  "freeze_day": 3,
+  "lots": 193,
+  "segments": 868,
+  "protected_lots": 10,
+  "anchored_lots": 0,
+  "stored_model_version": "aps-v5",
+  "stored_planning_policy_version": "setup-families-v1",
+  "improvement_contract_in_stored_report": 3,
+  "frozen_with_model_identity": {
+    "model": "aps-v5",
+    "planning_policy": "setup-families-v1",
+    "improvement_contract": 3,
+    "manual_allocation": 1,
+    "protected_context": 5,
+    "transfer_search": 2,
+    "quantity_material": 2
+  },
+  "private_fixture": "tests/fixtures/private/rev126.json.gz"
+}

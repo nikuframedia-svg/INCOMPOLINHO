@@ -193,7 +193,23 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    sempre consigo o lote que montou a ferramenta (a produção anterior desse
    lote incluída); um lote de um contrato de material anterior, ancorado ou já
    todo feito fica inteiro. A proteção do histórico na gravação compara só a
-   produção anterior a hoje e o próprio lote. **Movimentos manuais (12/10/2026)**
+   produção anterior a hoje e o próprio lote.
+   **«Continua» (decidido pelo Luís a 13/10/2026):** a execução montada só
+   continua enquanto, entre um segmento e o seguinte da mesma máquina, não
+   houver tempo de turno livre no calendário atual
+   (`frozen.free_working_time_between`, com a mesma definição de tempo livre
+   do aviso de capacidade livre: `calendar.free_shift_intervals`). Noites,
+   fins de semana, feriados, tempo já decorrido (dias antes de hoje e, hoje,
+   até à hora atual da fábrica), turnos sem operadores do grupo,
+   indisponibilidades da máquina ou da ferramenta e folgas de menos de
+   `calendar.MIN_FREE_INTERVAL_MIN` (30 min) não a interrompem; tempo de turno
+   livre corta-a, e
+   o resto do lote vai ao problema residual como o mesmo lote, na mesma
+   máquina. Retirada uma avaria, o buraco que ela deixou passa a ser tempo
+   livre e o resto pode ser antecipado; logo a seguir à fronteira, com a
+   ferramenta ainda montada, não paga setup novo. Caso real: revisão 127
+   (avaria da PRM043 retirada; o bloco de 19/10 ficava preso e a máquina
+   parada de 13 a 18/10 com duas encomendas atrasadas). **Movimentos manuais (12/10/2026)**
    seguem a mesma regra (`plans/manual_move._move_protection`, sobre
    `_protected_plan` sem o lote movido): o lote movido é decisão do planeador e
    sai da proteção; o resto de um lote começado é realocado como o mesmo lote,
@@ -346,6 +362,20 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   causalidade de uma nota antiga, de um OEE isolado ou da ausência de candidato.
 - Reutilizar os detalhes e relatórios existentes; não adicionar cartões,
   legendas ou funcionalidades para mascarar um defeito de planeamento.
+- **Atraso com capacidade livre (13/10/2026, só informação):**
+  `scheduler/idle_capacity.late_with_idle_capacity` procura entregas atrasadas
+  (`improvement.order_service`) e envios para subcontratação depois de `H`
+  com tempo de turno livre (`calendar.free_shift_intervals`; hoje só depois
+  da hora atual) numa máquina elegível ativa entre `max(hoje, R)` e o prazo
+  de produção. Um caso por lote (gémeas juntas). Na máquina do lote conta o
+  que falta; numa alternativa conta o lote inteiro (regra 3); peças que só
+  ficam prontas no fim do lote contam o resto do lote; um lote com produção
+  até hoje inclusive só conta a sua máquina (regra 4). Fica em
+  `gate_report.idle_capacity_late` e num aviso simples no topo do ecrã
+  (`plan-view.plan_notices`, «Possível melhoria: …»), que não manda carregar
+  em nenhum botão. Nunca bloqueia, ordena nem muda um plano; só decide se um
+  replaneamento por capacidade libertada tenta também o construtor completo
+  (§6). A falta real de capacidade (PRM042 na revisão 90) não aparece.
 
 ## 6. Solver e limites de compute
 
@@ -437,6 +467,18 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   segmentos (limite de trabalho, não de tempo); acima disso vai direto ao
   construtor completo. Quando corre, deixa ao construtor
   `LOCAL_REPAIR_OPTIMIZER_RESERVE_S` (35 s, medido na revisão 124).
+- Capacidade libertada (13/10/2026): se o plano ativo tem uma entrega
+  atrasada com capacidade livre antes do prazo (`jobs._late_with_idle_capacity`,
+  o mesmo detetor do aviso), a compactação deixa os mesmos 35 s ao
+  construtor. Atrasos só estruturais não reservam nada (ensaio na revisão
+  128: a reserva custava 3 setups e 6 encomendas prontas mais tarde). Se
+  depois da compactação ainda houver esse caso, corre o construtor completo
+  (`optimize_preserving_started_lots`) e fica o melhor pelo comparador único,
+  sem perdas por encomenda (`jobs._prefer_no_loss_plan`); se o construtor não
+  terminar fica a compactação. Se não, a compactação continua com esse
+  tempo. Notas de como um cálculo anterior foi feito
+  («A alteração afeta…», «O ajuste rápido…»; `frozen.CALCULATION_NOTE_PREFIXES`)
+  não passam para o plano novo.
 - Um deadline exterior abrange preparação, pesquisa, fecho, validação e escrita.
   Subfases nunca reiniciam o relógio. Preservar a reserva de fecho existente.
 - Guardar o último candidato completo validado fora do solver. Timeout de uma

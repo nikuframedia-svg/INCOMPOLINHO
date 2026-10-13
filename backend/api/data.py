@@ -839,7 +839,7 @@ async def get_lots():
     return [asdict(lot) for lot in state.lots]
 
 
-def _plan_notices(lots, engine_data, config) -> list[str]:
+def _plan_notices(segments, lots, engine_data, config) -> list[str]:
     """Plain pt-PT notes about the active plan itself, shown above every screen.
 
     - Legacy material note: a plan saved before the per-delivery material
@@ -848,6 +848,9 @@ def _plan_notices(lots, engine_data, config) -> list[str]:
     - Old ISOP note: the plan's ISOP starts at least one working day before
       today, so the days before today count as already produced until the
       ISOP of today is loaded.
+    - Idle capacity note: a delivery is late while an eligible machine has
+      free shift time from today until its deadline
+      (``scheduler.idle_capacity``); the plan can be improved.
 
     Computed from the plan and today's date on every read, never stored, and
     never changes the plan: each note disappears as soon as its cause does.
@@ -858,8 +861,21 @@ def _plan_notices(lots, engine_data, config) -> list[str]:
     notes = (
         legacy_material_warning(lots, engine_data, config),
         stale_isop_notice(engine_data, config),
+        _idle_capacity_notice(segments, lots, engine_data, config),
     )
     return [note for note in notes if note]
+
+
+def _idle_capacity_notice(segments, lots, engine_data, config) -> str | None:
+    from backend.scheduler.idle_capacity import idle_capacity_notice, late_with_idle_capacity
+
+    try:
+        cases = late_with_idle_capacity(list(segments or []), list(lots or []),
+                                        engine_data, config)
+    except Exception:  # informational note, never breaks the plan view
+        logger.exception("Idle-capacity notice failed")
+        return None
+    return idle_capacity_notice(cases, engine_data)
 
 
 @router.get("/plan-view")
@@ -884,7 +900,7 @@ async def get_plan_view():
             state.config,
         )
         plan_notices = await run_in_threadpool(
-            _plan_notices, state.lots, state.engine_data, state.config,
+            _plan_notices, state.segments, state.lots, state.engine_data, state.config,
         )
         return {
             "plan_revision": revision,
@@ -991,12 +1007,23 @@ async def get_stock_summary():
                     "produced": d.produced,
                     "workday": True if d.is_buffer else _is_workday(d.date, d.day_idx),
                     "is_buffer": d.is_buffer,
+                    **_subcontract_day_fields(d),
                 }
                 for d in p.days
             ],
         }
         for p in state.stock_projections
     ]
+
+
+def _subcontract_day_fields(day) -> dict:
+    """Optional subcontract movements of a stock day (absent when none)."""
+    fields: dict = {}
+    if getattr(day, "subcontract_sent", 0):
+        fields["subcontract_sent"] = day.subcontract_sent
+    if getattr(day, "subcontract_returns", None):
+        fields["subcontract_returns"] = day.subcontract_returns
+    return fields
 
 
 @router.get("/stock/{sku}")
@@ -1008,7 +1035,12 @@ async def get_stock_detail(sku: str):
     proj = next((p for p in state.stock_projections if p.sku == sku), None)
     if not proj:
         raise HTTPException(404, f"SKU {sku} não encontrado.")
-    return asdict(proj)
+    detail = asdict(proj)
+    for day, raw in zip(detail["days"], proj.days):
+        day.pop("subcontract_sent", None)
+        day.pop("subcontract_returns", None)
+        day.update(_subcontract_day_fields(raw))
+    return detail
 
 
 @router.get("/expedition")

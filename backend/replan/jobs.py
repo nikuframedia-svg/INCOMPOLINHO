@@ -32,6 +32,7 @@ from backend.plans.frozen import (
     compact_preserving_started_lots,
     optimize_preserving_started_lots,
     preserved_lots_warning,
+    without_calculation_notes,
 )
 
 UTC = timezone.utc  # noqa: UP017 - Python 3.10 compatibility
@@ -199,6 +200,27 @@ def _valid_delivery_floor(baseline, engine_data, config):
     floor = copy.deepcopy(baseline)
     floor.score = compute_score(floor.segments, floor.lots, engine_data, config=config)
     return floor
+
+
+def _late_with_idle_capacity(plan, engine_data, config, planning_day: int) -> bool:
+    """Whether a late delivery of ``plan`` has idle capacity before its deadline.
+
+    The cheap read-only check of ``scheduler.idle_capacity`` (tens of ms).
+    Only then can the complete constructor recover a delivery the compaction
+    leaves late; a structural shortage (no idle capacity) gives it nothing to
+    find, and its time is better left to the compaction (rehearsal of
+    13/10/2026 on revision 128: the reserve with only a structural late order
+    cost 3 setups and 6 orders ready later). A failing check reserves nothing.
+    """
+    from backend.scheduler.idle_capacity import late_with_idle_capacity
+
+    try:
+        return bool(late_with_idle_capacity(
+            plan.segments, plan.lots, engine_data, config, planning_day=planning_day,
+        ))
+    except Exception:  # informational check: the job goes on as before
+        logger.exception("Idle-capacity check failed in the replan job")
+        return False
 
 
 def _prefer_no_loss_plan(candidate, reference, engine_data):
@@ -873,6 +895,64 @@ class ReplanJobManager:
                 repaired.warnings.append(warning)
         return repaired, alternative_moves
 
+    def _rebuild_after_capacity_release(
+        self, job_id, engine_data, config, baseline, compacted, history_changes,
+    ):
+        """The complete constructor when compaction leaves a delivery late with idle capacity.
+
+        Runs in the remaining optional budget (the compaction left it a
+        reserve) and is taken only when the single comparator prefers it to
+        the compacted plan with no individual order losing
+        (``_prefer_no_loss_plan``) and it keeps the started production. On
+        timeout or failure returns ``None``: the compacted plan stays.
+        """
+        from backend.cpo import optimize
+
+        try:
+            with planning_scope(timeout_s=self._optional_budget()):
+                rebuilt = optimize_preserving_started_lots(
+                    engine_data, config, baseline,
+                    mode="normal", audit=True, optimizer=optimize,
+                )
+        except PlanningTimeout:
+            planning_checkpoint()
+            logger.info("Replan %s: constructor after capacity release stopped by its budget",
+                        job_id)
+            return None
+        except (RuntimeError, TypeError, ValueError):
+            logger.info("Replan %s: constructor after capacity release failed", job_id,
+                        exc_info=True)
+            return None
+        if history_changes(rebuilt) or not _prefer_no_loss_plan(rebuilt, compacted, engine_data):
+            return None
+        rebuilt.warnings = [
+            *rebuilt.warnings,
+            "Capacidade libertada: o recálculo completo deu um plano melhor do que "
+            "reorganizar o plano ativo.",
+        ]
+        return rebuilt
+
+    def _continue_compaction(self, job_id, engine_data, config, compacted):
+        """A second compaction pass from ``compacted`` in the remaining budget.
+
+        Every accepted move is already validated and no-loss, so the first
+        pass is kept on timeout, failure or a delivery regression.
+        """
+        from backend.scheduler.priority import delivery_not_worse
+
+        try:
+            with planning_scope(timeout_s=self._optional_budget()):
+                again = compact_preserving_started_lots(
+                    engine_data, config, copy.deepcopy(compacted),
+                )
+        except PlanningTimeout:
+            planning_checkpoint()
+            return compacted
+        except (RuntimeError, TypeError, ValueError):
+            logger.info("Replan %s: second compaction rejected", job_id, exc_info=True)
+            return compacted
+        return again if delivery_not_worse(again.score, compacted.score) else compacted
+
     def _run(self, job_id: str, *args, **kwargs) -> None:
         try:
             with planning_scope(
@@ -950,6 +1030,11 @@ class ReplanJobManager:
                 restored_baseline = deserialize_snapshot(baseline_snapshot)
                 active_mutations = copy.deepcopy(restored_baseline.get("active_mutations", []))
                 historical_baseline_result = restored_baseline["result"]
+                # Notes of how the active plan was calculated are not true of
+                # this calculation, whichever plan it keeps.
+                historical_baseline_result.warnings = without_calculation_notes(
+                    historical_baseline_result.warnings,
+                )
                 baseline_model_compatible = (
                     restored_baseline.get("model_version") == MODEL_VERSION
                     and restored_baseline.get("planning_policy_version") == PLANNING_POLICY_VERSION
@@ -1008,6 +1093,15 @@ class ReplanJobManager:
                 # Releasing capacity keeps the active plan legal: it is the
                 # fallback if compaction and the constructor cannot finish.
                 valid_fallback = _valid_delivery_floor(baseline_result, engine_data, config)
+                # A late delivery with idle capacity before its deadline: the
+                # compaction keeps time for the complete constructor, which
+                # may find what it cannot.
+                rebuild_reserve = (
+                    LOCAL_REPAIR_OPTIMIZER_RESERVE_S
+                    if valid_fallback is not None
+                    and _late_with_idle_capacity(valid_fallback, engine_data, config, freeze_day)
+                    else 0.0
+                )
                 self.store.update(
                     job_id,
                     progress=45,
@@ -1015,7 +1109,7 @@ class ReplanJobManager:
                     message="A reorganizar o plano com a capacidade libertada",
                 )
                 try:
-                    with planning_scope(timeout_s=self._optional_budget()):
+                    with planning_scope(timeout_s=self._optional_budget(rebuild_reserve)):
                         compacted = compact_preserving_started_lots(
                             engine_data,
                             config,
@@ -1039,6 +1133,28 @@ class ReplanJobManager:
                     baseline_score = original_baseline_score
                     result = compacted
                     selected_source = "compacted_baseline_after_capacity_release"
+                    if rebuild_reserve and _late_with_idle_capacity(
+                        compacted, engine_data, config, freeze_day,
+                    ):
+                        self.store.update(
+                            job_id,
+                            progress=55,
+                            phase="optimizing",
+                            message="A procurar o melhor plano completo",
+                        )
+                        rebuilt = self._rebuild_after_capacity_release(
+                            job_id, engine_data, config, historical_baseline_result,
+                            compacted, history_changes,
+                        )
+                        if rebuilt is not None:
+                            result = rebuilt
+                            selected_source = "optimized_after_capacity_release"
+                    elif rebuild_reserve:
+                        # Nothing left for the constructor to recover: the
+                        # compaction goes on with the time kept for it.
+                        result = self._continue_compaction(
+                            job_id, engine_data, config, compacted,
+                        )
             if prefer_unchanged_baseline and baseline_result is not None:
                 original_baseline_score = dict(baseline_result.score or {})
                 self.store.update(
@@ -1227,7 +1343,7 @@ class ReplanJobManager:
             )
             if rebuild_warnings and selected_source == "optimized":
                 result.warnings = [*rebuild_warnings, *list(result.warnings)]
-            if frozen_lots and selected_source == "optimized":
+            if frozen_lots and selected_source in {"optimized", "optimized_after_capacity_release"}:
                 from backend.scheduler.canonical import result_validation_data
 
                 engine_data = result_validation_data(engine_data, result)

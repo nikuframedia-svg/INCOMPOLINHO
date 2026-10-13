@@ -191,7 +191,24 @@ export interface DatasetInfo {
 
 // ── Analytics ────────────────────────────────────────────────
 
-export interface StockDayCompact {
+/** One return from the subcontractor, counted in `produced` on its return day. */
+export interface SubcontractReturn {
+  qty: number;
+  stamped_from_day: number;
+  stamped_to_day: number;
+  stamped_from_date: string;
+  stamped_to_date: string;
+  machines: string[];
+}
+
+/** Subcontracted references only; older servers omit both. */
+interface StockSubcontractMovements {
+  /** Pieces stamped and sent to the subcontractor on this day (not in `produced`). */
+  subcontract_sent?: number;
+  subcontract_returns?: SubcontractReturn[];
+}
+
+export interface StockDayCompact extends StockSubcontractMovements {
   day: number;
   date: string;
   stock: number;
@@ -217,7 +234,7 @@ export interface StockSummary {
   days: StockDayCompact[];
 }
 
-export interface StockDay {
+export interface StockDay extends StockSubcontractMovements {
   day_idx: number;
   date: string;
   demand: number;

@@ -18,6 +18,7 @@ import {
   segmentDeliveriesText,
   segmentDeliveryLines,
   segmentDeliveryTooltipLines,
+  segmentSubcontractLine,
   capitalize,
   fmtWorkday,
 } from "../lib/segmentDeliveries";
@@ -1753,7 +1754,9 @@ export function GanttPage() {
                       const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
-                      const deliveryTitle = segmentDeliveryTooltipLines(s).map((line) => `\n${line}`).join("");
+                      const subcontractLine = segmentSubcontractLine(s, (day) => isoAtDay(workdays, day));
+                      const deliveryTitle = [...(subcontractLine ? [subcontractLine] : []), ...segmentDeliveryTooltipLines(s)]
+                        .map((line) => `\n${line}`).join("");
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}

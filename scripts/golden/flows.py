@@ -263,6 +263,10 @@ def _flows() -> dict[str, Flow]:
         Flow("F3_outage_sunday", "F3", "flow_outage",
              (("resource", "PRM031"), ("start_at", "2026-10-18T00:01"),
               ("end_at", "2026-10-18T23:59")), weight=3),
+        Flow("F3b_outage_cycle", "F3", "flow_outage_cycle",
+             (("resource", "PRM043"), ("start_at", "2026-10-12T11:30"),
+              ("end_at", "2026-10-18T23:59"), ("added_at", "2026-10-12T12:00:00+01:00"),
+              ("removed_at", "2026-10-13T15:39:00+01:00")), weight=4),
         Flow("F4_manual_move", "F4", "flow_manual_move", fast=True, weight=3),
         Flow("F4b_manual_move_fallback", "F4", "flow_manual_move_fallback", fast=True,
              weight=3),
@@ -1024,36 +1028,75 @@ def flow_optimize_preserving(runner: Runner, fixture: str) -> None:
         copy.deepcopy(data), copy.deepcopy(config), copy.deepcopy(stored), mode="normal"))
 
 
+def _calendar_replan(runner: Runner, label: str, config_updates: dict) -> None:
+    """One calendar change through the replan job, then its application."""
+    revision = int(runner.state.plan_revision)
+    status, payload = runner.http(f"{label}:start", "POST", "/api/data/replan-jobs", body={
+        "reason": "Indisponibilidades alteradas",
+        "config_updates": config_updates,
+        "expected_revision": revision,
+        "request_id": runner.request_id(label),
+    })
+    job = payload.get("job") if isinstance(payload, dict) else None
+    if status in (200, 202) and isinstance(job, dict):
+        job = runner.wait_job(f"{label}:job", f"/api/data/replan-jobs/{job['id']}",
+                              active={"queued", "running"})
+        if job.get("status") == "ready":
+            runner.steps.append({"label": f"{label}:candidate",
+                                 "candidate": _replan_candidate_facts(runner, job["id"])})
+            gate = (job.get("result") or {}).get("gate_report") or {}
+            needed = bool(gate.get("requires_approval"))
+            runner.http(f"{label}:apply", "POST", f"/api/data/replan-jobs/{job['id']}/apply",
+                        body={
+                            "expected_revision": job.get("base_revision", revision),
+                            "approve_exceptions": needed,
+                            "approval_reason": APPROVAL_REASON if needed else "",
+                            "approval_author": APPROVAL_AUTHOR if needed else "",
+                            "request_id": runner.request_id(f"{label}-apply"),
+                        })
+
+
+def _machine_outage(resource: str, start_at: str, end_at: str, **extra) -> dict:
+    return {"kind": "machine", "resource": resource, "start_at": start_at, "end_at": end_at,
+            "category": "Avaria", "reason": "Golden master", **extra}
+
+
 def flow_outage(runner: Runner, resource: str, start_at: str, end_at: str) -> None:
     """F3: a machine outage through the replan job, then its application."""
     with runner.app():
-        revision = int(runner.state.plan_revision)
-        status, payload = runner.http("replan:start", "POST", "/api/data/replan-jobs", body={
-            "reason": "Indisponibilidades alteradas",
-            "config_updates": {"unavailability_additions": [{
-                "kind": "machine", "resource": resource, "start_at": start_at,
-                "end_at": end_at, "category": "Avaria", "reason": "Golden master",
-            }]},
-            "expected_revision": revision,
-            "request_id": runner.request_id("replan"),
+        _calendar_replan(runner, "replan", {
+            "unavailability_additions": [_machine_outage(resource, start_at, end_at)],
         })
-        job = payload.get("job") if isinstance(payload, dict) else None
-        if status in (200, 202) and isinstance(job, dict):
-            job = runner.wait_job("replan:job", f"/api/data/replan-jobs/{job['id']}",
-                                  active={"queued", "running"})
-            if job.get("status") == "ready":
-                runner.steps.append({"label": "replan:candidate",
-                                     "candidate": _replan_candidate_facts(runner, job["id"])})
-                gate = (job.get("result") or {}).get("gate_report") or {}
-                needed = bool(gate.get("requires_approval"))
-                runner.http("replan:apply", "POST", f"/api/data/replan-jobs/{job['id']}/apply",
-                            body={
-                                "expected_revision": job.get("base_revision", revision),
-                                "approve_exceptions": needed,
-                                "approval_reason": APPROVAL_REASON if needed else "",
-                                "approval_author": APPROVAL_AUTHOR if needed else "",
-                                "request_id": runner.request_id("replan-apply"),
-                            })
+        runner.record_state("after")
+
+
+# Fixed id of F3b's outage, so the removal can name it.
+OUTAGE_CYCLE_ID = "u_f3b000000001"
+
+
+def flow_outage_cycle(runner: Runner, resource: str, start_at: str, end_at: str,
+                      added_at: str, removed_at: str) -> None:
+    """F3b: an outage registered and, the next working day, removed.
+
+    The sequence of revisions 126 and 127 (13/10/2026): PRM043 broke down on
+    12/10 and was repaired on 13/10, each change through the replan job and
+    applied. The planning day moves between the two (``added_at``,
+    ``removed_at``), so the run started before the outage is at the boundary
+    when capacity is released. The states record the gate report: no
+    late delivery with idle capacity (``idle_capacity_late``) and no more
+    late orders than before the outage are expected
+    (``tests/test_idle_capacity.py`` checks the same sequence on revision 124).
+    """
+    with runner.app():
+        runner.h.set_anchor(added_at)
+        _calendar_replan(runner, "outage", {
+            "unavailability_additions": [
+                _machine_outage(resource, start_at, end_at, id=OUTAGE_CYCLE_ID),
+            ],
+        })
+        runner.record_state("outage")
+        runner.h.set_anchor(removed_at)
+        _calendar_replan(runner, "release", {"unavailability_removals": [OUTAGE_CYCLE_ID]})
         runner.record_state("after")
 
 

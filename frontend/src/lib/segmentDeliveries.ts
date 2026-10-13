@@ -97,6 +97,40 @@ export function segmentDeliveryTooltipLines(segment: Segment): string[] {
   return lines.length ? lines : ["Sem peças neste segmento"];
 }
 
+function subcontractedSkus(segment: Segment): Set<string> | null {
+  const outputs = segment.output_milestones ?? [];
+  if (outputs.length) return new Set(outputs.filter((output) => output.is_subcontracted).map((output) => output.sku));
+  return segment.is_subcontracted ? null : new Set();
+}
+
+function joinWithAnd(items: string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}` : items.join("");
+}
+
+/**
+ * "Subcontratado — volta a 19/10" para um segmento de uma referência
+ * subcontratada. O dia de regresso vem do servidor (customer_ready_day de cada
+ * entrega); dateAt só converte o dia útil em data. Null se não é subcontratado.
+ */
+export function segmentSubcontractLine(
+  segment: Segment,
+  dateAt: (day: number) => string | null,
+): string | null {
+  const skus = subcontractedSkus(segment);
+  if ((skus && !skus.size) || !hasProduction(segment)) return null;
+  const returnDays = [...new Set(
+    (segment.delivery_allocations ?? [])
+      .filter((entry) => !skus || skus.has(entry.sku))
+      .map((entry) => entry.customer_ready_day),
+  )].sort((left, right) => left - right);
+  if (!returnDays.length) return "Subcontratado";
+  const labels = returnDays.map((day) => {
+    const isoDate = dateAt(day);
+    return isoDate ? fmtDeliveryDate(isoDate) : `dia ${day}`;
+  });
+  return `Subcontratado — volta a ${joinWithAnd(labels)}`;
+}
+
 /** Uma linha por entrega (e o excedente no fim), para a janela de detalhe e a tabela. */
 export function segmentDeliveryLines(segment: Segment): string[] {
   if (!hasProduction(segment)) return ["Preparação do lote"];

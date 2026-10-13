@@ -8,6 +8,7 @@ import {
   segmentDeliveryLines,
   segmentDeliveryTooltipLines,
   segmentFirstDeliveryDay,
+  segmentSubcontractLine,
 } from "../src/lib/segmentDeliveries";
 
 const base = {
@@ -91,5 +92,49 @@ describe("segmentDeliveries", () => {
       delivery_allocations: [delivery("SKU1", "C", 12000, 3, "2026-10-14")], unallocated_output: [],
     })).toEqual([`Próxima entrega: dia 3 (14/10) · C · ${(12000).toLocaleString("pt-PT")} pç`]);
     expect((12000).toLocaleString("pt-PT")).not.toBe("12,000");
+  });
+
+  describe("subcontratação", () => {
+    const dates: Record<number, string> = { 10: "2026-10-19", 12: "2026-10-21" };
+    const dateAt = (day: number) => dates[day] ?? null;
+    const ready = (sku: string, qty: number, deliveryDay: number, readyDay: number) => ({
+      sku, client: "C", qty, delivery_day: deliveryDay, delivery_date: "2026-10-23", customer_ready_day: readyDay,
+    });
+    const milestone = (sku: string, isSubcontracted: boolean) => ({
+      op_id: `OP-${sku}`, sku, qty: 1, is_subcontracted: isSubcontracted, customer_delivery_day: 14,
+      production_due_day: 7, internal_target_day: 7, material_reference_day: 7,
+      material_reference_kind: "subcontract_dispatch", material_release_day: 2,
+    });
+
+    it("diz quando o segmento volta da subcontratação, com o dia do servidor", () => {
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true,
+        delivery_allocations: [ready("SKU1", 600, 14, 12), ready("SKU1", 400, 12, 10)], unallocated_output: [],
+      }, dateAt)).toBe("Subcontratado — volta a 19/10 e 21/10");
+    });
+
+    it("sem data conhecida mostra o dia útil; sem entregas fica só a indicação", () => {
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true, delivery_allocations: [ready("SKU1", 10, 30, 30)], unallocated_output: [],
+      }, dateAt)).toBe("Subcontratado — volta a dia 30");
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],
+      }, dateAt)).toBe("Subcontratado");
+    });
+
+    it("ignora referências feitas em casa e preparações", () => {
+      expect(segmentSubcontractLine({ ...base, delivery_allocations: [ready("SKU1", 10, 12, 12)], unallocated_output: [] }, dateAt))
+        .toBeNull();
+      expect(segmentSubcontractLine({ ...base, is_subcontracted: true, qty: 0, prod_min: 0 }, dateAt)).toBeNull();
+    });
+
+    it("nas gémeas só conta o lado subcontratado", () => {
+      expect(segmentSubcontractLine({
+        ...base,
+        output_milestones: [milestone("SKU1", false), milestone("SKU2", true)],
+        delivery_allocations: [ready("SKU1", 10, 11, 11), ready("SKU2", 10, 14, 12)],
+        unallocated_output: [],
+      }, dateAt)).toBe("Subcontratado — volta a 21/10");
+    });
   });
 });
