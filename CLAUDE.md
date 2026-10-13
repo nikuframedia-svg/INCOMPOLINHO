@@ -74,6 +74,20 @@ Valores NP nas datas:
 Stock real = último positivo antes do primeiro negativo.
 Lote económico: HARD — arredonda sempre para cima ao eco lot.
 
+## ═══ LOTE ECONÓMICO = UMA PRODUÇÃO (decisão do Luís, 13/10/2026) ═══
+Regra da Incompol; detalhe no `AGENTS.md` §2 («Lote económico = uma produção»).
+Estado: decidida, ainda por implementar (o código ainda aplica a janela por entrega).
+- Sempre que se produz um SKU, produz-se pelo menos o lote económico, numa só
+  produção (um setup). O lote económico cumpre-se sempre.
+- A janela de 5 dias úteis de matéria-prima vale só para a PRIMEIRA entrega que
+  o lote serve. As outras entregas que o lote cobre e o excedente não têm janela
+  própria: considera-se que há MP para o lote económico inteiro.
+- Nunca partir um lote em produções separadas. Se atrasar outra encomenda,
+  move-se o lote inteiro (mais cedo, mais tarde ou para a máquina alternativa).
+- Gémeas: o ciclo usa o `R` da primeira entrega de qualquer dos lados.
+- A janela por entrega (07–11/10/2026) partia os lotes e subiu os setups de
+  ~3 para ~9 por dia; não voltar a ela.
+
 ## ═══ PEÇAS GÉMEAS ═══
 Mesma ferramenta + máquina, produção SIMULTÂNEA.
 Quantidade por SKU = exactamente o que precisa (eco lot per-SKU).

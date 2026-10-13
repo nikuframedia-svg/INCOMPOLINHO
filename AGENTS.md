@@ -132,7 +132,32 @@ entre as duas entregas que formam o ciclo (a que o controla e a sua par):
 individuais; não aplicar inadvertidamente `max(R_outputs)` de um modelo genérico.
 Stock coproduzido não cria encomenda ou expedição fictícia.
 
-**Janela por entrega (decidido entre 07/10 e 10/10/2026).** Quando o
+**Lote económico = uma produção (decidido pelo Luís a 13/10/2026, a pedido
+da Incompol; substitui a «Janela por entrega» e as «Gémeas por entrega»
+abaixo).** Estado: decidido, **ainda por implementar** — até ser publicado, o
+código continua a aplicar a janela por entrega descrita abaixo.
+
+- Sempre que se produz um SKU, produz-se pelo menos o seu lote económico, numa
+  só produção: um setup, e a produção continua pelos turnos, noites, fins de
+  semana e dias seguintes sem novo setup. O lote económico cumpre-se sempre.
+- A janela de material de 5 dias úteis aplica-se só à primeira entrega que
+  essa produção serve: o `R` do lote é o `R` dessa entrega. As outras entregas
+  que o lote cobre (carry-forward) e o excedente económico não têm janela
+  própria: considera-se que há matéria-prima para o lote económico inteiro.
+- Um lote nunca é partido em produções separadas. Se ele atrasar outra
+  encomenda, move-se o lote inteiro (mais cedo, mais tarde ou para a máquina
+  alternativa); nunca se interrompe para meter outra ferramenta pelo meio.
+  Só uma avaria ou bloqueio real obriga a retomar o mesmo lote com novo setup.
+- Gémeas: o ciclo usa o `R` da primeira entrega servida por qualquer dos dois
+  lados; o tempo continua a ser o de uma execução.
+- A prontidão para o cliente (OTD, atrasos, subcontratação) continua a medir-se
+  por entrega.
+- Motivo: a janela por entrega partia cada lote económico em várias produções
+  pequenas (setups de cerca de 180 para cerca de 470 por plano, de 3 para 9 por
+  dia útil). Esta é a regra que o sistema usava até 07/10/2026.
+
+**Janela por entrega (decidido entre 07/10 e 10/10/2026; substituído a
+13/10/2026, ver acima).** Quando o
 carry-forward atribui um lote económico a várias entregas, cada entrega
 conserva o seu `R`: a quantidade atribuída a uma entrega só pode ser preparada
 ou produzida a partir do seu próprio `R`. O excedente económico liberta-se com
@@ -141,7 +166,8 @@ libertadas em datas diferentes são execuções físicas distintas.
 Subcontratação: cada parte é expedida por entrega e fica pronta para o cliente
 na sua própria conclusão mais o lead útil, não na conclusão do lote.
 
-**Gémeas por entrega (decidido pelo Luís a 11/10/2026, Fase B2).** Cada lado
+**Gémeas por entrega (decidido pelo Luís a 11/10/2026, Fase B2; substituído a
+13/10/2026, ver «Lote económico = uma produção»).** Cada lado
 de um ciclo gémeo regista um output por entrega que as suas peças cobrem
 (carry-forward), com as datas dessa entrega. Só as duas entregas que formam
 o ciclo (no máximo uma por lado, com no máximo 5 dias entre elas) partilham
