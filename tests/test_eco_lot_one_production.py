@@ -215,6 +215,74 @@ def test_an_outage_between_the_two_productions_allows_the_new_setup():
     assert not lot_split_violations(ordered, lots, blocked, CONFIG)
 
 
+def test_only_history_before_the_minute_boundary_may_precede_another_lot():
+    """The earlier part of a split is history only when it started before the
+    plan's boundary, the factory minute of the calculation (rule 4,
+    ``scheduler.history``), never the day of the wall clock."""
+    from backend.scheduler.validation import lot_split_violations
+
+    data = _with_other_tool()
+    result = schedule_all(data, config=CONFIG)
+    sku = sorted(
+        (s for s in result.segments if s.sku == "SKU"), key=lambda s: (s.day_idx, s.start_min),
+    )
+    other = next(s for s in result.segments if s.sku == "OTHER" and s.qty > 0)
+    lots = {lot.id: lot for lot in result.lots}
+    ordered = {"MACHINE": [sku[0], other, *sku[1:]]}
+    day, start = sku[0].day_idx, int(sku[0].start_min)
+    # No boundary (fresh plan, «Recalcular plano» from D0): judged whole.
+    assert lot_split_violations(ordered, lots, data, CONFIG)
+    started = copy.deepcopy(data)
+    # Started at the calculation's minute or before it: history.
+    for boundary in ([day, start + 1], [day + 1, 0]):
+        started.history_boundary = boundary
+        assert not lot_split_violations(ordered, lots, started, CONFIG), boundary
+    # Not yet started at the boundary (same day): a second production.
+    started.history_boundary = [day, start]
+    assert lot_split_violations(ordered, lots, started, CONFIG)
+
+
+@pytest.mark.parametrize("started", [
+    [(1, 420, 100, 30), (3, 420, 100, 0)],   # 07:00-08:30, done before 10:00
+    [(1, 540, 150, 30), (3, 420, 50, 0)],    # 09:00-11:00, running at 10:00
+], ids=["done-this-morning", "running-at-now"])
+def test_rule_4_cut_of_a_lot_started_today_lets_an_urgent_order_in(started):
+    """Rule 4 contiguity: free shift time cuts the run of a lot started
+    today at 07:00 or 09:00 (its rest was on day 3, after a removed outage).
+    At 10:00 an order due today takes the machine and the rest of the lot
+    follows it. The started part is history before the minute boundary, so
+    this is the rest of a started lot, not a second production; with the
+    day-level clock the plan was refused as ``lot_split``."""
+    from backend.plans import frozen
+    from backend.scheduler.canonical import result_validation_data
+    from backend.scheduler.improvement import _segment_physical_row
+    from backend.scheduler.validation import assert_plan_valid
+    from tests.test_now_boundary import _at, _plan
+    from tests.test_now_boundary import _config as boundary_config
+    from tests.test_now_boundary import _data as boundary_data
+
+    config = boundary_config()
+    data = boundary_data(second_due=1)
+    baseline, lots = _plan(data, config, {"OP1": started, "OP2": [(3, 480, 200, 30)]})
+    assert not validate_plan(baseline.segments, data, config, lots=baseline.lots)
+    now = _at(1, 600)
+
+    result = frozen.optimize_preserving_started_lots(
+        copy.deepcopy(data), config, baseline, mode="quick", now=now,
+    )
+
+    assert result.history_boundary == [1, 600]
+    assert_plan_valid(
+        result.segments, result_validation_data(data, result), config, lots=result.lots,
+    )
+    first = baseline.segments[0]
+    assert _segment_physical_row(first) in {_segment_physical_row(s) for s in result.segments}
+    ordered = sorted(result.segments, key=lambda s: (s.day_idx, s.start_min))
+    assert [s.lot_id for s in ordered] == [lots["OP1"].id, lots["OP2"].id, lots["OP1"].id]
+    assert ordered[1].day_idx == 1 and ordered[1].start_min >= 600
+    assert sum(s.qty for s in ordered if s.lot_id == lots["OP1"].id) == lots["OP1"].qty
+
+
 def test_lots_of_older_contracts_are_not_judged_as_split():
     from backend.scheduler.validation import lot_split_violations
 
@@ -530,16 +598,6 @@ def _real_change(case, data, config, baseline, freeze_day, started):
     return moved, data, config
 
 
-_RUNNING_RUN_ON_A_HOLIDAY = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pre-existing (also on 2408681): rev128 on 16/10, the BFP082 run that "
-        "started on 14/10 is frozen as running and keeps lot _14 (not started) "
-        "on the new holiday 23/10; rule 4, frozen._running_continuations"
-    ),
-)
-
-
 @pytest.mark.needs_private
 @pytest.mark.slow
 @pytest.mark.parametrize(("revision", "clock", "case"), [
@@ -547,7 +605,9 @@ _RUNNING_RUN_ON_A_HOLIDAY = pytest.mark.xfail(
     ("rev124", None, "holiday"),
     ("rev124", None, "move"),
     ("rev128", "2026-10-16", "outage"),
-    pytest.param("rev128", "2026-10-16", "holiday", marks=_RUNNING_RUN_ON_A_HOLIDAY),
+    # Was a strict xfail before the contiguity rule (13/10): the BFP082 run
+    # started on 14/10 was frozen whole and kept lot _14 on the new holiday.
+    ("rev128", "2026-10-16", "holiday"),
     ("rev128", "2026-10-16", "move"),
 ])
 def test_started_version_2_lots_survive_a_change_on_real_plans(revision, clock, case, monkeypatch):
@@ -584,6 +644,7 @@ def test_started_version_2_lots_survive_a_change_on_real_plans(revision, clock, 
     plan = SimpleNamespace(
         segments=result.segments, lots=result.lots, score=result.score,
         preserved_lot_proofs=getattr(result, "preserved_lot_proofs", None),
+        history_boundary=getattr(result, "history_boundary", None),
     )
     assert_plan_valid(result.segments, result_validation_data(view_data, plan), view_config,
                       lots=result.lots)

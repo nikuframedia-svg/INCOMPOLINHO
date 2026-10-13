@@ -23,6 +23,8 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
 
 1. **Admissibilidade obrigatória:** conservar procura, produção, identidades,
    recursos, calendários, material, histórico protegido e posições manuais.
+   Desde 13/10/2026 também o lote económico numa só produção (§2): vem antes
+   dos compromissos de entrega.
    Um plano fisicamente inválido nunca é candidato operacional.
 2. **Compromissos de entrega:** respeitar os prazos quando viáveis. Ao melhorar
    um plano válido do mesmo cenário, nenhuma encomenda individual pode perder
@@ -154,13 +156,31 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
   lote); o tempo continua a ser o de uma execução.
 - A prontidão para o cliente (OTD, OTD-D, atrasos, envio para subcontratação)
   continua a medir-se por entrega (`delivery_readiness`), e a antecipação por
-  entrega (§1.3).
+  entrega (§1.3). Na subcontratação a prontidão de cada entrega passa a ser a
+  do lote inteiro (decisão abaixo, ainda por implementar).
 - Motivo: a janela por entrega partia cada lote económico em várias produções
   pequenas (setups de cerca de 180 para cerca de 470 por plano, de 3 para 9 por
   dia útil). Esta é a regra que o sistema usava até 07/10/2026.
-- Perguntas ainda abertas à Incompol, com estes valores por omissão: sem
-  limite máximo de cobertura do lote; o resto de um lote interrompido mantém o
-  `R` do lote; a prontidão da subcontratação continua por entrega.
+- Respostas do Luís (13/10/2026) às perguntas que estavam abertas:
+  - O lote económico numa só produção vem antes da entrega a tempo: se o lote
+    atrasa outra encomenda, move-se o lote inteiro; nunca se parte para a
+    salvar (a verificação `lot_split` é regra dura do gate, §1.1). Quando
+    falta capacidade, isso pode custar uma entrega que a janela por entrega
+    salvava (caso BFP188 no ensaio de 13/10).
+  - Sem limite máximo de cobertura: um ano de stock é aceitável.
+  - Um lote interrompido por avaria retoma com o mesmo material (`R` do lote).
+  - Gémeas: `R_ciclo`.
+  - **Subcontratação (decidido; ainda por implementar):** o lote económico
+    inteiro vai ao subcontratado de uma só vez, quando o lote acaba, e todas
+    as peças voltam juntas no fim do lote + prazo do subcontratado (dias
+    úteis). Todas as entregas de um lote subcontratado ficam prontas em
+    `fim do lote + lead`, e o lote tem de acabar até ao último envio `H` da
+    sua primeira entrega. Hoje a prontidão da subcontratação ainda é por
+    entrega (cada entrega sai quando as suas peças estão feitas,
+    `material_quantities.delivery_readiness`), e o ecrã de Entregas mostra os
+    envios e regressos dessa mesma prontidão
+    (`analytics.stock_projection._subcontract_movements`); ao implementar,
+    muda-se o avaliador único e o ecrã segue-o.
 
 Implementação (13/10/2026):
 
@@ -180,8 +200,15 @@ Implementação (13/10/2026):
   métrica `lot_split_violations` no gate): um lote da versão 3 com outro
   trabalho na máquina entre dois dos seus segmentos, ou com nova afinação
   depois de já ter produzido, é inválido, salvo avaria/bloqueio da máquina ou
-  da ferramenta entre os dois, ou quando a parte anterior começou antes do dia
-  de planeamento (resto de um lote começado, regra 4). O verificador do
+  da ferramenta entre os dois, ou quando a parte anterior é histórico: começou
+  antes da fronteira do plano (o minuto atual da regra 4,
+  `ScheduleResult.history_boundary`, a mesma regra de `scheduler/history.py`,
+  nunca o dia do relógio). Assim o resto de um lote começado hoje pode seguir
+  outro trabalho, por exemplo quando a regra «Continua» corta a execução
+  montada e entra uma encomenda que vence hoje (com o dia do relógio esse
+  plano era recusado como `lot_split`). No problema residual a produção
+  congelada é ela própria um bloqueio de máquina e ferramenta. Sem fronteira
+  (carregar um ISOP, «Recalcular plano» desde D0) tudo é julgado. O verificador do
   contrato confirma também que nenhum lote da versão 3 produz ou prepara
   antes do `R` do lote (`canonical.source_contract_violations`).
 - Planos antigos: um plano das versões 0, 1 ou 2 continua válido (as suas
@@ -208,6 +235,9 @@ Implementação (13/10/2026):
   média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias). Com dia de
   planeamento 16/10 (23 lotes começados), avaria na PRM043, feriado novo e
   movimentos manuais dão planos válidos, sem mexer na produção começada.
+  Até à regra «Continua» (13/10) o feriado novo de 23/10 ficava com produção:
+  a série da BFP082 montada desde 14/10 era congelada inteira e levava o lote
+  `_14`, ainda por começar; com ela o feriado fica livre.
 
 **Janela por entrega (versão 1, decidido entre 07/10 e 10/10/2026;
 substituído a 13/10/2026, ver acima; histórico).** Quando o carry-forward

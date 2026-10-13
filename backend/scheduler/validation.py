@@ -1151,16 +1151,23 @@ def lot_split_violations(
     another lot's work comes between two of its segments, or when one of its
     segments mounts the tool again after the lot has produced. That is legal
     only when an outage or block of the machine or tool lies between the two
-    (``_blocked_between``) or when the earlier part is history (it started
-    before the planning day: the rest of a started lot, rule 4). Lots of an
+    (``_blocked_between``) or when the earlier part is history: it started
+    before the calculation's boundary, the current factory minute of rule 4
+    (``scheduler.history``, the same rule as the protection and the commit
+    guard, read from the plan's ``history_boundary``), so the rest of a lot
+    started today may follow other work. In the residual problem of a replan
+    the frozen work is itself a machine and tool block
+    (``frozen._install_frozen_reservations``). Lots of an
     older material contract (also when taken over as version 3,
     ``lot_sizing.UPGRADED_MATERIAL_KEY``) and lots preserved unchanged are
     not judged.
     """
 
+    from backend.scheduler.history import history_boundary, is_history
     from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
     from backend.scheduler.material_quantities import lot_material_version
 
+    boundary = history_boundary(data)
     preserved = set(getattr(data, "preserved_lot_proofs", None) or {})
     judged: dict[str, bool] = {}
 
@@ -1177,7 +1184,6 @@ def lot_split_violations(
             )
         return judged[lot_id]
 
-    history_day = None
     violations: list[dict[str, Any]] = []
     for machine_id, ordered in ordered_by_machine.items():
         last: dict[str, int] = {}
@@ -1203,11 +1209,7 @@ def lot_split_violations(
                 (segment.day_idx, int(segment.start_min)), data,
             ):
                 continue
-            if history_day is None:
-                from backend.plans.frozen import _current_planning_day
-
-                history_day = _current_planning_day(data, config) if data is not None else 0
-            if before.day_idx < history_day:
+            if is_history(before.day_idx, before.start_min, boundary):
                 continue
             reported.add(lot_id)
             lot = lots_by_id[lot_id]

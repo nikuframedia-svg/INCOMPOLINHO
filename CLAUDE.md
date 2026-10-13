@@ -46,7 +46,8 @@ Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
 
 ## ═══ ENTREGAS ═══
 Entregar a tempo é o primeiro objetivo **depois das leis físicas** (máquina,
-ferramenta, equipa, calendário, material). Quando há capacidade, o alvo é
+ferramenta, equipa, calendário, material) e do lote económico numa só produção
+(decisão de 13/10/2026). Quando há capacidade, o alvo é
 OTD = OTD-D = 100%.
 
 - **OTD** (global) = total produzido >= total procura
@@ -86,6 +87,9 @@ continuam válidos (não pedem «Recalcular»); o «Recalcular plano» redimensi
 - Nunca partir um lote em produções separadas. Se atrasar outra encomenda,
   move-se o lote inteiro (mais cedo, mais tarde ou para a máquina alternativa).
 - Gémeas: o ciclo usa o `R` da primeira entrega de qualquer dos lados.
+- Subcontratados (decidido, por implementar): o lote inteiro vai ao
+  subcontratado quando acaba e volta todo em fim do lote + prazo; tem de acabar
+  até ao último envio `H` da primeira entrega.
 - A janela por entrega (07–11/10/2026) partia os lotes e subiu os setups de
   ~3 para ~9 por dia; não voltar a ela.
 
