@@ -126,7 +126,8 @@ def _protected_context(
     # setup (it would act as a phantom predecessor). The rest of a started
     # lot (``residual_lot_remainders``) is the exception: its started part is
     # not in the residual plan and is the real predecessor of that rest (a
-    # run released after it goes on with the tool still mounted, rule 4).
+    # run released after it goes on with the tool still mounted, rule 4; an
+    # economic lot released whole resumes right after it, AGENTS §2).
     planned_lots = {segment.lot_id for segment in segments}
     rests = {
         str(rest.get("id")) for rest in getattr(data, "residual_lot_remainders", None) or []
@@ -817,6 +818,8 @@ def _validate_plan(
                     )
                 )
 
+    violations.extend(lot_split_violations(ordered_by_machine, lots_by_id, data, config))
+
     by_tool: dict[str, list[Segment]] = {}
     for seg in active:
         by_tool.setdefault(seg.tool_id, []).append(seg)
@@ -1100,6 +1103,132 @@ def _validate_plan(
     return violations
 
 
+def _blocked_between(
+    machine_id: str, tool_id: str, start: tuple[int, int], end: tuple[int, int],
+    data: EngineData | None,
+) -> bool:
+    """Whether a machine or tool unavailability lies in ``[start, end]``.
+
+    ``start``/``end`` are ``(day, minute)``. Unavailable days and the daily
+    intervals of the calendar window (``machine_blocked_intervals``,
+    ``tool_blocked_intervals``) count: a real outage or block, never a night,
+    a weekend or a holiday.
+    """
+
+    if data is None:
+        return False
+    start_abs = start[0] * 1440 + start[1]
+    end_abs = end[0] * 1440 + end[1]
+    blocked_days = (
+        data.machine_blocked_days.get(machine_id, set())
+        | data.tool_blocked_days.get(tool_id, set())
+    )
+    if any(day in blocked_days for day in range(start[0], end[0] + 1)):
+        return True
+    for block in (
+        *data.machine_blocked_intervals.get(machine_id, []),
+        *data.tool_blocked_intervals.get(tool_id, []),
+    ):
+        day = int(block.get("start_day", -1))
+        low = day * 1440 + int(block.get("start_min", 0))
+        high = day * 1440 + int(block.get("end_min", 1440))
+        if low <= end_abs and high >= start_abs:
+            return True
+    return False
+
+
+def lot_split_violations(
+    ordered_by_machine: dict[str, list[Segment]],
+    lots_by_id: dict[str, Lot],
+    data: EngineData | None,
+    config: FactoryConfig | None,
+) -> list[dict[str, Any]]:
+    """Economic lots produced in more than one production (AGENTS §2, 13/10/2026).
+
+    Material version 3: an economic lot is one production, one setup, which
+    continues through shifts, nights, weekends and the following days. On
+    its machine (``ordered_by_machine``, in time order), the lot is split when
+    another lot's work comes between two of its segments, or when one of its
+    segments mounts the tool again after the lot has produced. That is legal
+    only when an outage or block of the machine or tool lies between the two
+    (``_blocked_between``) or when the earlier part is history (it started
+    before the planning day: the rest of a started lot, rule 4). Lots of an
+    older material contract (also when taken over as version 3,
+    ``lot_sizing.UPGRADED_MATERIAL_KEY``) and lots preserved unchanged are
+    not judged.
+    """
+
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
+    from backend.scheduler.material_quantities import lot_material_version
+
+    preserved = set(getattr(data, "preserved_lot_proofs", None) or {})
+    judged: dict[str, bool] = {}
+
+    def one_production(lot_id: str) -> bool:
+        if lot_id not in judged:
+            lot = lots_by_id.get(lot_id)
+            judged[lot_id] = bool(
+                lot is not None
+                and lot_id not in preserved
+                and lot_material_version(lot) >= 3
+                and not any(
+                    output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or []
+                )
+            )
+        return judged[lot_id]
+
+    history_day = None
+    violations: list[dict[str, Any]] = []
+    for machine_id, ordered in ordered_by_machine.items():
+        last: dict[str, int] = {}
+        produced: set[str] = set()
+        reported: set[str] = set()
+        for index, segment in enumerate(ordered):
+            lot_id = segment.lot_id
+            previous = last.get(lot_id)
+            last[lot_id] = index
+            if previous is None:
+                if segment.prod_min > 0:
+                    produced.add(lot_id)
+                continue
+            interleaved = index - previous > 1
+            remount = segment.setup_min > 0 and lot_id in produced
+            if segment.prod_min > 0:
+                produced.add(lot_id)
+            if not (interleaved or remount) or lot_id in reported or not one_production(lot_id):
+                continue
+            before = ordered[previous]
+            if _blocked_between(
+                machine_id, segment.tool_id, (before.day_idx, int(before.end_min)),
+                (segment.day_idx, int(segment.start_min)), data,
+            ):
+                continue
+            if history_day is None:
+                from backend.plans.frozen import _current_planning_day
+
+                history_day = _current_planning_day(data, config) if data is not None else 0
+            if before.day_idx < history_day:
+                continue
+            reported.add(lot_id)
+            lot = lots_by_id[lot_id]
+            violations.append(
+                _violation(
+                    "lot_split",
+                    (
+                        f"Referência {lot.sku or lot.op_id} ({machine_id}): o lote económico "
+                        f"volta a ser produzido no {day_label(segment.day_idx, data)} "
+                        "numa produção separada, sem avaria nem bloqueio pelo meio. "
+                        "Um lote económico produz-se de uma só vez, com um único setup."
+                    ),
+                    segment,
+                    before,
+                    interleaved=interleaved,
+                    remount=remount,
+                )
+            )
+    return violations
+
+
 def hard_gate_metrics(violations: list[dict[str, Any]]) -> dict[str, int]:
     """Aggregate physical validation violations into public hard-gate metrics."""
 
@@ -1126,6 +1255,7 @@ def hard_gate_metrics(violations: list[dict[str, Any]]) -> dict[str, int]:
         "missing_tool_change_setup_violations": 0,
         "insufficient_tool_change_setup_violations": 0,
         "plan_anchor_violations": 0,
+        "lot_split_violations": 0,
     }
     mapping = {
         "setup_crew_overlap": "setup_crew_overlaps",
@@ -1152,6 +1282,7 @@ def hard_gate_metrics(violations: list[dict[str, Any]]) -> dict[str, int]:
             "insufficient_tool_change_setup_violations"
         ),
         "plan_anchor": "plan_anchor_violations",
+        "lot_split": "lot_split_violations",
     }
     for violation in violations:
         key = mapping.get(str(violation.get("kind")))

@@ -11,17 +11,19 @@ from backend.planning_control import current_planning_control, execution_cache
 from backend.plans.serialize import schedule_fingerprint
 from backend.scheduler.lot_sizing import (
     QUANTITY_MATERIAL_VERSION,
+    UPGRADED_MATERIAL_KEY,
     _aggregate_milestones,
     create_lots,
     material_version,
 )
+from backend.scheduler.material_quantities import lot_material_version
 from backend.scheduler.resources import build_setup_override_map, effective_oee, resolve_setup_hours
 from backend.scheduler.setup_identity import segment_setup_identity
 from backend.types import CommittedSupply
 
 # ``QUANTITY_MATERIAL_VERSION`` (defined in lot_sizing, imported from here by
-# the planning model identity): the per-delivery material contract written on
-# each lot output (``quantity_material_version``).
+# the planning model identity): the material contract written on each lot
+# output (``quantity_material_version``).
 
 _FIELD_LABELS = {
     "machine_id": "a máquina",
@@ -72,24 +74,15 @@ def legacy_material_reason(lots) -> str:
 def legacy_material_plan(lots, data, config) -> bool:
     """A plan built under an older material contract that now needs a rebuild.
 
-    Version 0 (before 08/10/2026): no lot carries ``quantity_material_version``
-    while the current lot sizing releases the material of the same scenario in
-    several portions. Version 1 (before Fase B2): twin cycles released whole
-    at the cycle ``R`` while the current lot sizing releases some twin cycle
-    per delivery. Such a plan can still be read, but committing it again
-    needs a rebuild.
+    None since material version 3 (13/10/2026, economic lot = one
+    production): every older contract obeys it. Version 0 and version 1 twin
+    cycles released the whole lot at its first ``R``, as version 3 does;
+    versions 1-2 released each delivery at its own ``R``, never before the
+    lot ``R``. Such plans stay valid and are never sent to «Recalcular
+    plano»; operations on them take their lots over as version 3
+    (``lot_sizing.upgrade_plan_material``).
     """
-    if data is None or not data.ops or not lots:
-        return False
-    version = quantity_material_version(lots)
-    if version >= QUANTITY_MATERIAL_VERSION:
-        return False
-    from backend.scheduler.quantity_dispatch import has_quantity_releases
-
-    current = contract_lots(data, config or FactoryConfig())
-    if version >= 1:
-        current = [lot for lot in current if lot.is_twin]
-    return has_quantity_releases(current)
+    return False
 
 
 def _lot_sizing_inputs(data, config, quantity_material):
@@ -374,7 +367,10 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
             for output in lot.output_milestones or []:
                 # Grouping and legal splitting can change lot IDs, but not the
                 # quantity attributed to each source delivery/material window.
-                key = tuple((k, str(v)) for k, v in sorted(output.items()) if k != "qty")
+                key = tuple(
+                    (k, str(v)) for k, v in sorted(output.items())
+                    if k not in ("qty", UPGRADED_MATERIAL_KEY)
+                )
                 counts[key] += int(output.get("qty", 0))
         return counts
 
@@ -400,10 +396,14 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
         # they retain the existing physical and total-quantity checks.
         if not any("qty" in output for output in lot.output_milestones):
             continue
-        if len({
+        # Lots that carry several deliveries: per-delivery lots (versions
+        # 1-2) whose outputs release on different days, and every version 3
+        # lot (released whole at the lot ``R``: nothing before it). A lot of
+        # one delivery is judged by the material window gates, as before.
+        if len(lot.output_milestones) > 1 and (lot_material_version(lot) >= 3 or len({
             item.get("cycle_material_release_day", item.get("material_release_day"))
             for item in lot.output_milestones
-        }) > 1:
+        }) > 1):
             check_material_quantities(lot, lot)
         try:
             milestones = _aggregate_milestones(lot.output_milestones)

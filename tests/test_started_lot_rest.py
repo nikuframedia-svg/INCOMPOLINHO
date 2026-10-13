@@ -18,7 +18,7 @@ from backend.config.types import FactoryConfig, MachineConfig
 from backend.plans import frozen
 from backend.scheduler.canonical import result_validation_data
 from backend.scheduler.improvement import _segment_physical_row
-from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler.lot_sizing import create_lots, upgrade_lot_material
 from backend.scheduler.types import ScheduleResult, Segment
 from backend.scheduler.validation import assert_plan_valid
 from backend.types import EngineData, EOp, MachineInfo, PlanAnchor
@@ -68,8 +68,13 @@ def _segment(lot, day, start, qty, setup, run_id):
 
 
 def _baseline(data, config, blocks):
-    """``blocks``: (lot index, day, start, qty, setup, run lot index)."""
-    lots = create_lots(data, config)
+    """``blocks``: (lot index, day, start, qty, setup, run lot index).
+
+    A plan saved under the per-delivery contract (material version 2), where
+    L's portions were separate productions; replans take it over as
+    version 3 (``frozen.with_current_material``).
+    """
+    lots = create_lots(data, config, quantity_material=2)
     assert [(lot.op_id, lot.qty) for lot in lots] == [("OP1", 200), ("OP1", 200), ("OP2", 100)]
     segments = [
         _segment(lots[index], day, start, qty, setup, f"quantity:{lots[run].id}:0")
@@ -101,7 +106,9 @@ def test_only_started_portion_is_frozen_and_rest_keeps_the_lot():
     assert [lot.id for lot in protected.lots] == [lot_x.id]  # all of it started
     assert protected.started == {lot_l.id, lot_x.id}
     (original, rest), = protected.partial
-    assert original == lot_l
+    # Taken over as version 3: same lot, released whole at the lot R.
+    assert original == upgrade_lot_material(lot_l, data)
+    assert rest.material_release_day == original.material_release_day
     # The rest of the same economic lot: never re-sized, same machine.
     assert (rest.id, rest.qty, rest.machine_id, rest.alt_machine_id) == (lot_l.id, 100, "M1", None)
     assert [(o["qty"], o["customer_delivery_day"]) for o in rest.output_milestones] == [(100, 9)]
@@ -127,7 +134,7 @@ def test_outage_moving_the_mount_supplier_gives_a_valid_plan(monkeypatch):
     by_id = {lot.id: lot for lot in result.lots}
     # Lot sizing ran once: the same lots, the started one unchanged.
     assert sorted(by_id) == sorted(lot.id for lot in baseline.lots)
-    assert by_id[lot_l.id] == lot_l
+    assert by_id[lot_l.id] == upgrade_lot_material(lot_l, outage)
     produced = {lot_id: sum(s.qty for s in result.segments if s.lot_id == lot_id)
                 for lot_id in by_id}
     assert produced == {lot_l.id: 200, lot_m.id: 200, lot_x.id: 100}
@@ -136,7 +143,8 @@ def test_outage_moving_the_mount_supplier_gives_a_valid_plan(monkeypatch):
     assert {_segment_physical_row(baseline.segments[i]) for i in (0, 1)} <= rows
     assert all(s.day_idx != 4 for s in result.segments)
     assert result.preserved_lot_proofs == frozen._splice_frozen_started_lots(
-        ScheduleResult([], [], {}, 0, [], []), baseline.segments[:2], [lot_x],
+        ScheduleResult([], [], {}, 0, [], []), baseline.segments[:2],
+        [upgrade_lot_material(lot_x, outage)],
     ).preserved_lot_proofs
     assert any("produção já iniciada mantém-se" in w for w in result.warnings)
 

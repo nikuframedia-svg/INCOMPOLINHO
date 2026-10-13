@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from backend.learning import (
     ISContext,
     LearnStore,
@@ -146,6 +148,7 @@ class TestSchedulerParams:
         assert p.max_edd_gap == 9
         assert "max_run_days" not in p.to_dict()
 
+    @pytest.mark.usefixtures("legacy_engine")
     def test_custom_params_change_behaviour(self):
         """Non-default params should produce a different schedule."""
         engine = _engine(

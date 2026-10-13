@@ -193,6 +193,7 @@ def test_failed_commit_keeps_active_snapshot(tmp_path, legacy):
         store.close()
 
 
+@pytest.mark.usefixtures("legacy_engine")
 def test_final_scheduler_pass_compacts_time_freed_by_late_setup_cleanup(monkeypatch):
     from backend.scheduler import shift_exchange
 

@@ -210,7 +210,9 @@ class TestQueryExecutors:
         data = json.loads(result)
         assert "error" in data
 
+    @pytest.mark.usefixtures("legacy_engine")
     def test_explicar_decisao_with_audit(self):
+        _setup_state()  # again, now on the legacy engine (its audit trail)
         result, _ = execute_tool("explicar_decisao", json.dumps({"sku": "SKU1"}))
         data = json.loads(result)
         assert "schedule_id" in data
@@ -609,6 +611,7 @@ class TestEngine:
 
 
 class TestState:
+    @pytest.mark.usefixtures("legacy_engine")
     def test_update_schedule_saves_audit(self):
         engine = _engine()
         config = FactoryConfig()

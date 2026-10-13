@@ -29,10 +29,20 @@ def lot_material_version(lot: Lot) -> int:
     )
 
 
+def whole_lot_release(lot: Lot) -> bool:
+    """Economic lot = one production (material version 3, AGENTS §2).
+
+    The whole lot is released at the lot ``R`` (its first delivery's, or
+    ``R_ciclo`` of a twin cycle): one portion, one release day.
+    """
+
+    return lot_material_version(lot) >= 3
+
+
 def twin_per_delivery(lot: Lot) -> bool:
     """A twin cycle under the per-delivery contract (material version 2)."""
 
-    return bool(lot.is_twin) and lot_material_version(lot) >= 2
+    return bool(lot.is_twin) and lot_material_version(lot) == 2
 
 
 def _twin_curve(lot: Lot, day: int) -> int:
@@ -54,6 +64,8 @@ def _twin_curve(lot: Lot, day: int) -> int:
 
 
 def released_quantity(lot: Lot, day: int) -> int:
+    if whole_lot_release(lot):
+        return lot.qty if day >= (lot.material_release_day or 0) else 0
     if lot.is_twin and twin_per_delivery(lot):
         return _twin_curve(lot, day)
     # Legacy twin cycles (version 1) share material from their controlling output.
@@ -82,6 +94,9 @@ def _driving_outputs(lot: Lot) -> list[dict]:
 
 
 def next_release_day(lot: Lot, day: int) -> int | None:
+    if whole_lot_release(lot):
+        release = int(lot.material_release_day or 0)
+        return release if release > day else None
     days = [
         output_release_day(output)
         for output in _driving_outputs(lot)
@@ -121,7 +136,8 @@ def releases_in_portions(lot: Lot) -> bool:
 def material_portions(lot: Lot) -> list[MaterialPortion]:
     """Group consecutive outputs released on the same day.
 
-    Lots with a single output and legacy twin cycles stay one portion; the
+    Lots with a single output, lots of material version 3 (released whole)
+    and legacy twin cycles stay one portion; the
     surplus joins the last portion whatever its own record says. A twin cycle
     under the per-delivery contract has one portion per increment of its
     release curve (:func:`_twin_portions`).
@@ -130,7 +146,7 @@ def material_portions(lot: Lot) -> list[MaterialPortion]:
     outputs = list(lot.output_milestones or [])
     if twin_per_delivery(lot):
         return _twin_portions(lot)
-    if lot.is_twin or len(outputs) <= 1:
+    if lot.is_twin or len(outputs) <= 1 or whole_lot_release(lot):
         return [MaterialPortion(0, int(lot.qty), lot.material_release_day, tuple(outputs))]
     groups: list[tuple[object, list[dict]]] = []
     for output in outputs:

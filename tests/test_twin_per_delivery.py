@@ -10,6 +10,12 @@ side's pieces are co-produced).
 
 Calendar: day 0 = Monday 12/10/2026, weekends are holidays. Deliveries on
 days 14, 15, 28 and 30 release material on days 7, 8, 21 and 23.
+
+Since 13/10/2026 (material version 3, AGENTS §2) the whole cycle is released
+at ``R_ciclo`` and made in one production; each delivery keeps its own ``R``
+only for traceability. The per-delivery cases run under version 2 (plans
+saved before, ``per_delivery_contract``); the end of the file asserts the
+same cases under the current contract.
 """
 
 from __future__ import annotations
@@ -27,9 +33,8 @@ from backend.analytics.order_tracking import compute_order_tracking, compute_seg
 from backend.analytics.stock_projection import compute_stock_projections
 from backend.config.types import FactoryConfig, MachineConfig
 from backend.plans.serialize import serialize_result_snapshot
-from backend.plans.store import LegacyMaterialPlanError, PlansStore, _assert_activatable_payload
+from backend.plans.store import PlansStore, _assert_activatable_payload
 from backend.scheduler.canonical import (
-    QUANTITY_MATERIAL_VERSION,
     legacy_material_plan,
     source_contract_violations,
 )
@@ -60,6 +65,21 @@ START = date(2026, 10, 12)  # Monday
 N_DAYS = 40
 PH = 1500  # pieces per hour on each side: 3000 cycles = 120 min
 CONFIG = FactoryConfig(machines={"M1": MachineConfig(id="M1", group="Grandes")})
+
+
+@pytest.fixture
+def per_delivery_contract(monkeypatch):
+    """Pin the per-delivery contract of twin cycles (material version 2, Fase B2).
+
+    Since 13/10/2026 (version 3, AGENTS §2) a twin cycle is released whole at
+    ``R_ciclo``; plans saved under version 2 keep these outputs and curves,
+    which the cases marked with this fixture exercise. The same cases under
+    the current contract are at the end of this file.
+    """
+    monkeypatch.setattr("backend.scheduler.lot_sizing.QUANTITY_MATERIAL_VERSION", 2)
+    monkeypatch.setattr("backend.scheduler.canonical.QUANTITY_MATERIAL_VERSION", 2)
+
+
 A_ID, B_ID = "TT_M1_A", "TT_M1_B"
 
 
@@ -115,6 +135,7 @@ def _outputs(lot, op_id):
 # ── lot sizing: one output per covered delivery, eco lot conserved ───────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_each_side_records_one_output_per_covered_delivery():
     (lot,) = create_lots(_carry_forward(), CONFIG)
     assert lot.is_twin and lot.qty == 3000
@@ -126,9 +147,7 @@ def test_each_side_records_one_output_per_covered_delivery():
     assert _outputs(lot, B_ID) == [
         (15, 2500, 8, 7, False), (30, 400, 23, None, False), (30, 100, 23, None, True),
     ]
-    assert {o["quantity_material_version"] for o in lot.output_milestones} == {
-        QUANTITY_MATERIAL_VERSION
-    } == {2}
+    assert {o["quantity_material_version"] for o in lot.output_milestones} == {2}
     assert lot.material_release_day == 7
 
 
@@ -159,6 +178,7 @@ def test_twin_time_is_one_execution():
 # ── release curve and portions ───────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_release_curve_is_the_larger_side_with_the_pair_at_min_r():
     (lot,) = create_lots(_carry_forward(), CONFIG)
     assert released_quantity(lot, 6) == 0
@@ -178,6 +198,7 @@ def test_release_curve_is_the_larger_side_with_the_pair_at_min_r():
     assert has_quantity_releases([lot])
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_twin_released_at_once_stays_one_portion():
     (lot,) = create_lots(_data({14: 1000}, {15: 2500}), CONFIG)
     assert [(p.qty, p.material_release_day) for p in material_portions(lot)] == [(3000, 7)]
@@ -187,6 +208,7 @@ def test_twin_released_at_once_stays_one_portion():
 # ── the plan respects every delivery's window ────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_no_twin_piece_before_its_own_delivery_release():
     data = _carry_forward()
     result = schedule_all(data, config=CONFIG)
@@ -208,6 +230,7 @@ def test_no_twin_piece_before_its_own_delivery_release():
                                           require_current_material=True)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_oracle_flags_the_whole_cycle_made_at_the_pair_release():
     data = _carry_forward()
     (lot,) = create_lots(data, CONFIG)
@@ -242,6 +265,7 @@ def _surplus_on_the_paired_side():
     return _data({10: 1000, 20: 2000, 25: 8000}, {15: 600}, eco_lot=12000)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_surplus_takes_its_own_delivery_r_not_the_cycle_r():
     data = _surplus_on_the_paired_side()
     (lot,) = create_lots(data, CONFIG)
@@ -261,6 +285,7 @@ def test_surplus_takes_its_own_delivery_r_not_the_cycle_r():
                                           require_current_material=True)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_oracle_does_not_trust_a_cycle_r_written_on_the_surplus():
     data = _surplus_on_the_paired_side()
     (lot,) = create_lots(data, CONFIG)
@@ -274,6 +299,7 @@ def test_oracle_does_not_trust_a_cycle_r_written_on_the_surplus():
     ]
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_oracle_ignores_a_cycle_pair_claim():
     data = _carry_forward()
     (lot,) = create_lots(data, CONFIG)
@@ -298,7 +324,7 @@ def _relabel(lot, op_id, day, **fields):
     return forged
 
 
-@pytest.mark.parametrize("forge", [
+_FORGES = [
     # A's day-28 delivery flagged as surplus (it would take A day 14's R).
     lambda lot: _relabel(lot, A_ID, 28, is_economic_surplus=True),
     # A's day-28 delivery moved to customer day 14.
@@ -310,7 +336,11 @@ def _relabel(lot, op_id, day, **fields):
         _relabel(_relabel(lot, A_ID, 28, material_release_day=0, is_coproduced_surplus=True),
                  A_ID, 14, material_release_day=0),
         B_ID, 15, material_release_day=0), B_ID, 30, material_release_day=0),
-])
+]
+
+
+@pytest.mark.usefixtures("per_delivery_contract")
+@pytest.mark.parametrize("forge", _FORGES)
 def test_relabelling_the_lot_never_hides_a_window_violation(forge):
     """Review of B2 (probe_oracle): the coverage of each side is rebuilt from
     the ISOP demand and the pieces each side makes, never from the lot's own
@@ -365,6 +395,7 @@ def test_oracle_lot_order_never_follows_the_list_order():
     assert oracle_coverage(lots[::-1], data) == oracle_coverage(lots, data)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_co_produced_stock_never_drives_the_release():
     """A: 1000 (day 10), 1000 (day 24), 500 (day 30). B: no demand.
 
@@ -393,6 +424,7 @@ def test_co_produced_stock_never_drives_the_release():
                                           require_current_material=True)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_reinserted_twin_tranche_starts_when_the_curve_reaches_it():
     """A tranche moved by the alternative repair keeps the lot's release curve:
     its first cycle is released when the curve passes the cycles made before
@@ -457,6 +489,7 @@ def _curve(lot, n_days):
             if released_quantity(lot, day) != released_quantity(lot, day - 1)]
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 @pytest.mark.parametrize(("name", "lot_id", "curve"), [
     # Surplus of the paired side (10267 pieces, own R 63) used to be
     # released at the cycle R 56: 10880 cycles on day 56.
@@ -618,7 +651,10 @@ def _payload(data, segments, lots):
     )
 
 
-def test_version_1_plan_with_the_whole_cycle_is_rebuilt_not_rejected(tmp_path):
+def test_version_1_plan_with_the_whole_cycle_stays_activatable(tmp_path):
+    """Was (version 2): a legacy plan refused on activation («peças gémeas»).
+    Under the current contract (version 3, 13/10/2026) a twin cycle is
+    released whole at ``R_ciclo``, as version 1 did: the plan stays valid."""
     data = _legacy_scenario()
     lots = create_lots(data, CONFIG, quantity_material=1)
     twin = next(lot for lot in lots if lot.is_twin)
@@ -633,14 +669,12 @@ def test_version_1_plan_with_the_whole_cycle_is_rebuilt_not_rejected(tmp_path):
                 setup_min=30.0, edd=solo.edd, sku="S", lot_qty=600,
                 output_milestones=solo.output_milestones),
     ]
-    # Readable under its recorded model ...
     assert not source_contract_violations(segments, lots, data, CONFIG)
-    # ... but its twin pieces for later deliveries break the current windows.
-    assert legacy_material_plan(lots, data, CONFIG)
-    with pytest.raises(LegacyMaterialPlanError) as caught:
-        _assert_activatable_payload(_payload(data, segments, lots))
-    # Version 1 already released single parts per delivery: only twins changed.
-    assert "peças gémeas" in str(caught.value)
+    assert not source_contract_violations(
+        segments, lots, data, CONFIG, require_current_material=True,
+    )
+    assert not legacy_material_plan(lots, data, CONFIG)
+    _assert_activatable_payload(_payload(data, segments, lots))
 
     rebuilt = schedule_all(data, config=CONFIG)
     assert not legacy_material_plan(rebuilt.lots, data, CONFIG)
@@ -659,3 +693,158 @@ def test_version_1_plan_without_twin_carry_forward_is_not_legacy():
     data = _data({14: 3000}, {15: 3000})
     lots = create_lots(data, CONFIG, quantity_material=1)
     assert not legacy_material_plan(copy.deepcopy(lots), data, CONFIG)
+
+
+# ── material version 3 (13/10/2026): the whole cycle at R_ciclo ──────────
+
+
+def _delivery_releases(lot, op_id):
+    return [o["delivery_material_release_day"] for o in lot.output_milestones
+            if o["op_id"] == op_id]
+
+
+def test_current_contract_every_output_takes_the_cycle_release():
+    """Was: only the pair took R_ciclo; A day 28 and B day 30 (and their
+    surplus) kept R 21 and 23. Now every output of the cycle carries
+    R_ciclo = 7; each delivery's own R stays only for traceability."""
+
+    (lot,) = create_lots(_carry_forward(), CONFIG)
+    assert _outputs(lot, A_ID) == [
+        (14, 1000, 7, 7, False), (28, 1500, 7, None, False), (28, 500, 7, None, True),
+    ]
+    assert _outputs(lot, B_ID) == [
+        (15, 2500, 7, 7, False), (30, 400, 7, None, False), (30, 100, 7, None, True),
+    ]
+    assert _delivery_releases(lot, A_ID) == [7, 21, 21]
+    assert _delivery_releases(lot, B_ID) == [8, 23, 23]
+    assert {o["quantity_material_version"] for o in lot.output_milestones} == {3}
+    assert lot.material_release_day == 7
+
+
+def test_current_contract_releases_the_whole_cycle_at_once():
+    """Was: 2500 cycles on day 7, the other 500 on day 21 (two portions).
+    Now all 3000 on day 7, one portion; every current lot goes to the
+    quantity builder (a cycle released at once too, which used not to)."""
+
+    (lot,) = create_lots(_carry_forward(), CONFIG)
+    assert [released_quantity(lot, day) for day in (6, 7, 21)] == [0, 3000, 3000]
+    assert [(p.qty, p.material_release_day) for p in material_portions(lot)] == [(3000, 7)]
+    assert has_quantity_releases([lot])
+    (once,) = create_lots(_data({14: 1000}, {15: 2500}), CONFIG)
+    assert [(p.qty, p.material_release_day) for p in material_portions(once)] == [(3000, 7)]
+    assert has_quantity_releases([once])
+
+
+def test_current_contract_makes_the_cycle_in_one_production():
+    """Was: 2500 cycles from day 7, the rest from day 21 (two setups). Now
+    one production of 3000 cycles from day 7; nothing before R_ciclo."""
+
+    data = _carry_forward()
+    result = schedule_all(data, config=CONFIG)
+    (lot,) = result.lots
+    segments = [s for s in result.segments if s.lot_id == lot.id]
+    assert sum(s.qty for s in segments) == 3000
+    assert min(s.day_idx for s in segments) == 7
+    assert sum(1 for s in segments if s.setup_min > 0) == 1
+    assert len({s.run_id for s in segments}) == 1
+    assert oracle_window_violations(result.segments, result.lots, data) == []
+    assert not source_contract_violations(result.segments, result.lots, data, CONFIG,
+                                          require_current_material=True)
+
+
+def test_current_contract_oracle_allows_the_whole_cycle_at_r_ciclo_only():
+    """Was: the whole cycle on day 7 was flagged (2500 allowed). Now it is
+    legal; one day earlier it is flagged, by the oracle and the contract."""
+
+    data = _carry_forward()
+    (lot,) = create_lots(data, CONFIG)
+    on_time = [_segment(lot, 7, 420, 570, 3000, setup=30)]
+    assert oracle_window_violations(on_time, [lot], data) == []
+    assert source_contract_violations(on_time, [lot], data, CONFIG) == []
+    early = [_segment(lot, 6, 420, 570, 3000, setup=30)]
+    assert [(v.day, v.produced, v.allowed)
+            for v in oracle_window_violations(early, [lot], data)] == [(6, 3000, 0)]
+    assert [item["field"] for item in source_contract_violations(early, [lot], data, CONFIG)] \
+        == ["material_quantity"]
+
+
+def test_current_contract_surplus_of_the_paired_side_takes_the_cycle_release():
+    """Was: B's 11400 surplus waited for B's own R (8) while the cycle R was
+    3. Now the surplus is part of the economic lot: all 12000 on day 3."""
+
+    data = _surplus_on_the_paired_side()
+    (lot,) = create_lots(data, CONFIG)
+    assert _outputs(lot, B_ID) == [(15, 600, 3, 3, False), (15, 11400, 3, None, True)]
+    assert [released_quantity(lot, day) for day in (2, 3, 8)] == [0, 12000, 12000]
+    assert oracle_window_violations([_segment(lot, 3, 420, 930, 12000, setup=30)], [lot], data) \
+        == []
+    assert [(v.day, v.allowed) for v in oracle_window_violations(
+        [_segment(lot, 2, 420, 930, 12000, setup=30)], [lot], data)] == [(2, 0)]
+    result = schedule_all(data, config=CONFIG)
+    assert oracle_window_violations(result.segments, result.lots, data) == []
+
+
+@pytest.mark.parametrize("forge", _FORGES)
+def test_current_contract_relabelling_never_hides_a_cycle_before_r_ciclo(forge):
+    """The oracle still rebuilds coverage from the ISOP demand, never from
+    the lot's labels: the whole cycle one day before R_ciclo is flagged the
+    same, whatever the outputs claim (including rewritten release days)."""
+
+    data = _carry_forward()
+    (lot,) = create_lots(data, CONFIG)
+    early = [_segment(lot, 6, 420, 570, 3000, setup=30)]
+    honest = [(v.day, v.produced, v.allowed)
+              for v in oracle_window_violations(early, [lot], data)]
+    assert honest == [(6, 3000, 0)]
+    assert [(v.day, v.produced, v.allowed)
+            for v in oracle_window_violations(early, [forge(lot)], data)] == honest
+
+
+def test_current_contract_co_produced_stock_follows_the_first_delivery():
+    """Was: the cycle followed A's three deliveries (R 3, 17, 23). Now the
+    whole lot is released with A's first delivery (R 3) and made at once;
+    B's co-produced pieces still never drive the release."""
+
+    from backend.scheduler.alternative_repair import _resolve_runs
+
+    data = _data({10: 1000, 24: 1000, 30: 500}, {})
+    (lot,) = create_lots(data, CONFIG)
+    assert [released_quantity(lot, day) for day in (2, 3, 23)] == [0, 3000, 3000]
+    assert [(p.qty, p.material_release_day) for p in material_portions(lot)] == [(3000, 3)]
+    # A tranche moved by the alternative repair keeps the lot release.
+    segments = [
+        _segment(lot, 3, 420, 490, 1000, setup=30, run="R0"),
+        _segment(lot, 17, 420, 490, 1000, setup=30, run="R1"),
+        _segment(lot, 23, 420, 490, 1000, setup=30, run="R2"),
+    ]
+    runs = _resolve_runs(segments, [lot], None)
+    assert [runs[run].lots[0].material_release_day for run in ("R0", "R1", "R2")] == [3, 3, 3]
+    result = schedule_all(data, config=CONFIG)
+    assert [(s.day_idx, s.qty) for s in result.segments if s.qty] == [(3, 3000)]
+    assert sum(1 for s in result.segments if s.setup_min > 0) == 1
+
+
+@pytest.mark.parametrize(("name", "lot_id", "curve"), [
+    ("rev121", "LOT_TWIN_BFP083_66", [(56, 10880)]),
+    ("rev90", "LOT_TWIN_BFP162_68", [(61, 4800)]),
+])
+def test_current_contract_real_twin_cycles_are_released_whole(name, lot_id, curve):
+    """Was: [(56, 2066), (63, 10880)] and [(61, 669), (64, 1149), (70, 4800)].
+    Now each real cycle is released whole at its R_ciclo, never more than
+    the oracle's curve, and every twin lot is one production."""
+
+    data, config = _fixture(name)
+    lots = create_lots(data, config)
+    lot = next(lot for lot in lots if lot.id == lot_id)
+    assert _curve(lot, data.n_days) == curve
+    calendar = WorkCalendar(data)
+    for twin in (lot for lot in lots if lot.is_twin):
+        releases = oracle_lot_releases(twin, data, calendar, lots)
+        assert released_quantity(twin, twin.material_release_day) == twin.qty
+        lot_release = min(release for _side, _qty, release in releases)
+        assert twin.material_release_day == lot_release, twin.id
+    result = schedule_all(copy.deepcopy(data), config=config)
+    assert oracle_window_violations(result.segments, result.lots, data) == []
+    for twin in (lot for lot in result.lots if lot.is_twin):
+        setups = [s for s in result.segments if s.lot_id == twin.id and s.setup_min > 0]
+        assert len(setups) <= 1, twin.id

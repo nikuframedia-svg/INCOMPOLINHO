@@ -966,13 +966,13 @@ def _resolve_runs(
             quantity = sum(s.qty for s in physical)
             if quantity <= 0 or quantity >= lot.qty:
                 continue
-            from backend.scheduler.material_quantities import (
-                lot_material_version,
-                twin_per_delivery,
-            )
+            from backend.scheduler.material_quantities import lot_material_version
 
-            if not lot_material_version(lot) or (lot.is_twin and not twin_per_delivery(lot)):
-                continue  # legacy lot or twin cycle released whole
+            version = lot_material_version(lot)
+            if not version or (lot.is_twin and version < 2):
+                continue  # legacy lot or twin cycle of version 1
+            # Version 3 (AGENTS §2): every output carries the lot ``R``, so a
+            # tranche keeps the lot's release, never the R of its deliveries.
             from backend.scheduler.lot_sizing import _aggregate_milestones
 
             first = min((s.day_idx, s.start_min) for s in physical)

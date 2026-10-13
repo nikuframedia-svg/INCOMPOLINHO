@@ -8,6 +8,11 @@ that run back to back share one run, and no segment is empty.
 
 Calendar: day 0 = Wednesday 07/10/2026, weekends are holidays, so a delivery
 on day 13 releases material on day 6 and one on day 14 on day 7.
+
+Since 13/10/2026 (material version 3, AGENTS §2) a current lot is one
+portion and one production; the per-portion cases run under version 2
+(plans saved before, ``per_delivery_contract``) and the end of the file
+asserts the same cases under the current contract.
 """
 
 from __future__ import annotations
@@ -38,6 +43,23 @@ from backend.types import EngineData, EOp, MachineInfo
 
 N_DAYS = 35
 DAY = 1440
+
+
+def _pin_contract(monkeypatch, version):
+    monkeypatch.setattr("backend.scheduler.lot_sizing.QUANTITY_MATERIAL_VERSION", version)
+    monkeypatch.setattr("backend.scheduler.canonical.QUANTITY_MATERIAL_VERSION", version)
+
+
+@pytest.fixture
+def per_delivery_contract(monkeypatch):
+    """Pin the per-delivery contract (material version 2, 08/10-13/10/2026).
+
+    Since version 3 an economic lot is one portion and one production
+    (AGENTS §2); the builder still plans the portions of lots saved under
+    versions 1-2, which the cases marked with this fixture exercise. The
+    same cases under the current contract are at the end of this file.
+    """
+    _pin_contract(monkeypatch, 2)
 
 
 def _op(op_id, tool, demand_by_day, *, eco_lot=0, machine="M1", alt=None, sh=1.0, ph=60):
@@ -87,6 +109,7 @@ def _assert_clean(result, data, config):
 # ── material portions ────────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_portions_group_equal_releases_and_close_with_the_surplus():
     # Days 13 and 14 release on days 6 and 7; Saturday 17 and Monday 19 both
     # on day 12. The eco-lot surplus closes the last portion.
@@ -99,6 +122,7 @@ def test_portions_group_equal_releases_and_close_with_the_surplus():
     assert [len(p.outputs) for p in portions] == [1, 1, 3]
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_portion_uses_its_own_delivery_window():
     data = _data([_op("A", "TA", {13: 100, 20: 50}, eco_lot=150)])
     (lot,) = create_lots(data)
@@ -114,6 +138,7 @@ def test_portion_uses_its_own_delivery_window():
 # ── rule 2: the 60-minute veto ───────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 @pytest.mark.parametrize(("tail", "continues"), [(59, True), (60, False)])
 def test_mounted_tool_continues_only_while_the_urgent_lot_loses_under_60_min(tail, continues):
     """A0 (1000 pcs, released day 6) runs into day 7, when A1 (``tail`` pcs,
@@ -171,6 +196,7 @@ def _retention_case(setup_hours):
     return builder, blocked, retained
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_retained_tool_yields_when_the_inserted_lot_gains_more_than_the_dependent_loses():
     """Rule 2 weighed both ways: A1 loses exactly 60 min (its new setup), X
     gains days. X waiting would lose far more than 60 min, so it passes."""
@@ -183,6 +209,7 @@ def test_retained_tool_yields_when_the_inserted_lot_gains_more_than_the_dependen
     assert blocked.start - x.start > 60
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_retained_tool_yields_to_a_gain_of_60_min_when_the_dependent_loses_less():
     builder, blocked, retained = _retention_case(setup_hours=0.5)
     assert builder.break_retention(blocked)
@@ -248,6 +275,7 @@ def test_retention_break_weighs_rule_2_by_urgency(own, others, accepted):
     assert _break_accepted(own, others) is accepted
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_retention_break_never_makes_an_unplaced_portion_of_the_tail_later(monkeypatch):
     """Deliveries first: the tail moved by the break ends up later; if a
     portion of that lot not placed yet would get a delivery later, the break
@@ -273,6 +301,7 @@ def test_retention_break_never_makes_an_unplaced_portion_of_the_tail_later(monke
 # ── same lot in one run ──────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_back_to_back_portions_of_a_lot_share_one_run_and_keep_their_boundaries():
     data = _data([_op("A", "TA", {13: 600, 14: 600, 15: 600}, eco_lot=1800)])
     config = _config()
@@ -294,6 +323,7 @@ def test_back_to_back_portions_of_a_lot_share_one_run_and_keep_their_boundaries(
 # ── rule 3: machine chosen for the whole lot ─────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_machine_choice_looks_at_every_portion_and_moves_the_whole_lot():
     """The first portion is equally early on M1 and M2, but M1 is down when
     the second portion is released: the lot goes to M2, both portions."""
@@ -337,7 +367,9 @@ def test_every_productive_chunk_carries_pieces():
     assert all(s.end_min > s.start_min for s in segments)
 
 
-def test_small_releases_never_create_empty_segments():
+@pytest.mark.parametrize("version", [2, 3])
+def test_small_releases_never_create_empty_segments(version, monkeypatch):
+    _pin_contract(monkeypatch, version)
     data = _data([
         _op("A", "TA", {13: 7, 14: 3, 15: 1, 16: 2}, eco_lot=40, ph=7),
         _op("B", "TB", {14: 11, 15: 5}, eco_lot=30, ph=13),
@@ -406,10 +438,13 @@ def _avoidable_remounts(segments, lots):
     return avoidable
 
 
-def test_no_avoidable_remount_in_a_mixed_campaign():
+@pytest.mark.parametrize("version", [2, 3])
+def test_no_avoidable_remount_in_a_mixed_campaign(version, monkeypatch):
     """Two tools sharing a machine, each lot with several releases: short
-    released portions continue the mounting instead of being mounted again."""
+    released portions continue the mounting instead of being mounted again
+    (version 2); under the current contract each lot is one production."""
 
+    _pin_contract(monkeypatch, version)
     data = _data([
         _op("A", "TA", {13: 900, 14: 40, 15: 30, 16: 300}, eco_lot=1270),
         _op("B", "TB", {14: 500, 15: 20, 16: 400}, eco_lot=920),
@@ -426,6 +461,7 @@ def test_no_avoidable_remount_in_a_mixed_campaign():
             assert produced <= released_quantity(lot, day)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_checker_detects_a_remount_the_builder_avoids():
     """The independent checker is not vacuous: a setup on a released
     continuation of the mounted tool counts as avoidable."""
@@ -448,6 +484,7 @@ def test_checker_detects_a_remount_the_builder_avoids():
 # ── rule 2 over a chain of continuations ─────────────────────────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_chained_continuations_never_add_up_past_the_tolerance():
     """A (3500 pcs) is followed by three small released portions of 40 pcs;
     B is more urgent than all three. Each continuation alone delays B by
@@ -500,6 +537,7 @@ def test_machine_choice_puts_deliveries_before_anticipation_and_setups():
     assert _machine_better(_option("M2", [(0, 100)], [0]), _option("M1", [(600, 700)], [0]), "M1")
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_a_continuation_is_vetoed_when_a_more_urgent_delivery_gets_later():
     """Inside the 60-min tolerance, a continuation still may not make a more
     urgent delivery late, or later (AGENTS §1.2 before rule 2)."""
@@ -524,6 +562,7 @@ def test_a_continuation_is_vetoed_when_a_more_urgent_delivery_gets_later():
     assert builder.loses(b, tail, chain)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_part_of_a_delivery_ranks_with_the_quantity_of_that_delivery():
     """Lot A_9 carries 100 of the 1000 pieces due on day 20 (the rest is in
     lot A_20). Ranked by its share it would wait behind C (950 due the same
@@ -540,6 +579,7 @@ def test_part_of_a_delivery_ranks_with_the_quantity_of_that_delivery():
     assert lot_priority_key(share.lot) > lot_priority_key(other.lot)
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_portion_ranks_only_with_deliveries_due_on_its_own_due_day():
     """The second portion of lot A_13 holds 30 pieces due on Saturday 17
     (production due Friday 16) and 900 of the 2000 due on Monday 19: both
@@ -558,6 +598,7 @@ def test_portion_ranks_only_with_deliveries_due_on_its_own_due_day():
 # ── fallback: a builder defect never fails the recalculation ─────────────
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_builder_failure_falls_back_to_one_run_per_portion(monkeypatch):
     import backend.scheduler.quantity_dispatch as quantity_dispatch
 
@@ -611,6 +652,7 @@ def test_twin_chunks_with_minutes_carry_pieces_on_every_side():
         assert [s.twin_outputs[side][2] for s in segments] == [1, 1, 1]
 
 
+@pytest.mark.usefixtures("per_delivery_contract")
 def test_a_smaller_delivery_due_the_same_day_goes_first_when_it_costs_no_delivery(monkeypatch):
     """P (6500 pcs) ranks first by quantity among the deliveries due on day 13
     but is one day late whatever happens. Q and A, placed after it, would
@@ -641,3 +683,226 @@ def test_a_smaller_delivery_due_the_same_day_goes_first_when_it_costs_no_deliver
     plain = schedule_all(_data(ops), config=config)
     assert end_day(plain, "TQ") > 13
     assert end_day(plain, "TP") == 14
+
+
+# ── material version 3 (13/10/2026): the same cases, one production per lot ──
+#
+# Since 13/10 an economic lot is one production (AGENTS §2): its whole
+# material is released with its first delivery and it is mounted once. The
+# per-portion rules above (tolerance, retention, portion ranking) then have
+# nothing to split; these cases assert what replaces them.
+
+
+def _ready(result, data):
+    """Ready day of every delivery, ``(op, customer day) -> day``."""
+
+    from backend.scheduler.material_quantities import delivery_portions
+
+    return {
+        (portion.op_id, portion.customer_delivery_day): portion.customer_ready_day
+        for portion in delivery_portions(result.lots, result.segments, data)
+        if portion.is_demand
+    }
+
+
+def _late(result, data):
+    return {key: day for key, day in _ready(result, data).items() if day > key[1]}
+
+
+def _assert_one_production_per_lot(result):
+    by_machine = defaultdict(list)
+    for segment in result.segments:
+        by_machine[segment.machine_id].append(segment)
+    for lot in result.lots:
+        own = sorted((s for s in result.segments if s.lot_id == lot.id), key=_abs)
+        assert sum(s.qty for s in own) == lot.qty
+        assert len({s.run_id for s in own}) == 1, lot.id
+        setups = sum(1 for s in own if s.setup_min > 0)
+        if setups == 0:  # the tool is still mounted by the previous lot
+            machine = sorted(by_machine[own[0].machine_id], key=_abs)
+            assert machine[machine.index(own[0]) - 1].tool_id == own[0].tool_id, lot.id
+        else:
+            assert setups == 1 and own[0].setup_min > 0, lot.id
+        assert [(p.qty, p.material_release_day) for p in material_portions(lot)] == [
+            (lot.qty, lot.material_release_day)
+        ]
+        assert min(s.day_idx for s in own) >= lot.material_release_day
+        first, last = _abs(own[0]), _abs(own[-1], end=True)
+        assert not any(
+            s.lot_id != lot.id and first < _abs(s) < last
+            for s in by_machine[own[0].machine_id]
+        ), f"{lot.id} split by another lot"
+
+
+V3_CASES = {
+    "tail_59": lambda: [
+        _op("A", "TA", {13: 1000, 14: 59}, eco_lot=1059), _op("B", "TB", {13: 100}),
+    ],
+    "tail_60": lambda: [
+        _op("A", "TA", {13: 1000, 14: 60}, eco_lot=1060), _op("B", "TB", {13: 100}),
+    ],
+    "retention_60": lambda: [
+        _op("A", "TA", {13: 300, 16: 300}, eco_lot=600, sh=1.0), _op("X", "TX", {14: 200}, sh=1.0),
+    ],
+    "retention_30": lambda: [
+        _op("A", "TA", {13: 300, 16: 300}, eco_lot=600, sh=0.5), _op("X", "TX", {14: 200}, sh=0.5),
+    ],
+    "back_to_back": lambda: [_op("A", "TA", {13: 600, 14: 600, 15: 600}, eco_lot=1800)],
+    "mixed_campaign": lambda: [
+        _op("A", "TA", {13: 900, 14: 40, 15: 30, 16: 300}, eco_lot=1270),
+        _op("B", "TB", {14: 500, 15: 20, 16: 400}, eco_lot=920),
+        _op("C", "TC", {14: 200, 20: 150}, eco_lot=350),
+    ],
+    "chain": lambda: [
+        _op("A", "TA", {13: 3500, 14: 40, 15: 40, 16: 40}, eco_lot=3620),
+        _op("B", "TB", {13: 100}),
+    ],
+    "share_of_a_delivery": lambda: [
+        _op("A", "TA", {9: 500, 20: 1000}, eco_lot=600), _op("C", "TC", {20: 950}),
+    ],
+    "small_releases": lambda: [
+        _op("A", "TA", {13: 7, 14: 3, 15: 1, 16: 2}, eco_lot=40, ph=7),
+        _op("B", "TB", {14: 11, 15: 5}, eco_lot=30, ph=13),
+    ],
+}
+
+
+@pytest.mark.parametrize("case", sorted(V3_CASES))
+def test_current_contract_each_economic_lot_is_one_production(case):
+    """Was: portions of one lot ran as separate productions whenever rule 2
+    let another lot in between. Now every lot of every case is mounted
+    once, from its first delivery's release, never split by another lot,
+    and no delivery is late (capacity allows it in all these cases)."""
+
+    data = _data(V3_CASES[case]())
+    config = _config()
+    result = schedule_all(data, config=config)
+    _assert_clean(result, data, config)
+    _assert_one_production_per_lot(result)
+    assert _late(result, data) == {}
+
+
+@pytest.mark.parametrize("tail", [59, 60])
+def test_current_contract_keeps_the_tail_in_the_one_production(tail):
+    """Was (version 2): with a tail of 60 min B went first and A's tail was
+    mounted again (2 setups). Now the tail belongs to the lot's one
+    production: B waits for it, whatever its length, and is still on time."""
+
+    data = _data(V3_CASES[f"tail_{tail}"]())
+    result = schedule_all(data, config=_config())
+    assert _setups(result.segments, "TA") == 1
+    a_end = max(_abs(s, end=True) for s in result.segments if s.tool_id == "TA")
+    b_start = min(
+        _abs(s) + s.setup_min for s in result.segments if s.tool_id == "TB" and s.prod_min > 0
+    )
+    assert b_start == a_end + 60
+    assert _ready(result, data)[("B", 13)] <= 13
+
+
+def test_current_contract_produces_the_whole_lot_before_the_inserted_one():
+    """Was (version 2): A's second delivery waited for its own release (day
+    9) and X went in between (two setups of TA). Now the whole lot runs on
+    day 6, from its first release; X follows on day 7 when its material
+    arrives, on time."""
+
+    data = _data(V3_CASES["retention_60"]())
+    result = schedule_all(data, config=_config())
+    assert {s.day_idx for s in result.segments if s.tool_id == "TA"} == {6}
+    assert min(s.day_idx for s in result.segments if s.tool_id == "TX") == 7
+    assert _ready(result, data) == {("A", 13): 6, ("A", 16): 6, ("X", 14): 7}
+
+
+def test_current_contract_has_one_portion_released_with_the_first_delivery():
+    """Was: (100, 6), (50, 7), (350, 12) and the second portion of lot
+    {13: 100, 20: 50} had its own window (day 13). Now one portion of the
+    whole lot at the first delivery's release, and the portion is the lot."""
+
+    data = _data([_op("A", "TA", {13: 100, 14: 50, 17: 30, 19: 20}, eco_lot=500)])
+    (lot,) = create_lots(data)
+    assert [(p.qty, p.material_release_day, len(p.outputs)) for p in material_portions(lot)] == [
+        (500, 6, 5)
+    ]
+    data = _data([_op("A", "TA", {13: 100, 20: 50}, eco_lot=150)])
+    (lot,) = create_lots(data)
+    (whole,) = material_portions(lot)
+    trial = _portion_lot(lot, whole.qty, whole.outputs, single=True)
+    assert (trial.qty, trial.material_release_day, trial.production_due_day) == (150, 6, 13)
+
+
+def test_current_contract_ranks_the_lot_with_its_first_delivery():
+    """Was: a portion ranked with the delivery it served (A_9's 100 pieces
+    for day 20, the 930 of lot A_13 due on day 16). Now the lot is one
+    portion and ranks with its first delivery."""
+
+    data = _data([_op("A", "TA", {9: 500, 20: 1000}, eco_lot=600), _op("C", "TC", {20: 950})])
+    builder = _CampaignBuilder(create_lots(data), data, _config())
+    (whole,) = builder.portions["LOT_TA_M1_A_9"]
+    (other,) = builder.portions["LOT_TC_M1_C_20"]
+    assert (whole.lot.qty, whole.key[0]) == (600, 9)
+    assert whole.key < other.key
+    data = _data([_op("A", "TA", {13: 100, 17: 30, 19: 2000}, eco_lot=1030)])
+    builder = _CampaignBuilder(create_lots(data), data, _config())
+    (whole,) = builder.portions["LOT_TA_M1_A_13"]
+    assert (whole.lot.qty, whole.lot.material_release_day, whole.key[0]) == (1030, 6, 13)
+
+
+def test_current_contract_machine_choice_keeps_the_lot_before_the_block():
+    """Was (version 2): M1 was down when the second portion was released,
+    so the whole lot moved to M2. Now the lot is released whole on day 6
+    and runs at once on its primary machine, before the block."""
+
+    data = _data(
+        [_op("A", "TA", {13: 300, 16: 300}, eco_lot=600, alt="M2")], machines=("M1", "M2"),
+    )
+    data.machine_blocked_days = {"M1": set(range(9, 16))}
+    config = _config(("M1", "M2"))
+    result = schedule_all(data, config=config)
+    _assert_clean(result, data, config)
+    _assert_one_production_per_lot(result)
+    assert {(s.machine_id, s.day_idx) for s in result.segments} == {("M1", 6)}
+
+
+def test_current_contract_builder_failure_falls_back_to_one_run_per_lot(monkeypatch):
+    """Was (version 2): one run per portion. Now the fallback still mounts
+    each lot once."""
+
+    import backend.scheduler.quantity_dispatch as quantity_dispatch
+
+    def broken(self, head):
+        raise ValueError("defeito simulado")
+
+    monkeypatch.setattr(quantity_dispatch._CampaignBuilder, "continue_campaign", broken)
+    data = _data(V3_CASES["tail_59"]())
+    config = _config()
+    result = schedule_all(data, config=config)
+    _assert_clean(result, data, config)
+    assert {s.run_id for s in result.segments} == {
+        "quantity:LOT_TA_M1_A_13:0", "quantity:LOT_TB_M1_B_13:0",
+    }
+    assert result.warnings[0] == quantity_dispatch.FALLBACK_WARNING
+
+
+def test_current_contract_a_lot_that_cannot_split_waits_rather_than_delay_more():
+    """Capacity-bound case (P is late whatever happens). Was (version 2):
+    A's first delivery (300 pieces) went before P as its own production and
+    only P was one day late. Now A is one production of 600 (660 min):
+    placed before P it would make P two days late, so the whole lot waits
+    after P and A's first delivery is one day late. The rule of 13/10
+    costs a delivery here; deliveries first still decides where the whole
+    lot goes (AGENTS §1.2), and Q still goes first at no cost."""
+
+    data = _data([
+        _op("P", "TP", {13: 6500}),
+        _op("Q", "TQ", {13: 100}),
+        _op("A", "TA", {13: 300, 20: 300}, eco_lot=600),
+    ])
+    config = _config()
+    result = schedule_all(data, config=config)
+    _assert_clean(result, data, config)
+    _assert_one_production_per_lot(result)
+    assert _ready(result, data) == {("P", 13): 14, ("Q", 13): 6, ("A", 13): 14, ("A", 20): 15}
+    # The alternative (the whole lot A before P) is two days for P.
+    a_first = [s for s in result.segments if s.tool_id != "TA"]
+    p_end = max(_abs(s, end=True) for s in a_first if s.tool_id == "TP")
+    a_minutes = sum(s.end_min - s.start_min for s in result.segments if s.tool_id == "TA")
+    assert (p_end + a_minutes) // DAY > 14

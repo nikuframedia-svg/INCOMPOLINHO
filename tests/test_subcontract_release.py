@@ -328,7 +328,9 @@ def test_normal_twin_uses_urgent_outputs_shared_material_release() -> None:
     lot = create_lots(data, config)[0]
     milestones = {item["sku"]: item for item in lot.output_milestones or []}
 
-    assert milestones["LATER"]["material_release_day"] == 3
+    # Each delivery keeps its own R; the whole cycle is released at R_ciclo.
+    assert milestones["LATER"]["delivery_material_release_day"] == 3
+    assert milestones["LATER"]["material_release_day"] == 0
     assert milestones["LATER"]["production_due_day"] == 10
     assert milestones["URGENT"]["material_release_day"] == 0
     assert milestones["URGENT"]["production_due_day"] == 7
@@ -359,7 +361,8 @@ def test_mixed_twin_uses_earliest_shared_material_release() -> None:
     milestones = {item["sku"]: item for item in lot.output_milestones or []}
     assert milestones["SUB"]["material_release_day"] == 0
     assert milestones["SUB"]["production_due_day"] == 7
-    assert milestones["NORMAL"]["material_release_day"] == 7
+    assert milestones["NORMAL"]["delivery_material_release_day"] == 7
+    assert milestones["NORMAL"]["material_release_day"] == 0
     assert milestones["NORMAL"]["production_due_day"] == 14
     assert lot.material_reference_kind == "mixed"
     assert lot.material_reference_day == 7

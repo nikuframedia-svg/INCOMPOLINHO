@@ -834,6 +834,9 @@ def _protected_plan(
         return ProtectedPlan()
     now = calculation_now(config, now)
     now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
+    # A per-delivery plan (versions 1-2) is protected as version 3: its
+    # started lots are frozen only where they started.
+    baseline_result = with_current_material(baseline_result, engine_data)
     segments = list(baseline_result.segments)
     lots_by_id = {lot.id: lot for lot in baseline_result.lots}
     anchored = _honoured_anchor_lot_ids(baseline_result, engine_data, config)
@@ -947,6 +950,27 @@ def _protected_plan(
         ],
         now_label=boundary_label(freeze_day, now_min, engine_data),
     )
+
+
+def with_current_material(baseline_result, engine_data):
+    """The baseline with the lots of a per-delivery plan under material version 3.
+
+    A plan saved under versions 1-2 stays valid (``legacy_material_plan``);
+    a replan, repair or manual move takes its lots over as version 3
+    (``lot_sizing.upgrade_plan_material``), so the started ones are frozen
+    only where they started (rule 4) and the plan never mixes versions.
+    Returns ``baseline_result`` itself when nothing changes.
+    """
+    from backend.scheduler.lot_sizing import upgrade_plan_material
+
+    if baseline_result is None or engine_data is None:
+        return baseline_result
+    lots = upgrade_plan_material(list(baseline_result.lots), engine_data)
+    if all(new is old for new, old in zip(lots, baseline_result.lots, strict=True)):
+        return baseline_result
+    upgraded = copy.copy(baseline_result)
+    upgraded.lots = lots
+    return upgraded
 
 
 def _current_delivery_dates(lot, engine_data):
@@ -1375,7 +1399,7 @@ def _compact_preserving_started_lots(
     engine_data, baseline_result, freeze_day, now = _recalculation_context(
         engine_data, config, baseline_result, recalculate_from_start, now,
     )
-    result = copy.deepcopy(baseline_result)
+    result = copy.deepcopy(with_current_material(baseline_result, engine_data))
     # Every validation of this plan reads its history boundary (rule 4).
     result.history_boundary = planning_boundary(
         freeze_day, elapsed_on_planning_day(freeze_day, engine_data, config, now),
@@ -1603,6 +1627,7 @@ def repair_preserving_protected_lots(
     """
     now = calculation_now(config, now)
     now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
+    baseline_result = with_current_material(baseline_result, engine_data)
     protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
     repaired = copy.deepcopy(baseline_result)
     if not protected and not now_min:
@@ -1701,6 +1726,7 @@ def optimize_preserving_started_lots(
         engine_data, baseline_result, freeze_day, now = _recalculation_context(
             engine_data, config, baseline_result, recalculate_from_start, now,
         )
+        baseline_result = with_current_material(baseline_result, engine_data)
         protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
         segments, lots, partial = protected.segments, protected.lots, protected.partial
         original_data = copy.deepcopy(engine_data)

@@ -203,7 +203,12 @@ def _milestone(lot: Lot, position: int) -> dict:
 
 
 def _output_floor(lot: Lot, output: dict, holidays: set[int]) -> int:
-    """Earliest productive start of one delivery: its own material release."""
+    """Earliest productive start of one delivery: the release of its material.
+
+    Material version 3 records the lot ``R`` on every output (the whole
+    economic lot is released with its first delivery); versions 1-2 recorded
+    each delivery's own ``R``.
+    """
 
     try:
         return output_release_day(output)

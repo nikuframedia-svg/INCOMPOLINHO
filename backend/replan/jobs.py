@@ -167,12 +167,13 @@ LEGACY_MATERIAL_PREFIXES = (
 def _without_stale_legacy_warnings(warnings, lots, current: list[str]) -> list[str]:
     """Drop a carried-over "recalculado de raiz" note from a current plan.
 
-    ``current``: the notes this calculation wrote, always kept.
+    ``current``: the notes this calculation wrote, always kept. Since
+    material version 3 no plan needs a rebuild (``legacy_material_plan``),
+    so a carried-over note is always stale.
     """
-    from backend.scheduler.canonical import quantity_material_version
-    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
+    from backend.scheduler.canonical import legacy_material_plan
 
-    if quantity_material_version(lots) < QUANTITY_MATERIAL_VERSION:
+    if legacy_material_plan(lots, None, None):
         return list(warnings)
     return [
         warning for warning in warnings

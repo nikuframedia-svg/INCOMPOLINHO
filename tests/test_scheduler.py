@@ -1982,6 +1982,7 @@ class TestScheduleAll:
         prod_segs = [s for s in result.segments if s.qty > 0]
         assert len(prod_segs) >= 1
 
+    @pytest.mark.usefixtures("legacy_engine")
     def test_campaign_reduces_setups_fix3(self):
         """Repeated lots of one reference share an adjustment campaign."""
         ops = [

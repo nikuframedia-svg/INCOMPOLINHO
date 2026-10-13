@@ -128,9 +128,11 @@ def test_source_contract_identical_with_cache_on_and_off(name):
     # is, must not depend on the cache.
     _violations_both_ways(segments, lots, data, config)
     _violations_both_ways(segments, lots, data, config, require_current_material=True)
-    # Too much production before the material of later deliveries is
-    # released: the verdict and its details are the same with the cache.
-    early = [replace(segment, day_idx=0) for segment in segments]
+    # Production the day before the lot's material is released (the whole
+    # economic lot, AGENTS §2): the verdict and its details are the same
+    # with the cache.
+    release = {lot.id: int(lot.material_release_day or 0) for lot in lots}
+    early = [replace(segment, day_idx=release[segment.lot_id] - 1) for segment in segments]
     found = _violations_both_ways(early, lots, data, config)
     assert any(item["field"] == "material_quantity" for item in found)
     resized = [replace(lots[0], qty=lots[0].qty + 1), *lots[1:]]
@@ -167,17 +169,15 @@ def test_rev121_validation_identical_with_cache_on_and_off(rev121):
     view = result_validation_data(data, result)
     assert _violations_both_ways(result.segments, result.lots, view, config) == []
     # Revision 121 was saved under material version 1 (twin cycles released
-    # whole). Under the current contract (Fase B2) only its twin cycles break
-    # their per-delivery windows, so it is a legacy plan to rebuild.
+    # whole). The current contract (version 3, 13/10/2026) releases every
+    # economic lot whole at its first delivery's R: the plan obeys it.
     from backend.scheduler.canonical import legacy_material_plan
 
     current = _violations_both_ways(
         result.segments, result.lots, view, config, require_current_material=True,
     )
-    twins = {lot.id for lot in result.lots if lot.is_twin}
-    assert current and {item["field"] for item in current} == {"material_quantity"}
-    assert {item["lot_id"] for item in current} <= twins
-    assert legacy_material_plan(result.lots, view, config)
+    assert current == []
+    assert not legacy_material_plan(result.lots, view, config)
     off = validate_plan(result.segments, view, config, lots=result.lots)
     with planning_scope(timeout_s=120.0):
         on = validate_plan(result.segments, view, config, lots=result.lots)

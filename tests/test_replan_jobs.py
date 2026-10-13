@@ -1019,8 +1019,9 @@ def test_failed_job_text_is_portuguese_never_raw_exception(ready_replan, monkeyp
         assert "candidate not committed" not in text
 
 
-def test_legacy_material_baseline_is_rebuilt_not_reused(ready_replan, monkeypatch):
-    """A5: a plan without per-delivery material is recalculated, not kept unchanged."""
+def test_older_material_baseline_is_not_rebuilt_from_scratch(ready_replan, monkeypatch):
+    """A5 (13/10/2026): a plan without per-delivery material obeys material
+    version 3 (whole lot at its first release): no forced rebuild, no note."""
     from backend.replan import jobs
 
     live, manager, _, result, _ = ready_replan
@@ -1045,10 +1046,12 @@ def test_legacy_material_baseline_is_rebuilt_not_reused(ready_replan, monkeypatc
         baseline_snapshot=baseline, prefer_unchanged_baseline=True,
     )
     current = manager.store.get(job["id"])
-    assert rebuilt, "a legacy baseline must go through the constructor"
     assert current["status"] == "ready", current
-    assert current["result"]["selected_source"] == "optimized"
-    assert any("libertado por entrega; por isso foi recalculado de raiz" in w for w in current["warnings"])
+    # Was: forced through the constructor ("optimized") with a note that it
+    # was rebuilt from scratch. Now the unchanged baseline is kept.
+    assert current["result"]["selected_source"] == "unchanged_baseline_calendar_compatible"
+    assert rebuilt == []
+    assert not any("recalculado de raiz" in w for w in current["warnings"])
 
 
 def test_unchanged_replan_keeps_the_better_compacted_baseline(ready_replan, monkeypatch):
@@ -1286,8 +1289,9 @@ def test_stale_legacy_note_is_dropped_from_a_current_plan():
     assert _without_stale_legacy_warnings(warnings, [current], []) == [other]
     # The calculation that rebuilt it keeps its own note.
     assert _without_stale_legacy_warnings(warnings, [current], [note]) == [note, other]
-    # Still a legacy plan: the notes stay true.
-    assert _without_stale_legacy_warnings(warnings, [legacy], []) == warnings
+    # Since material version 3 no older plan needs a rebuild: the notes of
+    # an older plan are stale too.
+    assert _without_stale_legacy_warnings(warnings, [legacy], []) == [other]
 
 
 # ── Capacity released with late deliveries (13/10/2026, revision 127) ────

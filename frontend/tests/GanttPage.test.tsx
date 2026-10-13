@@ -143,6 +143,26 @@ describe("GanttPage", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(3);
     expect(within(table).getByText("Libertação de material")).toBeTruthy();
   });
+  it("explica que o lote económico é uma só produção, com o material da primeira entrega", async () => {
+    const view = renderGantt(undefined, undefined, [{
+      ...segment,
+      material_release_day: 0,
+      output_milestones: [3, 6].map((day) => ({
+        op_id: "OP", sku: "SKU1", qty: 5, is_subcontracted: false,
+        customer_delivery_day: day, production_due_day: day, internal_target_day: day,
+        material_reference_day: day, material_reference_kind: "customer_delivery" as const,
+        material_release_day: 0, delivery_material_release_day: day - 3, quantity_material_version: 3,
+      })),
+    }]);
+    fireEvent.click(view.container.querySelector('[title*="Segmento: 10"]')!);
+    expect(await screen.findByText("Libertação do material do lote")).toBeTruthy();
+    expect(screen.getByText(/é produzido de uma só vez, com um único setup: o material do lote inteiro é libertado com a primeira entrega\./)).toBeTruthy();
+    expect(screen.queryByText(/cada parte só é produzida/)).toBeNull();
+    const table = screen.getByRole("table", {name: "Datas por referência"});
+    const [first, later] = within(table).getAllByRole("row").slice(1);
+    expect(within(first).getByText("liberta o material do lote", { exact: false })).toBeTruthy();
+    expect(within(later).queryByText("liberta o material do lote", { exact: false })).toBeNull();
+  });
   it("mostra as entregas abastecidas pelo segmento sem herdar o prazo inicial", async () => {
     const view = renderGantt(undefined, undefined, [{
       ...segment, day_idx: 1, edd: 0,

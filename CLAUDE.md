@@ -76,7 +76,8 @@ Lote económico: HARD — arredonda sempre para cima ao eco lot.
 
 ## ═══ LOTE ECONÓMICO = UMA PRODUÇÃO (decisão do Luís, 13/10/2026) ═══
 Regra da Incompol; detalhe no `AGENTS.md` §2 («Lote económico = uma produção»).
-Estado: decidida, ainda por implementar (o código ainda aplica a janela por entrega).
+Estado: implementada a 13/10/2026 (contrato de material versão 3). Planos antigos
+continuam válidos (não pedem «Recalcular»); o «Recalcular plano» redimensiona-os.
 - Sempre que se produz um SKU, produz-se pelo menos o lote económico, numa só
   produção (um setup). O lote económico cumpre-se sempre.
 - A janela de 5 dias úteis de matéria-prima vale só para a PRIMEIRA entrega que

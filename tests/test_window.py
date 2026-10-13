@@ -540,7 +540,17 @@ class TestWindowPolicy:
         assert result.score["missing_qty"] == 0
         assert result.score["early_window_violations"] == 0
         assert result.gate_report["coverage_gate_passed"] is True
-        assert result.solver_status == "strict_infeasible_best_effort"
+        # Was: the old engine reported "strict_infeasible_best_effort". Since
+        # material version 3 (13/10/2026) every lot goes to the quantity
+        # builder: each lot stays whole (one setup) and the plan reports the
+        # delay as best effort through the delivery gate.
+        assert {segment.run_id.split(":")[0] for segment in result.segments} == {"quantity"}
+        assert sorted(s.lot_id for s in result.segments if s.setup_min > 0) == sorted(
+            {s.lot_id for s in result.segments}
+        )
+        assert result.score["tardy_count"] == 2
+        assert result.gate_report["delivery_gate_passed"] is False
+        assert result.gate_report["status"] == "best_effort"
 
     def test_window_keeps_otd_on_tight_demand(self):
         """Demand at day 1 (inside window width) still delivers on time."""

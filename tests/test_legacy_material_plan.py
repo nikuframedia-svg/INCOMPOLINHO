@@ -1,8 +1,10 @@
-"""A plan saved before per-delivery material windows is rebuilt, not rejected (A5, T10).
+"""Plans of older material contracts under the current one (A5, T10; 13/10/2026).
 
-Reactivating it must not answer "Plano invalido: N conflito(s)": the planner
-gets one plain, actionable Portuguese message routing to an explicit
-recalculation, and the rebuilt plan of the same scenario is accepted.
+Since material version 3 (economic lot = one production, AGENTS §2) the
+whole economic lot is released with its first delivery, as plans were built
+before 08/10/2026: such a plan is valid again and is never sent to
+«Recalcular plano». A real material violation (production before the lot
+release) stays a plain validation error.
 """
 
 from __future__ import annotations
@@ -74,56 +76,45 @@ def _blocks(lot, blocks):
 
 
 # The whole economic lot made from its first release day (days 6-7), as
-# plans were built before 08/10/2026. Physically valid; only the material
-# windows of the later deliveries (days 9, 12, 13) are broken.
+# plans were built before 08/10/2026 and again since 13/10/2026.
 EARLY_BLOCKS = [
     (6, 420, 930, 60, 11250, "A"),
     (6, 930, 1430, 0, 12500, "B"),
     (7, 420, 750, 0, 8250, "A"),
 ]
+# The same production one workday earlier: before the lot release (day 6).
+TOO_EARLY_BLOCKS = [(day - 1, *rest) for day, *rest in EARLY_BLOCKS]
 
 
-def _legacy_plan():
+def _legacy_plan(blocks=EARLY_BLOCKS):
     data = _scenario()
     lot = create_lots(data, CONFIG, quantity_material=False)[0]
-    return data, _blocks(lot, EARLY_BLOCKS), [lot]
+    return data, _blocks(lot, blocks), [lot]
 
 
-def test_legacy_plan_activation_asks_for_recalculation_in_plain_portuguese():
+def test_legacy_plan_whole_at_its_first_release_activates_without_recalculation(tmp_path):
     data, segments, lots = _legacy_plan()
-    assert legacy_material_plan(lots, data, CONFIG)
+    assert not legacy_material_plan(lots, data, CONFIG)
     payload = _payload(data, segments, lots)
-
-    with pytest.raises(LegacyMaterialPlanError) as caught:
-        _assert_activatable_payload(payload)
-
-    error = caught.value
-    message = str(error)
-    assert error.code == "legacy_material_plan"
-    assert error.requires_recalculation is True
-    assert isinstance(error, PlanValidationError)  # existing handlers still apply
-    assert error.violations, "the evidence is kept for diagnosis"
-    assert "Plano invalido" not in message and "conflito" not in message
-    assert "Recalcular plano" in message and "material" in message
-    assert "já não" in message and "disponível" in message  # pt-PT with accents
-    assert "gémeas" not in message  # version 0: every lot predates the rule
-
-
-def test_store_refuses_the_legacy_plan_without_activating_anything(tmp_path):
-    data, segments, lots = _legacy_plan()
-    payload = _payload(data, segments, lots)
+    _assert_activatable_payload(payload)
     store = PlansStore(str(tmp_path / "plans.db"))
     try:
-        with pytest.raises(LegacyMaterialPlanError):
-            store.save(
-                name="Antigo", source="user", origin="isop.xlsx", note="",
-                payload=payload, score=payload["score"], gate_report=None,
-                is_auto=False, activate=True,
-            )
-        assert store.active() is None
-        assert store.list() == []
+        saved = store.save(
+            name="Antigo", source="user", origin="isop.xlsx", note="",
+            payload=payload, score=payload["score"], gate_report=None,
+            is_auto=False, activate=True,
+        )
+        assert store.active()["id"] == saved["id"]
     finally:
         store.close()
+
+
+def test_legacy_plan_before_the_lot_release_is_a_plain_validation_error():
+    data, segments, lots = _legacy_plan(TOO_EARLY_BLOCKS)
+    assert not legacy_material_plan(lots, data, CONFIG)
+    with pytest.raises(PlanValidationError) as caught:
+        _assert_activatable_payload(_payload(data, segments, lots))
+    assert not isinstance(caught.value, LegacyMaterialPlanError)
 
 
 def test_rebuilt_plan_of_the_same_scenario_activates(tmp_path):
@@ -148,7 +139,7 @@ def test_current_plan_breaking_its_material_window_is_not_called_legacy():
     data = _scenario()
     lot = create_lots(data, CONFIG)[0]
     assert not legacy_material_plan([lot], data, CONFIG)
-    segment = _blocks(lot, EARLY_BLOCKS)
+    segment = _blocks(lot, TOO_EARLY_BLOCKS)
     payload = _payload(data, segment, [lot])
     with pytest.raises(PlanValidationError) as caught:
         _assert_activatable_payload(payload)
@@ -156,7 +147,7 @@ def test_current_plan_breaking_its_material_window_is_not_called_legacy():
 
 
 def test_material_violation_messages_are_plain_portuguese():
-    data, segments, lots = _legacy_plan()
+    data, segments, lots = _legacy_plan(TOO_EARLY_BLOCKS)
     errors = source_contract_violations(
         segments, lots, data, CONFIG, require_current_material=True,
     )
@@ -188,7 +179,7 @@ def test_material_version_comes_from_one_constant():
 
 def test_material_message_names_reference_machine_and_dated_day():
     """No internal lot id; "dia N (dd/mm)"; pt-PT numbers; correct plural."""
-    data, segments, lots = _legacy_plan()
+    data, segments, lots = _legacy_plan(TOO_EARLY_BLOCKS)
     errors = source_contract_violations(
         segments, lots, data, CONFIG, require_current_material=True,
     )
@@ -228,8 +219,8 @@ def test_source_contract_message_says_loaded_isop_data():
             assert item["message"].endswith("não coincide com os dados carregados (ISOP).")
 
 
-def test_startup_restore_of_a_legacy_plan_says_to_recalculate():
-    """The active plan is kept as saved, with a plain note to recalculate."""
+def test_startup_restore_of_a_legacy_plan_has_no_recalculation_note():
+    """The active plan is kept as saved; it no longer predates the rule."""
     import copy
 
     from backend.copilot.state import CopilotState
@@ -244,18 +235,16 @@ def test_startup_restore_of_a_legacy_plan_says_to_recalculate():
         preserve_exact=True, recover_existing=True,
     )
     assert target.segments == segments
-    note = target.warnings[0]
-    assert note.startswith(
-        "Este plano foi calculado antes de o material passar a ser libertado por entrega."
-    )
-    assert "«Recalcular plano»" in note and "regras por entrega" in note
+    assert not any("Recalcular plano" in warning for warning in target.warnings)
 
 
-def test_current_plan_restore_has_no_recalculation_note():
+def test_no_plan_restore_has_a_recalculation_note():
     from backend.plans.restore import legacy_material_warning
 
     data = _scenario()
     result = schedule_all(data, config=CONFIG)
     assert legacy_material_warning(result.lots, data, CONFIG) is None
     _data, _segments, lots = _legacy_plan()
-    assert legacy_material_warning(lots, data, CONFIG)
+    assert legacy_material_warning(lots, data, CONFIG) is None
+    per_delivery = create_lots(data, CONFIG, quantity_material=2)
+    assert legacy_material_warning(per_delivery, data, CONFIG) is None

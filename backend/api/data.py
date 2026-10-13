@@ -502,17 +502,19 @@ def _recalculation_needs_rebuild(config) -> bool:
         return False
     detached = copy.copy(state.engine_data)
     detached.preserved_lot_proofs = {}
-    legacy_material = any(
-        not lot.is_twin and not any(
-            output.get("quantity_material_version") for output in lot.output_milestones or []
-        ) for lot in state.lots
-    )
-    if legacy_material:
-        from backend.scheduler.lot_sizing import create_lots
-        from backend.scheduler.quantity_dispatch import has_quantity_releases
+    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION, UPGRADED_MATERIAL_KEY
+    from backend.scheduler.material_quantities import lot_material_version
 
-        if has_quantity_releases(create_lots(detached, config)):
-            return True
+    # A plan of the per-delivery contract (material versions 1-2) stays
+    # valid, but only rebuilding its lots applies the current one (economic
+    # lot = one production): compaction would keep the productions its old
+    # contract split. Version 0 lots were already one production each.
+    if any(
+        0 < lot_material_version(lot) < QUANTITY_MATERIAL_VERSION
+        or any(output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or [])
+        for lot in state.lots
+    ):
+        return True
     return bool(source_contract_violations(
         state.segments, state.lots, detached, config, require_current_material=True,
     ))

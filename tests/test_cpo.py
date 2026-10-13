@@ -2840,6 +2840,7 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
 
 
+@pytest.mark.usefixtures("legacy_engine")
 def test_fallback_plan_declares_why_the_global_constructor_was_not_used(monkeypatch):
     """A "no_candidate" solver status always travels with its reason."""
 

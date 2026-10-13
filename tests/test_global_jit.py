@@ -1240,6 +1240,7 @@ def test_jde002_best_effort_produces_large_day_zero_shortage_before_future_work(
     assert gate_report["delivery_gate_passed"] is False
 
 
+@pytest.mark.usefixtures("legacy_engine")
 def test_no_global_candidate_falls_back_without_losing_quantity(monkeypatch):
     op = _op("OP1", "M1", "T1", demand=[0, 100, 0, 0])
     data = _engine([op], ["M1"], n_days=4)
@@ -1265,6 +1266,7 @@ def test_no_global_candidate_falls_back_without_losing_quantity(monkeypatch):
     assert result.solver_status == "no_candidate"
 
 
+@pytest.mark.usefixtures("legacy_engine")
 def test_global_jit_never_resurrects_negative_auto_buffer_days():
     op = _op("OP1", "M1", "T1", demand=[100, 0, 0, 0])
     data = _engine([op], ["M1"], n_days=4)

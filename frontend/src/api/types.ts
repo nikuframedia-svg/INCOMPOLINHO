@@ -69,6 +69,8 @@ export interface OutputMilestone {
   material_reference_day: number;
   material_reference_kind: "customer_delivery" | "subcontract_dispatch" | string;
   material_release_day: number;
+  /** Própria janela da entrega (versão 3: o material segue o lote). */
+  delivery_material_release_day?: number;
   is_coproduced_surplus?: boolean;
   is_economic_surplus?: boolean;
   quantity_material_version?: number;

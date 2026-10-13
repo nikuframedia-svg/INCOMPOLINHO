@@ -92,8 +92,13 @@ def _segment(lot, day, start, qty, setup, run_id):
 
 
 def _baseline(data, config, blocks):
-    """``blocks``: (lot index, day, start, qty, setup, run lot index)."""
-    lots = create_lots(data, config)
+    """``blocks``: (lot index, day, start, qty, setup, run lot index).
+
+    A plan saved under the per-delivery contract (material version 2), where
+    L's two deliveries were separate productions; replans take it over as
+    version 3 (``frozen.with_current_material``).
+    """
+    lots = create_lots(data, config, quantity_material=2)
     assert [(lot.op_id, lot.qty) for lot in lots] == [("OP1", 200), ("OP1", 200), ("OP2", 100)]
     segments = [
         _segment(lots[index], day, start, qty, setup, f"quantity:{lots[run].id}:0")
@@ -112,6 +117,16 @@ SUPPLIED = [(0, 0, 420, 100, 30, 0), (2, 0, 510, 100, 30, 2),
 # (one per delivery): a full-plan repair would merge them.
 SPLIT_START = [(0, 0, 420, 50, 30, 0), (0, 0, 480, 50, 0, 0), (2, 0, 510, 100, 30, 2),
                (1, 4, 420, 200, 30, 1), (0, 4, 570, 100, 0, 1)]
+
+
+def _unmarked(lot):
+    """The lot without the version-upgrade mark (``UPGRADED_MATERIAL_KEY``)."""
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
+
+    clean = copy.deepcopy(lot)
+    for output in clean.output_milestones:
+        output.pop(UPGRADED_MATERIAL_KEY, None)
+    return clean
 
 
 def _delivery(lot, customer_day):
@@ -220,13 +235,15 @@ def test_started_lot_rest_is_planned_with_the_new_material_windows():
     assert [(o["qty"], o["customer_delivery_day"]) for o in original.output_milestones] == [
         (o["qty"], o["customer_delivery_day"]) for o in lot_l.output_milestones
     ]
-    # ... dated by the current calendar: R moves back over the new holiday,
-    # U to the workday before the delivery holiday.
-    assert original == {lot.id: lot for lot in create_lots(data, config)}[lot_l.id]
+    # ... taken over as version 3 and dated by the current calendar: the
+    # delivery's own R moves back over the new holiday, U to the workday
+    # before the delivery holiday; the whole lot keeps the lot R.
+    assert _unmarked(original) == {lot.id: lot for lot in create_lots(data, config)}[lot_l.id]
     current = _delivery(original, 9)
-    assert (current["material_release_day"], current["production_due_day"]) == (1, 7)
+    assert (current["delivery_material_release_day"], current["production_due_day"]) == (1, 7)
+    assert current["material_release_day"] == original.material_release_day < 1
     assert [(o["qty"], o["material_release_day"], o["production_due_day"])
-            for o in rest.output_milestones] == [(100, 1, 7)]
+            for o in rest.output_milestones] == [(100, original.material_release_day, 7)]
     assert rest.edd == 7
     # The started production itself is unchanged.
     assert [(s.lot_id, s.day_idx) for s in protected.segments] == [
@@ -255,7 +272,7 @@ def test_holiday_added_after_a_lot_started_gives_a_valid_plan(monkeypatch):
     assert {lot_id: lot.qty for lot_id, lot in by_id.items()} == {
         lot.id: lot.qty for lot in baseline.lots
     }
-    assert by_id[lot_l.id] == sized_now[lot_l.id]
+    assert _unmarked(by_id[lot_l.id]) == sized_now[lot_l.id]
     # The started production is exactly as before; nothing runs on a holiday.
     rows = {_segment_physical_row(s) for s in result.segments}
     assert {_segment_physical_row(baseline.segments[i]) for i in (0, 1)} <= rows
@@ -420,7 +437,8 @@ def test_quick_repair_keeps_the_rest_of_a_started_lot_where_the_plan_ranks_it(mo
 
     config = _config()
     data = _priority_data(config)
-    lots = {lot.op_id: lot for lot in create_lots(data, config)}
+    # Saved under the per-delivery contract (version 2): L is two productions.
+    lots = {lot.op_id: lot for lot in create_lots(data, config, quantity_material=2)}
     lot_l, lot_k = lots["OP1"], lots["OP2"]
     assert (lot_l.qty, lot_k.qty) == (250, 200)
     blocks = [  # lot, run, day, start, qty, setup

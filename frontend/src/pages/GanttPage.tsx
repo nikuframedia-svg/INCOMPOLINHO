@@ -2177,6 +2177,10 @@ export function GanttPage() {
             // em vez de um prazo de produção ou de rutura que não é entrega.
             const firstLotDeliveryDay = lotDeliveryDays.length ? Math.min(...lotDeliveryDays) : null;
             const lotCoversSeveralDeliveries = !hasJointWindow && lotDeliveryDays.length > 1;
+            // Versão 3 (13/10/2026): o lote económico é uma só produção e o
+            // material do lote inteiro é libertado com a primeira entrega.
+            const wholeLotRelease = outputMilestones.some((output) => (output.quantity_material_version ?? 0) >= 3);
+            const ownRelease = (output: (typeof outputMilestones)[number]) => output.delivery_material_release_day ?? output.material_release_day;
             const jointProductionDue = sel.production_due_day
               ?? selectedLot?.production_due_day
               ?? (constraintOutputs.length
@@ -2191,7 +2195,7 @@ export function GanttPage() {
               .filter((output) => output.production_due_day === jointProductionDue)
               .map((output) => output.sku);
             const releaseControllingSkus = constraintOutputs
-              .filter((output) => output.material_release_day === jointMaterialRelease)
+              .filter((output) => ownRelease(output) === jointMaterialRelease)
               .map((output) => output.sku);
             const joinSkus = (skus: string[], fallback: string) => skus.length ? skus.join(" + ") : fallback;
             const materialReferenceLabel = sel.material_reference_kind === "subcontract_dispatch"
@@ -2230,7 +2234,7 @@ export function GanttPage() {
                     ["Prazo de origem do lote", fmtDay(jointProductionDue)] as [string, unknown],
                     ["Alvo interno", fmtDay(sel.internal_target_day ?? sel.internal_deadline)] as [string, unknown],
                     ["Referência da janela de material", `${fmtDay(sel.material_reference_day)} · ${materialReferenceLabel}`] as [string, unknown],
-                    [hasOutputBreakdown ? "Libertação da primeira parcela" : "Libertação simulada de material", fmtDay(jointMaterialRelease)] as [string, unknown],
+                    [hasOutputBreakdown ? (wholeLotRelease ? "Libertação do material do lote" : "Libertação da primeira parcela") : "Libertação simulada de material", fmtDay(jointMaterialRelease)] as [string, unknown],
                   ]),
               ["Início após libertação", sel.release_delay_workdays ? `${sel.release_delay_workdays} dia(s) útil(eis) depois` : "no primeiro dia permitido"],
               ["Prioridade cliente/ref.", sel.planning_priority ?? selectedLot?.planning_priority ?? 0],
@@ -2285,7 +2289,9 @@ export function GanttPage() {
                 {renderRows(mainRows)}
                 {lotCoversSeveralDeliveries && (
                   <p style={{ margin: "8px 0 0", fontSize: 12, color: T.secondary, lineHeight: 1.45 }}>
-                    O lote económico cobre também entregas seguintes; cada parte só é produzida depois de libertado o material da sua entrega.
+                    {wholeLotRelease
+                      ? "O lote económico cobre também entregas seguintes e é produzido de uma só vez, com um único setup: o material do lote inteiro é libertado com a primeira entrega."
+                      : "O lote económico cobre também entregas seguintes; cada parte só é produzida depois de libertado o material da sua entrega."}
                   </p>
                 )}
                 {hasOutputBreakdown && (
@@ -2312,7 +2318,9 @@ export function GanttPage() {
                             const contributesToJointWindow = constraintOutputs.includes(output);
                             const constraints = [
                               contributesToJointWindow && output.production_due_day === jointProductionDue ? "limita o prazo" : null,
-                              hasJointWindow && contributesToJointWindow && output.material_release_day === jointMaterialRelease ? "liberta o material comum" : null,
+                              contributesToJointWindow && ownRelease(output) === jointMaterialRelease
+                                ? (hasJointWindow ? "liberta o material comum" : wholeLotRelease ? "liberta o material do lote" : null)
+                                : null,
                               output.is_coproduced_surplus ? "stock coproduzido" : null,
                               output.is_economic_surplus ? "excedente do lote económico" : null,
                             ].filter(Boolean).join(" · ");
@@ -2334,7 +2342,7 @@ export function GanttPage() {
                                   {fmtDay(output.material_reference_day)}
                                   <div style={{ color: T.tertiary, fontFamily: T.sans, fontSize: 9, marginTop: 3 }}>{outputMaterialLabel}</div>
                                 </td>
-                                <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, color: T.primary, fontFamily: T.mono, fontSize: 10, verticalAlign: "top" }}>{fmtDay(output.material_release_day)}</td>
+                                <td style={{ padding: "9px 8px", borderBottom: `1px solid ${T.border}`, color: T.primary, fontFamily: T.mono, fontSize: 10, verticalAlign: "top" }}>{fmtDay(hasJointWindow ? ownRelease(output) : output.material_release_day)}</td>
                               </tr>
                             );
                           })}

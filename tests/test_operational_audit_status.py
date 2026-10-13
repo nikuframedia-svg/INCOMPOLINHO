@@ -321,7 +321,9 @@ def _surplus_plan(*, mixed: bool):
     from tests.test_quantity_campaigns import _op
 
     data = data_of([_op("A", "TA", {13: 100, 20: 50}, eco_lot=300), _op("B", "TB", {25: 80})])
-    lot_a, lot_b = sorted(create_lots(data), key=lambda lot: lot.op_id)
+    # A run of surplus only exists in a lot split by the per-delivery contract
+    # (material version 2, before 13/10/2026).
+    lot_a, lot_b = sorted(create_lots(data, quantity_material=2), key=lambda lot: lot.op_id)
     assert any(output.get("is_economic_surplus") for output in lot_a.output_milestones)
     lot_b = replace(
         lot_b, material_release_day=10,

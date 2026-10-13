@@ -61,6 +61,7 @@ HARD_GATE_KEYS = (
     "missing_tool_change_setup_violations",
     "insufficient_tool_change_setup_violations",
     "plan_anchor_violations",
+    "lot_split_violations",
     "missing_lots",
     "missing_qty",
     "unexpected_lots",

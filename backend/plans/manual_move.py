@@ -365,7 +365,8 @@ def _check_immutable_start(
     if not is_factory_workday(day, view, config):
         raise ManualMoveError(context + "O calendário da fábrica não permite produção nesse dia.")
     # Material release is a hard floor (AGENTS §2; the material gate blocks
-    # any candidate that breaks it): no production before the first release.
+    # any candidate that breaks it): no production before the lot's release,
+    # 5 working days before the first delivery it serves.
     if released_quantity(lot, day) <= 0:
         release = next_release_day(lot, day)
         when = (
@@ -373,7 +374,10 @@ def _check_immutable_start(
             if release is not None and release < len(data.workdays)
             else "ainda não está libertado nesse dia"
         )
-        raise ManualMoveError(context + f"O material deste lote {when}.")
+        raise ManualMoveError(
+            context + f"O material deste lote {when} "
+            "(5 dias úteis antes da primeira entrega que o lote serve)."
+        )
     early_setup = _setup_material_floor(
         data, config, lot, template, day, minute, machine_id, mount_layouts,
     )
@@ -1393,6 +1397,10 @@ def _move_lot(
     started = time.perf_counter()
     if target_day < 0 or target_day >= data.n_days:
         raise ManualMoveError(f"Dia alvo fora do horizonte: {target_day}.")
+    from backend.scheduler.lot_sizing import upgrade_plan_material
+
+    # A plan of material version 1-2 is moved under version 3 (AGENTS §2).
+    lots = upgrade_plan_material(lots, data)
 
     candidate_segments = copy.deepcopy(segments)
     candidate_lots = copy.deepcopy(lots)

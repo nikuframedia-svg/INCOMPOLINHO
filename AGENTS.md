@@ -134,8 +134,8 @@ Stock coproduzido não cria encomenda ou expedição fictícia.
 
 **Lote económico = uma produção (decidido pelo Luís a 13/10/2026, a pedido
 da Incompol; substitui a «Janela por entrega» e as «Gémeas por entrega»
-abaixo).** Estado: decidido, **ainda por implementar** — até ser publicado, o
-código continua a aplicar a janela por entrega descrita abaixo.
+abaixo).** Estado: implementado a 13/10/2026 como contrato de material
+versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
 
 - Sempre que se produz um SKU, produz-se pelo menos o seu lote económico, numa
   só produção: um setup, e a produção continua pelos turnos, noites, fins de
@@ -147,68 +147,106 @@ código continua a aplicar a janela por entrega descrita abaixo.
 - Um lote nunca é partido em produções separadas. Se ele atrasar outra
   encomenda, move-se o lote inteiro (mais cedo, mais tarde ou para a máquina
   alternativa); nunca se interrompe para meter outra ferramenta pelo meio.
-  Só uma avaria ou bloqueio real obriga a retomar o mesmo lote com novo setup.
-- Gémeas: o ciclo usa o `R` da primeira entrega servida por qualquer dos dois
-  lados; o tempo continua a ser o de uma execução.
-- A prontidão para o cliente (OTD, atrasos, subcontratação) continua a medir-se
-  por entrega.
+  Só uma avaria ou bloqueio real obriga a retomar o mesmo lote com novo setup;
+  o resto mantém o `R` do lote.
+- Gémeas: o ciclo usa `R_ciclo`, o `R` da primeira entrega servida por
+  qualquer dos dois lados (em todos os dados reais igual ao menor `R` do
+  lote); o tempo continua a ser o de uma execução.
+- A prontidão para o cliente (OTD, OTD-D, atrasos, envio para subcontratação)
+  continua a medir-se por entrega (`delivery_readiness`), e a antecipação por
+  entrega (§1.3).
 - Motivo: a janela por entrega partia cada lote económico em várias produções
   pequenas (setups de cerca de 180 para cerca de 470 por plano, de 3 para 9 por
   dia útil). Esta é a regra que o sistema usava até 07/10/2026.
+- Perguntas ainda abertas à Incompol, com estes valores por omissão: sem
+  limite máximo de cobertura do lote; o resto de um lote interrompido mantém o
+  `R` do lote; a prontidão da subcontratação continua por entrega.
 
-**Janela por entrega (decidido entre 07/10 e 10/10/2026; substituído a
-13/10/2026, ver acima).** Quando o
-carry-forward atribui um lote económico a várias entregas, cada entrega
-conserva o seu `R`: a quantidade atribuída a uma entrega só pode ser preparada
-ou produzida a partir do seu próprio `R`. O excedente económico liberta-se com
-a última entrega coberta. O lote é dimensionado uma vez (§3); partes
-libertadas em datas diferentes são execuções físicas distintas.
-Subcontratação: cada parte é expedida por entrega e fica pronta para o cliente
-na sua própria conclusão mais o lead útil, não na conclusão do lote.
+Implementação (13/10/2026):
 
-**Gémeas por entrega (decidido pelo Luís a 11/10/2026, Fase B2; substituído a
-13/10/2026, ver «Lote económico = uma produção»).** Cada lado
-de um ciclo gémeo regista um output por entrega que as suas peças cobrem
-(carry-forward), com as datas dessa entrega. Só as duas entregas que formam
-o ciclo (no máximo uma por lado, com no máximo 5 dias entre elas) partilham
-`R_ciclo = min(R)` (`cycle_material_release_day`); a quantidade feita para
-entregas futuras não é produzida antes do `R` próprio dessas entregas. O
-excedente económico de um lado liberta-se com o `R` próprio da última entrega
-coberta desse lado, nunca com o `R_ciclo` (mesmo quando essa entrega é a do
-par). Um lado sem nenhuma entrega coberta no ciclo é stock coproduzido: fica
-registado (com as datas da entrega que controla o ciclo, só para
-rastreabilidade) mas nunca liberta material; o ciclo segue a curva do outro
-lado. Num dia `d`, o ciclo pode fazer tantos ciclos quanto o maior dos dois
-lados libertados até `d`, sem contar stock coproduzido (cada ciclo faz uma
-peça de cada lado; as do outro lado são coproduzidas). As
-partes de um lote gémeo são os incrementos dessa curva; o tempo é sempre o de
-uma execução (o maior dos dois lados, nunca a soma) e o lote económico
-continua HARD por SKU. A prontidão é por lado e por entrega, como em qualquer
-lote. Versão do contrato de material: `QUANTITY_MATERIAL_VERSION = 2`
-(`lot_sizing.py`); planos guardados na versão 1 (ou sem versão) leem-se pelo
-modelo registado, mas só se reativam se cumprirem as janelas atuais; caso
-contrário pedem «Recalcular plano» (`canonical.legacy_material_plan`). Ao
-repor um plano destes (incluindo no arranque) o plano mantém-se como foi
-guardado e leva um aviso simples a pedir «Recalcular plano»
-(`restore.legacy_material_warning`).
+- Dimensionamento (`lot_sizing.py`): os outputs por entrega das versões 1-2
+  mantêm-se (um por entrega coberta, excedente no fim); na versão 3 todos
+  levam `material_release_day = R` do lote (`_inherit_lot_release`: o menor
+  `R` das entregas; nas gémeas `R_ciclo` das duas que formam o ciclo) e
+  guardam o `R` próprio da entrega em `delivery_material_release_day`, só
+  para rastreabilidade. `redate_lot_outputs` volta a datar ambos pelo
+  calendário atual.
+- Material (`material_quantities.whole_lot_release`): um lote da versão 3 é
+  uma só parte, libertada inteira no `R` do lote (`released_quantity`,
+  `next_release_day`, `material_portions`). Todos os lotes da versão 3 vão
+  ao construtor por partes (`quantity_dispatch.has_quantity_releases`),
+  nunca ao motor antigo.
+- Verificação física (`validation.lot_split_violations`, tipo `lot_split`,
+  métrica `lot_split_violations` no gate): um lote da versão 3 com outro
+  trabalho na máquina entre dois dos seus segmentos, ou com nova afinação
+  depois de já ter produzido, é inválido, salvo avaria/bloqueio da máquina ou
+  da ferramenta entre os dois, ou quando a parte anterior começou antes do dia
+  de planeamento (resto de um lote começado, regra 4). O verificador do
+  contrato confirma também que nenhum lote da versão 3 produz ou prepara
+  antes do `R` do lote (`canonical.source_contract_violations`).
+- Planos antigos: um plano das versões 0, 1 ou 2 continua válido (as suas
+  produções começam no `R` do lote ou depois) e nunca pede «Recalcular
+  plano» (`canonical.legacy_material_plan` devolve sempre falso). Ao
+  replanear, reparar, compactar ou mover um lote num plano das versões 1-2,
+  os lotes passam à versão 3 tal como estão
+  (`lot_sizing.upgrade_plan_material`, `frozen.with_current_material`,
+  `manual_move._move_lot`): o lote começado congela só o que começou
+  (regra 4) e o plano nunca mistura versões. Esses lotes ficam marcados
+  (`material_upgraded_from`) e podem manter as produções separadas que o
+  contrato antigo criou; o «Recalcular plano» desde o início redimensiona-os
+  sempre (`api/data._recalculation_needs_rebuild`).
+- Resto de um lote começado: como o lote inteiro já tem material, o resto
+  costuma retomar logo a seguir à parte começada, com a ferramenta ainda
+  montada. A validação do problema residual vê essa parte começada como
+  histórico (`validation._protected_context`, lotes em
+  `residual_lot_remainders`); uma cópia antiga de um lote que não é resto de
+  um lote começado continua a não servir de ponte.
+- Ensaio na cópia do plano ativo (revisão 128, ISOP 13/10): recálculo
+  completo 444 → 178 setups, 0 lotes com mais de uma produção, o mesmo
+  atraso (HAN002) e nenhuma encomenda atrasada a mais; 22 entregas ficam
+  prontas um pouco mais tarde mas dentro do prazo, 539 mais cedo; antecipação
+  média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias). Com dia de
+  planeamento 16/10 (23 lotes começados), avaria na PRM043, feriado novo e
+  movimentos manuais dão planos válidos, sem mexer na produção começada.
 
-Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
+**Janela por entrega (versão 1, decidido entre 07/10 e 10/10/2026;
+substituído a 13/10/2026, ver acima; histórico).** Quando o carry-forward
+atribuía um lote económico a várias entregas, cada entrega conservava o seu
+`R`: a quantidade de uma entrega só podia ser preparada ou produzida a partir
+do seu próprio `R` e o excedente com a última entrega coberta. Partes
+libertadas em datas diferentes eram execuções físicas distintas.
 
-1. **Material já libertado, ferramenta continua.** Se o material da parte
-   seguinte do lote já foi libertado quando a parte anterior acaba, a
-   ferramenta montada continua a produzir, sem novo setup.
+**Gémeas por entrega (versão 2, decidido pelo Luís a 11/10/2026, Fase B2;
+substituído a 13/10/2026; histórico).** Cada lado de um ciclo gémeo regista
+um output por entrega que as suas peças cobrem (carry-forward), com as datas
+dessa entrega; só as duas entregas que formam o ciclo partilham
+`R_ciclo = min(R)` (`cycle_material_release_day`). Na versão 2 as entregas
+futuras e o excedente esperavam pelo seu próprio `R` e um lado só com stock
+coproduzido nunca libertava material (curva de libertação
+`material_quantities._twin_curve`). A estrutura dos outputs mantém-se na
+versão 3; só a libertação muda. A prontidão é por lado e por entrega.
+
+Regras do motor (propostas e aceites pelo Luís a 10/10/2026; desde a versão
+3 de material cada lote é uma só parte, por isso as regras aplicam-se entre
+lotes da mesma ferramenta):
+
+1. **Material já libertado, ferramenta continua.** Se o material do lote
+   seguinte da mesma ferramenta (na versão 1-2: da parte seguinte do mesmo
+   lote) já foi libertado quando o anterior acaba, a ferramenta montada
+   continua a produzir, sem novo setup.
 2. **Ferramenta montada vs. lote mais urgente.** A ferramenta montada continua
    mesmo havendo um lote mais urgente para a máquina, desde que esse lote perca
    menos de 60 min (a mesma tolerância do §1.3; dentro dela, os setups
    desempatam antes dos minutos exatos). Com 60 min ou mais, passa o urgente.
-   A perda mede-se sobre todas as partes que faltam ao lote urgente, na sua
+   A perda mede-se sobre tudo o que falta ao lote urgente, na sua
    melhor máquina, contra a posição que tinha **antes de começar a cadeia de
    continuações**: vários passos pequenos nunca somam 60 min ou mais. Nenhuma
    entrega do lote urgente pode ficar atrasada ou mais atrasada.
-3. **Mudar de máquina leva o lote inteiro**, com todas as suas partes; um lote
-   nunca fica repartido entre máquinas.
-4. **Lote começado:** só congela o que já começou. As partes futuras continuam
-   otimizáveis e o lote nunca é redimensionado. Implementado a 11/10/2026
+3. **Mudar de máquina leva o lote inteiro**; um lote nunca fica repartido
+   entre máquinas (nem, desde 13/10/2026, entre produções).
+4. **Lote começado:** só congela o que já começou. O resto continua
+   otimizável como o mesmo lote, com o `R` do lote, e o lote nunca é
+   redimensionado. Implementado a 11/10/2026
    (`plans/frozen._protected_plan`): congela-se a produção antes do dia de
    planeamento e a execução montada nessa fronteira enquanto continua sem novo
    setup (uma avaria ou bloqueio novo para-a aí); o resto do lote vai ao
@@ -373,7 +411,10 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    final assim falha o trabalho com o código `history_protected` (não
    `blocked`, que é conflito físico).
 
-Construtor por partes (`quantity_dispatch.py`, B1a):
+Construtor por partes (`quantity_dispatch.py`, B1a). Desde a versão 3 de
+material cada lote é uma só parte (o lote inteiro, numa produção); as regras
+abaixo valem entre lotes, e as partes múltiplas só existem em lotes das
+versões 1-2:
 
 - **Prioridade de uma parte:** `lot_priority_key` com a quantidade da entrega
   ao cliente que a parte serve (operação + dia, somada sobre todos os lotes),
@@ -384,6 +425,11 @@ Construtor por partes (`quantity_dispatch.py`, B1a):
   ou anterior passa à frente quando isso salva a sua entrega e nenhuma
   entrega fica mais atrasada (nem a do lote que ultrapassa, nem as das partes
   ordenadas entre elas). A cadeia de continuações para quando se aplica.
+  Num lote da versão 3, que não deixa entrar ninguém a meio, vale também
+  para encomendas com prazo posterior: se o lote inteiro a atrasaria, ela
+  passa à frente e o lote move-se inteiro para depois dela, desde que
+  nenhuma entrega do lote fique mais atrasada (13/10/2026; nas revisões 90,
+  124 e 128 o plano não muda).
 - **Ferramenta retida:** uma inserção num intervalo de ferramenta retida só
   se aceita se nenhuma entrega das partes que recoloca, nem das partes ainda
   por colocar desses lotes, nem do lote inserido (incluindo as suas partes
@@ -605,8 +651,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   `earliest_allowed_start` (ex.: produção às 07:00 do dia de libertação com a
   afinação no fim do dia anterior), e plano de um contrato de material
   anterior (`LegacyMaterialPlanError`, 409 `legacy_material_plan`, tanto ao
-  iniciar a verificação como ao aplicar). Esse plano mostra o aviso no topo
-  do ecrã (`plan-view.plan_notices`).
+  iniciar a verificação como ao aplicar). Desde a versão 3 de material
+  (13/10/2026) nenhum plano anterior é recusado assim: os lotes passam à
+  versão 3 no início do movimento (§2).
 - Decidido em 07/10/2026: a robustez já não consome orçamento do solver nem
   corre dentro de planeamento, melhoria, movimento ou recálculo (§1.6).
 - Decidido em 08/10/2026: no modo `normal`, instâncias com 50 ou mais

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from backend.audit import (
     AuditLogger,
     AuditStore,
@@ -246,6 +248,7 @@ class TestTemplates:
 # --- Integration Tests ---
 
 
+@pytest.mark.usefixtures("legacy_engine")
 class TestScheduleAllAudit:
     def test_audit_false_no_trail(self):
         engine = _engine()

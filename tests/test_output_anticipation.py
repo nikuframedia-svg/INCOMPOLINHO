@@ -312,7 +312,11 @@ def test_a_proposal_that_may_win_is_validated_not_pruned():
 
 def _split_lot_on_busy_machine():
     """A (two deliveries, two runs) waits for B on M1 and is split by C; M2
-    is free. A one-run move cannot leave A's other run behind."""
+    is free. A one-run move cannot leave A's other run behind.
+
+    Built under the per-delivery contract (material version 2): since
+    13/10/2026 only lots of such plans are split into several runs.
+    """
 
     ops = [
         _op("B", "TB", {13: 900}),
@@ -321,7 +325,9 @@ def _split_lot_on_busy_machine():
     ]
     data = _data(ops, machines=("M1", "M2"))
     config = _config(("M1", "M2"))
-    result = schedule_all(data, config=config)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("backend.scheduler.lot_sizing.QUANTITY_MATERIAL_VERSION", 2)
+        result = schedule_all(data, config=config)
     lot_a = next(lot for lot in result.lots if lot.op_id == "A")
     assert {s.machine_id for s in result.segments} == {"M1"}
     assert len({s.run_id for s in result.segments if s.lot_id == lot_a.id}) == 2
@@ -376,6 +382,34 @@ def test_no_whole_lot_move_without_another_eligible_machine():
     plain = _data([replace(op, alt=None) for op in data.ops], machines=("M1", "M2"))
     lots = [replace(lot, alt_machine_id=None) for lot in lots]
     assert not list(lot_machine_proposals(segments, lots, plain, config))
+
+
+def test_current_contract_never_splits_the_lot_on_the_busy_machine():
+    """Was (version 2): A's two deliveries were two runs on M1, split by C,
+    and only a whole-lot move to M2 rejoined them. Since 13/10/2026 A is
+    released whole: one run, one setup, nothing in between, on time."""
+
+    ops = [
+        _op("B", "TB", {13: 900}),
+        _op("A", "TA", {13: 300, 20: 300}, eco_lot=600),
+        _op("C", "TC", {17: 600}),
+    ]
+    data = _data(ops, machines=("M1", "M2"))
+    config = _config(("M1", "M2"))
+    result = schedule_all(data, config=config)
+    assert not validate_plan(result.segments, data, config, lots=result.lots)
+    lot_a = next(lot for lot in result.lots if lot.op_id == "A")
+    own = sorted((s for s in result.segments if s.lot_id == lot_a.id),
+                 key=lambda s: (s.day_idx, s.start_min))
+    assert len({s.run_id for s in own}) == 1
+    assert sum(1 for s in own if s.setup_min > 0) == 1
+    first, last = (own[0].day_idx, own[0].start_min), (own[-1].day_idx, own[-1].end_min)
+    assert not any(
+        s.lot_id != lot_a.id and s.machine_id == own[0].machine_id
+        and first < (s.day_idx, s.start_min) < last
+        for s in result.segments
+    )
+    assert max(s.day_idx for s in own) <= 13
 
 
 # ── builder and evaluator agree on urgency (rule 2) ──────────────────────

@@ -22,6 +22,7 @@ from backend.plans.manual_move import (
     move_lot,
 )
 from backend.scheduler.improvement import _segment_physical_row
+from backend.scheduler.lot_sizing import upgrade_lot_material
 from backend.scheduler.material_quantities import next_release_day, releases_in_portions
 from backend.scheduler.validation import assert_plan_valid
 from backend.types import PlanAnchor
@@ -54,7 +55,8 @@ def test_rest_of_a_started_lot_follows_a_moved_mount(monkeypatch):
     rest = [s for s in moved.segments if s.lot_id == lot_l.id and s.day_idx >= 1]
     assert _rows(rest).isdisjoint(_rows([baseline.segments[3]]))
     # The rest is never re-sized: same lots, every lot complete.
-    assert {lot.id: lot for lot in moved.lots}[lot_l.id] == lot_l
+    # (The plan was saved under version 2: the move takes it over as version 3.)
+    assert {lot.id: lot for lot in moved.lots}[lot_l.id] == upgrade_lot_material(lot_l, data)
     produced = {lot.id: sum(s.qty for s in moved.segments if s.lot_id == lot.id)
                 for lot in moved.lots}
     assert produced == {lot_l.id: 200, lot_m.id: 200, lot_x.id: 100}
@@ -222,7 +224,12 @@ def test_without_quantity_releases_the_whole_plan_reallocation_still_runs(monkey
     )
     calls = _spy_reallocations(monkeypatch)
 
-    with pytest.raises(ManualMoveError):
-        _move(baseline, data, config, lot_x.id, 1, 420)
+    # The whole-plan reallocation is tried first. Was (version 2): it found
+    # no candidate and the move ended inconclusive. The plan is now taken
+    # over as version 3 (L released whole): that reallocation succeeds.
+    moved = _move(baseline, data, config, lot_x.id, 1, 420)
 
-    assert calls[0] == "whole plan"
+    assert calls == ["whole plan"]
+    assert _production_start(moved.segments, lot_x.id)[:2] == (1, 420.0)
+    assert moved.gate_report["physical_gate_passed"]
+    assert_plan_valid(moved.segments, data, config, lots=moved.lots)

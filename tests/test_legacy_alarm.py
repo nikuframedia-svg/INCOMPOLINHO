@@ -60,15 +60,25 @@ def _config():
     return FactoryConfig(machines={"M1": MachineConfig(id="M1", group="Grandes")})
 
 
+@pytest.fixture
+def older_contract(monkeypatch):
+    """Lots sized without material versions (version 0), as before 08/10/2026.
+
+    Since material version 3 (13/10/2026) every current lot goes to the
+    quantity builder; only lots of a version 0 plan reach the legacy engine.
+    """
+    monkeypatch.setattr("backend.scheduler.lot_sizing.QUANTITY_MATERIAL_VERSION", 0)
+
+
 def legacy_case():
-    """One delivery per lot: no material released by quantity."""
+    """One delivery per lot, version 0: no material released by quantity."""
     data = _data([_op("A", "TA", {13: 100}), _op("B", "TB", {14: 80})])
     assert not has_quantity_releases(create_lots(data, _config()))
     return data
 
 
 def per_delivery_case():
-    """A lot whose deliveries release material on different days (AGENTS §2)."""
+    """A lot covering deliveries on different days: the quantity builder (AGENTS §2)."""
     data = _data([_op("A", "TA", {13: 100, 20: 50}, eco_lot=150), _op("B", "TB", {14: 80})])
     assert has_quantity_releases(create_lots(data, _config()))
     return data
@@ -101,19 +111,19 @@ def _no_alarm_in_outputs(result):
 # ── each legacy site raises the alarm ────────────────────────────────────
 
 
-def test_schedule_all_legacy_branch_raises_the_alarm(alarms):
+def test_schedule_all_legacy_branch_raises_the_alarm(alarms, older_contract):
     result = schedule_all(legacy_case(), config=_config())
     assert result.segments
     assert "scheduler.schedule_all" in alarms()
     _no_alarm_in_outputs(result)
 
 
-def test_solve_global_jit_entry_raises_the_alarm(alarms):
+def test_solve_global_jit_entry_raises_the_alarm(alarms, older_contract):
     assert solve_global_jit([], legacy_case(), _config()) is None
     assert alarms() == ["global_jit.solve_global_jit"]
 
 
-def test_manual_reallocation_without_quantity_releases_raises_the_alarm(alarms):
+def test_manual_reallocation_without_quantity_releases_raises_the_alarm(alarms, older_contract):
     data = legacy_case()
     result = manual_move._allocate_existing_lots(
         data, source_lots=create_lots(data, _config()), config=_config(), time_budget_s=10.0,
@@ -148,7 +158,7 @@ def _forced_reallocation(data, monkeypatch, alarms):
     return reallocated
 
 
-def test_manual_move_reallocation_branch_raises_the_alarm(monkeypatch, alarms):
+def test_manual_move_reallocation_branch_raises_the_alarm(monkeypatch, alarms, older_contract):
     assert _forced_reallocation(legacy_case(), monkeypatch, alarms) == [1]
     assert alarms() == ["manual_move._move_lot"]
 
@@ -180,6 +190,18 @@ def test_per_delivery_schedule_and_quick_optimize_raise_no_alarm(alarms):
     data = per_delivery_case()
     result = schedule_all(copy.deepcopy(data), config=_config())
     assert result.segments
+    assert optimize(copy.deepcopy(data), mode="quick", config=_config()).segments
+    assert alarms() == []
+
+
+def test_current_contract_one_delivery_lots_raise_no_alarm(alarms):
+    """Was: lots with one delivery each (``legacy_case``) went to the legacy
+    engine and raised the alarm. Since material version 3 (13/10/2026)
+    every current lot goes to the quantity builder; only lots of a version
+    0 plan still reach the legacy engine."""
+    data = _data([_op("A", "TA", {13: 100}), _op("B", "TB", {14: 80})])
+    assert has_quantity_releases(create_lots(data, _config()))
+    assert schedule_all(copy.deepcopy(data), config=_config()).segments
     assert optimize(copy.deepcopy(data), mode="quick", config=_config()).segments
     assert alarms() == []
 

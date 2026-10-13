@@ -30,7 +30,46 @@ TWIN_MAX_PAIR_GAP_DAYS = 5
 # 1: non-twin lots release each delivery's quantity at its own ``R``.
 # 2: twin cycles too (Fase B2); only the two outputs paired in one cycle share
 #    ``R_ciclo = min(R)`` (``cycle_material_release_day``).
-QUANTITY_MATERIAL_VERSION = 2
+# 3: economic lot = one production (Incompol, 13/10/2026). The whole lot is
+#    released at the ``R`` of the first delivery it serves (twin cycles: at
+#    ``R_ciclo``); the other covered deliveries and the surplus inherit it.
+#    Each output keeps its own ``R`` as ``delivery_material_release_day``
+#    (traceability only); readiness stays per delivery.
+QUANTITY_MATERIAL_VERSION = 3
+
+# Marks the outputs of a lot sized under the per-delivery contract (version 1
+# or 2) and upgraded to version 3 by ``upgrade_lot_material``. Such a lot may
+# already be split into several productions by its old contract; the
+# one-production check (``validation.lot_split_violations``) leaves it alone.
+UPGRADED_MATERIAL_KEY = "material_upgraded_from"
+
+
+def _lot_release(outputs: list[dict[str, object]]) -> int:
+    """``R`` of an economic lot: its first delivery's, or ``R_ciclo`` of a twin cycle.
+
+    Reads each output's own ``R`` (``delivery_material_release_day`` once
+    inherited). The outputs paired in a twin cycle carry
+    ``cycle_material_release_day``; when there are any, the cycle's
+    ``R_ciclo`` is the lot ``R``.
+    """
+
+    def own(output: dict[str, object]) -> int:
+        return int(output.get("delivery_material_release_day", output["material_release_day"]))
+
+    paired = [own(item) for item in outputs if "cycle_material_release_day" in item]
+    return min(paired) if paired else min(own(item) for item in outputs)
+
+
+def _inherit_lot_release(outputs: list[dict[str, object]], version: int) -> None:
+    """Material version 3: every output of one economic lot shares the lot ``R``."""
+
+    release = _lot_release(outputs)
+    for output in outputs:
+        output.setdefault("delivery_material_release_day", output["material_release_day"])
+        output["material_release_day"] = release
+        if "cycle_material_release_day" in output:
+            output["cycle_material_release_day"] = release
+        output["quantity_material_version"] = version
 
 
 def material_version(quantity_material: bool | int | None) -> int:
@@ -176,15 +215,22 @@ def redate_lot_outputs(lot: Lot, data: EngineData) -> Lot:
         milestones = planning_milestones_for_op(
             dating, int(output["customer_delivery_day"]), holidays,
         )
-        outputs.append({**output, **_output_milestone(op, int(output["qty"]), milestones)})
-    # Only the two deliveries that formed a twin cycle share its release.
-    paired = [
-        int(output["material_release_day"])
-        for output in outputs if "cycle_material_release_day" in output
-    ]
-    for output in outputs:
-        if "cycle_material_release_day" in output:
-            output["cycle_material_release_day"] = min(paired)
+        dated = {**output, **_output_milestone(op, int(output["qty"]), milestones)}
+        if "delivery_material_release_day" in output:
+            dated["delivery_material_release_day"] = dated["material_release_day"]
+        outputs.append(dated)
+    version = max(int(item.get("quantity_material_version") or 0) for item in outputs)
+    if version >= 3:
+        _inherit_lot_release(outputs, version)
+    else:
+        # Only the two deliveries that formed a twin cycle share its release.
+        paired = [
+            int(output["material_release_day"])
+            for output in outputs if "cycle_material_release_day" in output
+        ]
+        for output in outputs:
+            if "cycle_material_release_day" in output:
+                output["cycle_material_release_day"] = min(paired)
     redated = copy.deepcopy(lot)
     for field, value in _aggregate_milestones(outputs).items():
         setattr(redated, field, value)
@@ -192,6 +238,74 @@ def redate_lot_outputs(lot: Lot, data: EngineData) -> Lot:
     redated.original_edd = redated.delivery_day = int(redated.customer_delivery_day)
     redated.internal_deadline = int(redated.internal_target_day)
     return redated
+
+
+def upgradable_material(lot: Lot) -> bool:
+    """A lot of the per-delivery contract that version 3 can take over as it is.
+
+    Version 1 non-twin lots and version 2 lots record one output per covered
+    delivery, as version 3 does; only the release differs, and their
+    production (each delivery at or after its own ``R``) is at or after the
+    lot ``R``. Version 0 lots and version 1 twin cycles record other outputs.
+    """
+
+    outputs = lot.output_milestones or []
+    if not outputs or not all("qty" in output for output in outputs):
+        return False
+    version = max(int(output.get("quantity_material_version") or 0) for output in outputs)
+    return version == 2 or (version == 1 and not lot.is_twin)
+
+
+def upgrade_lot_material(lot: Lot, data: EngineData) -> Lot:
+    """The same sized lot under material version 3 (AGENTS §2, 13/10/2026).
+
+    Quantities, covered deliveries and surplus stay; every output is dated by
+    the current inputs (``redate_lot_outputs``) and released at the lot
+    ``R``. The outputs are marked (``UPGRADED_MATERIAL_KEY``): the lot may
+    already be split into several productions by its old contract.
+    """
+
+    if not upgradable_material(lot):
+        return lot
+    previous = max(
+        int(output.get("quantity_material_version") or 0) for output in lot.output_milestones
+    )
+    upgraded = copy.deepcopy(lot)
+    for output in upgraded.output_milestones:
+        output["quantity_material_version"] = QUANTITY_MATERIAL_VERSION
+        output[UPGRADED_MATERIAL_KEY] = previous
+        output["delivery_material_release_day"] = output["material_release_day"]
+    redated = redate_lot_outputs(upgraded, data)
+    if redated is upgraded:
+        # An output's operation left the scenario: only the release changes.
+        _inherit_lot_release(upgraded.output_milestones, QUANTITY_MATERIAL_VERSION)
+        for field, value in _aggregate_milestones(upgraded.output_milestones).items():
+            setattr(upgraded, field, value)
+    return redated
+
+
+def upgrade_plan_material(lots: list[Lot], data: EngineData) -> list[Lot]:
+    """Every lot of a per-delivery plan (version 1 or 2) under version 3.
+
+    A plan is upgraded whole or not at all: the source contract compares all
+    its lots with the lots sized under one version. Plans of version 0, with
+    a version 1 twin cycle, or already current are returned unchanged.
+    """
+
+    if data is None or not getattr(data, "ops", None):
+        return lots
+    pending = [
+        lot for lot in lots
+        if lot.output_milestones
+        and max(
+            int(output.get("quantity_material_version") or 0)
+            for output in lot.output_milestones
+        ) < QUANTITY_MATERIAL_VERSION
+    ]
+    if not pending or not all(upgradable_material(lot) for lot in pending):
+        return lots
+    upgrade = {id(lot) for lot in pending}
+    return [upgrade_lot_material(lot, data) if id(lot) in upgrade else lot for lot in lots]
 
 
 def _carried_lot(raw: dict) -> Lot:
@@ -289,8 +403,10 @@ def _create_solo_lots(
     if not version:
         return lots
 
-    # Carry-forward assigns an economic lot to several deliveries. Retain
-    # those quantities instead of releasing the whole lot for its first order.
+    # Carry-forward assigns an economic lot to several deliveries: one output
+    # per covered delivery (readiness is per delivery). Version 3 releases
+    # the whole lot with its first delivery; versions 1-2 retained each
+    # delivery's quantity until its own ``R``.
     pending = [[day, int(qty)] for day, qty in enumerate(op.d) if qty > 0]
     index = 0
     for lot in lots:
@@ -311,6 +427,8 @@ def _create_solo_lots(
             surplus_output["qty"] = remaining
             surplus_output["is_economic_surplus"] = True
             outputs.append(surplus_output)
+        if version >= 3:
+            _inherit_lot_release(outputs, version)
         for field, value in _aggregate_milestones(outputs).items():
             setattr(lot, field, value)
         for output in lot.output_milestones:
@@ -330,6 +448,8 @@ def _create_twin_lots(
 ) -> list[Lot]:
     """Create deterministic twin cycles with equal output in every joint run.
 
+    Material version 3 (13/10/2026): the outputs are those of version 2 and
+    the whole cycle is released at ``R_ciclo`` (``_inherit_lot_release``).
     Material version 2 (Fase B2, AGENTS §2 "Janela por entrega"): each side
     records one output per delivery its pieces cover (carry-forward), with
     that delivery's own dates, and the surplus dated as the side's last
@@ -585,12 +705,13 @@ def _twin_delivery_outputs(
     controlling: _TwinDemandEvent,
     version: int,
 ) -> list[dict[str, object]]:
-    """Per-delivery outputs of one twin cycle (material version 2).
+    """Per-delivery outputs of one twin cycle (material version 2 and later).
 
     Side A's outputs come first, then side B's, each in delivery order with
     its surplus last. The deliveries that formed the cycle (the controlling
-    one and its partner) share the cycle release ``min(R)``; every other
-    covered delivery keeps its own ``R`` (AGENTS §2).
+    one and its partner) share the cycle release ``min(R)``; in version 2
+    every other covered delivery keeps its own ``R``, in version 3 every
+    output inherits ``R_ciclo`` (AGENTS §2).
     """
 
     paired = {id(event) for event in active_events}
@@ -625,6 +746,8 @@ def _twin_delivery_outputs(
         outputs.extend(side_outputs)
     for output in outputs:
         output["quantity_material_version"] = version
+    if version >= 3:
+        _inherit_lot_release(outputs, version)
     return outputs
 
 

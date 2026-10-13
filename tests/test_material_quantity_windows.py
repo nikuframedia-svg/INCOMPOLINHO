@@ -1,4 +1,11 @@
-"""Economic sizing must not release future demand with the first order."""
+"""Economic lot = one production (AGENTS §2, 13/10/2026).
+
+The BFP082 case: one economic lot of 32 000 pieces covers the deliveries of
+days 13, 16, 19 and 20. Its material is released with the first delivery
+(day 6) for the whole lot; the later deliveries and the surplus inherit it.
+Until 13/10 each delivery waited for its own release (per-delivery window,
+material versions 1-2).
+"""
 
 from datetime import date, timedelta
 from dataclasses import replace
@@ -44,41 +51,46 @@ def scenario():
     )
 
 
-def test_economic_lot_preserves_quantity_specific_release_dates():
+def test_economic_lot_is_released_with_its_first_delivery():
     lots = create_lots(scenario())
     assert len(lots) == 1
     lot = lots[0]
     assert lot.qty == 32000
     assert lot.id == "LOT_TOOL_MACHINE_SKU_13"
+    # Each delivery keeps its own window for traceability only.
     assert [
-        (m["qty"], m["customer_delivery_day"], m["material_release_day"])
+        (m["qty"], m["customer_delivery_day"], m["material_release_day"],
+         m["delivery_material_release_day"])
         for m in lot.output_milestones
     ] == [
-        (5680, 13, 6),
-        (14400, 16, 9),
-        (2400, 19, 12),
-        (9520, 20, 13),
+        (5680, 13, 6, 6),
+        (14400, 16, 6, 9),
+        (2400, 19, 6, 12),
+        (9520, 20, 6, 13),
     ]
 
 
-def test_full_pipeline_does_not_produce_unreleased_future_quantities():
+def test_full_pipeline_produces_the_whole_lot_from_its_release():
     data = scenario()
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
     assert sum(segment.qty for segment in result.segments) == 32000
-    for day, maximum in ((8, 5680), (11, 20080), (12, 22480)):
-        assert sum(segment.qty for segment in result.segments if segment.day_idx <= day) <= maximum
     assert min(segment.day_idx for segment in result.segments if segment.qty > 0) == 6
+    # The later deliveries do not wait for their own windows (day 9 for 16).
+    assert sum(segment.qty for segment in result.segments if segment.day_idx <= 8) > 5680
 
 
-def test_validator_rejects_anticipating_the_unreleased_tail():
+def test_validator_rejects_production_before_the_lot_release_only():
+    from backend.scheduler.validation import validate_plan
+
     data = scenario()
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
+    assert not source_contract_violations(result.segments, result.lots, data, config)
     for segment in result.segments:
-        segment.day_idx = 6
-    violations = source_contract_violations(result.segments, result.lots, data, config)
-    assert any(item["field"] == "material_quantity" for item in violations)
+        segment.day_idx -= min(s.day_idx for s in result.segments) - 5
+    violations = validate_plan(result.segments, data, config, lots=result.lots)
+    assert any(item["kind"] == "setup_before_material" for item in violations)
 
 
 def test_each_quantity_has_its_own_completion_not_the_end_of_the_lot():
@@ -112,22 +124,28 @@ def test_each_quantity_has_its_own_completion_not_the_end_of_the_lot():
     ]
 
 
-def test_waiting_for_future_material_does_not_reserve_the_machine():
+def test_another_tool_never_splits_the_economic_lot():
     data = scenario()
     demand = [0] * data.n_days
-    demand[14] = 1000  # Release on day 7, between the first lot's portions.
+    demand[14] = 1000  # Released on day 7, while the economic lot runs.
     other = replace(
         data.ops[0], id="OTHER_MACHINE_OTHER", sku="OTHER", t="OTHER", d=demand, eco_lot=0
     )
     data.ops.append(other)
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
-    assert min(s.day_idx for s in result.segments if s.sku == "OTHER") == 7
     assert sum(s.qty for s in result.segments if s.sku == "SKU") == 32000
     assert len([lot for lot in result.lots if lot.sku == "SKU"]) == 1
+    assert sum(1 for s in result.segments if s.sku == "SKU" and s.setup_min > 0) == 1
+    sku = [s for s in result.segments if s.sku == "SKU"]
+    first = min((s.day_idx, s.start_min) for s in sku)
+    last = max((s.day_idx, s.end_min) for s in sku)
+    assert all(
+        not first < (s.day_idx, s.start_min) < last for s in result.segments if s.sku == "OTHER"
+    )
 
 
-def test_legacy_snapshot_is_readable_but_early_quantity_cannot_be_committed():
+def test_legacy_snapshot_whole_at_the_first_release_stays_committable():
     from backend.scheduler.types import Segment
 
     data = scenario()
@@ -146,15 +164,17 @@ def test_legacy_snapshot_is_readable_but_early_quantity_cannot_be_committed():
         setup_min=lot.setup_min,
     )
     assert not source_contract_violations([segment], [lot], data, FactoryConfig())
-    errors = source_contract_violations(
-        [segment],
-        [lot],
-        data,
-        FactoryConfig(),
-        require_current_material=True,
+    # Material version 3 releases the whole lot on day 6, like this legacy
+    # plan: it stays committable, also under another lot id.
+    assert not source_contract_violations(
+        [segment], [lot], data, FactoryConfig(), require_current_material=True,
     )
-    assert any(item["field"] == "material_quantity" for item in errors)
     lot.id = segment.lot_id = "RENAMED"
+    assert not source_contract_violations(
+        [segment], [lot], data, FactoryConfig(), require_current_material=True,
+    )
+    # One day before the lot release it is refused.
+    segment.day_idx = 5
     errors = source_contract_violations(
         [segment], [lot], data, FactoryConfig(), require_current_material=True,
     )
@@ -174,14 +194,12 @@ def test_empty_mounting_context_preserves_legacy_engine_identity():
     assert value_fingerprint(data) == value_fingerprint(legacy)
 
 
-def test_reinserting_one_material_portion_preserves_the_economic_lot():
+def test_reinserting_the_economic_lot_keeps_it_whole():
     from backend.scheduler.alternative_repair import (
         _replace_lots, _resolve_runs, _schedule_run_earliest,
     )
     from backend.scheduler.validation import validate_plan
 
-    # Another tool released on day 7 breaks the mounting after the first
-    # portion: the economic lot runs as two physical runs (B1a campaigns).
     data = scenario()
     demand = [0] * data.n_days
     demand[14] = 1000
@@ -192,30 +210,24 @@ def test_reinserting_one_material_portion_preserves_the_economic_lot():
     result = schedule_all(data, config=config)
     runs = _resolve_runs(result.segments, result.lots, None)
     sku_runs = [run for run in runs.values() if run.tool_id == "TOOL"]
-    assert sorted(lot.qty for run in sku_runs for lot in run.lots) == [5680, 26320]
-    for run in sku_runs:
-        fixed = [s for s in result.segments if s.run_id != run.id]
-        rebound, created = _schedule_run_earliest(run, "MACHINE", fixed, data, config)
-        combined = [*fixed, *created]
-        lots = _replace_lots(result.lots, rebound.lots)
-        assert lots == result.lots
-        assert sum(s.qty for s in combined if s.sku == "SKU") == 32000
-        assert all(s.lot_qty == 32000 for s in created)
-        assert not validate_plan(combined, data, config, lots=lots)
+    assert [lot.qty for run in sku_runs for lot in run.lots] == [32000]
+    (run,) = sku_runs
+    fixed = [s for s in result.segments if s.run_id != run.id]
+    rebound, created = _schedule_run_earliest(run, "MACHINE", fixed, data, config)
+    combined = [*fixed, *created]
+    lots = _replace_lots(result.lots, rebound.lots)
+    assert lots == result.lots
+    assert sum(s.qty for s in combined if s.sku == "SKU") == 32000
+    assert all(s.lot_qty == 32000 for s in created)
+    assert not validate_plan(combined, data, config, lots=lots)
 
 
-def test_released_portions_continue_on_the_mounted_tool_in_one_run():
-    """Rule 1 (10/10): nothing else needs the machine, so the tool stays mounted
-    across the material waits: one setup, one run, portion boundaries kept."""
+def test_the_economic_lot_is_one_run_with_one_setup():
+    """Rule of 13/10: one production, one setup, from the lot release."""
 
     data = scenario()
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
     assert len({s.run_id for s in result.segments}) == 1
     assert sum(1 for s in result.segments if s.setup_min > 0) == 1
-    # Every portion ends on a segment boundary.
-    cumulative, boundaries = 0, set()
-    for segment in sorted(result.segments, key=lambda s: (s.day_idx, s.start_min)):
-        cumulative += segment.qty
-        boundaries.add(cumulative)
-    assert {5680, 20080, 22480, 32000} <= boundaries
+    assert sum(s.qty for s in result.segments) == 32000

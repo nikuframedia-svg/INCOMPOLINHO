@@ -1,10 +1,13 @@
 """Build the plan from material portions, as tool campaigns (plan of 10/10, B1a).
 
-An economic lot that covers several deliveries is sized once (AGENTS §3), but
-each delivery keeps its own material release ``R`` (AGENTS §2, "Janela por
-entrega"). This builder never returns new lots: it allocates the lot portion
-by portion with the shared earliest-slot allocator and keeps one machine per
-lot.
+An economic lot that covers several deliveries is sized once (AGENTS §3).
+Under the current material contract (version 3, 13/10/2026) the whole lot is
+released at the ``R`` of its first delivery and is one portion: it is placed
+as one production (one setup), never split. Plans of versions 1-2 released
+each delivery at its own ``R`` ("Janela por entrega"); their lots still have
+several portions. This builder never returns new lots: it allocates the lot
+portion by portion with the shared earliest-slot allocator and keeps one
+machine per lot.
 
 - **Portions** (``material_portions``): consecutive outputs released on the
   same day; the economic surplus closes the last portion. A portion uses the
@@ -64,7 +67,11 @@ from backend.config.shifts import ordered_shifts
 from backend.planning_control import planning_checkpoint
 from backend.scheduler.alternative_repair import _schedule_run_earliest
 from backend.scheduler.lot_sizing import _aggregate_milestones
-from backend.scheduler.material_quantities import material_portions, releases_in_portions
+from backend.scheduler.material_quantities import (
+    material_portions,
+    releases_in_portions,
+    whole_lot_release,
+)
 from backend.scheduler.policy import (
     ANTICIPATION_TOLERANCE_MIN,
     anticipation_compare,
@@ -103,12 +110,15 @@ _KEEP = object()
 
 
 def has_quantity_releases(lots):
-    """Whether some lot releases its material in more than one portion.
+    """Whether the lots are planned by this builder.
 
-    Twin cycles count since Fase B2 (their release curve, AGENTS §2).
+    Lots of the current material contract (version 3, one production per
+    economic lot, AGENTS §2) always are, as are lots of versions 1-2 that
+    release their material in more than one portion (twin cycles since
+    Fase B2). Only older plans fall back to the previous engine.
     """
 
-    return any(releases_in_portions(lot) for lot in lots)
+    return any(whole_lot_release(lot) or releases_in_portions(lot) for lot in lots)
 
 
 def _run(lot, identity):
@@ -827,7 +837,10 @@ class _CampaignBuilder:
         would make such a portion late, or later, while that portion placed
         first costs no delivery (neither the placement's lot nor the ready
         portions ranked between them gets later), the smaller one goes
-        first. Returns that portion's placement, or ``None``.
+        first. A whole economic lot (material version 3) cannot let a later
+        order in between: any order it would make late may go first, and
+        the whole lot moves after it. Returns that portion's placement, or
+        ``None``.
         """
 
         head = placement.portion
@@ -843,7 +856,7 @@ class _CampaignBuilder:
                 and portion.key > head.key
                 and portion.identity != head.identity
                 and portion.lot.production_due_day is not None
-                and portion.lot.production_due_day <= due
+                and (portion.lot.production_due_day <= due or whole_lot_release(head.lot))
                 and self.release_abs(portion) < placement.end
                 and machine in self.machines(portion.lot_id)
             ),
@@ -945,9 +958,9 @@ class _CampaignBuilder:
 
 FALLBACK_WARNING = (
     "Não foi possível juntar a produção em campanhas por ferramenta. O plano "
-    "monta a ferramenta uma vez por cada parte de entrega e pode ter mais "
-    "mudanças de ferramenta (setups). As entregas e as datas do material "
-    "continuam verificadas."
+    "monta a ferramenta uma vez por cada lote (ou parte de entrega, nos planos "
+    "antigos) e pode ter mais mudanças de ferramenta (setups). As entregas e "
+    "as datas do material continuam verificadas."
 )
 
 

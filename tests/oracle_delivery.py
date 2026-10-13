@@ -58,6 +58,9 @@ class WorkCalendar:
             return day not in self.holidays
         if day in self.extra:
             return True
+        # Holidays before the first ISOP column (05/10 for rev121) count too.
+        if day in self.holidays:
+            return False
         return (self.first + timedelta(days=day)).weekday() < 5
 
     def add(self, day: int, workdays: int) -> int:
@@ -445,11 +448,14 @@ def oracle_lot_releases(lot, data, calendar=None, lots=None) -> list[tuple[str, 
 
 
 def oracle_window_violations(segments, lots, data) -> list[WindowViolation]:
-    """Segments that prepare or make pieces before their delivery's ``R``.
+    """Segments that prepare or make pieces before their material is released.
 
     Lots without per-delivery outputs (``quantity_material_version``) are not
-    judged here. Production counts on the segment's day; a setup on a day
-    when nothing more is released is a violation too.
+    judged here. Versions 1-2: each delivery at its own ``R``. Version 3
+    (13/10/2026, AGENTS §2): the whole economic lot at the earliest ``R``
+    the oracle finds for it (its first delivery's, or the twin pair's).
+    Production counts on the segment's day; a setup on a day when nothing
+    more is released is a violation too.
     """
 
     calendar = WorkCalendar(data)
@@ -463,6 +469,9 @@ def oracle_window_violations(segments, lots, data) -> list[WindowViolation]:
         if not outputs or not any(o.get("quantity_material_version") for o in outputs):
             continue
         releases = oracle_lot_releases(lot, data, calendar, lots)
+        if max(int(o.get("quantity_material_version") or 0) for o in outputs) >= 3:
+            lot_release = min(release for _side, _qty, release in releases)
+            releases = [(side, qty, lot_release) for side, qty, _release in releases]
         produced = 0
         for segment in sorted(by_lot.get(lot.id, []), key=lambda s: (s.day_idx, s.start_min)):
             if lot.is_twin and segment.twin_outputs:
