@@ -26,7 +26,14 @@ from backend.scheduler.lot_sizing import upgrade_lot_material
 from backend.scheduler.material_quantities import next_release_day, releases_in_portions
 from backend.scheduler.validation import assert_plan_valid
 from backend.types import PlanAnchor
-from tests.test_started_lot_rest import SUPPLIED, _baseline, _config, _data
+from tests.test_started_lot_rest import (
+    SUPPLIED,
+    _baseline,
+    _config,
+    _data,
+    _recorded_productions,
+    _without_recorded_productions,
+)
 
 
 def _rows(segments):
@@ -56,7 +63,11 @@ def test_rest_of_a_started_lot_follows_a_moved_mount(monkeypatch):
     assert _rows(rest).isdisjoint(_rows([baseline.segments[3]]))
     # The rest is never re-sized: same lots, every lot complete.
     # (The plan was saved under version 2: the move takes it over as version 3.)
-    assert {lot.id: lot for lot in moved.lots}[lot_l.id] == upgrade_lot_material(lot_l, data)
+    # A move result carries no history boundary: L's started part and its
+    # rest count as two productions, as in the stored plan, and stay two.
+    moved_l = {lot.id: lot for lot in moved.lots}[lot_l.id]
+    assert _recorded_productions(moved_l) == {2}
+    assert _without_recorded_productions(moved_l) == upgrade_lot_material(lot_l, data)
     produced = {lot.id: sum(s.qty for s in moved.segments if s.lot_id == lot.id)
                 for lot in moved.lots}
     assert produced == {lot_l.id: 200, lot_m.id: 200, lot_x.id: 100}

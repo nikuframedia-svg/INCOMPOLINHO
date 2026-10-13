@@ -818,7 +818,9 @@ def _validate_plan(
                     )
                 )
 
-    violations.extend(lot_split_violations(ordered_by_machine, lots_by_id, data, config))
+    violations.extend(lot_split_violations(
+        ordered_by_machine, lots_by_id, data, config, history_ids=protected_ids,
+    ))
 
     by_tool: dict[str, list[Segment]] = {}
     for seg in active:
@@ -1103,38 +1105,292 @@ def _validate_plan(
     return violations
 
 
-def _blocked_between(
-    machine_id: str, tool_id: str, start: tuple[int, int], end: tuple[int, int],
-    data: EngineData | None,
-) -> bool:
-    """Whether a machine or tool unavailability lies in ``[start, end]``.
+def _working_gap(
+    start: tuple[int, float], end: tuple[int, float],
+    data: EngineData | None, config: FactoryConfig | None, *, workday=None,
+) -> list[tuple[int, float, float]]:
+    """Shift time of factory working days inside ``[start, end)``.
 
-    ``start``/``end`` are ``(day, minute)``. Unavailable days and the daily
-    intervals of the calendar window (``machine_blocked_intervals``,
-    ``tool_blocked_intervals``) count: a real outage or block, never a night,
-    a weekend or a holiday.
+    ``start``/``end`` are ``(day, minute)``. Nights, weekends, holidays and
+    the days before day 0 hold none. Returns ``(day, low, high)`` pieces.
+    ``workday(day)`` may replace ``calendar.is_factory_workday`` (a cache).
     """
 
-    if data is None:
+    from backend.config.shifts import ordered_shifts
+
+    config = config or FactoryConfig()
+    if workday is None:
+        def workday(day: int) -> bool:
+            return is_factory_workday(day, data, config)
+    pieces: list[tuple[int, float, float]] = []
+    for day in range(int(start[0]), int(end[0]) + 1):
+        low = float(start[1]) if day == start[0] else 0.0
+        high = float(end[1]) if day == end[0] else 1440.0
+        if high <= low or data is None or not workday(day):
+            continue
+        for shift in ordered_shifts(config):
+            piece_low = max(low, float(shift.start_min))
+            piece_high = min(high, float(shift.end_min))
+            if piece_high > piece_low:
+                pieces.append((day, piece_low, piece_high))
+    return pieces
+
+
+def _block_in_working_time(
+    machine_id: str, tool_id: str, pieces: list[tuple[int, float, float]],
+    data: EngineData | None,
+) -> bool:
+    """Whether a machine or tool unavailability covers part of ``pieces``.
+
+    Unavailable days and the daily intervals of the calendar window
+    (``machine_blocked_intervals``, ``tool_blocked_intervals``) count only
+    where they meet working time: a block at night, on a weekend or on a
+    holiday stops nothing.
+    """
+
+    if data is None or not pieces:
         return False
-    start_abs = start[0] * 1440 + start[1]
-    end_abs = end[0] * 1440 + end[1]
     blocked_days = (
         data.machine_blocked_days.get(machine_id, set())
         | data.tool_blocked_days.get(tool_id, set())
     )
-    if any(day in blocked_days for day in range(start[0], end[0] + 1)):
-        return True
-    for block in (
+    blocks = [
         *data.machine_blocked_intervals.get(machine_id, []),
         *data.tool_blocked_intervals.get(tool_id, []),
-    ):
-        day = int(block.get("start_day", -1))
-        low = day * 1440 + int(block.get("start_min", 0))
-        high = day * 1440 + int(block.get("end_min", 1440))
-        if low <= end_abs and high >= start_abs:
+    ]
+    for day, low, high in pieces:
+        if day in blocked_days:
             return True
+        for block in blocks:
+            if int(block.get("start_day", -1)) != day:
+                continue
+            if (int(block.get("start_min", 0)) < high
+                    and int(block.get("end_min", 1440)) > low):
+                return True
     return False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ProductionBreak:
+    """Where one lot stops being one production on a machine."""
+
+    before: Segment
+    after: Segment
+    kind: str  # "interleaved", "remount" or "pause"
+
+
+class _BreakFinder:
+    """The places where economic lots are split on their machines.
+
+    One lot is one production (AGENTS §2, 13/10/2026): one setup, and the
+    production goes on through shifts, nights, weekends and the following
+    days. On a machine (``ordered_by_machine``, in time order) a lot breaks
+    between two of its segments when
+
+    * ``interleaved``: another lot's work comes between them;
+    * ``remount``: the later segment mounts the tool again after the lot
+      has produced;
+    * ``pause``: nothing comes between, the tool stays mounted, but free
+      working time lies in the gap — shift time of a working day the
+      machine and tool could work, with enough operators, at least
+      ``calendar.MIN_FREE_INTERVAL_MIN`` long (``calendar.free_shift_intervals``,
+      the definition of rule 4's «Continua»).
+
+    An interleaving or a remount is excused when a machine or tool
+    unavailability covers part of the working time between the two parts
+    (``_block_in_working_time``); a pause never needs it, blocked time is
+    not free. A break is history, never judged, when its earlier part
+    started before the boundary of the plan (``scheduler.history``, the
+    current factory minute of the calculation) or is the started part of a
+    residual rest (``history_ids``). ``excuse_blocks=False`` counts every
+    interleaving and remount (an upper bound, see ``lot_productions``).
+    """
+
+    def __init__(
+        self, ordered_by_machine, lots_by_id, data, config, *, boundary, history_ids=(),
+        excuse_blocks: bool = True,
+    ):
+        self.excuse_blocks = excuse_blocks
+        self.ordered_by_machine = ordered_by_machine
+        self.lots_by_id = lots_by_id
+        self.data = data
+        self.config = config or FactoryConfig()
+        self.boundary = boundary
+        self.history_ids = set(history_ids)
+        self._by_day: dict[int, list[Segment]] | None = None
+        self._operators: dict[str, int] | None = None
+        self._workdays: dict[int, bool] = {}
+
+    def breaks(self, lot_ids: set[str]) -> dict[str, list[_ProductionBreak]]:
+        from backend.scheduler.history import is_history
+
+        found: dict[str, list[_ProductionBreak]] = {}
+        if not lot_ids:
+            return found
+        for ordered in self.ordered_by_machine.values():
+            last: dict[str, int] = {}
+            produced: set[str] = set()
+            for index, segment in enumerate(ordered):
+                lot_id = segment.lot_id
+                previous = last.get(lot_id)
+                last[lot_id] = index
+                had_produced = lot_id in produced
+                if segment.prod_min > 0:
+                    produced.add(lot_id)
+                if previous is None or lot_id not in lot_ids:
+                    continue
+                before = ordered[previous]
+                if id(before) in self.history_ids or is_history(
+                    before.day_idx, before.start_min, self.boundary,
+                ):
+                    continue
+                kind = None
+                if index - previous > 1:
+                    kind = "interleaved"
+                elif segment.setup_min > 0 and had_produced:
+                    kind = "remount"
+                elif had_produced and self._free_pause(before, segment):
+                    kind = "pause"
+                if kind is None:
+                    continue
+                if kind != "pause" and self._excused(before, segment):
+                    continue
+                found.setdefault(lot_id, []).append(_ProductionBreak(before, segment, kind))
+        return found
+
+    def productions(
+        self, lot_ids: set[str], breaks: dict[str, list[_ProductionBreak]] | None = None,
+    ) -> dict[str, int]:
+        """Productions of each lot: one per machine it runs on, plus its breaks."""
+
+        machines: dict[str, set[str]] = {}
+        for machine_id, ordered in self.ordered_by_machine.items():
+            for segment in ordered:
+                if segment.lot_id in lot_ids and id(segment) not in self.history_ids:
+                    machines.setdefault(segment.lot_id, set()).add(machine_id)
+        if breaks is None:
+            breaks = self.breaks(lot_ids)
+        return {
+            lot_id: len(used) + len(breaks.get(lot_id, []))
+            for lot_id, used in machines.items()
+        }
+
+    def _workday(self, day: int) -> bool:
+        if day not in self._workdays:
+            self._workdays[day] = is_factory_workday(day, self.data, self.config)
+        return self._workdays[day]
+
+    def _gap(self, before: Segment, after: Segment) -> list[tuple[int, float, float]]:
+        return _working_gap(
+            (before.day_idx, float(before.end_min)), (after.day_idx, float(after.start_min)),
+            self.data, self.config, workday=self._workday,
+        )
+
+    def _excused(self, before: Segment, after: Segment) -> bool:
+        """An outage or block over the working time between the two parts."""
+
+        data = self.data
+        if not self.excuse_blocks or data is None:
+            return False
+        machine_id, tool_id = after.machine_id, after.tool_id
+        if not (data.machine_blocked_days.get(machine_id)
+                or data.tool_blocked_days.get(tool_id)
+                or data.machine_blocked_intervals.get(machine_id)
+                or data.tool_blocked_intervals.get(tool_id)):
+            return False
+        return _block_in_working_time(machine_id, tool_id, self._gap(before, after), data)
+
+    def _free_pause(self, before: Segment, after: Segment) -> bool:
+        from backend.calendar import MIN_FREE_INTERVAL_MIN, free_shift_intervals
+
+        start = (before.day_idx, float(before.end_min))
+        end = (after.day_idx, float(after.start_min))
+        if (end[0] - start[0]) * 1440 + end[1] - start[1] < MIN_FREE_INTERVAL_MIN:
+            return False
+        pieces = self._gap(before, after)
+        if not any(high - low >= MIN_FREE_INTERVAL_MIN for _day, low, high in pieces):
+            return False
+        required = self._required_operators(after)
+        for day, low, high in pieces:
+            if high - low < MIN_FREE_INTERVAL_MIN:
+                continue
+            if free_shift_intervals(
+                after.machine_id, after.tool_id, day, self.data, self.config,
+                segments=self._segments_by_day().get(day, []),
+                required_operators=required, start_min=low, end_min=high,
+            ):
+                return True
+        return False
+
+    def _segments_by_day(self) -> dict[int, list[Segment]]:
+        if self._by_day is None:
+            by_day: dict[int, list[Segment]] = {}
+            for ordered in self.ordered_by_machine.values():
+                for segment in ordered:
+                    by_day.setdefault(segment.day_idx, []).append(segment)
+            self._by_day = by_day
+        return self._by_day
+
+    def _required_operators(self, segment: Segment) -> int:
+        """Operators the lot needs to run (the larger side of a twin cycle)."""
+
+        if self._operators is None:
+            self._operators = {
+                op.id: max(1, int(getattr(op, "operators", 1) or 1))
+                for op in getattr(self.data, "ops", None) or []
+            }
+        lot = self.lots_by_id.get(segment.lot_id)
+        if lot is None:
+            return 1
+        op_ids = [str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []] or [lot.op_id]
+        return max((self._operators.get(op_id, 1) for op_id in op_ids), default=1)
+
+
+def _upgraded_productions(lot: Lot) -> int | None:
+    """Productions an upgraded lot had in the plan it was calculated from."""
+
+    from backend.scheduler.lot_sizing import UPGRADED_PRODUCTIONS_KEY
+
+    values = [
+        int(output[UPGRADED_PRODUCTIONS_KEY])
+        for output in lot.output_milestones or []
+        if output.get(UPGRADED_PRODUCTIONS_KEY) is not None
+    ]
+    return max(values) if values else None
+
+
+def lot_productions(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData | None,
+    config: FactoryConfig | None,
+    *,
+    boundary=None,
+) -> dict[str, int]:
+    """Productions of every lot of a stored plan, the most the check may allow.
+
+    ``boundary`` is the history boundary (``scheduler.history``) of the
+    calculation the plan is the baseline of: breaks whose earlier part is
+    history are not counted, as the check does not judge them. Interleavings
+    and remounts count even with a block in between: the calendar may have
+    changed since the plan was made (a new outage would excuse the old
+    break there, while the plan that answers it moves the work elsewhere).
+    """
+
+    config = config or FactoryConfig()
+    by_machine: dict[str, list[Segment]] = {}
+    for segment in segments:
+        if segment.end_min > segment.start_min:
+            by_machine.setdefault(segment.machine_id, []).append(segment)
+    ordered = {
+        machine_id: sorted(items, key=lambda item: segment_abs(item, config)[0])
+        for machine_id, items in by_machine.items()
+    }
+    finder = _BreakFinder(
+        ordered, {lot.id: lot for lot in lots}, data, config, boundary=boundary,
+        excuse_blocks=False,
+    )
+    return finder.productions({lot.id for lot in lots})
 
 
 def lot_split_violations(
@@ -1142,93 +1398,112 @@ def lot_split_violations(
     lots_by_id: dict[str, Lot],
     data: EngineData | None,
     config: FactoryConfig | None,
+    *,
+    history_ids=(),
 ) -> list[dict[str, Any]]:
     """Economic lots produced in more than one production (AGENTS §2, 13/10/2026).
 
     Material version 3: an economic lot is one production, one setup, which
-    continues through shifts, nights, weekends and the following days. On
-    its machine (``ordered_by_machine``, in time order), the lot is split when
-    another lot's work comes between two of its segments, or when one of its
-    segments mounts the tool again after the lot has produced. That is legal
-    only when an outage or block of the machine or tool lies between the two
-    (``_blocked_between``) or when the earlier part is history: it started
-    before the calculation's boundary, the current factory minute of rule 4
-    (``scheduler.history``, the same rule as the protection and the commit
-    guard, read from the plan's ``history_boundary``), so the rest of a lot
-    started today may follow other work. In the residual problem of a replan
-    the frozen work is itself a machine and tool block
-    (``frozen._install_frozen_reservations``). Lots of an
-    older material contract (also when taken over as version 3,
-    ``lot_sizing.UPGRADED_MATERIAL_KEY``) and lots preserved unchanged are
-    not judged.
+    continues through shifts, nights, weekends and the following days. The
+    breaks of a lot are found by ``_BreakFinder``: another lot's work in
+    between, a new setup after the lot produced, or a pause with free
+    working time while nothing else runs; an outage or block of the machine
+    or tool over the working time in between excuses the first two. A break
+    whose earlier part is history is not judged: it started before the
+    calculation's boundary, the current factory minute of rule 4
+    (``scheduler.history``, read from the plan's ``history_boundary``), or
+    it is the started part of a residual rest (``history_ids``), so the rest
+    of a lot started today may follow other work. In the residual problem
+    of a replan the frozen work is itself a machine and tool block
+    (``frozen._install_frozen_reservations``).
+
+    Lots of an older material contract and lots preserved unchanged are not
+    judged. A lot taken over from versions 1-2
+    (``lot_sizing.UPGRADED_MATERIAL_KEY``) may keep the productions its old
+    contract made, but never gain one: it is split when it has more
+    productions than in the plan it was calculated from
+    (``lot_sizing.UPGRADED_PRODUCTIONS_KEY``, written by
+    ``plans.frozen.with_current_material``).
     """
 
-    from backend.scheduler.history import history_boundary, is_history
+    from backend.scheduler.history import history_boundary
     from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
     from backend.scheduler.material_quantities import lot_material_version
 
-    boundary = history_boundary(data)
     preserved = set(getattr(data, "preserved_lot_proofs", None) or {})
-    judged: dict[str, bool] = {}
+    planned = {segment.lot_id for ordered in ordered_by_machine.values() for segment in ordered}
+    strict: set[str] = set()
+    allowed: dict[str, int] = {}
+    for lot_id in planned:
+        lot = lots_by_id.get(lot_id)
+        if lot is None or lot_id in preserved or lot_material_version(lot) < 3:
+            continue
+        if not any(output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or []):
+            strict.add(lot_id)
+            continue
+        limit = _upgraded_productions(lot)
+        if limit is not None:
+            allowed[lot_id] = limit
+    if not strict and not allowed:
+        return []
 
-    def one_production(lot_id: str) -> bool:
-        if lot_id not in judged:
-            lot = lots_by_id.get(lot_id)
-            judged[lot_id] = bool(
-                lot is not None
-                and lot_id not in preserved
-                and lot_material_version(lot) >= 3
-                and not any(
-                    output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or []
-                )
-            )
-        return judged[lot_id]
-
+    finder = _BreakFinder(
+        ordered_by_machine, lots_by_id, data, config,
+        boundary=history_boundary(data), history_ids=history_ids,
+    )
     violations: list[dict[str, Any]] = []
-    for machine_id, ordered in ordered_by_machine.items():
-        last: dict[str, int] = {}
-        produced: set[str] = set()
-        reported: set[str] = set()
-        for index, segment in enumerate(ordered):
-            lot_id = segment.lot_id
-            previous = last.get(lot_id)
-            last[lot_id] = index
-            if previous is None:
-                if segment.prod_min > 0:
-                    produced.add(lot_id)
-                continue
-            interleaved = index - previous > 1
-            remount = segment.setup_min > 0 and lot_id in produced
-            if segment.prod_min > 0:
-                produced.add(lot_id)
-            if not (interleaved or remount) or lot_id in reported or not one_production(lot_id):
-                continue
-            before = ordered[previous]
-            if _blocked_between(
-                machine_id, segment.tool_id, (before.day_idx, int(before.end_min)),
-                (segment.day_idx, int(segment.start_min)), data,
-            ):
-                continue
-            if is_history(before.day_idx, before.start_min, boundary):
-                continue
-            reported.add(lot_id)
-            lot = lots_by_id[lot_id]
-            violations.append(
-                _violation(
-                    "lot_split",
-                    (
-                        f"Referência {lot.sku or lot.op_id} ({machine_id}): o lote económico "
-                        f"volta a ser produzido no {day_label(segment.day_idx, data)} "
-                        "numa produção separada, sem avaria nem bloqueio pelo meio. "
-                        "Um lote económico produz-se de uma só vez, com um único setup."
-                    ),
-                    segment,
-                    before,
-                    interleaved=interleaved,
-                    remount=remount,
-                )
-            )
+    breaks = finder.breaks(strict | set(allowed))
+    counts = finder.productions(set(allowed), breaks) if allowed else {}
+    for lot_id in sorted(strict & set(breaks)):
+        violations.append(_split_violation(lots_by_id[lot_id], breaks[lot_id][0], data))
+    for lot_id in sorted(allowed):
+        # More productions with no break means more machines: rule 3, checked elsewhere.
+        if counts.get(lot_id, 0) > allowed[lot_id] and breaks.get(lot_id):
+            violations.append(_split_violation(
+                lots_by_id[lot_id], breaks[lot_id][-1], data,
+                productions=counts[lot_id], allowed=allowed[lot_id],
+            ))
     return violations
+
+
+def _split_violation(
+    lot: Lot, item: _ProductionBreak, data: EngineData | None, *,
+    productions: int | None = None, allowed: int | None = None,
+) -> dict[str, Any]:
+    segment, before = item.after, item.before
+    if productions is not None:
+        message = (
+            f"Referência {lot.sku or lot.op_id} ({segment.machine_id}): o lote económico "
+            f"passa de {allowed} para {productions} produções separadas (no "
+            f"{day_label(segment.day_idx, data)}), sem avaria nem bloqueio pelo meio. "
+            "Um lote de um plano anterior pode manter as produções que tinha, "
+            "mas não ganhar outra."
+        )
+    elif item.kind == "pause":
+        message = (
+            f"Referência {lot.sku or lot.op_id} ({segment.machine_id}): o lote económico "
+            f"para com a ferramenta montada e retoma no {day_label(segment.day_idx, data)}, "
+            "com tempo de turno livre pelo meio. Um lote económico produz-se de uma só "
+            "vez, sem paragens."
+        )
+    else:
+        message = (
+            f"Referência {lot.sku or lot.op_id} ({segment.machine_id}): o lote económico "
+            f"volta a ser produzido no {day_label(segment.day_idx, data)} "
+            "numa produção separada, sem avaria nem bloqueio pelo meio. "
+            "Um lote económico produz-se de uma só vez, com um único setup."
+        )
+    return _violation(
+        "lot_split",
+        message,
+        segment,
+        before,
+        interleaved=item.kind == "interleaved",
+        remount=item.kind == "remount",
+        pause=item.kind == "pause",
+        **({"productions": productions, "allowed_productions": allowed}
+           if productions is not None else {}),
+    )
 
 
 def hard_gate_metrics(violations: list[dict[str, Any]]) -> dict[str, int]:

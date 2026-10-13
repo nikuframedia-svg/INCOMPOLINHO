@@ -99,6 +99,8 @@ export interface Segment extends PlanningMilestoneFields {
     customer_ready_day: number;
   }[] | null;
   unallocated_output?: { sku: string; qty: number }[] | null;
+  /** Subcontracted references: when the segment's pieces leave and come back (older servers omit it). */
+  subcontract_trips?: { sent_day: number; return_day: number; whole_lot: boolean }[];
   lot_id: string;
   run_id: string;
   machine_id: string;
@@ -873,6 +875,8 @@ export interface GateReport {
     completion_day: number;
     completion_date?: string | null;
     late_workdays: number;
+    /** The whole lot goes out when its last piece is made (since 13/10/2026). */
+    whole_lot?: boolean;
   }>;
   setup_overlap_detail: Record<string, unknown>[];
   proposals: GateProposal[];

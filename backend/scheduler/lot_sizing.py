@@ -40,8 +40,11 @@ QUANTITY_MATERIAL_VERSION = 3
 # Marks the outputs of a lot sized under the per-delivery contract (version 1
 # or 2) and upgraded to version 3 by ``upgrade_lot_material``. Such a lot may
 # already be split into several productions by its old contract; the
-# one-production check (``validation.lot_split_violations``) leaves it alone.
+# one-production check (``validation.lot_split_violations``) lets it keep
+# them but never gain one: ``UPGRADED_PRODUCTIONS_KEY`` records how many it
+# had in the plan each calculation starts from (``frozen.with_current_material``).
 UPGRADED_MATERIAL_KEY = "material_upgraded_from"
+UPGRADED_PRODUCTIONS_KEY = "material_upgraded_productions"
 
 
 def _lot_release(outputs: list[dict[str, object]]) -> int:

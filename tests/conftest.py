@@ -26,6 +26,13 @@ def legacy_engine(monkeypatch):
     Since material version 3 (13/10/2026) every current lot is planned by the
     quantity builder; the legacy engine (global constructor, dispatch audit
     trail, final scheduler passes) only plans lots of such older plans. Tests
-    of that engine pin this version.
+    of that engine pin this version, in every module that holds it (some
+    import the constant by value, e.g. ``canonical``).
     """
-    monkeypatch.setattr("backend.scheduler.lot_sizing.QUANTITY_MATERIAL_VERSION", 0)
+    import sys
+
+    import backend.scheduler.canonical  # noqa: F401  (holds the constant by value)
+
+    for name, module in list(sys.modules.items()):
+        if name.startswith("backend.") and hasattr(module, "QUANTITY_MATERIAL_VERSION"):
+            monkeypatch.setattr(module, "QUANTITY_MATERIAL_VERSION", 0)

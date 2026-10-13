@@ -120,12 +120,14 @@ SPLIT_START = [(0, 0, 420, 50, 30, 0), (0, 0, 480, 50, 0, 0), (2, 0, 510, 100, 3
 
 
 def _unmarked(lot):
-    """The lot without the version-upgrade mark (``UPGRADED_MATERIAL_KEY``)."""
-    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
+    """The lot without the version-upgrade marks (``UPGRADED_MATERIAL_KEY``
+    and the productions it had, ``UPGRADED_PRODUCTIONS_KEY``)."""
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY, UPGRADED_PRODUCTIONS_KEY
 
     clean = copy.deepcopy(lot)
     for output in clean.output_milestones:
         output.pop(UPGRADED_MATERIAL_KEY, None)
+        output.pop(UPGRADED_PRODUCTIONS_KEY, None)
     return clean
 
 
@@ -383,7 +385,9 @@ def test_quick_repair_changing_started_production_falls_back_to_the_constructor(
             second.end_min, first.qty + second.qty, first.prod_min + second.prod_min,
         )
         candidate.segments.remove(second)
-        assert_plan_valid(candidate.segments, data, config, lots=candidate.lots)
+        # Judged with its history boundary: L's started part is history.
+        assert_plan_valid(candidate.segments, result_validation_data(data, candidate), config,
+                          lots=candidate.lots)
         calls.append("repair")
         return candidate, moves
 

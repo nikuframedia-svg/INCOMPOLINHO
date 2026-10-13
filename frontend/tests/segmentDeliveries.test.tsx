@@ -128,6 +128,26 @@ describe("segmentDeliveries", () => {
       expect(segmentSubcontractLine({ ...base, is_subcontracted: true, qty: 0, prod_min: 0 }, dateAt)).toBeNull();
     });
 
+    it("o lote subcontratado vai inteiro quando acaba e volta inteiro (dias do servidor)", () => {
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true,
+        delivery_allocations: [ready("SKU1", 600, 14, 12), ready("SKU1", 400, 30, 12)], unallocated_output: [],
+        subcontract_trips: [{ sent_day: 10, return_day: 12, whole_lot: true }],
+      }, dateAt)).toBe("Subcontratado — o lote inteiro sai a 19/10 e volta a 21/10");
+      // Só excedente: a viagem do lote continua a aparecer.
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],
+        subcontract_trips: [{ sent_day: 10, return_day: 30, whole_lot: true }],
+      }, dateAt)).toBe("Subcontratado — o lote inteiro sai a 19/10 e volta a dia 30");
+    });
+
+    it("um lote de um plano anterior sai com as peças de cada entrega", () => {
+      expect(segmentSubcontractLine({
+        ...base, is_subcontracted: true, delivery_allocations: [ready("SKU1", 10, 14, 12)], unallocated_output: [],
+        subcontract_trips: [{ sent_day: 10, return_day: 12, whole_lot: false }],
+      }, dateAt)).toBe("Subcontratado — sai a 19/10 e volta a 21/10");
+    });
+
     it("nas gémeas só conta o lado subcontratado", () => {
       expect(segmentSubcontractLine({
         ...base,

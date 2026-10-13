@@ -99,7 +99,11 @@ def test_outage_in_the_gap_keeps_the_run_and_its_removal_releases_the_rest():
     baseline, lot = _plan(data, config, AFTER_GAP)
     outage = copy.deepcopy(data)
     outage.machine_blocked_days = {"M1": {1, 2}}
-    assert_plan_valid(baseline.segments, outage, config, lots=baseline.lots)
+    # Valid as the plan of planning day 1: the afternoon of day 0, when the
+    # lot already stood, is history (a pause there is not judged).
+    view = copy.deepcopy(outage)
+    view.history_boundary = [1, 0]
+    assert_plan_valid(baseline.segments, view, config, lots=baseline.lots)
 
     # With the outage there is no working time between: the run goes on.
     protected = frozen._protected_plan(baseline, 1, outage, config)

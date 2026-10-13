@@ -99,26 +99,45 @@ def _subcontract_movements(
 ) -> tuple[dict[str, dict[int, int]], dict[str, dict[int, list[dict]]]]:
     """Pieces sent to and returned from the subcontractor, per (op_id, day).
 
-    A subcontracted portion's pieces are shown leaving on the days they are
-    stamped (its slices) and back together on its customer-ready day (the
-    shared evaluator's credit), with the days and machines they were stamped
-    on. Portions stamped on the same days and machines that come back on the
+    Read from the shared evaluator (``delivery_portions``). A lot that goes
+    out whole (material version 3, ``whole_lot_subcontract``, 13/10/2026)
+    is shown leaving whole on its completion day and back together on its
+    return day, stamped over the whole lot's days and machines. Older lots
+    keep the per-delivery rule: a portion's pieces leave on the days they are
+    stamped (its slices) and come back together on its customer-ready day.
+    Portions stamped on the same days and machines that come back on the
     same day are one return.
     """
     sent: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     returns: dict[str, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
     by_origin: dict[tuple, dict] = {}
+
+    def machines_of(items) -> set[str]:
+        return {
+            segments[item.segment_index].machine_id
+            for item in items
+            if 0 <= item.segment_index < len(segments)
+        }
+
+    # Stamping days and machines of each whole lot, over all its portions.
+    whole_lots: dict[str, list] = defaultdict(list)
+    for portion in portions:
+        if portion.is_subcontracted and portion.whole_lot_dispatch:
+            for item in portion.slices:
+                whole_lots[item.lot_id].append(item)
+
     for portion in portions:
         if not portion.is_subcontracted or not portion.produced_qty:
             continue
         for item in portion.slices:
-            sent[portion.op_id][item.day_idx] += item.qty
-        stamped = [item.day_idx for item in portion.slices]
-        machines = sorted({
-            segments[item.segment_index].machine_id
-            for item in portion.slices
-            if 0 <= item.segment_index < len(segments)
-        })
+            leaves = item.available_day if item.lot_id in whole_lots else item.day_idx
+            sent[portion.op_id][leaves] += item.qty
+        lots_out_whole = {item.lot_id for item in portion.slices if item.lot_id in whole_lots}
+        stamped_items = [
+            *portion.slices, *(item for lot_id in lots_out_whole for item in whole_lots[lot_id]),
+        ]
+        stamped = [item.day_idx for item in stamped_items]
+        machines = sorted(machines_of(stamped_items))
         first = min(stamped, default=portion.factory_day)
         last = max(stamped, default=portion.factory_day)
         for day, qty in portion.credits():

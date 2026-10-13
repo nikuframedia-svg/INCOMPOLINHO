@@ -6,6 +6,12 @@ must agree, order by order, with the independent oracle in
 revision 121: an economic lot covering several deliveries (F1), the same lot
 subcontracted with the shape of 6800017267C.30 (F2), with economic surplus
 (F3) and with opening stock and a committed supply (F5).
+
+Since 13/10/2026 a subcontracted economic lot of the current contract goes
+out whole when it ends (AGENTS §2): F2-whole is that case (the 21/10 and
+16/10 orders wait for the lot). F2, F3 and F5 keep the per-delivery dispatch
+of a lot taken over from an older plan (``material_upgraded_from``), which
+each view still reads from the same evaluator.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from backend.config.types import FactoryConfig, MachineConfig
 from backend.risk.slack_analytics import compute_lot_risks
 from backend.scheduler.gates import build_gate_report
 from backend.scheduler.improvement import subcontract_lateness
-from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY, create_lots
 from backend.scheduler.scoring import compute_score
 from backend.scheduler.types import Segment
 from backend.types import ClientDemandEntry, CommittedSupply, EngineData, EOp, MachineInfo
@@ -101,7 +107,21 @@ def f1(blocks=SHAPE):
     return _segments(lots[0], blocks), lots, data
 
 
+def _taken_over(lots):
+    """Lots taken over from a per-delivery plan: each delivery leaves alone."""
+    for lot in lots:
+        for output in lot.output_milestones:
+            output[UPGRADED_MATERIAL_KEY] = 2
+    return lots
+
+
 def f2(blocks=SHAPE):
+    data = _data(subcontracted=True, eco_lot=2610, entries=ONE_CLIENT)
+    lots = _taken_over(create_lots(data))
+    return _segments(lots[0], blocks), lots, data
+
+
+def f2_whole(blocks=SHAPE):
     data = _data(subcontracted=True, eco_lot=2610, entries=ONE_CLIENT)
     lots = create_lots(data)
     return _segments(lots[0], blocks), lots, data
@@ -109,7 +129,7 @@ def f2(blocks=SHAPE):
 
 def f3(blocks=(*SHAPE, (13, 880, 950, 390))):
     data = _data(subcontracted=True, eco_lot=3000, entries=ONE_CLIENT)
-    lots = create_lots(data)
+    lots = _taken_over(create_lots(data))
     return _segments(lots[0], blocks), lots, data
 
 
@@ -120,7 +140,7 @@ def f5(blocks=((7, 835, 930, 461), (7, 930, 1060, 1714), (13, 814, 880, 73),
     # 500 ordered, of which 138 already in stock (NP -362), served by the supply.
     entries = [_entry("ACURION", 12, 500, 362), *ONE_CLIENT[1:]]
     data = _data(subcontracted=True, eco_lot=3000, entries=entries, stk=138, supplies=(supply,))
-    lots = create_lots(data)
+    lots = _taken_over(create_lots(data))
     return _segments(lots[0], list(blocks)), lots, data
 
 
@@ -133,7 +153,8 @@ def f1_late():
                (13, 814, 880, 73)])
 
 
-FIXTURES = {"F1": f1, "F1-late": f1_late, "F2": f2, "F2-late": f2_late, "F3": f3, "F5": f5}
+FIXTURES = {"F1": f1, "F1-late": f1_late, "F2": f2, "F2-late": f2_late, "F2-whole": f2_whole,
+            "F3": f3, "F5": f5}
 
 
 def _views(segments, lots, data):
@@ -169,6 +190,18 @@ def test_oracle_subcontracted_portions_follow_their_own_completion():
 def test_oracle_marks_only_the_slipped_portion_late():
     segments, lots, data = f2_late()
     assert [o.late for o in oracle_orders(segments, lots, data)] == [False, False, True]
+
+
+def test_oracle_sends_a_current_lot_whole_when_it_ends():
+    """The same lot under the current contract: everything leaves on day 13,
+    the lot's last day, and is back on day 20; the orders of days 12 and 19
+    are late, the one of day 26 is not."""
+    segments, lots, data = f2_whole()
+    ready = [(o.due_day, o.factory_day, o.ready_day, o.late)
+             for o in oracle_orders(segments, lots, data)]
+    assert ready == [(12, 13, 20, True), (19, 13, 20, True), (26, 13, 20, False)]
+    # Not all made (the day-13 block missing): nothing leaves at all.
+    assert all(o.ready_day is None for o in oracle_orders(segments[1:], lots, data))
 
 
 # ── T1: all views agree with the oracle, order by order ──────────────────

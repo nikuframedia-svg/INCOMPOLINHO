@@ -26,6 +26,23 @@ from backend.types import EngineData, EOp, MachineInfo, PlanAnchor
 START = date(2026, 3, 2)  # a Monday
 
 
+
+def _recorded_productions(lot):
+    from backend.scheduler.lot_sizing import UPGRADED_PRODUCTIONS_KEY
+
+    return {output.get(UPGRADED_PRODUCTIONS_KEY) for output in lot.output_milestones}
+
+
+def _without_recorded_productions(lot):
+    """The lot without the productions it had in the stored plan
+    (``lot_sizing.UPGRADED_PRODUCTIONS_KEY``, written by each calculation)."""
+    from backend.scheduler.lot_sizing import UPGRADED_PRODUCTIONS_KEY
+
+    clean = copy.deepcopy(lot)
+    for output in clean.output_milestones:
+        output.pop(UPGRADED_PRODUCTIONS_KEY, None)
+    return clean
+
 def _config() -> FactoryConfig:
     config = FactoryConfig(machines={"M1": MachineConfig("M1", "Grandes")})
     config.tools = {"T1": {"primary": "M1", "setup_hours": 0.5},
@@ -134,7 +151,10 @@ def test_outage_moving_the_mount_supplier_gives_a_valid_plan(monkeypatch):
     by_id = {lot.id: lot for lot in result.lots}
     # Lot sizing ran once: the same lots, the started one unchanged.
     assert sorted(by_id) == sorted(lot.id for lot in baseline.lots)
-    assert by_id[lot_l.id] == upgrade_lot_material(lot_l, outage)
+    # Taken over as version 3, with the productions it had in the stored
+    # plan: one, its started part is history (rule 4).
+    assert _recorded_productions(by_id[lot_l.id]) == {1}
+    assert _without_recorded_productions(by_id[lot_l.id]) == upgrade_lot_material(lot_l, outage)
     produced = {lot_id: sum(s.qty for s in result.segments if s.lot_id == lot_id)
                 for lot_id in by_id}
     assert produced == {lot_l.id: 200, lot_m.id: 200, lot_x.id: 100}
@@ -142,9 +162,9 @@ def test_outage_moving_the_mount_supplier_gives_a_valid_plan(monkeypatch):
     rows = {_segment_physical_row(s) for s in result.segments}
     assert {_segment_physical_row(baseline.segments[i]) for i in (0, 1)} <= rows
     assert all(s.day_idx != 4 for s in result.segments)
+    assert _without_recorded_productions(by_id[lot_x.id]) == upgrade_lot_material(lot_x, outage)
     assert result.preserved_lot_proofs == frozen._splice_frozen_started_lots(
-        ScheduleResult([], [], {}, 0, [], []), baseline.segments[:2],
-        [upgrade_lot_material(lot_x, outage)],
+        ScheduleResult([], [], {}, 0, [], []), baseline.segments[:2], [by_id[lot_x.id]],
     ).preserved_lot_proofs
     assert any("produção já iniciada mantém-se" in w for w in result.warnings)
 

@@ -835,8 +835,10 @@ def _protected_plan(
     now = calculation_now(config, now)
     now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
     # A per-delivery plan (versions 1-2) is protected as version 3: its
-    # started lots are frozen only where they started.
-    baseline_result = with_current_material(baseline_result, engine_data)
+    # started lots are frozen only where they started. The productions of
+    # upgraded lots are recorded by the calculation's entry point, from the
+    # stored plan; ``baseline_result`` here may be a candidate.
+    baseline_result = with_current_material(baseline_result, engine_data, record=False)
     segments = list(baseline_result.segments)
     lots_by_id = {lot.id: lot for lot in baseline_result.lots}
     anchored = _honoured_anchor_lot_ids(baseline_result, engine_data, config)
@@ -952,25 +954,69 @@ def _protected_plan(
     )
 
 
-def with_current_material(baseline_result, engine_data):
+def with_current_material(
+    baseline_result, engine_data, config=None, boundary=None, *, record: bool = True,
+):
     """The baseline with the lots of a per-delivery plan under material version 3.
 
     A plan saved under versions 1-2 stays valid (``legacy_material_plan``);
     a replan, repair or manual move takes its lots over as version 3
     (``lot_sizing.upgrade_plan_material``), so the started ones are frozen
     only where they started (rule 4) and the plan never mixes versions.
-    Returns ``baseline_result`` itself when nothing changes.
+
+    Each lot taken over records how many productions it has in this
+    baseline (``lot_sizing.UPGRADED_PRODUCTIONS_KEY``, counted by
+    ``validation.lot_productions`` at the calculation's history ``boundary``,
+    ``planning_boundary``): it may keep them, never gain one
+    (``validation.lot_split_violations``). Only a calculation's entry point
+    records them, from the stored plan (``record``); the counts it wrote stay
+    with the lots. Returns ``baseline_result`` itself when nothing changes.
     """
     from backend.scheduler.lot_sizing import upgrade_plan_material
 
     if baseline_result is None or engine_data is None:
         return baseline_result
     lots = upgrade_plan_material(list(baseline_result.lots), engine_data)
+    if record:
+        lots = _with_upgraded_productions(
+            lots, baseline_result.segments, engine_data, config, boundary,
+        )
     if all(new is old for new, old in zip(lots, baseline_result.lots, strict=True)):
         return baseline_result
     upgraded = copy.copy(baseline_result)
     upgraded.lots = lots
     return upgraded
+
+
+def _with_upgraded_productions(lots, segments, engine_data, config, boundary):
+    """``lots`` with the productions of each upgraded lot in ``segments`` recorded."""
+    from backend.scheduler.history import as_boundary
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY, UPGRADED_PRODUCTIONS_KEY
+    from backend.scheduler.validation import lot_productions
+
+    upgraded = [
+        lot for lot in lots
+        if any(output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or [])
+    ]
+    if not upgraded:
+        return lots
+    counts = lot_productions(
+        list(segments or []), upgraded, engine_data, config, boundary=as_boundary(boundary),
+    )
+    marked = {id(lot) for lot in upgraded}
+    result = []
+    for lot in lots:
+        count = max(1, counts.get(lot.id, 0)) if id(lot) in marked else None
+        if count is None or all(
+            output.get(UPGRADED_PRODUCTIONS_KEY) == count for output in lot.output_milestones
+        ):
+            result.append(lot)
+            continue
+        recorded = copy.deepcopy(lot)
+        for output in recorded.output_milestones:
+            output[UPGRADED_PRODUCTIONS_KEY] = count
+        result.append(recorded)
+    return result
 
 
 def _current_delivery_dates(lot, engine_data):
@@ -1399,11 +1445,12 @@ def _compact_preserving_started_lots(
     engine_data, baseline_result, freeze_day, now = _recalculation_context(
         engine_data, config, baseline_result, recalculate_from_start, now,
     )
-    result = copy.deepcopy(with_current_material(baseline_result, engine_data))
     # Every validation of this plan reads its history boundary (rule 4).
-    result.history_boundary = planning_boundary(
+    boundary = planning_boundary(
         freeze_day, elapsed_on_planning_day(freeze_day, engine_data, config, now),
     )
+    result = copy.deepcopy(with_current_material(baseline_result, engine_data, config, boundary))
+    result.history_boundary = boundary
     protected = _protected_plan(result, freeze_day, engine_data, config, now=now)
     result, improvement = improve_preserving_protected_lots(
         result, engine_data, copy.deepcopy(engine_data), config,
@@ -1627,7 +1674,9 @@ def repair_preserving_protected_lots(
     """
     now = calculation_now(config, now)
     now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
-    baseline_result = with_current_material(baseline_result, engine_data)
+    baseline_result = with_current_material(
+        baseline_result, engine_data, config, planning_boundary(freeze_day, now_min),
+    )
     protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
     repaired = copy.deepcopy(baseline_result)
     if not protected and not now_min:
@@ -1726,14 +1775,14 @@ def optimize_preserving_started_lots(
         engine_data, baseline_result, freeze_day, now = _recalculation_context(
             engine_data, config, baseline_result, recalculate_from_start, now,
         )
-        baseline_result = with_current_material(baseline_result, engine_data)
-        protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
-        segments, lots, partial = protected.segments, protected.lots, protected.partial
-        original_data = copy.deepcopy(engine_data)
         # Every validation of the plan reads its history boundary (rule 4).
         boundary = planning_boundary(
             freeze_day, elapsed_on_planning_day(freeze_day, engine_data, config, now),
         )
+        baseline_result = with_current_material(baseline_result, engine_data, config, boundary)
+        protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
+        segments, lots, partial = protected.segments, protected.lots, protected.partial
+        original_data = copy.deepcopy(engine_data)
         complete = None
         complete_fingerprint = None
 

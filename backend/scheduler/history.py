@@ -31,7 +31,12 @@ from typing import Any
 def history_boundary(data) -> tuple[int, int] | None:
     """``(day, minute)`` before which the plan is history, or ``None``."""
 
-    raw = getattr(data, "history_boundary", None) if data is not None else None
+    return as_boundary(getattr(data, "history_boundary", None) if data is not None else None)
+
+
+def as_boundary(raw) -> tuple[int, int] | None:
+    """A stored boundary ``[day, minute]`` as ``(day, minute)``; ``None`` if none."""
+
     if not raw:
         return None
     day, minute = int(raw[0]), int(raw[1])

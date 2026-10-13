@@ -194,25 +194,92 @@ def test_validator_rejects_a_second_production_of_one_lot():
     assert lot_split_violations({"MACHINE": remount}, lots, data, CONFIG)
 
 
-def test_an_outage_between_the_two_productions_allows_the_new_setup():
-    from backend.scheduler.validation import lot_split_violations
-
+def _split_by_other_tool():
+    """The economic lot (day 6, 07:00-15:30), OTHER at 15:30, the rest of
+    the lot from day 7 07:00 with a new setup: two productions."""
     data = _with_other_tool()
     result = schedule_all(data, config=CONFIG)
     sku = sorted(
         (s for s in result.segments if s.sku == "SKU"), key=lambda s: (s.day_idx, s.start_min),
     )
     other = next(s for s in result.segments if s.sku == "OTHER" and s.qty > 0)
+    first = sku[0]
+    assert (first.day_idx, first.start_min, first.end_min) == (6, 420, 930)
+    between = replace(other, day_idx=6, start_min=930, end_min=1030)
+    rest = replace(sku[1], day_idx=7, start_min=420, end_min=930, setup_min=60.0)
     lots = {lot.id: lot for lot in result.lots}
-    ordered = {"MACHINE": [sku[0], other, *sku[1:]]}
+    return data, lots, {"MACHINE": [first, between, rest]}
+
+
+def test_an_outage_between_the_two_productions_allows_the_new_setup():
+    from backend.scheduler.validation import lot_split_violations
+
+    data, lots, ordered = _split_by_other_tool()
+    assert lot_split_violations(ordered, lots, data, CONFIG)
     blocked = copy.deepcopy(data)
-    blocked.machine_blocked_days = {"MACHINE": {sku[0].day_idx}}
+    blocked.machine_blocked_days = {"MACHINE": {6}}
     assert not lot_split_violations(ordered, lots, blocked, CONFIG)
+    # A tool block over working time in between (day 6, shift B).
     blocked = copy.deepcopy(data)
-    blocked.tool_blocked_intervals = {"TOOL": [{
-        "start_day": sku[1].day_idx, "start_min": 0, "end_min": sku[1].start_min,
-    }]}
+    blocked.tool_blocked_intervals = {"TOOL": [{"start_day": 6, "start_min": 1000, "end_min": 1100}]}
     assert not lot_split_violations(ordered, lots, blocked, CONFIG)
+
+
+@pytest.mark.parametrize("block", [
+    {"start_day": 7, "start_min": 0, "end_min": 420},      # the night before the rest
+    {"start_day": 6, "start_min": 420, "end_min": 600},    # before the gap
+    {"start_day": 8, "start_min": 420, "end_min": 600},    # after the rest started
+], ids=["night", "before", "after"])
+def test_a_block_outside_the_working_time_in_between_excuses_nothing(block):
+    """Review of 13/10: any block between the two parts used to excuse the
+    split, also a short tool block at night. Only one that stops working
+    time between the two parts does."""
+    from backend.scheduler.validation import lot_split_violations
+
+    data, lots, ordered = _split_by_other_tool()
+    blocked = copy.deepcopy(data)
+    blocked.tool_blocked_intervals = {"TOOL": [block]}
+    blocked.machine_blocked_days = {"MACHINE": {4}}  # a weekend day: no working time
+    assert [item["kind"] for item in lot_split_violations(ordered, lots, blocked, CONFIG)] == [
+        "lot_split",
+    ]
+
+
+def test_a_pause_with_free_working_time_is_a_second_production():
+    """Nothing else on the machine, the tool still mounted, but the lot stops
+    for idle shift time: that is a split too (review of 13/10). Nights,
+    weekends, holidays, outages and gaps under 30 min are not pauses."""
+    from backend.scheduler.validation import lot_split_violations
+
+    data = scenario()
+    result = schedule_all(data, config=CONFIG)
+    lots = {lot.id: lot for lot in result.lots}
+    sku = sorted(result.segments, key=lambda s: (s.day_idx, s.start_min))
+    assert [(s.day_idx, s.start_min, s.end_min) for s in sku] == [
+        (6, 420, 930), (6, 930, 1440), (7, 420, 740),
+    ]
+    assert not lot_split_violations({"MACHINE": sku}, lots, data, CONFIG)
+
+    def moved(last_day, last_start):
+        tail = replace(sku[-1], day_idx=last_day, start_min=last_start,
+                       end_min=last_start + 320)
+        return {"MACHINE": [*sku[:-1], tail]}
+
+    # Two days later (day 9; 7 and 8 are working days): a pause.
+    (violation,) = lot_split_violations(moved(9, 420), lots, data, CONFIG)
+    assert violation["pause"] and "sem paragens" in violation["message"]
+    # One hour later the same night-to-morning: a pause of 60 min.
+    assert lot_split_violations(moved(7, 480), lots, data, CONFIG)
+    # 20 minutes is a gap, not free time.
+    assert not lot_split_violations(moved(7, 440), lots, data, CONFIG)
+    # From Friday (day 9) to Monday (day 12) over the weekend: no pause.
+    friday = [replace(segment, day_idx=9) for segment in sku[:-1]]
+    monday = replace(sku[-1], day_idx=12)
+    assert not lot_split_violations({"MACHINE": [*friday, monday]}, lots, data, CONFIG)
+    # The machine down on days 7-8: resuming on day 9 is not a pause.
+    outage = copy.deepcopy(data)
+    outage.machine_blocked_days = {"MACHINE": {7, 8}}
+    assert not lot_split_violations(moved(9, 420), lots, outage, CONFIG)
 
 
 def test_only_history_before_the_minute_boundary_may_precede_another_lot():
@@ -264,7 +331,12 @@ def test_rule_4_cut_of_a_lot_started_today_lets_an_urgent_order_in(started):
     config = boundary_config()
     data = boundary_data(second_due=1)
     baseline, lots = _plan(data, config, {"OP1": started, "OP2": [(3, 480, 200, 30)]})
-    assert not validate_plan(baseline.segments, data, config, lots=baseline.lots)
+    # With the outage gone the stored plan pauses the lot over free shift
+    # time: under today's inputs that is a second production, which the
+    # replan has to remove.
+    assert [item["kind"] for item in validate_plan(
+        baseline.segments, data, config, lots=baseline.lots,
+    )] == ["lot_split"]
     now = _at(1, 600)
 
     result = frozen.optimize_preserving_started_lots(

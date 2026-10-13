@@ -12,6 +12,7 @@ from backend.plans.serialize import schedule_fingerprint
 from backend.scheduler.lot_sizing import (
     QUANTITY_MATERIAL_VERSION,
     UPGRADED_MATERIAL_KEY,
+    UPGRADED_PRODUCTIONS_KEY,
     _aggregate_milestones,
     create_lots,
     material_version,
@@ -369,7 +370,7 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                 # quantity attributed to each source delivery/material window.
                 key = tuple(
                     (k, str(v)) for k, v in sorted(output.items())
-                    if k not in ("qty", UPGRADED_MATERIAL_KEY)
+                    if k not in ("qty", UPGRADED_MATERIAL_KEY, UPGRADED_PRODUCTIONS_KEY)
                 )
                 counts[key] += int(output.get("qty", 0))
         return counts

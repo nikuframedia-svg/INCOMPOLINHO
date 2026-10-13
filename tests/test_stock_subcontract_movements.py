@@ -1,4 +1,4 @@
-"""Stock screen: subcontracted pieces leave on their stamping days and count on return."""
+"""Stock screen: a subcontracted lot leaves whole when it ends and counts on return."""
 
 from __future__ import annotations
 
@@ -48,18 +48,35 @@ def test_subcontracted_pieces_are_sent_on_stamping_day_and_return_with_origin():
     assert projection.stockout_day == 14
 
 
-def test_subcontracted_delivery_stamped_over_several_days_is_sent_on_each_stamping_day():
+def test_subcontracted_lot_stamped_over_several_days_is_sent_whole_when_it_ends():
     _op_, data, lot, segments = _subcontracted_plan([7, 8])
+
+    projection = compute_stock_projections(segments, [lot], data)[0]
+    days = {day.day_idx: day for day in projection.days}
+
+    # The economic lot goes out whole on its last stamping day (13/10/2026)
+    # and comes back together, with the days it was stamped.
+    assert (days[7].subcontract_sent, days[8].subcontract_sent) == (0, 100)
+    assert days[7].produced == days[8].produced == 0
+    (back,) = days[15].subcontract_returns
+    assert (back["qty"], back["stamped_from_day"], back["stamped_to_day"]) == (100, 7, 8)
+    assert back["stamped_from_date"] == "2026-09-14"
+
+
+def test_lot_taken_over_from_the_per_delivery_contract_is_sent_on_each_stamping_day():
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
+
+    _op_, data, lot, segments = _subcontracted_plan([7, 8])
+    for output in lot.output_milestones:
+        output[UPGRADED_MATERIAL_KEY] = 2
 
     projection = compute_stock_projections(segments, [lot], data)[0]
     days = {day.day_idx: day for day in projection.days}
 
     # Each stamping day shows its own pieces; they all come back together.
     assert (days[7].subcontract_sent, days[8].subcontract_sent) == (50, 50)
-    assert days[7].produced == days[8].produced == 0
     (back,) = days[15].subcontract_returns
     assert (back["qty"], back["stamped_from_day"], back["stamped_to_day"]) == (100, 7, 8)
-    assert back["stamped_from_date"] == "2026-09-14"
 
 
 def test_in_house_reference_has_no_subcontract_movements():

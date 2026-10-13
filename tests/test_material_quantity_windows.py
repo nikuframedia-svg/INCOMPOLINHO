@@ -143,6 +143,16 @@ def test_another_tool_never_splits_the_economic_lot():
     assert all(
         not first < (s.day_idx, s.start_min) < last for s in result.segments if s.sku == "OTHER"
     )
+    # Not at the cost of the other order: it is still ready on time (day 7,
+    # due day 14), before the economic lot.
+    from backend.scheduler.material_quantities import delivery_portions
+
+    (other_order,) = [
+        portion for portion in delivery_portions(result.lots, result.segments, data)
+        if portion.sku == "OTHER" and portion.is_demand
+    ]
+    assert other_order.complete
+    assert other_order.customer_ready_day <= other_order.customer_delivery_day == 14
 
 
 def test_legacy_snapshot_whole_at_the_first_release_stays_committable():

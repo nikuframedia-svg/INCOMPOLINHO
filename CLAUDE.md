@@ -46,9 +46,14 @@ Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
 
 ## ═══ ENTREGAS ═══
 Entregar a tempo é o primeiro objetivo **depois das leis físicas** (máquina,
-ferramenta, equipa, calendário, material) e do lote económico numa só produção
-(decisão de 13/10/2026). Quando há capacidade, o alvo é
-OTD = OTD-D = 100%.
+ferramenta, equipa, calendário, material) e do lote económico numa só produção.
+O lote económico numa só produção é **regra dura, acima da entrega a tempo**
+(decisão do Luís, 13/10/2026; verificação `lot_split` no gate): se o lote
+atrasa outra encomenda, move-se inteiro; nunca se parte para a salvar. Pode
+custar uma entrega quando falta capacidade (ensaio revisão 128, avaria grande
+da PRM031 a 16/10: BFP188, entrega do dia 21, pronta no dia 22) e traz mais
+stock e produção mais cedo (cerca de +75% peças × dias). Quando há
+capacidade, o alvo é OTD = OTD-D = 100%.
 
 - **OTD** (global) = total produzido >= total procura
 - **OTD-D** (por dia) = em cada dia com procura, produção acumulada >= procura acumulada
@@ -87,9 +92,14 @@ continuam válidos (não pedem «Recalcular»); o «Recalcular plano» redimensi
 - Nunca partir um lote em produções separadas. Se atrasar outra encomenda,
   move-se o lote inteiro (mais cedo, mais tarde ou para a máquina alternativa).
 - Gémeas: o ciclo usa o `R` da primeira entrega de qualquer dos lados.
-- Subcontratados (decidido, por implementar): o lote inteiro vai ao
-  subcontratado quando acaba e volta todo em fim do lote + prazo; tem de acabar
-  até ao último envio `H` da primeira entrega.
+- Subcontratados (implementado a 14/10/2026): o lote inteiro vai ao
+  subcontratado quando acaba e volta todo em fim do lote + prazo (dias úteis);
+  todas as entregas do lote ficam prontas nesse dia; tem de acabar até ao
+  último envio `H` da primeira entrega (`material_quantities.whole_lot_subcontract`).
+- Um lote nunca para com tempo de turno livre pelo meio, nem é interrompido
+  por outro trabalho; só uma avaria ou bloqueio sobre o tempo de trabalho
+  entre as partes o desculpa. Lotes de planos antigos (v1-2) podem manter as
+  produções que tinham, mas não ganhar outra.
 - A janela por entrega (07–11/10/2026) partia os lotes e subiu os setups de
   ~3 para ~9 por dia; não voltar a ela.
 

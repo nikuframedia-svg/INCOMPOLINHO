@@ -129,7 +129,7 @@ export function GateReportCard({ gate, activePlan = false }: { gate: GateReport;
           <div style={{ marginTop: 6 }}>
             {subcontractDispatchDetail.slice(0, 5).map((item) => (
               <div key={`${item.lot_id}-${item.op_id}`}>
-                {item.sku} · conclusão {item.completion_date ?? `D${item.completion_day}`} · envio necessário {item.subcontract_dispatch_date ?? `D${item.subcontract_dispatch_day}`} · {workdaysLabel(item.late_workdays)} de atraso
+                {item.sku} · {item.whole_lot ? "lote completo" : "conclusão"} {item.completion_date ?? `D${item.completion_day}`} · envio necessário {item.subcontract_dispatch_date ?? `D${item.subcontract_dispatch_day}`} · {workdaysLabel(item.late_workdays)} de atraso
               </div>
             ))}
           </div>

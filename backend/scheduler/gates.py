@@ -736,9 +736,12 @@ def _subcontract_dispatch_detail(
 ) -> list[dict[str, Any]]:
     """Subcontracted deliveries that leave after their planned dispatch.
 
-    Each delivery is judged by when its own pieces are finished, whichever
-    lot of the operation makes them (``delivery_portions``), never by the
-    end of the economic lot. ``lot_id`` is the lot that completes it.
+    Each delivery is judged by the day it leaves for the subcontractor, read
+    from the shared evaluator (``delivery_portions``), whichever lot of the
+    operation makes its pieces. A lot of material version 3 goes out whole
+    when its last piece is made (13/10/2026, ``whole_lot``): every delivery
+    it serves leaves then. Older lots: when the delivery's own pieces are
+    finished. ``lot_id`` is the lot that completes it.
     """
     holidays = calendar_holidays(data, -60, data.n_days + 60)
     lots_by_id = {lot.id: lot for lot in lots}
@@ -770,6 +773,7 @@ def _subcontract_dispatch_detail(
                 "production_due_day": portion.production_due_day,
                 "completion_day": completion,
                 "customer_ready_day": portion.customer_ready_day,
+                "whole_lot": portion.whole_lot_dispatch,
                 "late_workdays": workdays_between(
                     dispatch,
                     completion,

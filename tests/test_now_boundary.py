@@ -436,7 +436,9 @@ def test_recalculate_from_start_ignores_the_clock():
     """«Recalcular plano» plans from D0: no started production, nothing elapsed."""
     config = _config()
     data = _data()
-    baseline, _lots = _plan(data, config, MORNING)
+    # The lot started at 07:00 of day 1, in one production (MORNING pauses it
+    # over free shift time: judged from D0 that is a split, 13/10/2026).
+    baseline, _lots = _plan(data, config, {"OP1": [(1, 420, 200, 30)]})
     now = _at(1, 600)
 
     _data_copy, _baseline, freeze_day, plan_now = frozen._recalculation_context(

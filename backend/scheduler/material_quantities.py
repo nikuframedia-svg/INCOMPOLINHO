@@ -39,6 +39,27 @@ def whole_lot_release(lot: Lot) -> bool:
     return lot_material_version(lot) >= 3
 
 
+def whole_lot_subcontract(lot: Lot) -> bool:
+    """A subcontracted lot goes out whole when it ends (Luís, 13/10/2026).
+
+    Material version 3, sized under it: the whole economic lot goes to the
+    subcontractor at once when its last piece is made, and every piece comes
+    back together ``lead`` working days later. A lot taken over from versions
+    1-2 (``lot_sizing.UPGRADED_MATERIAL_KEY``) may still be several
+    productions of its old contract: each delivery keeps leaving with its own
+    pieces until the first «Recalcular plano» sizes it again.
+    """
+
+    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
+
+    outputs = lot.output_milestones or []
+    return (
+        whole_lot_release(lot)
+        and any(output.get("is_subcontracted") for output in outputs)
+        and not any(output.get(UPGRADED_MATERIAL_KEY) for output in outputs)
+    )
+
+
 def twin_per_delivery(lot: Lot) -> bool:
     """A twin cycle under the per-delivery contract (material version 2)."""
 
@@ -223,10 +244,15 @@ def output_completion_days(lot: Lot, segments: list[Segment], missing_day: int):
 #
 # Every view (score, stock, orders, expedition, risks, late report,
 # subcontracting, repair and optimiser heuristics) reads the readiness of an
-# output from here. A delivery is ready when its own quantity exists, never
-# when the whole economic lot ends; a subcontracted portion leaves when its
-# own pieces are finished and is back after the subcontractor's lead time,
-# counted in working days of the factory calendar (``data`` is required).
+# output from here. A delivery made in house is ready when its own quantity
+# exists, never when the whole economic lot ends. A subcontracted lot of
+# material version 3 goes out whole when its last piece is made and comes
+# back whole after the subcontractor's lead time (``whole_lot_subcontract``,
+# decided 13/10/2026): every delivery it serves leaves on the lot's
+# completion day and is ready ``lead`` working days later. Older lots keep
+# the per-delivery rule: a subcontracted portion leaves when its own pieces
+# are finished. Lead times count working days of the factory calendar
+# (``data`` is required).
 #
 # Two readings, one allocation rule (FIFO in absolute time):
 #
@@ -273,9 +299,12 @@ class OutputReadiness:
     """When one output (delivery portion) of a lot is ready, from that lot alone.
 
     ``factory_day`` is the day its last piece is produced (``missing_day``
-    when the plan does not produce it); ``customer_ready_day`` adds the
-    subcontract lead time in working days for subcontracted outputs. It is
-    ``None`` only in :func:`factory_readiness`, which has no calendar.
+    when the plan does not produce it); for a lot that goes out whole
+    (``whole_lot_dispatch``, :func:`whole_lot_subcontract`) it is the day
+    the lot's last piece is produced, its dispatch to the subcontractor.
+    ``customer_ready_day`` adds the subcontract lead time in working days for
+    subcontracted outputs. It is ``None`` only in :func:`factory_readiness`,
+    which has no calendar.
     """
 
     lot_id: str
@@ -298,6 +327,7 @@ class OutputReadiness:
     cycle_rule: bool
     slices: tuple[OutputSlice, ...]
     output: dict = field(compare=False, repr=False)
+    whole_lot_dispatch: bool = False
 
     @property
     def customer_delay(self) -> int:
@@ -326,7 +356,9 @@ class PortionSlice:
     segment_index: int
     day_idx: int
     end_min: int
-    available_day: int  # factory availability: ``day_idx``, or the lot end (cycle rule)
+    # Factory availability: ``day_idx``, or the lot end (cycle rule; a
+    # subcontracted lot that goes out whole, its dispatch day).
+    available_day: int
     qty: int
 
 
@@ -356,6 +388,9 @@ class DeliveryPortion:
     complete: bool
     slices: tuple[PortionSlice, ...]
     source: OutputReadiness | None = field(default=None, compare=False, repr=False)
+    # Its pieces go out with whole lots (``whole_lot_subcontract``): each
+    # slice leaves on its lot's completion day (``available_day``).
+    whole_lot_dispatch: bool = False
 
     @property
     def planned_dispatch_day(self) -> int | None:
@@ -385,7 +420,8 @@ class DeliveryPortion:
 
         Factory availability follows each produced piece. Customer
         availability is the same for in-house outputs; a subcontracted
-        portion returns as a whole, ``lead`` working days after it leaves.
+        portion returns as a whole, ``lead`` working days after it leaves
+        (with whole lots: after the last of its lots is complete).
         """
 
         if not customer or not self.is_subcontracted:
@@ -444,7 +480,10 @@ def delivery_readiness(
     absolute end time (``day * 1440 + end_min``, then segment order) and per
     operation (each side of a twin cycle is its own operation). Legacy lots
     without quantity material and twin cycles of version 1 keep the cycle
-    rule: every output completes with the lot.
+    rule: every output completes with the lot. The subcontracted outputs of
+    a lot that goes out whole (``whole_lot_subcontract``) leave on the day
+    the whole lot is complete (``missing_day`` while it is not) and are
+    ready ``lead`` working days later.
     ``data`` (required) supplies the factory calendar for subcontract lead
     times and the default ``missing_day`` (the horizon end). ``extra_lead``
     adds working days to a lot's subcontract return (robustness scenarios).
@@ -598,9 +637,54 @@ def _readiness(
                     slices=tuple(slices),
                     output=output,
                 ))
+        if not cycle_rule and whole_lot_subcontract(lot):
+            lot_records = _whole_lot_dispatch(
+                lot, lot_records, lot_completion, holidays, missing_day, extra_lead,
+            )
         lot_records.sort(key=lambda record: record.index)
         records.extend(lot_records)
     return records
+
+
+def _whole_lot_dispatch(
+    lot: Lot,
+    lot_records: list[OutputReadiness],
+    lot_completion: int | None,
+    holidays: set[int] | None,
+    missing_day: int,
+    extra_lead: dict[str, int],
+) -> list[OutputReadiness]:
+    """The subcontracted outputs of ``lot`` leave together when it is complete.
+
+    Dispatch is the day the lot's last piece is made, once every output (the
+    surplus included) is produced; ``missing_day`` while the plan does not
+    complete the lot. Every subcontracted output is ready ``lead`` working
+    days after that dispatch; in-house outputs (the other side of a twin
+    cycle) keep their own pieces' day.
+    """
+
+    from backend.scheduler.jit_policy import add_workdays
+
+    complete = lot_completion is not None and all(record.complete for record in lot_records)
+    dispatch = int(lot_completion) if complete else int(missing_day)
+    result = []
+    for record in lot_records:
+        if not record.is_subcontracted:
+            result.append(record)
+            continue
+        ready = (
+            None if holidays is None
+            else add_workdays(
+                dispatch, record.lead_workdays + int(extra_lead.get(lot.id, 0)), holidays,
+            )
+        )
+        result.append(replace(
+            record,
+            factory_day=dispatch,
+            customer_ready_day=int(ready) if ready is not None else None,
+            whole_lot_dispatch=True,
+        ))
+    return result
 
 
 def delivery_portions(
@@ -617,7 +701,9 @@ def delivery_portions(
     serves its demand outputs in due order (customer day, production due
     day, lot order), first-in-first-out by availability then absolute time.
     A subcontracted delivery leaves when its own pieces are complete and is
-    back ``lead`` working days later. Production beyond every delivery forms
+    back ``lead`` working days later; the pieces of a lot that goes out whole
+    (``whole_lot_subcontract``) are available on the lot's completion day,
+    so every delivery it serves leaves then. Production beyond every delivery forms
     one surplus portion per operation and lot. Same calendar and ``missing_day`` as
     :func:`delivery_readiness`; ``records`` reuses an already computed one.
     """
@@ -644,7 +730,11 @@ def delivery_portions(
                     item.segment_index,
                     item.day_idx,
                     item.end_min,
-                    record.factory_day if record.cycle_rule else item.day_idx,
+                    (
+                        record.factory_day
+                        if record.cycle_rule or record.whole_lot_dispatch
+                        else item.day_idx
+                    ),
                     item.qty,
                 )
                 for record in op_records
@@ -659,6 +749,7 @@ def delivery_portions(
                                 lot_order.get(record.lot_id, len(lot_order)), record.index),
         )
         subcontracted_op = any(record.is_subcontracted for record in op_records)
+        whole_lots = {record.lot_id for record in op_records if record.whole_lot_dispatch}
         lead_op = max((record.lead_workdays for record in op_records), default=0)
         sku = next((record.sku for record in op_records if record.sku), "")
         cursor = 0
@@ -719,6 +810,7 @@ def delivery_portions(
                 complete=complete,
                 slices=tuple(slices),
                 source=record,
+                whole_lot_dispatch=any(item.lot_id in whole_lots for item in slices),
             ))
         # Production beyond every delivery (economic or co-produced surplus):
         # one portion per lot, so a subcontracted surplus returns with its own
@@ -748,6 +840,7 @@ def delivery_portions(
                 customer_ready_day=int(ready),
                 complete=True,
                 slices=tuple(rest),
+                whole_lot_dispatch=any(item.lot_id in whole_lots for item in rest),
             ))
     return portions
 

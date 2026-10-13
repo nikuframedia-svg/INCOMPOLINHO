@@ -23,8 +23,16 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
 
 1. **Admissibilidade obrigatória:** conservar procura, produção, identidades,
    recursos, calendários, material, histórico protegido e posições manuais.
-   Desde 13/10/2026 também o lote económico numa só produção (§2): vem antes
-   dos compromissos de entrega.
+   **Desde 13/10/2026 também o lote económico numa só produção (§2), regra
+   dura acima da entrega a tempo** (decisão do Luís): a verificação
+   `lot_split` está nas métricas duras do gate. Se o lote atrasa outra
+   encomenda, move-se o lote inteiro; nunca se parte para salvar uma entrega.
+   Quando falta capacidade isso pode custar uma entrega que a janela por
+   entrega salvava: no ensaio de 13/10 (revisão 128, avaria grande da PRM031
+   a 16/10) a entrega BFP188 do dia 21 (800 peças) fica pronta no dia 22
+   em vez do dia 20. E há mais stock e produção mais cedo: cerca de +75% em
+   peças × dias e 58 a 95 entregas prontas com mais de 30 dias de
+   antecedência (sem limite de cobertura, §2).
    Um plano fisicamente inválido nunca é candidato operacional.
 2. **Compromissos de entrega:** respeitar os prazos quando viáveis. Ao melhorar
    um plano válido do mesmo cenário, nenhuma encomenda individual pode perder
@@ -156,8 +164,8 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
   lote); o tempo continua a ser o de uma execução.
 - A prontidão para o cliente (OTD, OTD-D, atrasos, envio para subcontratação)
   continua a medir-se por entrega (`delivery_readiness`), e a antecipação por
-  entrega (§1.3). Na subcontratação a prontidão de cada entrega passa a ser a
-  do lote inteiro (decisão abaixo, ainda por implementar).
+  entrega (§1.3). Na subcontratação cada entrega sai e volta com o lote
+  inteiro (decisão abaixo, implementada a 14/10/2026).
 - Motivo: a janela por entrega partia cada lote económico em várias produções
   pequenas (setups de cerca de 180 para cerca de 470 por plano, de 3 para 9 por
   dia útil). Esta é a regra que o sistema usava até 07/10/2026.
@@ -166,21 +174,40 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
     atrasa outra encomenda, move-se o lote inteiro; nunca se parte para a
     salvar (a verificação `lot_split` é regra dura do gate, §1.1). Quando
     falta capacidade, isso pode custar uma entrega que a janela por entrega
-    salvava (caso BFP188 no ensaio de 13/10).
+    salvava (caso BFP188 no ensaio de 13/10, §1.1), e o stock e a
+    antecipação sobem.
   - Sem limite máximo de cobertura: um ano de stock é aceitável.
   - Um lote interrompido por avaria retoma com o mesmo material (`R` do lote).
   - Gémeas: `R_ciclo`.
-  - **Subcontratação (decidido; ainda por implementar):** o lote económico
-    inteiro vai ao subcontratado de uma só vez, quando o lote acaba, e todas
-    as peças voltam juntas no fim do lote + prazo do subcontratado (dias
-    úteis). Todas as entregas de um lote subcontratado ficam prontas em
+  - **Subcontratação (decidido a 13/10, implementado a 14/10/2026):** o lote
+    económico inteiro vai ao subcontratado de uma só vez, quando o lote acaba,
+    e todas as peças voltam juntas no fim do lote + prazo do subcontratado
+    (dias úteis). Todas as entregas de um lote subcontratado ficam prontas em
     `fim do lote + lead`, e o lote tem de acabar até ao último envio `H` da
-    sua primeira entrega. Hoje a prontidão da subcontratação ainda é por
-    entrega (cada entrega sai quando as suas peças estão feitas,
-    `material_quantities.delivery_readiness`), e o ecrã de Entregas mostra os
-    envios e regressos dessa mesma prontidão
-    (`analytics.stock_projection._subcontract_movements`); ao implementar,
-    muda-se o avaliador único e o ecrã segue-o.
+    sua primeira entrega (o `H` do lote, `latest_subcontract_dispatch_day`,
+    já é o da primeira entrega). Está no avaliador único
+    (`material_quantities.whole_lot_subcontract`, `_whole_lot_dispatch`):
+    num lote da versão 3 cada output subcontratado tem `factory_day` = dia
+    da última peça do lote (o envio; `missing_day` enquanto o lote não está
+    todo feito, excedente incluído) e `customer_ready_day` = esse dia +
+    `lead` dias úteis; nas `delivery_portions` cada peça desse lote só fica
+    disponível nesse dia (`whole_lot_dispatch`). O lado feito em casa de um
+    ciclo gémeo continua pronto com as suas peças; um lote passado à versão
+    3 a partir das versões 1-2 (`material_upgraded_from`) pode ainda ter as
+    produções separadas do contrato antigo e mantém o envio por entrega até
+    ao «Recalcular plano». Leem-no sem regra própria: o gate
+    (`subcontract_dispatch_detail`, com `whole_lot`; o cartão mostra «lote
+    completo»), o score (`subcontract_dispatch_misses`), a comparação por
+    encomenda, o aviso de capacidade livre (as peças só contam no fim do
+    lote: conta o resto do lote), o ecrã de Entregas/Stock (o lote sai
+    inteiro no dia em que acaba e volta junto, com os dias e máquinas em
+    que foi estampado, `stock_projection._subcontract_movements`) e o
+    tooltip do Gantt («Subcontratado — o lote inteiro sai a … e volta a …»,
+    `subcontract_trips` de `order_tracking.compute_segment_deliveries`).
+    Revisão 128 recalculada: todos os lotes subcontratados (HAN002, JTE003,
+    gémeas BFP178/BFP186) ficam prontos no fim do lote + 5 dias úteis; num
+    lote HAN002 que cobre duas semanas a primeira entrega deixa de sair
+    antes de o lote acabar.
 
 Implementação (13/10/2026):
 
@@ -197,18 +224,34 @@ Implementação (13/10/2026):
   ao construtor por partes (`quantity_dispatch.has_quantity_releases`),
   nunca ao motor antigo.
 - Verificação física (`validation.lot_split_violations`, tipo `lot_split`,
-  métrica `lot_split_violations` no gate): um lote da versão 3 com outro
-  trabalho na máquina entre dois dos seus segmentos, ou com nova afinação
-  depois de já ter produzido, é inválido, salvo avaria/bloqueio da máquina ou
-  da ferramenta entre os dois, ou quando a parte anterior é histórico: começou
-  antes da fronteira do plano (o minuto atual da regra 4,
-  `ScheduleResult.history_boundary`, a mesma regra de `scheduler/history.py`,
-  nunca o dia do relógio). Assim o resto de um lote começado hoje pode seguir
-  outro trabalho, por exemplo quando a regra «Continua» corta a execução
-  montada e entra uma encomenda que vence hoje (com o dia do relógio esse
-  plano era recusado como `lot_split`). No problema residual a produção
-  congelada é ela própria um bloqueio de máquina e ferramenta. Sem fronteira
-  (carregar um ISOP, «Recalcular plano» desde D0) tudo é julgado. O verificador do
+  métrica `lot_split_violations` no gate; as quebras vêm de
+  `validation._BreakFinder`). Um lote da versão 3 é inválido quando, na sua
+  máquina, entre dois dos seus segmentos:
+  - há outro trabalho (`interleaved`);
+  - há nova afinação depois de já ter produzido (`remount`);
+  - não há nada, a ferramenta continua montada, mas há tempo de turno livre
+    pelo meio (`pause`, revisão de 13/10): a mesma definição de tempo livre
+    da regra «Continua» (`calendar.free_shift_intervals`: dias úteis, dentro
+    dos turnos, fora de indisponibilidades da máquina e da ferramenta, com
+    operadores do grupo, sem a ferramenta noutra máquina, pelo menos
+    `MIN_FREE_INTERVAL_MIN` = 30 min). Noites, fins de semana, feriados e
+    avarias não são pausas.
+
+  Uma avaria ou bloqueio da máquina ou da ferramenta só desculpa as duas
+  primeiras quando cobre parte do tempo de trabalho entre as duas partes
+  (`validation._working_gap`, `_block_in_working_time`): um bloqueio curto à
+  noite, num fim de semana ou fora do intervalo não desculpa nada (antes
+  bastava qualquer bloqueio entre as duas partes). Nunca se julga uma quebra
+  cuja parte anterior é histórico: começou antes da fronteira do plano (o
+  minuto atual da regra 4, `ScheduleResult.history_boundary`, a mesma regra
+  de `scheduler/history.py`, nunca o dia do relógio) ou é a parte começada do
+  resto de um lote no problema residual (`_protected_context`). Assim o resto
+  de um lote começado hoje pode seguir outro trabalho, por exemplo quando a
+  regra «Continua» corta a execução montada e entra uma encomenda que vence
+  hoje (com o dia do relógio esse plano era recusado como `lot_split`). No
+  problema residual a produção congelada é ela própria um bloqueio de
+  máquina e ferramenta. Sem fronteira (carregar um ISOP, «Recalcular plano»
+  desde D0, movimentos manuais) tudo é julgado. O verificador do
   contrato confirma também que nenhum lote da versão 3 produz ou prepara
   antes do `R` do lote (`canonical.source_contract_violations`).
 - Planos antigos: um plano das versões 0, 1 ou 2 continua válido (as suas
@@ -220,8 +263,19 @@ Implementação (13/10/2026):
   `manual_move._move_lot`): o lote começado congela só o que começou
   (regra 4) e o plano nunca mistura versões. Esses lotes ficam marcados
   (`material_upgraded_from`) e podem manter as produções separadas que o
-  contrato antigo criou; o «Recalcular plano» desde o início redimensiona-os
-  sempre (`api/data._recalculation_needs_rebuild`).
+  contrato antigo criou, **mas nunca ganhar outra** (revisão de 13/10: um
+  replaneamento partia lotes como BFP082_14 e o gate aceitava). Cada
+  cálculo regista nos outputs quantas produções o lote tem no plano de que
+  parte (`material_upgraded_productions`, escrito por
+  `frozen.with_current_material` no início do replaneamento, da reparação,
+  da compactação e do movimento manual; `validation.lot_productions`: uma
+  por máquina mais as quebras, contadas com a fronteira desse cálculo e sem
+  desculpar bloqueios, porque o calendário pode ter mudado). O plano novo é
+  inválido se o lote tiver mais produções do que isso (`lot_split` com
+  `productions` e `allowed_productions`). Margem conhecida: uma quebra do
+  plano guardado desculpada por uma avaria conta como produção permitida.
+  O «Recalcular plano» desde o início redimensiona-os sempre
+  (`api/data._recalculation_needs_rebuild`).
 - Resto de um lote começado: como o lote inteiro já tem material, o resto
   costuma retomar logo a seguir à parte começada, com a ferramenta ainda
   montada. A validação do problema residual vê essa parte começada como
@@ -232,7 +286,10 @@ Implementação (13/10/2026):
   completo 444 → 178 setups, 0 lotes com mais de uma produção, o mesmo
   atraso (HAN002) e nenhuma encomenda atrasada a mais; 22 entregas ficam
   prontas um pouco mais tarde mas dentro do prazo, 539 mais cedo; antecipação
-  média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias). Com dia de
+  média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias). O custo da
+  regra (§1.1): mais stock e produção mais cedo, e na avaria grande da
+  PRM031 a 16/10 a entrega BFP188 do dia 21 fica um dia atrasada (o lote não
+  se parte para a salvar). Com dia de
   planeamento 16/10 (23 lotes começados), avaria na PRM043, feriado novo e
   movimentos manuais dão planos válidos, sem mexer na produção começada.
   Até à regra «Continua» (13/10) o feriado novo de 23/10 ficava com produção:
@@ -480,7 +537,9 @@ versões 1-2:
 expedição, subcontratação, atrasos, riscos, tooltip, propostas, CTP,
 robustez e o ciclo de melhoria usam `material_quantities.delivery_readiness`.
 As peças são fungíveis por referência: a prontidão de cada encomenda é FIFO por
-tempo absoluto sobre todos os lotes da operação. O motivo de aprovação
+tempo absoluto sobre todos os lotes da operação. Num lote subcontratado da
+versão 3 as peças só ficam disponíveis no dia em que o lote acaba (sai
+inteiro e volta junto, §2, `whole_lot_subcontract`). O motivo de aprovação
 `delivery_risk` é por encomenda; `tardy_count` ("Lotes no prazo") é só
 indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
 
@@ -597,6 +656,7 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
 - **Atraso com capacidade livre (13/10/2026, só informação):**
   `scheduler/idle_capacity.late_with_idle_capacity` procura entregas atrasadas
   (`improvement.order_service`) e envios para subcontratação depois de `H`
+  (um lote subcontratado só sai quando acaba: conta o resto do lote)
   com tempo de turno livre (`calendar.free_shift_intervals`; hoje só depois
   da hora atual) numa máquina elegível ativa entre `max(hoje, R)` e o prazo
   de produção. Um caso por lote (gémeas juntas). Na máquina do lote conta o
@@ -736,6 +796,17 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   mexe na árvore de produção de cada vez. Experiências fazem-se em worktrees
   ou cópias isoladas com `PP1_DATA_DIR`/`PP1_CONFIG_PATH` próprios.
 
+- **Limpeza pendente (código que já não corre, 13/10/2026).** Desde a versão
+  3 de material `canonical.legacy_material_plan` devolve sempre falso, por
+  isso ficaram sem efeito: `LegacyMaterialPlanError` (`plans/store.py`),
+  `manual_plan._refuse_legacy_material_plan`,
+  `restore.legacy_material_warning`, `jobs._baseline_needs_material_rebuild`
+  e o ramo que mantém tudo de `_without_stale_legacy_warnings`. O motor
+  antigo (construtor global, rasto de auditoria do dispatch, passes finais
+  do scheduler) só planeia lotes de planos guardados antes de 08/10/2026
+  (versão 0); o «explicar decisão» do copiloto deixou de ter rasto nos
+  planos atuais. Fica para um plano de limpeza depois da publicação; não
+  apagar sem esse plano nem sem as suítes completas.
 - O checkout contém trabalho não consolidado de outras tarefas. Inspecionar
   estado/diff; não resetar, limpar, sobrescrever ou publicar alterações alheias.
 - Para auditoria, ler SQLite com `mode=ro` e trabalhar sobre objetos destacados.

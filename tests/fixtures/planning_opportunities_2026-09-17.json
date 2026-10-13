@@ -23,7 +23,7 @@
       ],
       "segments": [
         {"sku": "1065170X100", "due": 1, "day": 0, "start": 420, "setup": 30, "qty": 100},
-        {"sku": "1092262X100", "due": 0, "day": 1, "start": 420, "setup": 30, "qty": 100},
+        {"sku": "1092262X100", "due": 0, "day": 1, "start": 1350, "setup": 30, "qty": 100},
         {"sku": "1092262X100", "due": 0, "day": 4, "start": 420, "setup": 0, "qty": 100}
       ],
       "expected": {"sku": "1092262X100", "first_day": 0, "production_start": 450, "complete_day": 0}

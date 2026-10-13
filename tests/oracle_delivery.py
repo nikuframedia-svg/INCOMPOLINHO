@@ -11,8 +11,12 @@ the ISOP demand and the factory calendar):
   (``day * 1440 + end``, then segment order); committed supplies enter on
   their available day.
 - An in-house order is ready on the day of the last piece it consumes.
-- A subcontracted order leaves when its own cumulative quantity is complete
-  and is back ``lead`` working days later (never at the end of the lot).
+- A subcontracted order leaves when the pieces it consumes leave and is back
+  ``lead`` working days later. An economic lot of material version 3 (its
+  outputs say so, and no ``material_upgraded_from``) of a subcontracted
+  operation leaves whole on the day its last piece is made, once all its
+  pieces are made (Luís, 13/10/2026); every other piece leaves on the day it
+  is made, so the order leaves when its own cumulative quantity is complete.
 - Explicit stock in an order (``order_qty - |NP|``) is served from the
   opening stock first; net NP never deducts stock twice.
 - Twin cycles: each side is its own SKU, served from that side's pieces
@@ -117,20 +121,52 @@ def _subcontract(op) -> tuple[bool, int, int]:
     return flagged, int(op.subcontract_lead_time_days or 0), int(op.subcontract_buffer_days or 0)
 
 
+def _goes_out_whole(lot, data) -> bool:
+    """A subcontracted economic lot of material version 3 (not taken over)."""
+
+    outputs = lot.output_milestones or []
+    version = max((int(o.get("quantity_material_version") or 0) for o in outputs), default=0)
+    if version < 3 or any(o.get("material_upgraded_from") for o in outputs):
+        return False
+    op_ids = {str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []} or {lot.op_id}
+    return any(_subcontract(op)[0] for op in data.ops if op.id in op_ids)
+
+
+def _lot_dispatch_days(segments, lots, data) -> dict[str, int | None]:
+    """Day each whole-going lot leaves: its last piece, once all are made."""
+
+    result = {}
+    for lot in lots:
+        if not _goes_out_whole(lot, data):
+            continue
+        own = [segment for segment in segments if segment.lot_id == lot.id and segment.qty > 0]
+        made = sum(int(segment.qty) for segment in own)
+        result[lot.id] = max(s.day_idx for s in own) if own and made >= lot.qty else None
+    return result
+
+
 def _events(segments, lots, data, op_ids: set[str]) -> list[_Event]:
     op_of_lot = {lot.id: lot.op_id for lot in lots}
+    whole = _lot_dispatch_days(segments, lots, data)
+    subcontracted_ops = {op.id for op in data.ops if _subcontract(op)[0]}
     events = []
     for index, segment in enumerate(segments):
         outputs = segment.twin_outputs or [(op_of_lot.get(segment.lot_id), segment.sku, segment.qty)]
         qty = sum(int(q) for op, _sku, q in outputs if op in op_ids)
-        if qty > 0:
-            events.append(_Event(segment.day_idx * DAY + segment.end_min, index,
-                                 segment.day_idx, qty, index))
+        if qty <= 0:
+            continue
+        day = segment.day_idx
+        if segment.lot_id in whole and op_ids & subcontracted_ops:
+            if whole[segment.lot_id] is None:
+                continue  # the lot is never complete: its pieces never leave
+            day = whole[segment.lot_id]
+        events.append(_Event(segment.day_idx * DAY + segment.end_min, index, day, qty, index))
     for supply in data.committed_supplies:
         if supply.op_id in op_ids and supply.qty > 0:
             events.append(_Event(supply.available_day * DAY, -1, supply.available_day,
                                  int(supply.qty), None))
-    events.sort(key=lambda event: (event.abs_time, event.order))
+    # Available day first (a whole lot leaves on its last day), then time.
+    events.sort(key=lambda event: (event.day, event.abs_time, event.order))
     return events
 
 

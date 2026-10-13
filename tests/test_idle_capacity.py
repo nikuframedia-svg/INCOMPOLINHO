@@ -380,12 +380,16 @@ def test_subcontract_dispatch_is_judged_by_its_latest_dispatch_day():
     assert lot.is_subcontracted and lot.latest_subcontract_dispatch_day == 4
     assert lot.subcontract_dispatch_day == 3  # the planned dispatch keeps a buffer day
     # 50 pieces on day 2, the rest on day 7: the dispatch (latest day 4) and
-    # the delivery (day 11) are late, and 150 pieces are missing by day 4.
+    # the delivery (day 11) are late. The lot goes out whole when it ends
+    # (13/10/2026), so all 200 pieces miss day 4 and the rest of the lot
+    # (150 pieces) must be made by then.
     segments = _segments(lot, [(2, 420, 50, 30), (7, 420, 150, 30)])
 
     (case,) = late_with_idle_capacity(segments, [lot], data, config, planning_day=0)
     assert case["subcontracted"] and case["production_due_day"] == 4
-    assert case["customer_delivery_day"] == 11 and case["shortfall_qty"] == 150
+    assert case["customer_delivery_day"] == 11 and case["shortfall_qty"] == 200
+    assert case["lot_end_rule"]
+    assert case["needed_min"] == pytest.approx(case["setup_min"] + lot.prod_min * 150 / 200)
     assert "envio para subcontratação 06/03" in idle_capacity_notice([case], data)
 
     # Ready on the dispatch day: nothing to report.

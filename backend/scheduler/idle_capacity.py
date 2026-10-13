@@ -15,7 +15,10 @@ Deliveries are judged as everywhere else (AGENTS §1.2, §2):
   on the customer day;
 * subcontracted deliveries are judged by their latest compatible dispatch
   ``H`` (``delivery_portions``): the shortfall is what is not finished by
-  ``H``, and production must happen by ``H``.
+  ``H``, and production must happen by ``H``. A lot that goes out whole
+  (material version 3, 13/10/2026) leaves when its last piece is made, so
+  its deliveries count as finished only when the whole lot is: the lot has
+  to end by ``H`` of its first delivery.
 
 The late deliveries of one lot (both sides of a twin cycle, several orders)
 are one case, listed once: the lot is a case when its late deliveries up to
@@ -31,8 +34,9 @@ day only the time after the current factory minute counts.
 The minutes needed follow the planning rules:
 
 * on a machine the lot already uses, the shortfall at the lot's rate, or —
-  when its pieces are only available at the lot end (cycle rule) — the rest
-  of the lot not produced by the deadline;
+  when its pieces are only available at the lot end (cycle rule, a
+  subcontracted lot that goes out whole) — the rest of the lot not produced
+  by the deadline;
 * on an alternative machine (rule 3), the whole lot at that machine's rate:
   a lot changes machine as a whole. A lot with production on the planning
   day or before has started (rule 4) and only counts its own machine;
@@ -197,8 +201,11 @@ def _delivery_window(delivery: _Delivery, portions) -> dict | None:
             output_release_day(portion.source.output) for portion in portions
         ),
         "shortfall_qty": int(shortfall),
-        # Cycle rule: the pieces are only available when the lot ends.
-        "lot_end_rule": any(bool(portion.source.cycle_rule) for portion in pending),
+        # Cycle rule, or a subcontracted lot that goes out whole: the pieces
+        # are only available when the lot ends.
+        "lot_end_rule": any(
+            bool(portion.source.cycle_rule) or portion.whole_lot_dispatch for portion in pending
+        ),
     }
 
 

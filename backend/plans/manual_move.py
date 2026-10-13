@@ -1397,10 +1397,20 @@ def _move_lot(
     started = time.perf_counter()
     if target_day < 0 or target_day >= data.n_days:
         raise ManualMoveError(f"Dia alvo fora do horizonte: {target_day}.")
-    from backend.scheduler.lot_sizing import upgrade_plan_material
+    from types import SimpleNamespace
 
-    # A plan of material version 1-2 is moved under version 3 (AGENTS §2).
-    lots = upgrade_plan_material(lots, data)
+    from backend.plans.frozen import (
+        _current_planning_day,
+        calculation_now,
+        elapsed_on_planning_day,
+        with_current_material,
+    )
+
+    # A plan of material version 1-2 is moved under version 3 (AGENTS §2);
+    # each lot taken over keeps the productions it has here, never more.
+    # Counted without a history boundary: a move result carries none, so
+    # its validation judges the whole plan.
+    lots = with_current_material(SimpleNamespace(segments=segments, lots=lots), data, config).lots
 
     candidate_segments = copy.deepcopy(segments)
     candidate_lots = copy.deepcopy(lots)
@@ -1415,10 +1425,7 @@ def _move_lot(
     from backend.planning_control import PlanningCancelled, PlanningTimeout
     from backend.plans.frozen import (
         NoValidCandidateError,
-        _current_planning_day,
         _frozen_started_lots,
-        calculation_now,
-        elapsed_on_planning_day,
         started_before,
     )
 

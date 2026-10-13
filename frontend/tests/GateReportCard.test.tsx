@@ -159,6 +159,16 @@ describe("linhas de detalhe sem abreviaturas", () => {
     expect(text).not.toContain("excesso");
   });
 
+  it("um lote subcontratado que sai inteiro mostra o fim do lote", () => {
+    const gate = report("completed");
+    gate.subcontract_dispatch_detail = [{
+      lot_id: "L2", op_id: "O2", sku: "SKU2", qty: 10, customer_delivery_day: 20,
+      subcontract_dispatch_day: 15, completion_day: 16, late_workdays: 1, whole_lot: true,
+    } as unknown as NonNullable<GateReport["subcontract_dispatch_detail"]>[number]];
+    const { container } = render(<GateReportCard gate={gate} />);
+    expect(container.textContent).toContain("SKU2 · lote completo D16 · envio necessário D15");
+  });
+
   it("ações sugeridas e transferências mantidas ficam dentro de Detalhes técnicos", () => {
     const gate = infeasibleReport();
     gate.proposals = [{

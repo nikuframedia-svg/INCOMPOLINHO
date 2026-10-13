@@ -197,9 +197,15 @@ def compute_order_tracking(
     engine_data: EngineData,
     *,
     segment_allocations: list[list[dict]] | None = None,
+    portions: list[DeliveryPortion] | None = None,
 ) -> list[ClientOrders]:
-    """Trace each client demand to its covering lot/segments."""
-    readiness = delivery_portions(lots, segments, engine_data)
+    """Trace each client demand to its covering lot/segments.
+
+    ``portions`` reuses an already computed ``delivery_portions``.
+    """
+    readiness = (
+        portions if portions is not None else delivery_portions(lots, segments, engine_data)
+    )
 
     # Twin lots are indexed by all operations they produce for.
     lots_by_op: dict[str, list[Lot]] = defaultdict(list)
@@ -375,15 +381,36 @@ def _allocate_demands(
 
 
 def compute_segment_deliveries(segments, lots, data):
-    """Read-only projection of the same FIFO allocations used by Entregas."""
+    """Read-only projection of the same FIFO allocations used by Entregas.
+
+    ``subcontract_trips``: when the pieces of each segment of a
+    subcontracted reference leave for the subcontractor and when they are
+    back (``sent_day``, ``return_day``), read from the shared evaluator; a
+    lot that goes out whole (``whole_lot``, 13/10/2026) has one trip for all
+    its segments, its surplus included. Empty for in-house production.
+    """
     allocations = [[] for _ in segments]
-    compute_order_tracking(segments, lots, data, segment_allocations=allocations)
+    portions = delivery_portions(lots, segments, data)
+    compute_order_tracking(
+        segments, lots, data, segment_allocations=allocations, portions=portions,
+    )
+    trips: list[set[tuple[int, int, bool]]] = [set() for _ in segments]
+    for portion in portions:
+        if not portion.is_subcontracted or not portion.produced_qty:
+            continue
+        for item in portion.slices:
+            if 0 <= item.segment_index < len(segments):
+                trips[item.segment_index].add((
+                    item.available_day if portion.whole_lot_dispatch else portion.factory_day,
+                    portion.customer_ready_day,
+                    portion.whole_lot_dispatch,
+                ))
     untraced_skus = {
         op.sku for op in data.ops
         if any(qty > 0 for qty in op.d) and not data.client_demands.get(op.sku)
     }
     result = []
-    for segment, deliveries in zip(segments, allocations):
+    for segment, deliveries, segment_trips in zip(segments, allocations, trips, strict=True):
         quantities = defaultdict(int)
         for _op_id, sku, qty in segment.twin_outputs or [("", segment.sku, segment.qty)]:
             quantities[sku] += qty
@@ -395,6 +422,10 @@ def compute_segment_deliveries(segments, lots, data):
             "unallocated_output": [
                 {"sku": sku, "qty": qty} for sku, qty in quantities.items() if qty > 0
             ] if known else None,
+            "subcontract_trips": [
+                {"sent_day": sent, "return_day": back, "whole_lot": whole}
+                for sent, back, whole in sorted(segment_trips)
+            ],
         })
     return result
 
