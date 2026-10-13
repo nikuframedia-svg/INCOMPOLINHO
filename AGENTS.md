@@ -192,8 +192,116 @@ Regras do motor por entrega (propostas e aceites pelo Luís a 10/10/2026):
    as duas partes no lote original. Uma continuação congelada sem setup leva
    sempre consigo o lote que montou a ferramenta (a produção anterior desse
    lote incluída); um lote de um contrato de material anterior, ancorado ou já
-   todo feito fica inteiro. A proteção do histórico na gravação compara só a
-   produção anterior a hoje e o próprio lote.
+   todo feito fica inteiro. A proteção do histórico na gravação compara a
+   produção anterior a hoje, a de hoje que começou antes da hora do cálculo
+   (com a regra de corte abaixo) e o próprio lote.
+   **Fronteira = hora atual (decidido pelo Luís a 13/10/2026).** O motor
+   trabalha em dias inteiros, mas um replaneamento durante o dia não pode
+   mexer no que já se fez hoje nem pôr trabalho em horas que já passaram
+   (caso real: avaria da PRM043 retirada às 15:39 e o plano mostrava a
+   máquina a produzir desde as 07:00). Por isso a fronteira da regra 4 é o
+   minuto atual da fábrica (Europe/Lisbon, `calendar.factory_now`), não o
+   início do dia:
+   - Cada cálculo capta **um só "agora"** e usa-o do princípio ao fim:
+     trabalhos de replaneamento (avaria posta ou retirada, feriado,
+     configuração), gravações pelo servidor (`plans.transactions`, relógio
+     fixo com `calendar.fixed_factory_clock`) e movimentos manuais
+     (`plans.manual_move.move_lot`). O dia de planeamento, os minutos já
+     decorridos, a proteção, a continuidade da regra 4, o aviso de
+     capacidade livre e a proteção na gravação leem esse mesmo instante.
+     Nos testes injeta-se com `now=` ou `fixed_factory_clock`.
+   - Hoje, os segmentos que começam antes do "agora" ficam congelados como os
+     dos dias anteriores (`frozen.started_before`); um segmento a decorrer
+     nesse minuto fica inteiro, e a execução montada continua a partir do
+     último deles com a regra de continuidade acima.
+   - Nenhuma produção ou setup novo entra hoje antes do "agora", em nenhuma
+     máquina: no problema residual há um bloqueio temporário de máquinas e
+     ferramentas de 00:00 até ao "agora" no dia de planeamento
+     (`frozen._install_frozen_reservations`, "Tempo já decorrido hoje"),
+     nunca gravado na configuração.
+   - **Uma só regra para o que já aconteceu** (`scheduler/history.py`):
+     o que começa antes do "agora" já aconteceu. Um dado com hora (avaria ou
+     indisponibilidade de máquina/ferramenta, ausência ou corte de
+     operadores, feriado, elegibilidade, turnos) só julga o plano a partir de
+     max(agora, início do dado): uma ausência desde as 07:00 lançada às 10:00
+     nada diz da produção das 07:00–10:00, que já se fez. O limite viaja com
+     o plano (`ScheduleResult.history_boundary`, guardado nos dados do plano
+     como `EngineData.history_boundary`, tal como as provas dos lotes
+     preservados) e é lido por
+     todas as validações desse plano — no cálculo, ao aplicar e na gravação
+     (`scheduler.validation`, `scheduler.operators`). No problema residual
+     não há limite: tudo ali é trabalho novo e julgado por inteiro.
+   - **Corte em vez de libertar** (`frozen._conflict_cuts`): quando um dado
+     novo choca com trabalho protegido (os segmentos já começados hoje e a
+     execução montada que continua), o segmento pára em max(agora, início do
+     conflito). A parte antes fica exatamente como estava (correu de facto,
+     com as peças feitas até esse minuto, arredondadas para baixo); o resto é
+     replaneado como resto do mesmo lote (nunca redimensionado; sem setup
+     novo se a ferramenta continuar montada e sem outra pelo meio); o que essa
+     máquina protegia depois dele sai da proteção. Uma falta de operadores
+     não nomeia lote: pára, no "agora", o segmento protegido desse grupo e
+     turno que começou por último (desempate: máquina, lote), até a falta
+     desaparecer. Um dia que deixou de ser útil (feriado lançado hoje) pára
+     do mesmo modo o trabalho protegido desse dia a partir do "agora".
+     Um segmento que até esse minuto não fez nenhuma peça (ex.:
+     afinação a decorrer) sai inteiro, mas o lote continua começado: todo ele
+     é replaneado como resto, com o mesmo tamanho. Na validação do residual,
+     a parte começada de um lote cujo resto se replaneia conta como a
+     ferramenta montada antes desse resto (`validation._protected_context`;
+     antes era ignorada e uma execução libertada a 14/10 às 06:00 falhava
+     com "falta afinação").
+     Casos ensaiados pela API, com aplicação (cópia da revisão 128, 13/10):
+     ausência de 4 (ou 2) operadores de Grandes no turno A desde as 07:00 ou
+     desde as 10:00, lançada às 10:00 — pronto e aplicado (antes falhava com
+     "regras físicas"); a manhã fica, a PRM019 pára às 10:00 com 1415 peças
+     (com 4 ausentes) e a afinação da PRM031 iniciada às 09:45 é refeita mais
+     tarde; 1 atraso (como antes), 448–449 setups. Ausência no turno B, ou no
+     turno A de 14/10 lançada a 14/10 às 06:00 — pronto (o segundo falhava
+     antes nas duas versões). Avaria da PRM043 das 07:00 às 09:00 lançada às
+     15:39 — o plano ativo continua válido e mantém-se, em 3 s (antes falhava
+     com "produção já iniciada"). Avaria da PRM019 das 09:00 às 12:00 lançada
+     às 10:00: o segmento das 08:55 pára às 10:00 (1415 peças) e retoma às
+     12:00 sem afinação; das 11:00 às 13:00: pára às 11:00 (2722 peças) e
+     retoma às 13:00. Em casos sintéticos: um segmento das 09:00 às 11:30 com
+     avaria das 11:00 às 13:00 lançada às 10:00 pára às 11:00 e o resto vem
+     depois sem setup novo; uma avaria das 07:00 às 08:00 lançada às 13:00
+     deixa a manhã toda (07:00–09:30 e 09:30–12:00) como estava.
+   - A proteção na gravação (`frozen.historical_schedule_changes`, na loja
+     `plans.store` e antes, em `candidate_history_changes`) lê a mesma regra:
+     cada segmento de hoje começado antes do "agora" do cálculo fica igual
+     ou pára num minuto não anterior a esse "agora" com as peças desse corte
+     (`history.cut_row`); só pode faltar se até esse minuto não fez nenhuma
+     peça; nenhuma produção nova antes do "agora"; um lote com produção
+     antes do "agora" mantém o tamanho. Aceita portanto exatamente o que a
+     libertação produz.
+   - **Data e idade do cálculo:** na gravação, a data de hoje é a do relógio
+     real (`calendar.wall_factory_now`); o minuto do cálculo só conta se for
+     do mesmo dia. Um plano calculado noutro dia é recusado com «O plano foi
+     calculado noutro dia; calcule novamente.» Trabalhos de replaneamento e
+     pré-visualizações (movimentos manuais, recálculos à espera de
+     aprovação) só se aplicam até 15 minutos depois do cálculo («O plano foi
+     calculado há mais de 15 minutos; calcule novamente.»); o fluxo normal
+     (o trabalho acaba e aplica-se logo) não é afetado.
+   - O fecho operacional do trabalho (prioridades e compactação depois do
+     construtor) volta a correr durante o dia quando só há lotes começados
+     hoje: corre no residual, com o trabalho protegido e o tempo já decorrido
+     reservados, como o próprio cálculo. Com lotes começados em dias
+     anteriores continua desligado, como antes.
+   - «Recalcular plano» continua a recalcular desde D0 (decisão de
+     06/10/2026, §5): o seu "agora" é as 00:00 de D0, nada conta como
+     decorrido e o plano não leva limite de histórico. Carregar um ISOP de
+     raiz não muda.
+   - Resultado no caso real (revisão 126 → 127, avaria retirada às 15:39 de
+     13/10, pelo caminho real do trabalho): nada novo antes das 15:39 e a
+     manhã intacta (antes: 8 segmentos novos antes das 15:39, entre eles a
+     PRM043 desde as 07:00, e 3 segmentos da manhã mudados); 0 encomendas
+     atrasadas. O caminho depende do tempo (AGENTS §6): no ensaio de 13/10 à
+     noite a compactação chegou sem atrasos (472 setups) e o resto do lote
+     `_5` de 6800016767A.10 recomeça a 14/10 às 07:00 sem setup novo,
+     ficando a PRM043 parada de 13/10 das 15:39 à meia-noite; na verificação
+     anterior a compactação deixou um atraso e o construtor completo pôs o
+     resto a recomeçar às 15:39 (479 setups). Às 10:00 o construtor completo
+     põe o resto às 10:00 (479 setups); às 06:00 o plano é igual ao de antes.
    **«Continua» (decidido pelo Luís a 13/10/2026):** a execução montada só
    continua enquanto, entre um segmento e o seguinte da mesma máquina, não
    houver tempo de turno livre no calendário atual
@@ -341,6 +449,28 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   configuração anterior (ex.: OEE alterado), o recálculo reconstrói os lotes
   com o optimizador completo em vez de compactar
   (`api/data._recalculation_needs_rebuild`).
+- **Hora atual (13/10/2026):** fora de «Recalcular plano», o passado
+  protegido acaba no minuto atual da fábrica, não no início de hoje: o que
+  começou hoje antes do cálculo fica como está e nada novo é posto em horas
+  que já passaram (§2, regra 4, «Fronteira = hora atual»). A gravação
+  confirma-o com o instante do próprio cálculo. Limites conhecidos
+  (documentados, não corrigidos):
+  - A vista do plano ainda usa o dia como histórico
+    (`plans/explanations.py`): lotes começados esta manhã não aparecem como
+    históricos e podem ter a dica "podia começar mais cedo". Só visual.
+  - «Anular» dentro do mesmo dia (`plans/restore.py`) passa pela proteção ao
+    minuto: repor uma versão anterior que difere do plano atual antes do
+    "agora" é recusado. Está de acordo com a regra, mas é uma mudança.
+  - Entre o cálculo e a aplicação (até 15 minutos, ver §2) um candidato pode
+    ainda reescrever produção do plano ativo desse intervalo.
+  - Um segmento que pára sem nenhuma peça feita (afinação a decorrer) sai
+    inteiro: a afinação é refeita mais tarde (conservador).
+  - Um lote que não pode ser replaneado sozinho (ancorado, de um contrato de
+    material anterior) não é cortado: fica inteiro; se um dado novo chocar
+    com ele o trabalho falha como antes.
+  - Elegibilidade (ferramenta/máquina) mudada com um lote começado: a parte
+    feita fica como histórico, mas o resto continua preso à máquina do lote
+    (regra 3), por isso o plano pode não ter solução.
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
 - **Decisão pendente (11/10/2026, à espera do Luís):** retirar um feriado (ou

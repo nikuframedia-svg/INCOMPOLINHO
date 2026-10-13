@@ -128,17 +128,15 @@ def test_changed_candidate_does_not_inherit_verification_status(reported_state, 
 
 def test_job_capacity_release_keeps_report_through_apply_and_reopening(ready_replan, monkeypatch):  # noqa: F811
     from datetime import datetime
-    from unittest.mock import Mock
 
     from backend.plans.store import PlansStore
     from backend.replan import jobs
 
     live, manager, _old_job, result, _config_path = ready_replan
     live.engine_data.workdays = ["2026-10-05", "2026-10-06"]
-    clock = Mock(wraps=datetime)
-    fixed = datetime.fromisoformat(live.engine_data.workdays[0] + "T12:00:00+01:00")
-    clock.now.side_effect = lambda tz: fixed.astimezone(tz)
-    monkeypatch.setattr("backend.plans.frozen.datetime", clock)
+    # Before the first shift of D0: nothing has started (AGENTS §2 rule 4).
+    fixed = datetime.fromisoformat(live.engine_data.workdays[0] + "T06:00:00+01:00")
+    monkeypatch.setattr("backend.calendar._wall_clock", lambda zone: fixed.astimezone(zone))
     live.engine_data.ops[0].stk = 0
     result.segments = [replace(result.segments[0], start_min=600, end_min=690)]
     result.score = compute_score(result.segments, result.lots, live.engine_data, live.config)
@@ -217,3 +215,42 @@ def test_restore_preserves_evidence_without_running_improvement(reported_state, 
         assert target.gate_report["improvement"]["status"] == "not_evaluated"
         if case == "changed_inputs":
             assert target.improvement_report["stop_reason"] == "inputs_changed"
+
+
+@pytest.mark.parametrize("later", ["16min", "next_day"])
+def test_stale_job_is_refused_at_apply(ready_replan, monkeypatch, later):  # noqa: F811
+    """AGENTS §2 rule 4: a replan job is applied on the day it was calculated,
+    at most 15 minutes later; else «calcule novamente», plan unchanged."""
+    from datetime import datetime, timedelta
+
+    from backend.plans.frozen import OTHER_DAY_TEXT, TOO_OLD_TEXT
+    from backend.replan import jobs
+
+    live, manager, _old_job, result, _config_path = ready_replan
+    live.engine_data.workdays = ["2026-10-05", "2026-10-06"]
+    fixed = datetime.fromisoformat(live.engine_data.workdays[0] + "T06:00:00+01:00")
+    monkeypatch.setattr("backend.calendar._wall_clock", lambda zone: fixed.astimezone(zone))
+    live.engine_data.ops[0].stk = 0
+    result.segments = [replace(result.segments[0], start_min=600, end_min=690)]
+    result.score = compute_score(result.segments, result.lots, live.engine_data, live.config)
+    live.update_schedule(result)
+    baseline = serialize_snapshot(live)
+    config = copy.deepcopy(live.config)
+    config.operators[("Grandes", "A")] += 1
+    job = manager.store.create(
+        "release", "fixture", live.plan_revision,
+        base_input_fingerprints=jobs.replan_base_fingerprints(baseline),
+    )
+    manager._run(
+        job["id"], copy.deepcopy(live.engine_data), config,
+        "fixture", live.plan_revision, "release", copy.deepcopy(live.dataset_info),
+        baseline_snapshot=baseline, reoptimize_relaxed_baseline=True,
+    )
+    assert manager.get(job["id"])["status"] == "ready"
+    applied_at = fixed + (timedelta(minutes=16) if later == "16min" else timedelta(days=1))
+    monkeypatch.setattr("backend.calendar._wall_clock", lambda zone: applied_at.astimezone(zone))
+    text = TOO_OLD_TEXT if later == "16min" else OTHER_DAY_TEXT
+    with pytest.raises(ValueError, match=text):
+        _apply(manager, job["id"], revision=live.plan_revision)
+    assert live.segments == result.segments
+    assert manager.get(job["id"])["status"] == "ready"

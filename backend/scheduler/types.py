@@ -247,3 +247,8 @@ class ScheduleResult:
     # Structured improvement facts (plan-melhoria §7.1). ``verified`` maps a
     # search scope to the physical signature of the state it last verified.
     improvement_report: dict | None = None
+    # The plan's history boundary (AGENTS §2 rule 4, ``scheduler.history``),
+    # set by a calculation that protects started work: ``[day, minute]``,
+    # ``[0, 0]`` for none (it plans from D0); ``None``: not set by it.
+    # Carried to the plan's inputs like ``preserved_lot_proofs``.
+    history_boundary: list[int] | None = None

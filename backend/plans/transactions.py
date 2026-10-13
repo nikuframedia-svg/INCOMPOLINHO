@@ -11,6 +11,7 @@ import logging
 import os
 import tempfile
 from dataclasses import fields
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from starlette.concurrency import run_in_threadpool
 
+from backend import calendar as factory_calendar
 from backend.api.locks import commit_lock, plan_mutation_lock
 from backend.planning_control import planning_checkpoint, planning_scope
 from backend.plans.context import is_staging, stage_state
@@ -174,7 +176,8 @@ def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException 
     """The 409 of a known refusal at the durable boundary, else ``None``.
 
     Only typed refusals are a 409, in plain Portuguese with a stable code:
-    started production would change (``HistoricalPlanProtectedError``), the
+    started production would change (``HistoricalPlanProtectedError``), a
+    calculation of another day or too old (``frozen.StaleCalculationError``), the
     inputs of «Recalcular plano» changed during the calculation
     (``RecalculationContextChanged``), a missing approval or a blocked
     candidate (``gates.ApprovalRequired``, ``gates.ApplicationBlocked``).
@@ -183,10 +186,13 @@ def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException 
     inconsistente", a corrupt journal row, a defect): the caller logs it and
     it stays an HTTP 500, never a 409 asking to calculate again.
     """
+    from backend.plans.frozen import StaleCalculationError
     from backend.plans.store import HistoricalPlanProtectedError, RecalculationContextChanged
     from backend.scheduler.gates import application_refusal_detail
 
-    if isinstance(exc, HistoricalPlanProtectedError | RecalculationContextChanged):
+    if isinstance(exc, StaleCalculationError):
+        detail = {"code": exc.code, "message": f"{exc} O plano ativo não foi alterado."}
+    elif isinstance(exc, HistoricalPlanProtectedError | RecalculationContextChanged):
         detail = {
             "code": exc.code,
             "message": f"{exc} O plano ativo não foi alterado; calcule novamente a alteração.",
@@ -203,7 +209,7 @@ def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException 
 def _commit(
     state, staged, origin, file_identity, operation_id, fingerprint, response,
     validators, callbacks,
-    *, recalculate_from_start=False,
+    *, recalculate_from_start=False, planning_now=None,
 ):
     with commit_lock:
         store = state.get_plans_store()
@@ -284,6 +290,8 @@ def _commit(
                 _sync_directory(target.parent)
             planning_checkpoint()
             scope = {"recalculate_from_start": True} if recalculate_from_start else {}
+            if planning_now is not None:
+                scope["planning_now"] = planning_now
             store.commit_mutation(operation_id, payload, response_json, source="auto", **scope)
         except BaseException:
             # A lost acknowledgement after COMMIT is not a failed operation.
@@ -363,16 +371,19 @@ def run_sync_mutation(
             )
         origin, file_identity = input_identity(state), _file_identity()
         staged = clone_state(state)
+    # One "now" for the calculation and the commit guard (AGENTS §2 rule 4).
+    now = factory_calendar.factory_now(None)
     # Check until the durable boundary, never turn its late acknowledgement into failure.
     with planning_scope(timeout_s=_planning_budget(planning_mode), check_on_exit=False):
-        with stage_state(state, staged) as context:
+        with stage_state(state, staged) as context, factory_calendar.fixed_factory_clock(now):
+            context.planning_now = now
             try:
                 response = fn()
             finally:
                 planning_checkpoint()
         return _commit(
             state, staged, origin, file_identity, operation_id, fingerprint, response,
-            context.validators, context.callbacks,
+            context.validators, context.callbacks, planning_now=context.planning_now,
         )
 
 
@@ -438,6 +449,10 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                 origin, file_identity = input_identity(state), _file_identity()
                 staged = clone_state(state)
 
+        # One "now" for the calculation and the commit guard (AGENTS §2 rule 4);
+        # a write that applies an earlier calculation keeps that one.
+        calculated_at = {"now": factory_calendar.factory_now(None)}
+
         def calculate():
             from backend.plans.candidates import PreparedPlanWrite, previews
             from backend.scheduler.gates import application_refusal_detail, authorize_application
@@ -466,17 +481,35 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                         "gate_report": prepared.values["gate_report"],
                         **candidate.identity(),
                     }) from exc
+                from backend.plans.frozen import StaleCalculationError, assert_fresh_calculation
+
+                try:
+                    # Applied the day it was calculated, while recent (rule 4).
+                    assert_fresh_calculation(prepared.planning_now, state.config)
+                except StaleCalculationError as exc:
+                    raise HTTPException(409, {
+                        "code": exc.code,
+                        "message": f"{exc} O plano ativo não foi alterado.",
+                    }) from exc
                 for key, value in prepared.values.items():
                     setattr(staged, key, value)
                 if approval is not None:
                     staged.approvals.append({
                         **approval, "action": prepared.approval_action, **candidate.identity(),
                     })
+                calculated_at["now"] = (
+                    datetime.fromisoformat(prepared.planning_now)
+                    if prepared.planning_now else None
+                )
                 return prepared.response, [], []
-            with stage_state(state, staged) as context:
+            with stage_state(state, staged) as context, factory_calendar.fixed_factory_clock(
+                calculated_at["now"],
+            ):
                 context.api_write = True
                 context.recalculate_from_start = recalculate_from_start
+                context.planning_now = calculated_at["now"]
                 response = asyncio.run(fn(*args, **kwargs))
+            calculated_at["now"] = context.planning_now
             if context.approval_required is not None:
                 if context.validators or context.callbacks:
                     # Do not cache executable closures over a previous request.
@@ -487,7 +520,12 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                 }
                 candidate = previews.put_for_origin(
                     preview_kind, origin, preview_parameters,
-                    PreparedPlanWrite(values, response, file_identity, context.approval_action),
+                    PreparedPlanWrite(
+                        values, response, file_identity, context.approval_action,
+                        planning_now=(
+                            context.planning_now.isoformat() if context.planning_now else None
+                        ),
+                    ),
                 )
                 error = context.approval_required
                 raise HTTPException(error.status_code, {
@@ -506,6 +544,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                         _commit, state, staged, origin, file_identity, operation_id,
                         fingerprint, response, validators, callbacks,
                         recalculate_from_start=recalculate_from_start,
+                        planning_now=calculated_at["now"],
                     )
                 except ValueError as exc:
                     # Rolled back: a known refusal of the durable boundary

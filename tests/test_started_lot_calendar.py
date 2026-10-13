@@ -547,11 +547,12 @@ def test_rev124_holiday_write_gives_an_activatable_plan(monkeypatch):
     from backend.plans.store import _assert_activatable_payload
     from backend.replan.jobs import _result_snapshot
     from backend.scheduler.canonical import result_validation_data as validation_view
-    from tests.snapshot_fixture import load_payload
+    from tests.snapshot_fixture import load_payload, pin_factory_clock
 
     manifest, payload = load_payload("rev124")
     freeze_day = manifest["freeze_day"]
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_a, **_k: freeze_day)
+    pin_factory_clock(monkeypatch, payload["engine_data"]["workdays"][freeze_day])
     restored = deserialize_snapshot(copy.deepcopy(payload))
     config, data, baseline = restored["config"], restored["engine_data"], restored["result"]
     config.holidays = sorted({*config.holidays, "2026-10-23"})
@@ -582,13 +583,14 @@ def test_rev124_small_outage_quick_repair_keeps_started_production(monkeypatch):
     from backend.config.unavailability import add_unavailability_entry
     from backend.plans.store import _assert_activatable_payload
     from backend.replan import jobs
-    from tests.snapshot_fixture import load_payload
+    from tests.snapshot_fixture import load_payload, pin_factory_clock
     from backend.plans.serialize import deserialize_snapshot
 
     manifest, payload = load_payload("rev124")
     freeze_day = manifest["freeze_day"]
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_a, **_k: freeze_day)
     monkeypatch.setattr(jobs, "_current_planning_day", lambda *_a, **_k: freeze_day)
+    pin_factory_clock(monkeypatch, payload["engine_data"]["workdays"][freeze_day])
     # A generous budget: the quick repair always finishes (the outcome that
     # failed in production when the machine was not busy).
     monkeypatch.setattr(jobs, "REPLAN_TOTAL_BUDGET_S", 600.0)

@@ -59,6 +59,8 @@ def _jsonable(value: Any) -> Any:
             raw.pop("protected_mounting_segments", None)
         if isinstance(value, EngineData) and not value.residual_lot_remainders:
             raw.pop("residual_lot_remainders", None)
+        if isinstance(value, EngineData) and value.history_boundary is None:
+            raw.pop("history_boundary", None)
         return _jsonable(raw)
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
@@ -128,6 +130,13 @@ def serialize_result_snapshot(
     engine_payload = _jsonable(engine_data)
     if result.preserved_lot_proofs is not None:
         engine_payload["preserved_lot_proofs"] = dict(result.preserved_lot_proofs)
+    if result.history_boundary is not None:
+        from backend.scheduler.canonical import stored_history_boundary
+
+        engine_payload.pop("history_boundary", None)
+        boundary = stored_history_boundary(result.history_boundary)
+        if boundary is not None:
+            engine_payload["history_boundary"] = boundary
     return _finalize_snapshot(
         _jsonable(
             {
@@ -229,6 +238,8 @@ def planning_input_fingerprints(
     """Return stable fingerprints for comparing detached planning inputs."""
 
     engine_payload = _jsonable(engine_data)
+    # The history boundary belongs to a calculated plan, not to its inputs.
+    engine_payload.pop("history_boundary", None)
     referenced_machines = {
         machine_id
         for op in engine_payload.get("ops", [])

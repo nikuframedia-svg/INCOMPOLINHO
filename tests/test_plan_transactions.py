@@ -175,12 +175,97 @@ def test_durable_commit_rejects_retroactive_historical_move(planning, offsets):
     assert refused.value.lot_ids == ["LOT1"]
     # Plain Portuguese for the planner: references and machines, no lot ids.
     assert str(refused.value) == (
-        "O plano proposto alteraria a produção anterior a hoje, que está "
-        "protegida (Referência SKU1 (M1))."
+        "O plano proposto alteraria a produção anterior a hoje ou já feita hoje, "
+        "que está protegida (Referência SKU1 (M1))."
     )
     assert planning.store.runtime_identity() == before
     assert planning.store.active()["payload"] == baseline
     planning.store.abort_mutation("retroactive")
+
+
+def _pin_wall_clock(monkeypatch, when: datetime) -> None:
+    from backend import calendar as factory_calendar
+
+    monkeypatch.setattr(factory_calendar, "_wall_clock", lambda zone: when.astimezone(zone))
+
+
+def _commit_moved_today(planning, *, wall: datetime, delta: int = 60):
+    """Day 1 is the wall clock's date; its segment (07:00) moves ``delta`` min."""
+    planning.state.engine_data.workdays = [
+        (wall.date() + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)
+    ]
+    planning.state.segments[0].day_idx = 1
+    baseline = serialize_snapshot(planning.state)
+    planning.store.save(
+        name="Before", source="auto", origin="isop.xlsx", note="baseline",
+        payload=baseline, score=baseline["score"], gate_report=baseline["gate_report"],
+        is_auto=True, activate=True,
+    )
+    candidate = copy.deepcopy(baseline)
+    candidate["segments"][0]["start_min"] += delta
+    candidate["segments"][0]["end_min"] += delta
+    candidate["plan_revision"] += 1
+    _finalize_snapshot(candidate)
+    planning.store.prepare_mutation("today", "fingerprint", {"plan_revision": 8})
+    return baseline, candidate
+
+
+def test_commit_guard_takes_today_from_the_real_clock(planning, monkeypatch):
+    """AGENTS §2 rule 4: a candidate calculated on 13/10 and applied on 14/10
+    is refused (calculate again); on its own date its minute applies."""
+    from backend.plans.frozen import OTHER_DAY_TEXT, StaleCalculationError
+
+    lisbon = ZoneInfo("Europe/Lisbon")
+    wall = datetime(2026, 10, 14, 8, 0, tzinfo=lisbon)
+    _pin_wall_clock(monkeypatch, wall)
+    baseline, candidate = _commit_moved_today(planning, wall=wall)
+    with pytest.raises(StaleCalculationError, match=OTHER_DAY_TEXT):
+        planning.store.commit_mutation(
+            "today", candidate, {}, source="auto",
+            planning_now=datetime(2026, 10, 13, 15, 0, tzinfo=lisbon),
+        )
+    assert planning.store.active()["payload"] == baseline
+    refusal = transactions._commit_refusal(StaleCalculationError(OTHER_DAY_TEXT), 3)
+    assert refusal.status_code == 409 and refusal.detail["code"] == "stale_calculation"
+    assert refusal.detail["message"] == (
+        "O plano foi calculado noutro dia; calcule novamente. O plano ativo não foi alterado."
+    )
+    # Same date: the segment of 07:00 had started at 08:00, not at 06:30.
+    with pytest.raises(HistoricalPlanProtectedError):
+        planning.store.commit_mutation("today", candidate, {}, source="auto", planning_now=wall)
+    planning.store.commit_mutation(
+        "today", candidate, {}, source="auto", planning_now=wall - timedelta(minutes=90),
+    )
+    assert planning.store.active()["payload"]["segments"][0]["start_min"] == 480
+
+
+def test_fresh_calculation_window(monkeypatch):
+    from backend.plans.frozen import (
+        OTHER_DAY_TEXT,
+        TOO_OLD_TEXT,
+        StaleCalculationError,
+        assert_fresh_calculation,
+    )
+
+    lisbon = ZoneInfo("Europe/Lisbon")
+    wall = datetime(2026, 10, 13, 15, 39, tzinfo=lisbon)
+    _pin_wall_clock(monkeypatch, wall)
+    assert_fresh_calculation(None, "Europe/Lisbon")
+    assert_fresh_calculation((wall - timedelta(minutes=15)).isoformat(), "Europe/Lisbon")
+    with pytest.raises(StaleCalculationError, match=TOO_OLD_TEXT):
+        assert_fresh_calculation((wall - timedelta(minutes=16)).isoformat(), "Europe/Lisbon")
+    with pytest.raises(StaleCalculationError, match=OTHER_DAY_TEXT):
+        assert_fresh_calculation(datetime(2026, 10, 12, 23, 59, tzinfo=lisbon), "Europe/Lisbon")
+
+
+def test_fixed_clock_none_keeps_the_outer_instant():
+    from backend import calendar as factory_calendar
+
+    outer = datetime(2026, 10, 13, 10, 0, tzinfo=ZoneInfo("Europe/Lisbon"))
+    with factory_calendar.fixed_factory_clock(outer):
+        with factory_calendar.fixed_factory_clock(None):
+            assert factory_calendar.factory_now(None) == outer
+        assert factory_calendar.factory_now(None) == outer
 
 
 def test_writer_commit_refused_by_history_guard_is_409_and_rolls_back(planning):

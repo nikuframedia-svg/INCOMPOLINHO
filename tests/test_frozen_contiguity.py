@@ -366,7 +366,12 @@ def test_rev127_run_after_the_removed_outage_is_not_frozen():
     restored = deserialize_snapshot(copy.deepcopy(payload))
     data, config, result = restored["engine_data"], restored["config"], restored["result"]
 
-    protected = frozen._protected_plan(result, manifest["freeze_day"], data, config)
+    # The day rule (06:00 of the planning day): independent of the hour of the run.
+    day = str(data.workdays[manifest["freeze_day"]])[:10]
+    protected = frozen._protected_plan(
+        result, manifest["freeze_day"], data, config,
+        now=datetime.fromisoformat(f"{day}T06:00").replace(tzinfo=LISBON),
+    )
 
     # Before: PRM043's blocks of 19/10 were frozen and 13-18/10 reserved.
     assert not [
@@ -442,11 +447,14 @@ def test_rev127_capacity_release_replan_has_no_late_order(monkeypatch):
         result.segments, result.lots, data, plan["config"], planning_day=freeze_day,
         now=removed_at,
     ) == []
-    # PRM043 works on 13/10 and the started JTE001 lot goes on without a new setup.
+    # PRM043 goes back to work after the removal (never in the hours of 13/10
+    # already gone, AGENTS §2 rule 4 since 13/10/2026) and the started JTE001
+    # lot goes on without a new setup.
     first = min(
         (s for s in result.segments if s.machine_id == "PRM043" and s.day_idx >= freeze_day),
         key=lambda s: (s.day_idx, s.start_min),
     )
-    assert first.day_idx == freeze_day and first.tool_id == "JTE001" and first.setup_min == 0
+    assert (first.day_idx, first.start_min) >= (freeze_day, 15 * 60 + 39)
+    assert first.tool_id == "JTE001" and first.setup_min == 0
     # The note of the outage's rebuild is not carried over.
     assert not any(w.startswith("A alteração afeta") for w in final["warnings"])

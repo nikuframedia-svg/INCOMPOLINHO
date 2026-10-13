@@ -157,13 +157,22 @@ def operator_peaks(
         if config is not None
         else [("A", 420, 930), ("B", 930, 1440)]
     )
+    from backend.scheduler.history import history_boundary, judged_start
+
+    # AGENTS §2 rule 4: staffing judges the plan only from its history
+    # boundary on (an absence entered at 10:00 from 07:00 says nothing of
+    # the production already done that morning).
+    boundary = history_boundary(engine_data)
     production_events: dict[tuple[int, str, str], list[tuple[float, int]]] = {}
     for segment in segments:
         if segment.prod_min <= 0:
             continue
+        judged = judged_start(segment.day_idx, segment.start_min, segment.end_min, boundary)
+        if judged is None:
+            continue
         group = machine_group.get(segment.machine_id, "Grandes")
         required = segment_operator_demand(segment, engine_data)
-        production_start = segment.production_start_min
+        production_start = max(segment.production_start_min, judged)
         for shift_id, shift_start, shift_end in configured_shifts:
             overlap_start = max(production_start, shift_start)
             overlap_end = min(int(segment.end_min), shift_end)

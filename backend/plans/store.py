@@ -43,7 +43,7 @@ class LegacyMaterialPlanError(PlanValidationError):
 
 
 class HistoricalPlanProtectedError(ValueError):
-    """A plan would change production that started before today (AGENTS §2, rule 4).
+    """A plan would change production that started before the boundary (AGENTS §2, rule 4).
 
     Protected history, not a physical conflict: the plan as calculated cannot
     replace the active one, which stays untouched. ``lot_ids`` keeps the
@@ -57,8 +57,8 @@ class HistoricalPlanProtectedError(ValueError):
         self.labels = list(labels or [])
         shown = "; ".join(self.labels[:5]) + ("; …" if len(self.labels) > 5 else "")
         super().__init__(
-            "O plano proposto alteraria a produção anterior a hoje, que está "
-            f"protegida{f' ({shown})' if shown else ''}."
+            "O plano proposto alteraria a produção anterior a hoje ou já feita hoje, "
+            f"que está protegida{f' ({shown})' if shown else ''}."
         )
 
 
@@ -329,8 +329,15 @@ class PlansStore:
             (plan_id, revision),
         )
 
-    def _assert_historical_unchanged_locked(self, payload: dict) -> None:
-        from backend.plans.frozen import historical_schedule_changes
+    def _assert_historical_unchanged_locked(self, payload: dict, *, now=None) -> None:
+        """``now``: the instant the candidate was calculated at; today's
+        production before it is history too (AGENTS §2 rule 4).
+
+        The date of today is the real clock's at commit
+        (``frozen.commit_instant``): a candidate calculated on an earlier date
+        is refused; its own minute counts only on the same date.
+        """
+        from backend.plans.frozen import commit_instant, historical_schedule_changes
 
         row = self._conn.execute(
             "SELECT p.payload_json FROM plans p "
@@ -339,7 +346,10 @@ class PlansStore:
         if row is None:
             return
         before = json.loads(row[0])
-        changed = historical_schedule_changes(before, payload)
+        today, now = commit_instant(
+            now, str((before.get("config") or {}).get("timezone") or "Europe/Lisbon"),
+        )
+        changed = historical_schedule_changes(before, payload, today=today, now=now)
         if changed:
             raise HistoricalPlanProtectedError(
                 changed, _lot_labels(changed, payload, before),
@@ -467,7 +477,7 @@ class PlansStore:
 
     def commit_mutation(
         self, operation_id: str, payload: dict | None, response, *, source: str,
-        recalculate_from_start: bool = False,
+        recalculate_from_start: bool = False, planning_now=None,
     ) -> None:
         from backend.plans.serialize import assert_snapshot_integrity
 
@@ -489,7 +499,7 @@ class PlansStore:
                 if recalculate_from_start:
                     self._assert_recalculation_context_locked(payload)
                 else:
-                    self._assert_historical_unchanged_locked(payload)
+                    self._assert_historical_unchanged_locked(payload, now=planning_now)
                 plan_id = uuid4().hex
                 self._conn.execute(
                     "INSERT INTO plans(id,name,source,origin,note,is_auto,otd,otd_d,tardy_count,"

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -16,6 +17,10 @@ class MutationContext:
     recalculate_from_start: bool = False
     approval_required: object | None = None
     approval_action: str = "recompute"
+    # The instant this write was calculated at (AGENTS §2 rule 4): the commit
+    # guard reads today's history at it. A write that applies a candidate
+    # calculated earlier (a replan job, a manual move) sets that one.
+    planning_now: datetime | None = None
 
 
 _context: ContextVar[MutationContext | None] = ContextVar("plan_mutation", default=None)
@@ -33,6 +38,14 @@ def is_staging() -> bool:
 def recalculation_from_start() -> bool:
     context = _context.get()
     return context is not None and context.recalculate_from_start
+
+
+def set_planning_now(now: datetime | str | None) -> None:
+    """Record the instant the candidate being written was calculated at."""
+    context = _context.get()
+    if context is None or not now:
+        return
+    context.planning_now = datetime.fromisoformat(now) if isinstance(now, str) else now
 
 
 def api_write_context() -> MutationContext | None:

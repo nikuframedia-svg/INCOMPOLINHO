@@ -673,8 +673,8 @@ def test_apply_refused_by_the_history_guard_is_a_plain_409(ready_replan, monkeyp
     detail = refused.value.detail
     assert detail["code"] == "historical_plan_protected"
     assert detail["message"] == (
-        "O plano proposto alteraria a produção anterior a hoje, que está protegida "
-        "(Referência SKU1 (M1)). O plano ativo não foi alterado; calcule novamente a alteração."
+        "O plano proposto alteraria a produção anterior a hoje ou já feita hoje, que está "
+        "protegida (Referência SKU1 (M1)). O plano ativo não foi alterado; calcule novamente a alteração."
     )
     assert detail["current_revision"] == 1
     assert serialize_snapshot(live) == before_plan

@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from tests.snapshot_fixture import load_payload
+from tests.snapshot_fixture import load_payload, pin_factory_clock
 
 OUTAGES = {
     "PRM031_three_weeks": ("PRM031", "2026-10-19T00:01", "2026-11-09T23:59"),
@@ -35,6 +35,7 @@ def test_breakdown_replan_on_rev124_is_valid_within_budget(outage, monkeypatch):
     freeze_day = manifest["freeze_day"]
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_args, **_kw: freeze_day)
     monkeypatch.setattr(jobs, "_current_planning_day", lambda *_args, **_kw: freeze_day)
+    pin_factory_clock(monkeypatch, payload["engine_data"]["workdays"][freeze_day])
     restored = deserialize_snapshot(copy.deepcopy(payload))
     config, engine_data = restored["config"], restored["engine_data"]
     resource, start_at, end_at = OUTAGES[outage]

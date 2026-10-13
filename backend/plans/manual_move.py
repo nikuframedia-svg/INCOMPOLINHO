@@ -63,9 +63,12 @@ class ManualMoveResult:
     delivery_warnings: list[str]
     time_ms: float
     improvement_report: dict | None = None
+    # The instant the move was checked at (ISO); the commit guard reads
+    # today's history at it (AGENTS §2 rule 4).
+    planning_now: str | None = None
 
 
-def _move_protection(baseline_result, freeze_day: int, data, config, lot_id: str):
+def _move_protection(baseline_result, freeze_day: int, data, config, lot_id: str, now=None):
     """What a manual move keeps exactly as in the baseline (AGENTS §2, rule 4).
 
     The production before the planning day, the run mounted at that boundary
@@ -80,7 +83,7 @@ def _move_protection(baseline_result, freeze_day: int, data, config, lot_id: str
     others = copy.copy(baseline_result)
     others.segments = [s for s in baseline_result.segments if s.lot_id != lot_id]
     others.lots = [item for item in baseline_result.lots if item.id != lot_id]
-    return _protected_plan(others, freeze_day, data, config)
+    return _protected_plan(others, freeze_day, data, config, now=now)
 
 
 def _started_lot_proofs(protection) -> dict:
@@ -428,6 +431,21 @@ def _check_immutable_start(
                     f"para {required} operador(es) nesse instante, considerando as "
                     "ausências e as produções protegidas."
                 )
+
+
+def _elapsed_text(day, minute, data, now_min, *, setup=False) -> str:
+    """Plain text: a move cannot start (or set up) in time already gone today."""
+    now_text = f"{int(now_min) // 60:02d}:{int(now_min) % 60:02d}"
+    when = f"no dia {day} ({str(data.workdays[day])[:10]}), às {minute // 60:02d}:{minute % 60:02d}"
+    if setup:
+        return (
+            f"Impedido iniciar {when}: a afinação começaria antes da hora atual "
+            f"({now_text}), em tempo que já passou. Escolha uma hora mais tarde."
+        )
+    return (
+        f"Impedido iniciar {when}: esse momento já passou (agora são {now_text}). "
+        "Escolha uma hora a partir de agora."
+    )
 
 
 def _inconclusive_move(lot_id, day, minute, machine_id):
@@ -935,6 +953,7 @@ def _allocate_existing_lots(
     cancel_event: threading.Event | None = None,
     time_budget_s: float | None = None,
     protection=None,
+    now: datetime | None = None,
 ) -> ScheduleResult | None:
     """Allocate existing productions using the shared physical solver, without lot sizing.
 
@@ -947,6 +966,8 @@ def _allocate_existing_lots(
         _install_frozen_reservations,
         _protected_plan,
         _splice_frozen_started_lots,
+        calculation_now,
+        elapsed_on_planning_day,
     )
     from backend.scheduler.global_jit import solve_global_jit
     from backend.scheduler.jit_policy import calendar_holidays
@@ -958,15 +979,17 @@ def _allocate_existing_lots(
 
     planning_checkpoint()
     residual_data = copy.deepcopy(candidate_data)
-    freeze_day = _current_planning_day(candidate_data, config)
+    now = calculation_now(config, now)
+    freeze_day = _current_planning_day(candidate_data, config, now)
     if protection is None and baseline_result is not None:
-        protection = _protected_plan(baseline_result, freeze_day, candidate_data, config)
+        protection = _protected_plan(baseline_result, freeze_day, candidate_data, config, now=now)
     protected_segments, protected_lots, partial = [], [], []
     if protection is not None:
         protected_segments = list(protection.segments)
         protected_lots, partial = list(protection.lots), list(protection.partial)
         _install_frozen_reservations(
             residual_data, protected_segments, protected_lots, freeze_day, config, partial,
+            now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
         )
     protected_ids = {lot.id for lot in protected_lots}
     rests = {original.id: rest for original, rest in partial}
@@ -1056,6 +1079,7 @@ def _replan_around_fixed_lot(
     optimization_mode: str,
     cancel_event: threading.Event | None,
     time_budget_s: float,
+    now: datetime | None = None,
 ) -> ScheduleResult | None:
     """Place the moved lot exactly, then allocate the rest around it.
 
@@ -1067,9 +1091,13 @@ def _replan_around_fixed_lot(
         _current_planning_day,
         _install_frozen_reservations,
         _splice_frozen_started_lots,
+        calculation_now,
+        elapsed_on_planning_day,
     )
     from backend.scheduler.canonical import preserved_lot_proofs
 
+    now = calculation_now(config, now)
+    freeze_day = _current_planning_day(candidate_data, config, now)
     frozen_segments = list(protection.segments)
     partial = list(protection.partial)
     anchored_segments = _materialize_target(
@@ -1085,8 +1113,8 @@ def _replan_around_fixed_lot(
         anchor for anchor in residual_data.plan_anchors if anchor.lot_id not in protected_ids
     ]
     _install_frozen_reservations(
-        residual_data, protected_segments, protected_lots,
-        _current_planning_day(candidate_data, config), config, partial,
+        residual_data, protected_segments, protected_lots, freeze_day, config, partial,
+        now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
     )
     with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
         result = _allocate_existing_lots(
@@ -1094,7 +1122,7 @@ def _replan_around_fixed_lot(
                 rests.get(item.id, item) for item in source_lots
                 if item.id not in protected_ids
             ], config=config, cancel_event=cancel_event,
-            time_budget_s=time_budget_s,
+            time_budget_s=time_budget_s, now=now,
         )
         if result is None:
             return None
@@ -1225,7 +1253,7 @@ def _fixed_positions_move(
 
 
 def _finalize_move_candidate(
-    result, candidate_data, config, source_lots, frozen_segments=(), lot_id=None,
+    result, candidate_data, config, source_lots, frozen_segments=(), lot_id=None, now=None,
 ):
     """Improve and validate the complete candidate; ``frozen_segments`` stay as they are.
 
@@ -1235,6 +1263,7 @@ def _finalize_move_candidate(
     from backend.plans.frozen import (
         _current_planning_day,
         _protected_plan,
+        calculation_now,
         improve_preserving_protected_lots,
     )
     from backend.scheduler.canonical import result_validation_data
@@ -1247,16 +1276,17 @@ def _finalize_move_candidate(
     if report.get("final_signature") != signature:
         budget = improvement_time_budget(MANUAL_MOVE_BUDGET_S)
         if budget > 0:
-            freeze_day = _current_planning_day(candidate_data, config)
+            now = calculation_now(config, now)
+            freeze_day = _current_planning_day(candidate_data, config, now)
             # Rule 4: of a started lot only what started is fixed, its rest
             # may still improve. The requested lot stays exactly where it was
             # placed; as before, what precedes it may still be improved (the
             # merged plan is validated, so its mounting is never lost).
             if lot_id is None:
-                protection = _protected_plan(result, freeze_day, candidate_data, config)
+                protection = _protected_plan(result, freeze_day, candidate_data, config, now=now)
             else:
                 protection = _move_protection(
-                    result, freeze_day, candidate_data, config, lot_id,
+                    result, freeze_day, candidate_data, config, lot_id, now=now,
                 )
                 protection.segments = [*protection.segments, *(
                     copy.deepcopy(item) for item in result.segments if item.lot_id == lot_id
@@ -1267,7 +1297,8 @@ def _finalize_move_candidate(
             result, report = improve_preserving_protected_lots(
                 result, candidate_data, copy.deepcopy(candidate_data), config,
                 protection.segments, protection.lots, freeze_day, time_budget_s=budget,
-                partial=protection.partial,
+                partial=protection.partial, now=now,
+                cut=protection.cut,
             )
         else:
             report = {"status": "not_evaluated", "stop_reason": "no_time_left"}
@@ -1313,15 +1344,26 @@ def move_lot(
     optimization_mode: str = "quick",
     progress: Callable[[str, int, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    now: datetime | None = None,
 ) -> ManualMoveResult:
-    """Verify a move within one budget, including every fallback and validation."""
-    with planning_scope(timeout_s=MANUAL_MOVE_BUDGET_S, cancel_event=cancel_event):
+    """Verify a move within one budget, including every fallback and validation.
+
+    ``now``: the instant of the check (default: the calculation's,
+    ``frozen.calculation_now``), one for the whole check (AGENTS §2 rule 4).
+    """
+    from backend.calendar import fixed_factory_clock
+    from backend.plans.frozen import calculation_now
+
+    now = calculation_now(config, now)
+    with planning_scope(
+        timeout_s=MANUAL_MOVE_BUDGET_S, cancel_event=cancel_event,
+    ), fixed_factory_clock(now):
         return _move_lot(
             segments, lots, baseline_score, data, config,
             lot_id=lot_id, target_day=target_day, target_machine=target_machine,
             target_start_min=target_start_min, reason=reason, author=author,
             optimization_mode=optimization_mode, progress=progress,
-            cancel_event=cancel_event,
+            cancel_event=cancel_event, now=now,
         )
 
 
@@ -1341,6 +1383,7 @@ def _move_lot(
     optimization_mode: str = "quick",
     progress: Callable[[str, int, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    now: datetime | None = None,
 ) -> ManualMoveResult:
     """Anchor one complete lot and reoptimise every other production.
 
@@ -1366,6 +1409,9 @@ def _move_lot(
         NoValidCandidateError,
         _current_planning_day,
         _frozen_started_lots,
+        calculation_now,
+        elapsed_on_planning_day,
+        started_before,
     )
 
     baseline_result = ScheduleResult(
@@ -1376,8 +1422,12 @@ def _move_lot(
         warnings=[],
         operator_alerts=[],
     )
-    freeze_day = _current_planning_day(data, config)
-    started_segments, _ = _frozen_started_lots(baseline_result, freeze_day)
+    # The boundary is the current factory minute (AGENTS §2 rule 4, 13/10/2026);
+    # the helpers below read the same instant (``move_lot`` fixes the clock).
+    now = calculation_now(config, now)
+    freeze_day = _current_planning_day(data, config, now)
+    now_min = elapsed_on_planning_day(freeze_day, data, config, now)
+    started_segments, _ = _frozen_started_lots(baseline_result, freeze_day, now_min)
     if any(segment.lot_id == lot_id for segment in started_segments):
         raise ManualMoveError(
             f"Lote {lot_id} já iniciado está congelado e não pode ser movido."
@@ -1385,7 +1435,7 @@ def _move_lot(
     # Rule 4 (AGENTS §2): only what started (and the run mounted at the
     # boundary, with its mount supplier) is fixed; the rest of a started lot
     # may be re-allocated, never re-sized.
-    protection = _move_protection(baseline_result, freeze_day, data, config, lot_id)
+    protection = _move_protection(baseline_result, freeze_day, data, config, lot_id, now=now)
     frozen_segments = protection.segments
     frozen_proofs = _started_lot_proofs(protection)
     candidate_segments = [segment for segment in candidate_segments if segment.lot_id != lot_id]
@@ -1421,6 +1471,8 @@ def _move_lot(
         raise ManualMoveError("A hora alvo tem de ficar dentro de um turno ativo.")
     if target_day >= len(data.workdays):
         raise ManualMoveError(f"Dia alvo fora do calendário: {target_day}.")
+    if (target_day, start_min) < (freeze_day, now_min):
+        raise ManualMoveError(_elapsed_text(target_day, start_min, data, now_min))
     _check_immutable_start(
         data, config, frozen_segments, lot, first_moved,
         target_day, start_min, machine_id,
@@ -1549,6 +1601,12 @@ def _move_lot(
     except ManualMoveError as exc:
         raise _inconclusive_move(lot_id, target_day, start_min, machine_id) from exc
     candidate_segments, candidate_lots = complete.segments, complete.lots
+    # Its setup too: nothing new is placed in time already gone today.
+    if any(
+        segment.lot_id == lot_id and started_before(segment, freeze_day, now_min)
+        for segment in candidate_segments
+    ):
+        raise ManualMoveError(_elapsed_text(target_day, start_min, data, now_min, setup=True))
     score, gate_report = complete.score, complete.gate_report
     if progress:
         progress("finalizing", 90, "A preparar a comparação")
@@ -1594,4 +1652,5 @@ def _move_lot(
         requires_confirmation=requires_confirmation,
         delivery_warnings=delivery_warnings,
         time_ms=round((time.perf_counter() - started) * 1000, 1),
+        planning_now=now.isoformat(),
     )

@@ -311,6 +311,15 @@ async def apply_move(body: dict):
             confirmed = bool(
                 body.get("approve_exceptions", body.get("confirm_delivery_risk", False))
             )
+        from backend.plans.frozen import StaleCalculationError, assert_fresh_calculation
+
+        try:
+            # A move checked on another day, or too long ago, is checked again.
+            assert_fresh_calculation(candidate.planning_now, state.config)
+        except StaleCalculationError as exc:
+            raise HTTPException(
+                409, {"code": exc.code, "message": f"{exc} O plano ativo não foi alterado."},
+            ) from exc
         try:
             approval = authorize_application(
                 candidate.gate_report,
@@ -334,6 +343,10 @@ async def apply_move(body: dict):
             ) from exc
 
         response_payload = _response(candidate)
+        from backend.plans.context import set_planning_now
+
+        # The commit guard reads today's history at the instant of the check.
+        set_planning_now(candidate.planning_now)
 
         # Persist both sides of the manual change. Failure is non-blocking,
         # matching the scheduler's snapshot policy.

@@ -28,9 +28,15 @@ from backend.planning_control import (
 from backend.plans.frozen import (
     _current_planning_day,
     _frozen_started_lots,
+    _protected_plan,
+    assert_fresh_calculation,
+    boundary_label,
     candidate_history_changes,
     compact_preserving_started_lots,
+    elapsed_on_planning_day,
+    improve_preserving_protected_lots,
     optimize_preserving_started_lots,
+    planning_boundary,
     preserved_lots_warning,
     without_calculation_notes,
 )
@@ -202,7 +208,7 @@ def _valid_delivery_floor(baseline, engine_data, config):
     return floor
 
 
-def _late_with_idle_capacity(plan, engine_data, config, planning_day: int) -> bool:
+def _late_with_idle_capacity(plan, engine_data, config, planning_day: int, now=None) -> bool:
     """Whether a late delivery of ``plan`` has idle capacity before its deadline.
 
     The cheap read-only check of ``scheduler.idle_capacity`` (tens of ms).
@@ -211,12 +217,13 @@ def _late_with_idle_capacity(plan, engine_data, config, planning_day: int) -> bo
     find, and its time is better left to the compaction (rehearsal of
     13/10/2026 on revision 128: the reserve with only a structural late order
     cost 3 setups and 6 orders ready later). A failing check reserves nothing.
+    ``now``: the job's instant (only time after it is free today).
     """
     from backend.scheduler.idle_capacity import late_with_idle_capacity
 
     try:
         return bool(late_with_idle_capacity(
-            plan.segments, plan.lots, engine_data, config, planning_day=planning_day,
+            plan.segments, plan.lots, engine_data, config, planning_day=planning_day, now=now,
         ))
     except Exception:  # informational check: the job goes on as before
         logger.exception("Idle-capacity check failed in the replan job")
@@ -829,7 +836,7 @@ class ReplanJobManager:
         )
 
     @staticmethod
-    def _local_calendar_repair(baseline, engine_data, config, freeze_day, budget_s):
+    def _local_calendar_repair(baseline, engine_data, config, freeze_day, budget_s, now=None):
         """Repair only the segments a calendar edit invalidated, within its budget.
 
         Only movable work is repaired (AGENTS §2 rule 4, §5): the production
@@ -888,7 +895,7 @@ class ReplanJobManager:
 
         with planning_scope(timeout_s=budget_s):
             repaired = repair_preserving_protected_lots(
-                baseline, engine_data, config, freeze_day, repair,
+                baseline, engine_data, config, freeze_day, repair, now=now,
             )
         for warning in tail_warnings:
             if warning not in repaired.warnings:
@@ -896,7 +903,7 @@ class ReplanJobManager:
         return repaired, alternative_moves
 
     def _rebuild_after_capacity_release(
-        self, job_id, engine_data, config, baseline, compacted, history_changes,
+        self, job_id, engine_data, config, baseline, compacted, history_changes, now=None,
     ):
         """The complete constructor when compaction leaves a delivery late with idle capacity.
 
@@ -912,7 +919,7 @@ class ReplanJobManager:
             with planning_scope(timeout_s=self._optional_budget()):
                 rebuilt = optimize_preserving_started_lots(
                     engine_data, config, baseline,
-                    mode="normal", audit=True, optimizer=optimize,
+                    mode="normal", audit=True, optimizer=optimize, now=now,
                 )
         except PlanningTimeout:
             planning_checkpoint()
@@ -932,7 +939,7 @@ class ReplanJobManager:
         ]
         return rebuilt
 
-    def _continue_compaction(self, job_id, engine_data, config, compacted):
+    def _continue_compaction(self, job_id, engine_data, config, compacted, now=None):
         """A second compaction pass from ``compacted`` in the remaining budget.
 
         Every accepted move is already validated and no-loss, so the first
@@ -943,7 +950,7 @@ class ReplanJobManager:
         try:
             with planning_scope(timeout_s=self._optional_budget()):
                 again = compact_preserving_started_lots(
-                    engine_data, config, copy.deepcopy(compacted),
+                    engine_data, config, copy.deepcopy(compacted), now=now,
                 )
         except PlanningTimeout:
             planning_checkpoint()
@@ -954,12 +961,18 @@ class ReplanJobManager:
         return again if delivery_not_worse(again.score, compacted.score) else compacted
 
     def _run(self, job_id: str, *args, **kwargs) -> None:
+        from backend import calendar as factory_calendar
+
+        # One "now" for the whole job (AGENTS §2 rule 4, 13/10/2026): the
+        # planning day, today's elapsed minutes, the protection, the
+        # idle-capacity check and, at apply, the commit guard use it.
+        now = factory_calendar.factory_now(None)
         try:
             with planning_scope(
                 timeout_s=REPLAN_TOTAL_BUDGET_S,
                 cancelled=lambda: self._is_cancelled(job_id),
-            ):
-                self._run_planning(job_id, *args, **kwargs)
+            ), factory_calendar.fixed_factory_clock(now):
+                self._run_planning(job_id, *args, now=now, **kwargs)
         except PlanningCancelled:
             # Also raised at scope exit after the job already failed; the store
             # never overwrites a terminal status.
@@ -988,6 +1001,7 @@ class ReplanJobManager:
         prefer_unchanged_baseline: bool = False,
         allow_unchanged_baseline_apply: bool = False,
         reoptimize_relaxed_baseline: bool = False,
+        now: datetime | None = None,
     ) -> None:
         from backend.config.planning import synchronize_active_twin_groups
         from backend.config.types import PLANNING_POLICY_VERSION
@@ -1072,17 +1086,29 @@ class ReplanJobManager:
                 return
             apply_calendars(engine_data, config)
             reapply_calendar_mutations(engine_data, active_mutations, config)
-            freeze_day = _current_planning_day(engine_data, config)
+            if now is None:
+                from backend.calendar import factory_now
+
+                now = factory_now(config)
+            freeze_day = _current_planning_day(engine_data, config, now)
+            now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
+            # The plan's history boundary (AGENTS §2 rule 4): every validation
+            # of this job's plans, its apply and its commit judge the inputs
+            # only from this instant on (``scheduler.history``).
+            from backend.scheduler.canonical import stored_history_boundary
+
+            engine_data.history_boundary = stored_history_boundary(
+                planning_boundary(freeze_day, now_min),
+            )
             frozen_segments, frozen_lots = _frozen_started_lots(
-                historical_baseline_result,
-                freeze_day,
+                historical_baseline_result, freeze_day, now_min,
             )
 
             def history_changes(candidate) -> list[str]:
                 # The commit guard, before a candidate is offered.
                 return candidate_history_changes(
                     baseline_snapshot, candidate, engine_data, config,
-                    freeze_day=freeze_day,
+                    freeze_day=freeze_day, now=now,
                 )
 
             baseline_score = None
@@ -1099,7 +1125,9 @@ class ReplanJobManager:
                 rebuild_reserve = (
                     LOCAL_REPAIR_OPTIMIZER_RESERVE_S
                     if valid_fallback is not None
-                    and _late_with_idle_capacity(valid_fallback, engine_data, config, freeze_day)
+                    and _late_with_idle_capacity(
+                        valid_fallback, engine_data, config, freeze_day, now,
+                    )
                     else 0.0
                 )
                 self.store.update(
@@ -1114,6 +1142,7 @@ class ReplanJobManager:
                             engine_data,
                             config,
                             copy.deepcopy(baseline_result),
+                            now=now,
                         )
                     if not delivery_not_worse(
                         compacted.score,
@@ -1134,7 +1163,7 @@ class ReplanJobManager:
                     result = compacted
                     selected_source = "compacted_baseline_after_capacity_release"
                     if rebuild_reserve and _late_with_idle_capacity(
-                        compacted, engine_data, config, freeze_day,
+                        compacted, engine_data, config, freeze_day, now,
                     ):
                         self.store.update(
                             job_id,
@@ -1144,7 +1173,7 @@ class ReplanJobManager:
                         )
                         rebuilt = self._rebuild_after_capacity_release(
                             job_id, engine_data, config, historical_baseline_result,
-                            compacted, history_changes,
+                            compacted, history_changes, now,
                         )
                         if rebuilt is not None:
                             result = rebuilt
@@ -1153,7 +1182,7 @@ class ReplanJobManager:
                         # Nothing left for the constructor to recover: the
                         # compaction goes on with the time kept for it.
                         result = self._continue_compaction(
-                            job_id, engine_data, config, compacted,
+                            job_id, engine_data, config, compacted, now,
                         )
             if prefer_unchanged_baseline and baseline_result is not None:
                 original_baseline_score = dict(baseline_result.score or {})
@@ -1190,6 +1219,7 @@ class ReplanJobManager:
                             config,
                             freeze_day,
                             local_budget,
+                            now,
                         )
                         assert_plan_valid(
                             repaired.segments,
@@ -1315,7 +1345,7 @@ class ReplanJobManager:
                     ):
                         result = optimize_preserving_started_lots(
                             engine_data, config, historical_baseline_result,
-                            mode="normal", audit=True, optimizer=optimize,
+                            mode="normal", audit=True, optimizer=optimize, now=now,
                         )
                 except (PlanningTimeout, PlanValidationError):
                     if valid_fallback is None:
@@ -1361,7 +1391,7 @@ class ReplanJobManager:
                         timeout_s=self._optional_budget()
                     ):
                         baseline_result = compact_preserving_started_lots(
-                            engine_data, config, baseline_result,
+                            engine_data, config, baseline_result, now=now,
                         )
                 except PlanningTimeout:
                     planning_checkpoint()
@@ -1407,7 +1437,15 @@ class ReplanJobManager:
                 "avoidable_priority_order_anomalies",
             )
             operational_metrics = (result.gate_report or {}).get("metrics", {})
-            if selected_source == "optimized" and not frozen_lots and any(
+            # Lots started on earlier days keep the closeout off. During the
+            # planning day (lots started before "now", or minutes already
+            # gone) it runs on the residual with them and the elapsed time
+            # reserved, as the calculation itself did (AGENTS §2 rule 4).
+            closeout_allowed = not _frozen_started_lots(
+                historical_baseline_result, freeze_day,
+            )[1]
+            protected_closeout = bool(frozen_lots) or now_min > 0
+            if selected_source == "optimized" and closeout_allowed and any(
                 int(operational_metrics.get(key, 0)) for key in operational_keys
             ):
                 self.store.update(
@@ -1428,9 +1466,22 @@ class ReplanJobManager:
                         # order may lose, no setup may be added.
                         from backend.scheduler.improvement import improve_plan
 
-                        trial.segments, trial.lots, improvement = improve_plan(
-                            trial.segments, trial.lots, engine_data, config,
-                        )
+                        if protected_closeout:
+                            protected = _protected_plan(
+                                historical_baseline_result, freeze_day, engine_data, config,
+                                now=now,
+                            )
+                            trial, improvement = improve_preserving_protected_lots(
+                                trial, engine_data, copy.deepcopy(engine_data), config,
+                                protected.segments, protected.lots, freeze_day,
+                                time_budget_s=float(remaining_time(60.0) or 0.0),
+                                partial=protected.partial, now=now,
+                                cut=protected.cut,
+                            )
+                        else:
+                            trial.segments, trial.lots, improvement = improve_plan(
+                                trial.segments, trial.lots, engine_data, config,
+                            )
                         if improvement.get("moves_accepted"):
                             assert_plan_valid(trial.segments, engine_data, config, lots=trial.lots)
                             trial.score = compute_score(
@@ -1463,7 +1514,10 @@ class ReplanJobManager:
             if changed_history:
                 raise _ProtectedHistoryChanged(changed_history)
             if frozen_lots:
-                frozen_warning = preserved_lots_warning(len(frozen_lots), freeze_day)
+                frozen_warning = preserved_lots_warning(
+                    len(frozen_lots), freeze_day,
+                    boundary_label(freeze_day, now_min, engine_data),
+                )
                 result.warnings = [
                     warning for warning in result.warnings
                     if not warning.startswith("Plano anterior preservado:")
@@ -1557,6 +1611,8 @@ class ReplanJobManager:
                     "baseline_score": baseline_score,
                     "selected_source": selected_source,
                     "unchanged_resource_relaxation": unchanged_resource_relaxation,
+                    # The commit guard reads history at this instant.
+                    "planning_now": now.isoformat(),
                 },
             )
         except PlanningStopped:
@@ -1650,6 +1706,10 @@ class ReplanJobManager:
             return job
         if job["status"] != "ready":
             raise ValueError("O candidato ainda não está pronto ou já foi aplicado.")
+        # A candidate is applied the day it was calculated, while it is
+        # recent: the factory moved on since (AGENTS §2 rule 4).
+        planning_now = (job.get("result") or {}).get("planning_now")
+        assert_fresh_calculation(planning_now, state.config)
         current_id = str((state.dataset_info or {}).get("id", ""))
         if current_id != job["dataset_id"]:
             raise ValueError("O ISOP mudou durante o cálculo; o candidato ficou obsoleto.")
@@ -1687,23 +1747,33 @@ class ReplanJobManager:
         active_mutations = copy.deepcopy(restored.get("active_mutations", []))
         reapply_calendar_mutations(engine_data, active_mutations, config)
         validate_active_twin_eco_lots(engine_data)
-        result.score = compute_score(
-            result.segments,
-            result.lots,
-            engine_data,
-            config=config,
-        )
-        result.gate_report = build_gate_report(
-            result.segments,
-            result.lots,
-            result.score,
-            engine_data,
-            config,
-        )
+        from backend.calendar import fixed_factory_clock
         from backend.scheduler.improvement import attach_improvement_summary
 
-        attach_improvement_summary(result, engine_data, config)
+        # The gates read the job's own instant (the idle-capacity check
+        # counts free time after it), as when the candidate was offered.
+        with fixed_factory_clock(
+            datetime.fromisoformat(planning_now) if planning_now else None,
+        ):
+            result.score = compute_score(
+                result.segments,
+                result.lots,
+                engine_data,
+                config=config,
+            )
+            result.gate_report = build_gate_report(
+                result.segments,
+                result.lots,
+                result.score,
+                engine_data,
+                config,
+            )
+            attach_improvement_summary(result, engine_data, config)
         job_result = job.get("result") or {}
+        from backend.plans.context import set_planning_now
+
+        # The commit guard reads today's history at the job's own instant.
+        set_planning_now(job_result.get("planning_now"))
         if job_result.get("unchanged_resource_relaxation"):
             candidate_schedule = restored.get("fingerprints", {}).get("schedule")
             base_schedule = (base_fingerprints or {}).get("schedule")

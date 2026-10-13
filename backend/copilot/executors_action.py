@@ -186,12 +186,21 @@ def exec_mover_referencia(args: dict) -> str:
     # Deep copy and mutate
     mutated = copy.deepcopy(state.engine_data)
     candidate_config = copy.deepcopy(state.config)
-    from backend.plans.frozen import _current_planning_day, _frozen_started_lots
+    from backend.plans.frozen import (
+        _current_planning_day,
+        _frozen_started_lots,
+        calculation_now,
+        elapsed_on_planning_day,
+    )
 
     baseline = _schedule_result_from_state()
+    # Started up to the current factory minute (AGENTS §2 rule 4).
+    now = calculation_now(candidate_config)
+    freeze_day = _current_planning_day(mutated, candidate_config, now)
     _, frozen_lots = _frozen_started_lots(
         baseline,
-        _current_planning_day(mutated, candidate_config),
+        freeze_day,
+        elapsed_on_planning_day(freeze_day, mutated, candidate_config, now),
     )
     tools = {op.t for op in ops_found}
     if any(lot.tool_id in tools for lot in frozen_lots):
@@ -209,6 +218,7 @@ def exec_mover_referencia(args: dict) -> str:
         candidate_config,
         _schedule_result_from_state(),
         audit=True,
+        now=now,
     )
 
     try:

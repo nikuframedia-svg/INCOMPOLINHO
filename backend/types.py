@@ -192,3 +192,8 @@ class EngineData:
     calendar_sources: dict[str, dict] = field(default_factory=dict)
     calendar_projection_end: int = -1
     calendar_day_offset: int = 0
+    # The plan's history boundary ``[day, minute]`` (AGENTS §2 rule 4): what
+    # starts before it already happened. Time-bound inputs (unavailabilities,
+    # absences, eligibility) judge the plan only from it on
+    # (``scheduler.history``). ``None``: the whole plan is judged.
+    history_boundary: list[int] | None = None

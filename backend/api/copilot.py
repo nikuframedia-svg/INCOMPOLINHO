@@ -35,6 +35,7 @@ from backend.copilot.prompts import build_system_prompt
 from backend.copilot.state import state
 from backend.copilot.tools import TOOLS
 from backend.planning_control import PlanningCancelled, PlanningTimeout
+from backend.plans.frozen import StaleCalculationError
 from backend.plans.store import HistoricalPlanProtectedError
 from backend.scheduler.validation import PlanValidationError
 
@@ -154,6 +155,13 @@ async def historical_plan_handler(_request: Request, exc: HistoricalPlanProtecte
         "code": exc.code,
         "message": f"{exc} O plano ativo não foi alterado; calcule novamente a alteração.",
     }
+    return JSONResponse(status_code=409, content={"detail": detail})
+
+
+@app.exception_handler(StaleCalculationError)
+async def stale_calculation_handler(_request: Request, exc: StaleCalculationError):
+    """A candidate of another day or too old (AGENTS §2 rule 4): a 409, not a 500."""
+    detail = {"code": exc.code, "message": f"{exc} O plano ativo não foi alterado."}
     return JSONResponse(status_code=409, content={"detail": detail})
 
 

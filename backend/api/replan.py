@@ -581,6 +581,7 @@ async def apply_replan(job_id: str, body: dict):
                     "message": str(exc),
                     # An approval refusal: plain Portuguese, machine-readable code.
                     **(application_refusal_detail(exc) or {}),
+                    **({"code": exc.code} if getattr(exc, "code", None) else {}),
                     "current_revision": state.plan_revision,
                 },
             ) from exc

@@ -205,11 +205,24 @@ def _lot_proof(segments, lot):
 
 
 def result_validation_data(data, result):
-    if result.preserved_lot_proofs is None:
+    """``data`` with the plan's own evidence: preserved-lot proofs and its
+    history boundary (``ScheduleResult.history_boundary``)."""
+    boundary = getattr(result, "history_boundary", None)
+    if result.preserved_lot_proofs is None and boundary is None:
         return data
     detached = copy.copy(data)
-    detached.preserved_lot_proofs = dict(result.preserved_lot_proofs)
+    if result.preserved_lot_proofs is not None:
+        detached.preserved_lot_proofs = dict(result.preserved_lot_proofs)
+    if boundary is not None:
+        detached.history_boundary = stored_history_boundary(boundary)
     return detached
+
+
+def stored_history_boundary(boundary) -> list[int] | None:
+    """How a result's history boundary is kept on its inputs (``[0, 0]``: none)."""
+    if not boundary or (int(boundary[0]) <= 0 and int(boundary[1]) <= 0):
+        return None
+    return [int(boundary[0]), int(boundary[1])]
 
 
 def source_contract_violations(segments, lots, data, config, *, require_current_material=False):

@@ -28,6 +28,8 @@ class PreparedPlanWrite:
     response: object
     file_identity: dict
     approval_action: str = "recompute"
+    # The instant it was calculated at (ISO); the commit guard reads history at it.
+    planning_now: str | None = None
 
 
 @dataclass

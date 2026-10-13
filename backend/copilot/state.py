@@ -212,6 +212,13 @@ class CopilotState:
         """Update state and optionally persist an automatic plan snapshot."""
         if self.engine_data is not None and result.preserved_lot_proofs is not None:
             self.engine_data.preserved_lot_proofs = dict(result.preserved_lot_proofs)
+        if self.engine_data is not None and result.history_boundary is not None:
+            from backend.scheduler.canonical import stored_history_boundary
+
+            # The plan's history boundary (AGENTS §2 rule 4) goes with it.
+            self.engine_data.history_boundary = stored_history_boundary(
+                result.history_boundary,
+            )
         self.segments = result.segments
         self.lots = result.lots
         self.score = result.score

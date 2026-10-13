@@ -130,3 +130,20 @@ def rename_lots_and_runs(snapshot: FrozenSnapshot) -> tuple[FrozenSnapshot, dict
     for anchor in renamed.data.plan_anchors or []:
         anchor.lot_id = lot_map.get(anchor.lot_id, anchor.lot_id)
     return renamed, lot_map, run_map
+
+
+def pin_factory_clock(monkeypatch, day: str, minute: int = 6 * 60) -> None:
+    """Pin the real factory clock to ``day`` (ISO date) at ``minute``.
+
+    Plans of the recent revisions span today: without a pinned clock their
+    history boundary (AGENTS §2 rule 4) would depend on the hour the test
+    runs. 06:00 of the planning day is before the shifts (the day rule).
+    """
+    from datetime import datetime
+
+    from backend import calendar as factory_calendar
+
+    when = datetime.fromisoformat(f"{day[:10]}T{minute // 60:02d}:{minute % 60:02d}")
+    monkeypatch.setattr(
+        factory_calendar, "_wall_clock", lambda zone: when.replace(tzinfo=zone),
+    )

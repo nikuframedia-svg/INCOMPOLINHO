@@ -123,12 +123,19 @@ def _protected_context(
 
     # A lot carried by the plan itself is judged by the plan's own segments:
     # a stale protected copy of a moved lot must never bridge a real missing
-    # setup (it would act as a phantom predecessor).
+    # setup (it would act as a phantom predecessor). The rest of a started
+    # lot (``residual_lot_remainders``) is the exception: its started part is
+    # not in the residual plan and is the real predecessor of that rest (a
+    # run released after it goes on with the tool still mounted, rule 4).
     planned_lots = {segment.lot_id for segment in segments}
+    rests = {
+        str(rest.get("id")) for rest in getattr(data, "residual_lot_remainders", None) or []
+    }
     return [
         segment
         for segment in protected_mounting_segments(data)
-        if segment.end_min > segment.start_min and segment.lot_id not in planned_lots
+        if segment.end_min > segment.start_min
+        and (segment.lot_id not in planned_lots or segment.lot_id in rests)
     ]
 
 
@@ -471,6 +478,14 @@ def _validate_plan(
     violations: list[dict[str, Any]] = []
     active = [s for s in segments if s.end_min > s.start_min]
     from backend.scheduler.canonical import source_contract_violations
+    from backend.scheduler.history import history_boundary, is_history, judged_start
+
+    # AGENTS §2 rule 4: the inputs judge the plan only from its history
+    # boundary on; what started before it already happened.
+    boundary = history_boundary(data)
+
+    def judged_from(seg: Segment) -> float | None:
+        return judged_start(seg.day_idx, seg.start_min, seg.end_min, boundary)
 
     violations.extend(source_contract_violations(segments, lots, data, config))
     shift_a_start, _shift_b_end, day_cap = _timing(config)
@@ -523,7 +538,7 @@ def _validate_plan(
                     required_min=required,
                 )
             )
-        if config is not None and not any(
+        if config is not None and judged_from(seg) is not None and not any(
             int(shift.start_min) <= int(seg.start_min)
             and int(seg.end_min) <= int(shift.end_min)
             for shift in config.shifts
@@ -545,6 +560,7 @@ def _validate_plan(
     tool_intervals = getattr(data, "tool_blocked_intervals", {}) if data else {}
 
     for seg in active:
+        judged_min = judged_from(seg)
         if known_machines and seg.machine_id not in known_machines:
             violations.append(
                 _violation(
@@ -561,6 +577,8 @@ def _validate_plan(
                     seg,
                 )
             )
+        if judged_min is None:
+            continue
         lot = lots_by_id.get(seg.lot_id)
         if lot is not None:
             lot_op_ids = (
@@ -632,7 +650,7 @@ def _validate_plan(
         ):
             if (
                 int(block.get("start_day", -1)) == seg.day_idx
-                and seg.start_min < int(block.get("end_min", 0))
+                and judged_min < int(block.get("end_min", 0))
                 and seg.end_min > int(block.get("start_min", 0))
             ):
                 violations.append(
@@ -653,7 +671,7 @@ def _validate_plan(
         ):
             if (
                 int(block.get("start_day", -1)) == seg.day_idx
-                and seg.start_min < int(block.get("end_min", 0))
+                and judged_min < int(block.get("end_min", 0))
                 and seg.end_min > int(block.get("start_min", 0))
             ):
                 violations.append(
@@ -897,7 +915,7 @@ def _validate_plan(
         if seg.setup_min <= 0:
             continue
         lot = lots_by_id.get(seg.lot_id)
-        if lot is not None:
+        if lot is not None and judged_from(seg) is not None:
             material_floor = max(0, earliest_allowed_start(lot, material_holidays))
             if seg.day_idx < material_floor:
                 violations.append(
@@ -948,6 +966,8 @@ def _validate_plan(
                 continue
             first_seg, first_start, first_end = active_setups[0]
             day_idx, start_min = abs_to_day_min(instant, config)
+            if is_history(day_idx, start_min, boundary):
+                continue
             violations.append(
                 _violation(
                     "setup_crew_overlap",

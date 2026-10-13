@@ -169,6 +169,8 @@ def test_empty_mounting_context_preserves_legacy_engine_identity():
     legacy = asdict(data)
     legacy.pop("protected_mounting_segments")
     legacy.pop("residual_lot_remainders")
+    # No history boundary (AGENTS §2 rule 4, 13/10/2026) is no new key either.
+    legacy.pop("history_boundary")
     assert value_fingerprint(data) == value_fingerprint(legacy)
 
 

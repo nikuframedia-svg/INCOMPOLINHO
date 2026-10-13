@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date as dt_date
 from datetime import datetime, timedelta
 from typing import Any
@@ -19,11 +22,56 @@ from backend.types import EngineData
 MIN_FREE_INTERVAL_MIN = 30
 
 
-def factory_now(config: FactoryConfig | None, *, now: datetime | None = None) -> datetime:
-    """The current time in the factory's time zone (``now`` replaces the clock)."""
+# The one "now" of the calculation running in this context (a replan job, a
+# plan write), set by ``fixed_factory_clock``; ``None`` reads the clock.
+_FIXED_NOW: ContextVar[datetime | None] = ContextVar("factory_fixed_now", default=None)
 
-    zone = ZoneInfo(str(getattr(config, "timezone", None) or "Europe/Lisbon"))
-    return (now or datetime.now(zone)).astimezone(zone)
+
+@contextmanager
+def fixed_factory_clock(now: datetime | None) -> Iterator[datetime | None]:
+    """Every ``factory_now`` inside reads ``now`` (AGENTS §2 rule 4, 13/10/2026).
+
+    A replan job or a plan write captures one instant and calculates with
+    it: the planning day, the minutes of today already gone, the rule-4
+    protection, the idle-capacity check and the commit guard all agree.
+    ``None`` changes nothing: an instant fixed outside stays in force.
+    """
+    if now is None:
+        yield _FIXED_NOW.get()
+        return
+    token = _FIXED_NOW.set(now)
+    try:
+        yield now
+    finally:
+        _FIXED_NOW.reset(token)
+
+
+def _wall_clock(zone: ZoneInfo) -> datetime:
+    return datetime.now(zone)
+
+
+def factory_now(config: FactoryConfig | str | None, *, now: datetime | None = None) -> datetime:
+    """The current time in the factory's time zone.
+
+    ``now`` replaces the clock, then the instant fixed for this calculation
+    (``fixed_factory_clock``). ``config`` may be the time zone name.
+    """
+
+    name = config if isinstance(config, str) else getattr(config, "timezone", None)
+    zone = ZoneInfo(str(name or "Europe/Lisbon"))
+    return (now or _FIXED_NOW.get() or _wall_clock(zone)).astimezone(zone)
+
+
+def wall_factory_now(config: FactoryConfig | str | None) -> datetime:
+    """The real factory clock, whatever instant a calculation fixed.
+
+    The commit guard reads the date of today here: a candidate is checked
+    against the day it is applied on, never the day it was calculated on.
+    """
+
+    name = config if isinstance(config, str) else getattr(config, "timezone", None)
+    zone = ZoneInfo(str(name or "Europe/Lisbon"))
+    return _wall_clock(zone).astimezone(zone)
 
 
 def elapsed_minutes(
@@ -45,12 +93,7 @@ def elapsed_minutes(
 
 
 def current_factory_day(data: EngineData, config: FactoryConfig, *, now=None) -> int:
-    today = (
-        (now or datetime.now(ZoneInfo(config.timezone)))
-        .astimezone(ZoneInfo(config.timezone))
-        .date()
-        .isoformat()
-    )
+    today = factory_now(config, now=now).date().isoformat()
     return next(
         (index for index, day in enumerate(data.workdays) if str(day)[:10] >= today),
         len(data.workdays),
