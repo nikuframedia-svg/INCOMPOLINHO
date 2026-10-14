@@ -18,6 +18,7 @@ from backend.scheduler.canonical import legacy_material_plan, source_contract_vi
 from backend.scheduler.lot_sizing import (
     QUANTITY_MATERIAL_VERSION,
     UPGRADED_MATERIAL_KEY,
+    UPGRADED_PRODUCTIONS_KEY,
     create_lots,
     redate_lot_outputs,
     upgrade_lot_material,
@@ -355,7 +356,7 @@ def test_rule_4_cut_of_a_lot_started_today_lets_an_urgent_order_in(started):
     assert sum(s.qty for s in ordered if s.lot_id == lots["OP1"].id) == lots["OP1"].qty
 
 
-def test_lots_of_older_contracts_are_not_judged_as_split():
+def test_lots_of_older_contracts_keep_only_their_recorded_productions():
     from backend.scheduler.validation import lot_split_violations
 
     data = _with_other_tool()
@@ -365,11 +366,21 @@ def test_lots_of_older_contracts_are_not_judged_as_split():
     )
     other = next(s for s in result.segments if s.sku == "OTHER" and s.qty > 0)
     ordered = {"MACHINE": [sku[0], other, *sku[1:]]}
+    # Taken over from version 2 with the two productions it had there: kept.
     upgraded = copy.deepcopy(result.lots)
     for lot in upgraded:
         for output in lot.output_milestones:
             output[UPGRADED_MATERIAL_KEY] = 2
+            output[UPGRADED_PRODUCTIONS_KEY] = 2
     assert not lot_split_violations(ordered, {lot.id: lot for lot in upgraded}, data, CONFIG)
+    # With no recorded count nothing proves it had them: judged strictly.
+    unrecorded = copy.deepcopy(upgraded)
+    for lot in unrecorded:
+        for output in lot.output_milestones:
+            del output[UPGRADED_PRODUCTIONS_KEY]
+    assert [item["kind"] for item in lot_split_violations(
+        ordered, {lot.id: lot for lot in unrecorded}, data, CONFIG,
+    )] == ["lot_split"]
     legacy = copy.deepcopy(result.lots)
     for lot in legacy:
         for output in lot.output_milestones:

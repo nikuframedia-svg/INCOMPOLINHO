@@ -38,6 +38,7 @@ from backend.plans.frozen import (
     optimize_preserving_started_lots,
     planning_boundary,
     preserved_lots_warning,
+    with_current_material,
     without_calculation_notes,
 )
 
@@ -1468,9 +1469,18 @@ class ReplanJobManager:
                         from backend.scheduler.improvement import improve_plan
 
                         if protected_closeout:
+                            # The stored plan enters here as the closeout's
+                            # baseline: its upgraded lots record their
+                            # productions at this calculation's boundary, as
+                            # every other entry point does, so the rests and
+                            # originals spliced back are judged
+                            # (``validation.lot_split_violations``).
                             protected = _protected_plan(
-                                historical_baseline_result, freeze_day, engine_data, config,
-                                now=now,
+                                with_current_material(
+                                    historical_baseline_result, engine_data, config,
+                                    planning_boundary(freeze_day, now_min),
+                                ),
+                                freeze_day, engine_data, config, now=now,
                             )
                             trial, improvement = improve_preserving_protected_lots(
                                 trial, engine_data, copy.deepcopy(engine_data), config,

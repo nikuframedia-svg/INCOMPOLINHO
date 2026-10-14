@@ -27,12 +27,19 @@ dias úteis, com lógica verificável no Gantt e baixo consumo de compute**.
    dura acima da entrega a tempo** (decisão do Luís): a verificação
    `lot_split` está nas métricas duras do gate. Se o lote atrasa outra
    encomenda, move-se o lote inteiro; nunca se parte para salvar uma entrega.
-   Quando falta capacidade isso pode custar uma entrega que a janela por
-   entrega salvava: no ensaio de 13/10 (revisão 128, avaria grande da PRM031
-   a 16/10) a entrega BFP188 do dia 21 (800 peças) fica pronta no dia 22
-   em vez do dia 20. E há mais stock e produção mais cedo: cerca de +75% em
-   peças × dias e 58 a 95 entregas prontas com mais de 30 dias de
-   antecedência (sem limite de cobertura, §2).
+   Custo 1: pode atrasar uma entrega quando o lote não cabe inteiro antes do
+   prazo e a janela por entrega a salvava. Visto num ensaio de 13/10
+   (revisão 128, avaria grande da PRM031 a 16/10): uma entrega do dia 21
+   (BFP188, 800 peças) ficou pronta no dia 22. No ensaio final de 14/10
+   (avaria da PRM031 de 19/10 a 09/11) não houve atraso novo: só a encomenda
+   que já estava atrasada (CF589). Custo 2: mais stock e produção mais cedo
+   (sem limite de cobertura, §2), medido por cenário:
+   - carga de ISOP nova de 13/10 (ensaio de 14/10 numa cópia da revisão
+     128): stock +39% em peças × dias (40,5 → 56,3 milhões) e 44 entregas
+     prontas com mais de 30 dias de antecedência (antes 0); 445 → 178
+     setups; 1 encomenda atrasada antes e depois;
+   - recálculo F1 do golden master (base 6c303e9): stock +39% (42,4 → 59,1
+     milhões) e 52 entregas com mais de 30 dias (antes 0); 478 → 184 setups.
    Um plano fisicamente inválido nunca é candidato operacional.
 2. **Compromissos de entrega:** respeitar os prazos quando viáveis. Ao melhorar
    um plano válido do mesmo cenário, nenhuma encomenda individual pode perder
@@ -173,8 +180,8 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
   - O lote económico numa só produção vem antes da entrega a tempo: se o lote
     atrasa outra encomenda, move-se o lote inteiro; nunca se parte para a
     salvar (a verificação `lot_split` é regra dura do gate, §1.1). Quando
-    falta capacidade, isso pode custar uma entrega que a janela por entrega
-    salvava (caso BFP188 no ensaio de 13/10, §1.1), e o stock e a
+    falta capacidade, isso pode atrasar uma entrega quando o lote não cabe
+    inteiro antes do prazo (visto num ensaio de 13/10, §1.1), e o stock e a
     antecipação sobem.
   - Sem limite máximo de cobertura: um ano de stock é aceitável.
   - Um lote interrompido por avaria retoma com o mesmo material (`R` do lote).
@@ -195,7 +202,10 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
     ciclo gémeo continua pronto com as suas peças; um lote passado à versão
     3 a partir das versões 1-2 (`material_upgraded_from`) pode ainda ter as
     produções separadas do contrato antigo e mantém o envio por entrega até
-    ao «Recalcular plano». Leem-no sem regra própria: o gate
+    ao «Recalcular plano»; se uma âncora manual o mantém (com os lotes da
+    mesma ferramenta montada que o alimentam,
+    `frozen._protected_lots(mount_suppliers=True)`), mantém-no em cada
+    «Recalcular» até a âncora ser removida. Leem-no sem regra própria: o gate
     (`subcontract_dispatch_detail`, com `whole_lot`; o cartão mostra «lote
     completo»), o score (`subcontract_dispatch_misses`), a comparação por
     encomenda, o aviso de capacidade livre (as peças só contam no fim do
@@ -297,14 +307,17 @@ Implementação (13/10/2026):
   histórico (`validation._protected_context`, lotes em
   `residual_lot_remainders`); uma cópia antiga de um lote que não é resto de
   um lote começado continua a não servir de ponte.
-- Ensaio na cópia do plano ativo (revisão 128, ISOP 13/10): recálculo
-  completo 444 → 178 setups, 0 lotes com mais de uma produção, o mesmo
-  atraso (HAN002) e nenhuma encomenda atrasada a mais; 22 entregas ficam
-  prontas um pouco mais tarde mas dentro do prazo, 539 mais cedo; antecipação
-  média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias). O custo da
-  regra (§1.1): mais stock e produção mais cedo, e na avaria grande da
-  PRM031 a 16/10 a entrega BFP188 do dia 21 fica um dia atrasada (o lote não
-  se parte para a salvar). Com dia de
+- Primeiro ensaio na cópia do plano ativo (13/10, revisão 128, ISOP 13/10,
+  recálculo completo): 444 → 178 setups, 0 lotes com mais de uma produção,
+  o mesmo atraso (HAN002) e nenhuma encomenda atrasada a mais; 22 entregas
+  ficam prontas um pouco mais tarde mas dentro do prazo, 539 mais cedo;
+  antecipação média 14,9 dias (máx. 66; 65 entregas com mais de 30 dias).
+  Os números do ensaio final de 14/10 (carga de ISOP nova: 445 → 178 setups,
+  44 entregas com mais de 30 dias) e do golden master estão em §1.1; diferem
+  destes por medirem outro momento e outra contagem. O custo da regra
+  (§1.1): mais stock e produção mais cedo, e pode atrasar uma entrega quando
+  o lote não cabe inteiro antes do prazo (o lote não se parte para a
+  salvar; visto na avaria grande da PRM031 a 16/10 deste ensaio). Com dia de
   planeamento 16/10 (23 lotes começados), avaria na PRM043, feriado novo e
   movimentos manuais dão planos válidos, sem mexer na produção começada.
   Até à regra «Continua» (13/10) o feriado novo de 23/10 ficava com produção:

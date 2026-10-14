@@ -50,9 +50,11 @@ ferramenta, equipa, calendário, material) e do lote económico numa só produç
 O lote económico numa só produção é **regra dura, acima da entrega a tempo**
 (decisão do Luís, 13/10/2026; verificação `lot_split` no gate): se o lote
 atrasa outra encomenda, move-se inteiro; nunca se parte para a salvar. Pode
-custar uma entrega quando falta capacidade (ensaio revisão 128, avaria grande
-da PRM031 a 16/10: BFP188, entrega do dia 21, pronta no dia 22) e traz mais
-stock e produção mais cedo (cerca de +75% peças × dias). Quando há
+atrasar uma entrega quando o lote não cabe inteiro antes do prazo (visto num
+ensaio de 13/10, revisão 128, avaria grande da PRM031 a 16/10: uma entrega um
+dia atrasada) e traz mais stock e produção mais cedo: +39% peças × dias e 44
+entregas com mais de 30 dias de antecedência na carga de ISOP nova de 13/10;
++39% e 52 no recálculo F1 do golden master (AGENTS §1.1). Quando há
 capacidade, o alvo é OTD = OTD-D = 100%.
 
 - **OTD** (global) = total produzido >= total procura

@@ -87,10 +87,15 @@ def test_validator_rejects_production_before_the_lot_release_only():
     config = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
     result = schedule_all(data, config=config)
     assert not source_contract_violations(result.segments, result.lots, data, config)
+    shift = min(s.day_idx for s in result.segments) - 5
     for segment in result.segments:
-        segment.day_idx -= min(s.day_idx for s in result.segments) - 5
+        segment.day_idx -= shift
     violations = validate_plan(result.segments, data, config, lots=result.lots)
     assert any(item["kind"] == "setup_before_material" for item in violations)
+    # The production itself, not only its setup: pieces made before the lot
+    # release R (day 6) break the source contract.
+    errors = source_contract_violations(result.segments, result.lots, data, config)
+    assert any(item["field"] == "material_quantity" for item in errors)
 
 
 def test_each_quantity_has_its_own_completion_not_the_end_of_the_lot():

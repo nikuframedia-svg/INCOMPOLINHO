@@ -1448,7 +1448,8 @@ def lot_split_violations(
     contract made, but never gain one: it is split when it has more
     productions than in the plan it was calculated from
     (``lot_sizing.UPGRADED_PRODUCTIONS_KEY``, written by
-    ``plans.frozen.with_current_material``).
+    ``plans.frozen.with_current_material``); one with no recorded count is
+    judged strictly, as a lot of the current contract.
     """
 
     from backend.scheduler.history import history_boundary
@@ -1467,7 +1468,11 @@ def lot_split_violations(
             strict.add(lot_id)
             continue
         limit = _upgraded_productions(lot)
-        if limit is not None:
+        if limit is None:
+            # No recorded count: nothing proves which productions it had, so
+            # it is judged like a lot of the current contract (fail closed).
+            strict.add(lot_id)
+        else:
             allowed[lot_id] = limit
     if not strict and not allowed:
         return []
