@@ -602,14 +602,13 @@ def _verify_ctp(
         for s in scenario.mutated_data.committed_supplies
         if s.op_id == op.id
     ]
-    # Each delivery is available when its own pieces are (a subcontracted one
-    # when it returns), from the same delivery portions as orders and stock.
+    # Each piece is available on the day it is made, subcontracted ones too
+    # (stock rule, 14/10/2026), from the same delivery portions as orders.
     for portion in delivery_portions(scenario.lots, scenario.segments, scenario.mutated_data):
         if portion.op_id != op.id:
             continue
         for item in portion.slices:
-            day = portion.customer_ready_day if portion.is_subcontracted else item.day_idx
-            events.append((day, item.lot_id, item.qty, item.day_idx))
+            events.append((item.day_idx, item.lot_id, item.qty, item.day_idx))
     cumulative = 0
     relevant_until = {}
     for _day, lot_id, quantity, production_day in sorted(events):

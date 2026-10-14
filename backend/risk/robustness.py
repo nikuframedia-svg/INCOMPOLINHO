@@ -599,16 +599,11 @@ def replay_scenario(
         )
 
     # Each delivery is ready when its own replayed pieces are (shared
-    # readiness evaluator); a late supplier adds working days to the return.
-    readiness = delivery_readiness(
-        measured_lots,
-        replayed,
-        data,
-        extra_lead={
-            str(lot_id): int(days)
-            for lot_id, days in manifest["subcontract_delays"].items()
-        },
-    )
+    # readiness evaluator). A late subcontractor (``subcontract_delays``,
+    # still drawn so scenarios stay reproducible) delays no delivery: a
+    # subcontracted delivery is judged on the stock made in the factory
+    # (Luís, 14/10/2026).
+    readiness = delivery_readiness(measured_lots, replayed, data)
     output_delay: dict[str, int] = {}
     for record in readiness:
         if not record.is_demand or not _measured(record.customer_delivery_day, horizon):

@@ -4,8 +4,12 @@ Deliveries are judged per order (AGENTS §1.2): ``delivery_risk`` is raised
 when an order is late or an OTD-D checkpoint fails, both read from the same
 delivery portions (``material_quantities.delivery_portions``) as orders,
 stock and the improvement no-loss check. The lot metric (``tardy_count``,
-``otd``: "Lotes no prazo") is reported but does not decide approval. An
-operational audit that ran out of time is "por avaliar", never a pass.
+``otd``: "Lotes no prazo") is reported but does not decide approval. A
+subcontracted delivery is judged like any other, on the stock shown on
+Entregas (Luís, 14/10/2026): finishing before the subcontract dispatch is the
+planner's aim (score ``subcontract_dispatch_misses``), never an approval
+reason or a list on the screen. An operational audit that ran out of time is
+"por avaliar", never a pass.
 """
 
 from __future__ import annotations
@@ -20,9 +24,7 @@ from backend.config.types import FactoryConfig
 from backend.scheduler.jit_policy import (
     calendar_holidays,
     window_violation_details,
-    workdays_between,
 )
-from backend.scheduler.material_quantities import delivery_portions
 from backend.scheduler.operational_audit import build_operational_audit
 from backend.scheduler.types import Lot, Segment
 from backend.scheduler.validation import (
@@ -117,21 +119,6 @@ def build_gate_report(
         "production_due_misses": int(score.get("production_due_misses", 0) or 0),
         "production_due_late_workdays": int(
             score.get("production_due_late_workdays", 0) or 0
-        ),
-        "subcontract_dispatch_total": int(
-            score.get("subcontract_dispatch_total", 0) or 0
-        ),
-        "subcontract_dispatch_misses": int(
-            score.get("subcontract_dispatch_misses", 0) or 0
-        ),
-        "subcontract_dispatch_late_workdays": int(
-            score.get("subcontract_dispatch_late_workdays", 0) or 0
-        ),
-        "subcontract_dispatch_max_late_workdays": int(
-            score.get("subcontract_dispatch_max_late_workdays", 0) or 0
-        ),
-        "subcontract_dispatch_otd": float(
-            score.get("subcontract_dispatch_otd", 100.0) or 0.0
         ),
     }
     window_metrics = {
@@ -231,9 +218,6 @@ def build_gate_report(
             and delivery_metrics["tardy_count"] == 0
             and delivery_metrics["otd_d_failures"] == 0
         )
-    subcontract_dispatch_gate_passed = (
-        delivery_metrics["subcontract_dispatch_misses"] == 0
-    )
     jit_window_gate_passed = window_metrics["early_window_violations"] == 0
     material_gate_passed = all(
         int(metrics.get(key, 0)) == 0 for key in MATERIAL_GATE_KEYS
@@ -252,8 +236,6 @@ def build_gate_report(
     approval_reasons: list[str] = []
     if not delivery_gate_passed:
         approval_reasons.append("delivery_risk")
-    if not subcontract_dispatch_gate_passed:
-        approval_reasons.append("subcontract_dispatch_risk")
     if not jit_window_gate_passed:
         approval_reasons.append("jit_window_blocked")
     if not material_gate_passed:
@@ -309,11 +291,6 @@ def build_gate_report(
         if data is not None
         else []
     )
-    subcontract_dispatch_detail = (
-        _subcontract_dispatch_detail(segments, lots, data)
-        if data is not None
-        else []
-    )
     idle_capacity_late = (
         _idle_capacity_late(segments, lots, data, config, service)
         if data is not None
@@ -330,7 +307,6 @@ def build_gate_report(
         "operator_capacity_gate_passed": operator_capacity_gate_passed,
         "coverage_gate_passed": coverage_gate_passed,
         "delivery_gate_passed": delivery_gate_passed,
-        "subcontract_dispatch_gate_passed": subcontract_dispatch_gate_passed,
         "jit_window_gate_passed": jit_window_gate_passed,
         # Robustness is informational only (computed after commit, outside
         # the plan); the field stays for schema compatibility.
@@ -343,7 +319,6 @@ def build_gate_report(
         "late_detail": late_detail,
         "late_order_detail": late_order_detail,
         "jit_window_detail": jit_window_detail,
-        "subcontract_dispatch_detail": subcontract_dispatch_detail,
         # Informational only: late deliveries with idle machine time before
         # their deadline (the plan can be improved); never decides approval.
         "idle_capacity_late": idle_capacity_late,
@@ -479,7 +454,8 @@ class ApprovalRequired(ValueError):
 # Plain Portuguese for each approval reason of ``build_gate_report``.
 APPROVAL_REASON_TEXTS = {
     "delivery_risk": "há encomendas em risco de atraso",
-    "subcontract_dispatch_risk": "há envios para subcontratação em risco",
+    # Plans saved before 14/10/2026 may still carry it.
+    "subcontract_dispatch_risk": "há envios para subcontratação em risco (critério antigo)",
     "jit_window_blocked": "há produção antes da libertação do material",
     "material_release_blocked": "há produção sem material libertado",
     "operator_capacity_shortage": "falta capacidade de operadores",
@@ -727,68 +703,6 @@ def _with_calendar_dates(details: list[dict], data: EngineData) -> list[dict]:
             enriched[date_field] = label(int(value))
         result.append(enriched)
     return result
-
-
-def _subcontract_dispatch_detail(
-    segments: list[Segment],
-    lots: list[Lot],
-    data: EngineData,
-) -> list[dict[str, Any]]:
-    """Subcontracted deliveries that leave after their planned dispatch.
-
-    Each delivery is judged by the day it leaves for the subcontractor, read
-    from the shared evaluator (``delivery_portions``), whichever lot of the
-    operation makes its pieces. A lot of material version 3 goes out whole
-    when its last piece is made (13/10/2026, ``whole_lot``): every delivery
-    it serves leaves then. Older lots: when the delivery's own pieces are
-    finished. ``lot_id`` is the lot that completes it.
-    """
-    holidays = calendar_holidays(data, -60, data.n_days + 60)
-    lots_by_id = {lot.id: lot for lot in lots}
-    details: list[dict[str, Any]] = []
-    for portion in delivery_portions(lots, segments, data):
-        if not portion.is_demand or not portion.is_subcontracted:
-            continue
-        dispatch = portion.planned_dispatch_day
-        completion = portion.factory_day
-        if completion <= dispatch:
-            continue
-        source = portion.source
-        lot_id = portion.completing_lot_id or source.lot_id
-        lot = lots_by_id.get(lot_id) or lots_by_id[source.lot_id]
-        details.append(
-            {
-                "lot_id": lot_id,
-                "lot_ids": portion.lot_ids,
-                "op_id": portion.op_id,
-                "sku": portion.sku,
-                "qty": portion.qty,
-                "subcontract_company_id": source.output.get(
-                    "subcontract_company_id",
-                    lot.subcontract_company_id,
-                ),
-                "customer_delivery_day": portion.customer_delivery_day,
-                "latest_subcontract_dispatch_day": portion.latest_subcontract_dispatch_day,
-                "subcontract_dispatch_day": dispatch,
-                "production_due_day": portion.production_due_day,
-                "completion_day": completion,
-                "customer_ready_day": portion.customer_ready_day,
-                "whole_lot": portion.whole_lot_dispatch,
-                "late_workdays": workdays_between(
-                    dispatch,
-                    completion,
-                    holidays,
-                ),
-            }
-        )
-    details.sort(
-        key=lambda item: (
-            -int(item["late_workdays"]),
-            int(item["subcontract_dispatch_day"]),
-            str(item["lot_id"]),
-        )
-    )
-    return _with_calendar_dates(details, data)
 
 
 def _idle_capacity_late(

@@ -755,7 +755,8 @@ def test_late_delivery_report_uses_the_controlling_twin_output():
     ]
     segment.sku = "A"
     segment.twin_outputs = list(lot.twin_outputs)
-    segment.day_idx = 4
+    # Made on day 9: after B's delivery (day 8, stock short), before A's.
+    segment.day_idx = 9
 
     report = analyze_late_deliveries(
         loaded.segments,

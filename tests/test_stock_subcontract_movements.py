@@ -90,12 +90,18 @@ def test_subcontracted_rupture_is_the_first_negative_day_shown():
     assert projection.coverage_days == 14.0
 
 
-def test_late_subcontracted_production_is_still_a_late_order():
+def test_subcontracted_order_is_late_only_when_the_shown_stock_is_short():
+    """Luís, 14/10/2026: the same rule as the Entregas screen. Made on day 8
+    for the day-14 delivery (after the dispatch 5 working days before) is on
+    time; made on day 15 leaves the stock short on day 14 and is late."""
     from backend.analytics.late_delivery import analyze_late_deliveries
 
     _op_, data, lot, segments = _subcontracted_plan([8])
-    report = analyze_late_deliveries(segments, [lot], data, _config())
-    assert report.tardy_count == 1
+    assert analyze_late_deliveries(segments, [lot], data, _config()).tardy_count == 0
+    assert compute_stock_projections(segments, [lot], data)[0].stockout_day is None
+    _op_, data, lot, segments = _subcontracted_plan([15])
+    assert analyze_late_deliveries(segments, [lot], data, _config()).tardy_count == 1
+    assert compute_stock_projections(segments, [lot], data)[0].stockout_day == 14
 
 
 def test_in_house_reference_is_unchanged():

@@ -1,12 +1,12 @@
 """A subcontracted economic lot goes out whole (Luís, 13/10/2026; AGENTS §2).
 
 The whole economic lot goes to the subcontractor at once, when its last piece
-is made, and every piece comes back together ``lead`` working days later. So
-every delivery the lot serves is ready at ``lot end + lead``, and the lot has
-to end by the latest dispatch day ``H`` of its first delivery. One evaluator
-(``material_quantities.delivery_readiness`` / ``delivery_portions``) says it;
-the gate, the score, the idle-capacity notice, the stock screen and the Gantt
-read it. Until 13/10 each delivery left with its own pieces.
+is made, and the planner aims to end the lot by the latest dispatch day ``H``
+of its first delivery (``factory_day``, ``subcontract_dispatch_misses``).
+Since 14/10/2026 that is only the planner's aim: a delivery is late only when
+the stock shown on Entregas (pieces on the day they are made) is short, so
+``customer_ready_day`` is the day its own pieces are made. One evaluator
+(``material_quantities.delivery_readiness`` / ``delivery_portions``) says it.
 """
 
 from __future__ import annotations
@@ -17,16 +17,13 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from backend.analytics.order_tracking import compute_segment_deliveries
 from backend.analytics.stock_projection import compute_stock_projections
 from backend.config.planning import apply_effective_planning_config
 from backend.scheduler.gates import build_gate_report
-from backend.scheduler.jit_policy import add_workdays
 from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY, create_lots
 from backend.scheduler.material_quantities import (
     delivery_portions,
     delivery_readiness,
-    readiness_holidays,
 )
 from backend.scheduler.scoring import compute_score
 from backend.types import EOp, EngineData, MachineInfo
@@ -102,49 +99,46 @@ def test_the_lot_deadline_is_the_latest_dispatch_of_its_first_delivery():
     assert lot.production_due_day == lot.edd == 2
 
 
-def test_every_delivery_leaves_with_the_whole_lot_and_is_back_together():
+def test_every_delivery_leaves_with_the_whole_lot_but_counts_when_made():
     data, lot = _two_deliveries()
     # The first delivery's pieces are made on day 1, the lot ends on day 2.
     segments = _segments(lot, [(1, 150), (2, 150)])
 
     records = delivery_readiness([lot], segments, data)
     assert [(r.qty, r.factory_day, r.customer_ready_day, r.whole_lot_dispatch) for r in records] == [
-        (100, 2, 9, True), (100, 2, 9, True), (100, 2, 9, True),
+        (100, 2, 1, True), (100, 2, 2, True), (100, 2, 2, True),
     ]
     portions = delivery_portions([lot], segments, data)
     assert [
         (p.qty, p.produced_qty, p.factory_day, p.customer_ready_day, p.whole_lot_dispatch)
         for p in portions
-    ] == [(100, 100, 2, 9, True), (100, 100, 2, 9, True), (0, 100, 2, 9, True)]
-    # Ready = lot end + lead in working days: Wed 9/9 + 5 = Wed 16/9.
-    holidays = readiness_holidays([lot], segments, data)
-    assert add_workdays(2, LEAD, holidays) == 9
-    # Factory availability (stock made on the day) is unchanged.
+    ] == [(100, 100, 2, 1, True), (100, 100, 2, 2, True), (0, 100, 2, 2, True)]
+    # Stock made on the day: every piece counts when it is stamped.
     assert sorted((item.day_idx, item.qty) for p in portions for item in p.slices) == [
         (1, 50), (1, 100), (2, 50), (2, 100),
     ]
 
 
-def test_a_lot_ending_after_the_first_dispatch_makes_only_that_delivery_late():
+def test_a_lot_ending_after_the_first_dispatch_misses_only_the_planner_aim():
     data, lot = _two_deliveries()
     # The first delivery's pieces are done on day 1, but the lot ends on day
-    # 3, after H = day 2: the whole lot leaves on day 3 and is back on day 10.
+    # 3, after H = day 2: the whole lot leaves on day 3. The stock covers
+    # both deliveries on their days, so nothing is late (14/10/2026).
     segments = _segments(lot, [(1, 150), (3, 150)])
     portions = [p for p in delivery_portions([lot], segments, data) if p.is_demand]
     assert [(p.customer_delivery_day, p.factory_day, p.customer_ready_day) for p in portions] == [
-        (9, 3, 10), (16, 3, 10),
+        (9, 3, 1), (16, 3, 3),
     ]
 
     score = compute_score(segments, [lot], data)
+    # The planner's aim, kept internal: one delivery leaves after its H.
     assert score["subcontract_dispatch_total"] == 2
     assert score["subcontract_dispatch_misses"] == 1
+    assert score["tardy_count"] == 0 and score["otd_d"] == 100.0
     gate = build_gate_report(segments, [lot], score, data, _config())
-    (late,) = gate["subcontract_dispatch_detail"]
-    assert (late["customer_delivery_day"], late["completion_day"], late["late_workdays"]) == (
-        9, 3, 1,
-    )
-    assert late["whole_lot"] is True
-    assert late["customer_ready_day"] == 10
+    assert "subcontract_dispatch_detail" not in gate
+    assert "subcontract_dispatch_misses" not in gate["metrics"]
+    assert not {"delivery_risk", "subcontract_dispatch_risk"} & set(gate["approval_reasons"])
 
 
 def test_until_the_whole_lot_is_made_nothing_leaves():
@@ -166,7 +160,7 @@ def test_a_lot_taken_over_from_the_per_delivery_contract_keeps_its_old_dispatch(
     segments = _segments(upgraded, [(1, 150), (2, 150)])
     records = delivery_readiness([upgraded], segments, data)
     assert [(r.factory_day, r.customer_ready_day, r.whole_lot_dispatch) for r in records] == [
-        (1, 8, False), (2, 9, False), (2, 9, False),
+        (1, 1, False), (2, 2, False), (2, 2, False),
     ]
 
 
@@ -197,13 +191,6 @@ def test_stock_screen_shows_the_whole_lot_on_its_production_days():
     assert projection.stockout_day is None
 
 
-def test_gantt_segments_show_one_trip_for_the_whole_lot():
-    data, lot = _two_deliveries()
-    segments = _segments(lot, [(1, 150), (2, 150)])
-    trips = [row["subcontract_trips"] for row in compute_segment_deliveries(segments, [lot], data)]
-    assert trips == [[{"sent_day": 2, "return_day": 9, "whole_lot": True}]] * 2
-
-
 def _delivery_of_two_lots(*, first_upgraded=False):
     """Lot A (120: 100 for day 9, 20 for day 16) is made on day 4, lot B (180
     for day 16: the economic lot is a minimum, 14/10/2026) on day 1. FIFO,
@@ -220,59 +207,36 @@ def _delivery_of_two_lots(*, first_upgraded=False):
         p for p in delivery_portions([first, second], segments, data)
         if p.is_demand and len(p.lot_ids) == 2
     ]
-    assert mixed.customer_ready_day == 11  # day 4 + 5 working days
+    assert mixed.customer_ready_day == 4  # the later lot's pieces, day 4
+    assert mixed.factory_day == 4  # A leaves whole on day 4
     return data, [first, second], segments
 
 
-def test_gantt_trip_of_a_lot_is_its_own_when_a_delivery_waits_for_two_lots():
-    """Review of 13/10/2026: B leaves whole on day 1 and is back on day 8,
-    although the delivery it shares with A is ready only on day 11."""
-    data, lots, segments = _delivery_of_two_lots()
-    trips = [row["subcontract_trips"] for row in compute_segment_deliveries(segments, lots, data)]
-    assert trips == [
-        [{"sent_day": 1, "return_day": 8, "whole_lot": True}],
-        [{"sent_day": 4, "return_day": 11, "whole_lot": True}],
-    ]
-
-
-def test_gantt_trip_of_a_per_delivery_lot_mixed_with_a_whole_lot():
-    """B is taken over from the per-delivery contract: its pieces of the
-    shared delivery leave when that delivery is complete (day 4, with A's),
-    not on the day they were stamped; A still leaves whole."""
-    data, lots, segments = _delivery_of_two_lots(first_upgraded=True)
-    trips = [row["subcontract_trips"] for row in compute_segment_deliveries(segments, lots, data)]
-    assert trips == [
-        [
-            {"sent_day": 1, "return_day": 8, "whole_lot": False},
-            {"sent_day": 4, "return_day": 11, "whole_lot": False},
-        ],
-        [{"sent_day": 4, "return_day": 11, "whole_lot": True}],
-    ]
-    # The stock screen shows each lot on the day it is stamped.
+@pytest.mark.parametrize("first_upgraded", [False, True], ids=["whole", "mixed"])
+def test_a_delivery_of_two_lots_counts_each_lot_when_it_is_stamped(first_upgraded):
+    """Lot B (per-delivery when taken over, else whole) and lot A (whole)
+    serve one delivery: the stock screen shows each lot on the day it is
+    stamped, and the delivery is ready with the later lot's pieces."""
+    data, lots, segments = _delivery_of_two_lots(first_upgraded=first_upgraded)
     (projection,) = compute_stock_projections(segments, lots, data)
     assert [(day.day_idx, day.produced) for day in projection.days
             if day.produced] == [(1, 180), (4, 120)]
 
 
-def test_idle_capacity_counts_the_rest_of_a_lot_that_goes_out_whole():
+def test_idle_capacity_ignores_a_missed_dispatch_when_the_stock_covers():
     """The lot ends on day 4, after H = day 2, with the machine idle on days
-    0-2: a possible improvement. Its first delivery's pieces exist on day 0,
-    but only the whole lot leaves, so the notice asks for the lot's rest."""
+    0-2. The stock covers both deliveries on their days (14/10/2026): no
+    late delivery, so no idle-capacity notice."""
     from backend.config.types import FactoryConfig
     from backend.scheduler.idle_capacity import late_with_idle_capacity
 
     data, lot = _two_deliveries()
     segments = _segments(lot, [(0, 150), (4, 150)])
     config = FactoryConfig(machines=_config().machines)
-    (case,) = late_with_idle_capacity(
+    assert late_with_idle_capacity(
         segments, [lot], data, config, planning_day=0,
         now=datetime(2026, 9, 1, 6, 0),
-    )
-    assert case["lot_id"] == lot.id
-    assert case["subcontracted"] and case["lot_end_rule"]
-    assert case["production_due_day"] == 2
-    # The rest of the lot (150 pieces, 90 min) must fit by day 2.
-    assert case["needed_min"] == pytest.approx(90.0)
+    ) == []
 
 
 # ── real plan (private fixture) ──────────────────────────────────────────
@@ -282,7 +246,8 @@ def test_idle_capacity_counts_the_rest_of_a_lot_that_goes_out_whole():
 def test_rev128_subcontracted_lots_go_out_whole():
     """ISOP of 13/10 (rev128), recalculated under the current contract. Every
     delivery of a subcontracted lot (HAN002 CF589MMA1A02.20, JTE003, the
-    BFP178/BFP186 twins) is ready at its lot's end + 5 working days. Under
+    BFP178/BFP186 twins) leaves at its lot's end (the planner's aim) and is
+    ready for the customer when its own pieces are made (14/10/2026). Under
     the per-delivery rule a HAN002 lot covering the deliveries of two weeks
     sent the first week's pieces before the lot ended."""
     from backend.plans.serialize import deserialize_snapshot
@@ -293,7 +258,6 @@ def test_rev128_subcontracted_lots_go_out_whole():
     restored = deserialize_snapshot(copy.deepcopy(payload))
     data, config = restored["engine_data"], restored["config"]
     result = schedule_all(copy.deepcopy(data), config=config)
-    holidays = readiness_holidays(result.lots, result.segments, data)
 
     records = delivery_readiness(result.lots, result.segments, data)
     subcontracted = [r for r in records if r.is_subcontracted]
@@ -305,8 +269,10 @@ def test_rev128_subcontracted_lots_go_out_whole():
     changed = []
     for lot_id, lot_records in by_lot.items():
         end = max(s.day_idx for s in result.segments if s.lot_id == lot_id and s.qty > 0)
-        assert {(r.factory_day, r.customer_ready_day, r.whole_lot_dispatch)
-                for r in lot_records} == {(end, add_workdays(end, 5, holidays), True)}, lot_id
+        assert {(r.factory_day, r.whole_lot_dispatch) for r in lot_records} == {(end, True)}, lot_id
+        for record in lot_records:
+            assert record.customer_ready_day == max(
+                (item.day_idx for item in record.slices), default=end), lot_id
         # The lot's deadline is H of its first delivery.
         first = min((r for r in lot_records if r.is_demand),
                     key=lambda r: r.customer_delivery_day)

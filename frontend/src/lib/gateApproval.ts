@@ -9,7 +9,6 @@ import type { GateReport } from "../api/types";
  */
 const APPROVAL_REASON_LABELS: Record<string, string> = {
   delivery_risk: "há encomendas que ficam atrasadas",
-  subcontract_dispatch_risk: "existem envios para subcontratação em risco",
   jit_window_blocked: "há produções marcadas antes de o material ser libertado",
   material_release_blocked: "há mudanças de ferramenta marcadas antes de o material ser libertado",
   operator_capacity_shortage: "faltam operadores em alguns turnos",
@@ -22,6 +21,9 @@ const APPROVAL_REASON_LABELS: Record<string, string> = {
   // A fábrica retirou o limite de dias seguidos (09/10/2026); só revisões
   // antigas trazem este motivo.
   long_production: "produção em dias seguidos acima do limite (critério antigo; já não se aplica)",
+  // Desde 14/10/2026 uma subcontratada só está atrasada se faltar stock no
+  // dia da entrega; só revisões antigas trazem este motivo.
+  subcontract_dispatch_risk: "envios para subcontratação em risco (critério antigo; já não se aplica)",
 };
 
 /**
@@ -34,7 +36,6 @@ const LEGACY_LOT_DELIVERY_RISK_LABEL = "há lotes que acabam depois do prazo de 
 /** Reason codes the backend can emit today (gates.py); each one has a plain label. */
 export const BACKEND_APPROVAL_REASONS = [
   "delivery_risk",
-  "subcontract_dispatch_risk",
   "jit_window_blocked",
   "material_release_blocked",
   "operator_capacity_shortage",
@@ -53,7 +54,8 @@ export function isLegacyRobustnessReason(reason: string): boolean {
 
 /** Old reasons the planner no longer decides on (robustness, the removed consecutive-days limit). */
 export function isLegacyReason(reason: string): boolean {
-  return isLegacyRobustnessReason(reason) || reason === "long_production";
+  return isLegacyRobustnessReason(reason) || reason === "long_production"
+    || reason === "subcontract_dispatch_risk";
 }
 
 const REASON_CODE = /^[a-z0-9_]+$/;
@@ -234,10 +236,6 @@ export function gateSummaryLines(gate: GateReport): string[] {
   const missingLots = count(metrics.missing_lots);
   if (missingLots && missingLots > 0) {
     lines.push(`${plural(missingLots, "lote fica", "lotes ficam")} sem produção suficiente.`);
-  }
-  const subcontractMisses = count(metrics.subcontract_dispatch_misses);
-  if (subcontractMisses && subcontractMisses > 0) {
-    lines.push(`${plural(subcontractMisses, "envio", "envios")} para subcontratação ${subcontractMisses === 1 ? "sai" : "saem"} tarde.`);
   }
   const early = count(metrics.early_window_violations);
   if (early && early > 0) {

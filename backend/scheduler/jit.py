@@ -358,15 +358,17 @@ def jit_dispatch(
         dispatch_misses = int(jit_score.get("subcontract_dispatch_misses", 0) or 0)
         logger.warning(
             "JIT hard window: best effort has %d late delivery lot(s) and "
-            "%d late subcontract dispatch(es)",
+            "%d subcontract dispatch target miss(es)",
             jit_score["tardy_count"],
             dispatch_misses,
         )
-        jit_warns.append(
-            f"JIT firme: {jit_score['tardy_count']} entrega(s) e "
-            f"{dispatch_misses} envio(s) para subcontratação em atraso; "
-            "a janela de material de 5 dias úteis não foi relaxada"
-        )
+        # A missed subcontract dispatch is the planner's aim, not a late
+        # delivery (Luís, 14/10/2026): only late deliveries reach the screen.
+        if int(jit_score.get("tardy_count", 0) or 0) > 0:
+            jit_warns.append(
+                f"JIT firme: {jit_score['tardy_count']} entrega(s) em atraso; "
+                "a janela de material de 5 dias úteis não foi relaxada"
+            )
 
     logger.info(
         "JIT v3: earliness %.1f → %.1f days",

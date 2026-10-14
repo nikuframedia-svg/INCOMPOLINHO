@@ -236,14 +236,26 @@ def test_score_and_gate_distinguish_dispatch_from_customer_delivery() -> None:
         config,
         include_operational_audit=False,
     )
+    # Missing the dispatch is the planner's aim (score), not lateness: the
+    # stock covers the day-14 delivery (Luís, 14/10/2026).
     assert late_score["subcontract_dispatch_misses"] == 1
     assert late_score["subcontract_dispatch_late_workdays"] == 1
-    assert late_score["tardy_count"] == 1
+    assert late_score["tardy_count"] == 0
 
     gate = build_gate_report(late_segments, [lot], late_score, data, config)
-    assert gate["subcontract_dispatch_gate_passed"] is False
-    assert "subcontract_dispatch_risk" in gate["approval_reasons"]
-    assert gate["subcontract_dispatch_detail"][0]["subcontract_dispatch_day"] == 7
+    assert "subcontract_dispatch_gate_passed" not in gate
+    assert "subcontract_dispatch_detail" not in gate
+    assert not {"subcontract_dispatch_risk", "delivery_risk"} & set(gate["approval_reasons"])
+
+    # Pieces made after the delivery day: a real stock shortfall, late.
+    short_segments = [_segment(lot, 15)]
+    short_score = compute_score(
+        short_segments, [lot], data, config, include_operational_audit=False,
+    )
+    assert short_score["tardy_count"] == 1
+    gate = build_gate_report(short_segments, [lot], short_score, data, config)
+    assert "delivery_risk" in gate["approval_reasons"]
+    assert "subcontract_dispatch_risk" not in gate["approval_reasons"]
 
 
 def test_ctp_uses_release_to_dispatch_production_window() -> None:
@@ -415,12 +427,15 @@ def test_coproduced_subcontract_twin_output_serves_its_own_later_delivery() -> N
     assert score["subcontract_dispatch_total"] == 1
     assert score["subcontract_dispatch_misses"] == 0
 
+    # The pieces count on the day they are made (14/10/2026).
     production = build_production_by_op([segment], [lot], data)
-    assert production[subcontracted.id].get(1, 0) == 0
-    assert sum(production[subcontracted.id].values()) == 100
+    assert dict(production[subcontracted.id]) == {1: 100}
 
 
-def test_expedition_and_order_tracking_wait_for_external_lead() -> None:
+def test_expedition_and_order_tracking_count_subcontracted_pieces_when_made() -> None:
+    """Stock rule (Luís, 14/10/2026): made on day 8 for a day-14 delivery is
+    on time, although it misses the dispatch 5 working days before; made on
+    day 15 is late."""
     op = _op(delivery_day=14)
     data = _engine(op, with_client_demand=True)
     config = _config()
@@ -430,12 +445,16 @@ def test_expedition_and_order_tracking_wait_for_external_lead() -> None:
 
     tracking = compute_order_tracking(segments, [lot], data)[0].orders[0]
     assert tracking.factory_ready_day == 8
-    assert tracking.customer_ready_day == 15
-    assert tracking.status == "at_subcontractor"
+    assert tracking.customer_ready_day == 8
+    assert tracking.status == "ready"
+    assert tracking.subcontract_dispatch_day == 7
 
     expedition = compute_expedition(segments, [lot], data)
     entry = expedition.days[0].entries[0]
-    assert entry.factory_produced_qty == 100
-    assert entry.produced_qty == 0
-    assert entry.status == "at_subcontractor"
-    assert expedition.days[0].total_at_subcontractor == 1
+    assert entry.factory_produced_qty == entry.produced_qty == 100
+    assert entry.status == "ready"
+    assert expedition.days[0].total_at_subcontractor == 0
+
+    late = compute_order_tracking([_segment(lot, 15)], [lot], data)[0].orders[0]
+    assert late.customer_ready_day == 15
+    assert late.status != "ready"

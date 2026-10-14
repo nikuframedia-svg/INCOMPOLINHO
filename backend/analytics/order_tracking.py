@@ -35,14 +35,15 @@ def compute_order_readiness(segments, lots, data) -> dict[str, list[OrderReadine
 
     Pieces of a SKU are fungible: every lot of the operation serves its
     deliveries in due order (``delivery_portions``), so an order is judged
-    by when its own pieces exist, whichever lot makes them.
+    by when its own pieces exist, whichever lot makes them. Subcontracted
+    pieces count on the day they are made too (stock rule, 14/10/2026), so
+    the customer and factory readings are the same curve.
     """
     portions = delivery_portions(lots, segments, data)
     customer = production_by_op(portions)
-    factory = production_by_op(portions, customer=False)
     for supply in data.committed_supplies:
         customer[supply.op_id][supply.available_day] += supply.qty
-        factory[supply.op_id][supply.available_day] += supply.qty
+    factory = customer
     ops_by_sku = defaultdict(list)
     for op in data.ops:
         ops_by_sku[op.sku].append(op)
@@ -282,9 +283,9 @@ def _allocate_demands(
     """Allocate real outputs first-in-first-out, by availability then absolute time.
 
     Each event is the part of a segment that serves one delivery portion of
-    the operation (all its lots, ``delivery_portions``). An in-house piece is
-    available when produced; a subcontracted delivery portion when it
-    returns, so each order carries its own portion's dispatch and return.
+    the operation (all its lots, ``delivery_portions``). Every piece is
+    available when produced, subcontracted ones too (stock rule,
+    14/10/2026); each order still carries its planned subcontract dispatch.
     """
     by_id = {lot.id: lot for lot in sku_lots}
     events = []
@@ -297,10 +298,7 @@ def _allocate_demands(
             if lot is None:
                 continue
             segment = segments[item.segment_index]
-            if portion.is_subcontracted:
-                factory_day, customer_day = portion.factory_day, portion.customer_ready_day
-            else:
-                factory_day = customer_day = item.day_idx
+            factory_day = customer_day = item.day_idx
             info = _LotInfo(lot.id, segment.machine_id, segment.run_id, [item.day_idx])
             events.append(_LotContribution(lot, info, item.qty, False, factory_day, customer_day,
                                            item.segment_index,
@@ -381,42 +379,18 @@ def _allocate_demands(
 
 
 def compute_segment_deliveries(segments, lots, data):
-    """Read-only projection of the same FIFO allocations used by Entregas.
-
-    ``subcontract_trips``: when the pieces of each segment of a
-    subcontracted reference leave for the subcontractor and when they are
-    back (``sent_day``, ``return_day``), read from the shared evaluator; a
-    lot that goes out whole (``whole_lot``, 13/10/2026) has one trip for all
-    its segments, its surplus included. Empty for in-house production.
-    """
+    """Read-only projection of the same FIFO allocations used by Entregas."""
     allocations = [[] for _ in segments]
     portions = delivery_portions(lots, segments, data)
     compute_order_tracking(
         segments, lots, data, segment_allocations=allocations, portions=portions,
     )
-    trips: list[set[tuple[int, int, bool]]] = [set() for _ in segments]
-    for portion in portions:
-        if not portion.is_subcontracted or not portion.produced_qty:
-            continue
-        for item in portion.slices:
-            if not 0 <= item.segment_index < len(segments):
-                continue
-            if item.whole_lot and item.lot_ready_day is not None:
-                # Its own lot's trip: out at that lot's end, back with that
-                # lot, even when the delivery also waits for another lot.
-                trip = (item.available_day, item.lot_ready_day, True)
-            else:
-                # Per-delivery dispatch (a lot taken over from material
-                # versions 1-2, a twin cycle): out when the delivery's pieces
-                # are complete, back with it.
-                trip = (portion.factory_day, portion.customer_ready_day, False)
-            trips[item.segment_index].add(trip)
     untraced_skus = {
         op.sku for op in data.ops
         if any(qty > 0 for qty in op.d) and not data.client_demands.get(op.sku)
     }
     result = []
-    for segment, deliveries, segment_trips in zip(segments, allocations, trips, strict=True):
+    for segment, deliveries in zip(segments, allocations, strict=True):
         quantities = defaultdict(int)
         for _op_id, sku, qty in segment.twin_outputs or [("", segment.sku, segment.qty)]:
             quantities[sku] += qty
@@ -428,10 +402,6 @@ def compute_segment_deliveries(segments, lots, data):
             "unallocated_output": [
                 {"sku": sku, "qty": qty} for sku, qty in quantities.items() if qty > 0
             ] if known else None,
-            "subcontract_trips": [
-                {"sent_day": sent, "return_day": back, "whole_lot": whole}
-                for sent, back, whole in sorted(segment_trips)
-            ],
         })
     return result
 

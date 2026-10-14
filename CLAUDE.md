@@ -60,6 +60,11 @@ capacidade, o alvo é OTD = OTD-D = 100%.
 - **OTD** (global) = total produzido >= total procura
 - **OTD-D** (por dia) = em cada dia com procura, produção acumulada >= procura acumulada
 - Uma melhoria automática nunca pode piorar **nenhuma** encomenda individual.
+- **Subcontratadas (Luís, 14/10/2026):** só estão atrasadas se faltar stock
+  no ecrã de Entregas no dia da entrega (peças contam no dia em que são
+  feitas), em todo o sistema e sem opção. O motor continua a apontar para
+  acabar 5 dias úteis antes (envio), mas falhar isso não é atraso nem
+  aparece no ecrã (AGENTS §2).
 - Se não há capacidade dentro da janela de material, o plano mantém e reporta
   os atrasos: nunca relaxar a janela, inventar stock ou violar física para
   mostrar 100%. Ex.: revisão 90 tem OTD 96,5% por falta real de capacidade

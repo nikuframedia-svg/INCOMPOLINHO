@@ -10,8 +10,6 @@ function proposalMetricLine(proposal: GateProposal) {
   if (!before || !after) return null;
   const keys = [
     "tardy_count",
-    "subcontract_dispatch_misses",
-    "subcontract_dispatch_late_workdays",
     "otd",
     "otd_d",
     "setups",
@@ -49,9 +47,6 @@ export function GateReportCard({ gate, activePlan = false }: { gate: GateReport;
     ? gate.feasibility
     : null;
   const jitWindowDetail = Array.isArray(gate.jit_window_detail) ? gate.jit_window_detail : [];
-  const subcontractDispatchDetail = Array.isArray(gate.subcontract_dispatch_detail)
-    ? gate.subcontract_dispatch_detail
-    : [];
   const setupOverlapDetail = Array.isArray(gate.setup_overlap_detail) ? gate.setup_overlap_detail : [];
   const proposals = Array.isArray(gate.proposals) ? gate.proposals : [];
   const keptTransfers = gate.improvement?.tool_transfers?.items ?? [];
@@ -121,20 +116,6 @@ export function GateReportCard({ gate, activePlan = false }: { gate: GateReport;
           </div>
         </details>
       )}
-      {subcontractDispatchDetail.length > 0 && (
-        <details style={{ fontSize: 12, color: T.orange, lineHeight: 1.6, marginBottom: 8 }}>
-          <summary style={{ cursor: "pointer", color: T.primary, fontWeight: 600 }}>
-            Ver envios para subcontratação em atraso ({subcontractDispatchDetail.length})
-          </summary>
-          <div style={{ marginTop: 6 }}>
-            {subcontractDispatchDetail.slice(0, 5).map((item) => (
-              <div key={`${item.lot_id}-${item.op_id}`}>
-                {item.sku} · {item.whole_lot ? "lote completo" : "conclusão"} {item.completion_date ?? `D${item.completion_day}`} · envio necessário {item.subcontract_dispatch_date ?? `D${item.subcontract_dispatch_day}`} · {workdaysLabel(item.late_workdays)} de atraso
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
       {setupOverlapDetail.length > 0 && (
         <details style={{ fontSize: 12, color: T.red, lineHeight: 1.6, marginBottom: 8 }}>
           <summary style={{ cursor: "pointer", color: T.primary, fontWeight: 600 }}>
@@ -159,7 +140,7 @@ export function GateReportCard({ gate, activePlan = false }: { gate: GateReport;
             {gate.approval_reasons?.length ? ` · motivos ${gate.approval_reasons.join(", ")}` : ""}
           </div>
           <div style={{ fontFamily: T.mono }}>
-            Material fora da janela {metrics.early_window_violations ?? 0} · envios sub. em atraso {metrics.subcontract_dispatch_misses ?? 0} · OTD-D {metrics.otd_d ?? 0}% · cobertura em falta {metrics.missing_lots ?? 0} lote(s) / {metrics.missing_qty ?? 0} pç · gémeas repetidas {metrics.duplicate_twin_output_qty ?? 0} pç · lotes em atraso {metrics.tardy_count ?? 0} · encomendas em atraso {metrics.orders_late ?? "—"}
+            Material fora da janela {metrics.early_window_violations ?? 0} · OTD-D {metrics.otd_d ?? 0}% · cobertura em falta {metrics.missing_lots ?? 0} lote(s) / {metrics.missing_qty ?? 0} pç · gémeas repetidas {metrics.duplicate_twin_output_qty ?? 0} pç · lotes em atraso {metrics.tardy_count ?? 0} · encomendas em atraso {metrics.orders_late ?? "—"}
           </div>
           {feasibility && !feasibility.strict_feasible && (
             <div>

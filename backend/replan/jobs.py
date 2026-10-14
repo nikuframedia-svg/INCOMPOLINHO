@@ -213,6 +213,10 @@ def _valid_delivery_floor(baseline, engine_data, config):
 def _late_with_idle_capacity(plan, engine_data, config, planning_day: int, now=None) -> bool:
     """Whether a late delivery of ``plan`` has idle capacity before its deadline.
 
+    A missed subcontract dispatch counts too (``dispatch_targets``): finishing
+    before it stays the planner's aim although it is no late delivery
+    (Luís, 14/10/2026).
+
     The cheap read-only check of ``scheduler.idle_capacity`` (tens of ms).
     Only then can the complete constructor recover a delivery the compaction
     leaves late; a structural shortage (no idle capacity) gives it nothing to
@@ -226,6 +230,7 @@ def _late_with_idle_capacity(plan, engine_data, config, planning_day: int, now=N
     try:
         return bool(late_with_idle_capacity(
             plan.segments, plan.lots, engine_data, config, planning_day=planning_day, now=now,
+            dispatch_targets=True,
         ))
     except Exception:  # informational check: the job goes on as before
         logger.exception("Idle-capacity check failed in the replan job")

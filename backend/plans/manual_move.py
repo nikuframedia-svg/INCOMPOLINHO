@@ -1853,16 +1853,6 @@ def _move_lot(
     new_tardy = int(score.get("tardy_count", 0) or 0)
     if new_tardy > old_tardy:
         delivery_warnings.append(f"Cria {new_tardy - old_tardy} novo(s) atraso(s).")
-    old_dispatch = int(
-        baseline_score.get("subcontract_dispatch_misses", 0) or 0
-    )
-    new_dispatch = int(score.get("subcontract_dispatch_misses", 0) or 0)
-    if new_dispatch > old_dispatch:
-        delivery_warnings.append(
-            "Cria "
-            f"{new_dispatch - old_dispatch} novo(s) atraso(s) de envio para "
-            "subcontratação."
-        )
     if int(gate_report["metrics"].get("early_window_violations", 0) or 0):
         delivery_warnings.append(
             "O plano inicia produção antes da libertação de material calculada "

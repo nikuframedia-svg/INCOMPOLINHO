@@ -10,13 +10,15 @@ the ISOP demand and the factory calendar):
 - Production of a SKU is served first-in-first-out in absolute time
   (``day * 1440 + end``, then segment order); committed supplies enter on
   their available day.
-- An in-house order is ready on the day of the last piece it consumes.
-- A subcontracted order leaves when the pieces it consumes leave and is back
-  ``lead`` working days later. An economic lot of material version 3 (its
-  outputs say so, and no ``material_upgraded_from``) of a subcontracted
-  operation leaves whole on the day its last piece is made, once all its
-  pieces are made (Luís, 13/10/2026); every other piece leaves on the day it
-  is made, so the order leaves when its own cumulative quantity is complete.
+- An order is ready on the day of the last piece it consumes, subcontracted
+  ones too: a subcontracted delivery is late only when the stock shown on
+  Entregas (pieces on the day they are made) is short (Luís, 14/10/2026).
+- Subcontract dispatch (``oracle_checkpoints(dispatch=True)``, the planner's
+  aim, never lateness): an economic lot of material version 3 (its outputs
+  say so, and no ``material_upgraded_from``) of a subcontracted operation
+  leaves whole on the day its last piece is made, once all its pieces are
+  made (Luís, 13/10/2026); every other piece leaves on the day it is made,
+  so the delivery leaves when its own cumulative quantity is complete.
 - Explicit stock in an order (``order_qty - |NP|``) is served from the
   opening stock first; net NP never deducts stock twice.
 - Twin cycles: each side is its own SKU, served from that side's pieces
@@ -145,9 +147,9 @@ def _lot_dispatch_days(segments, lots, data) -> dict[str, int | None]:
     return result
 
 
-def _events(segments, lots, data, op_ids: set[str]) -> list[_Event]:
+def _events(segments, lots, data, op_ids: set[str], *, dispatch: bool = False) -> list[_Event]:
     op_of_lot = {lot.id: lot.op_id for lot in lots}
-    whole = _lot_dispatch_days(segments, lots, data)
+    whole = _lot_dispatch_days(segments, lots, data) if dispatch else {}
     subcontracted_ops = {op.id for op in data.ops if _subcontract(op)[0]}
     events = []
     for index, segment in enumerate(segments):
@@ -170,8 +172,8 @@ def _events(segments, lots, data, op_ids: set[str]) -> list[_Event]:
     return events
 
 
-def _serve(orders: list[OracleOrder], events: list[_Event], calendar: WorkCalendar,
-           lead: int, stock: int, explicit_stock: list[int]) -> None:
+def _serve(orders: list[OracleOrder], events: list[_Event], stock: int,
+           explicit_stock: list[int]) -> None:
     cursor, left = 0, events[0].qty if events else 0
     for order, explicit in zip(orders, explicit_stock):
         credit = min(stock, explicit)
@@ -196,9 +198,7 @@ def _serve(orders: list[OracleOrder], events: list[_Event], calendar: WorkCalend
         candidates = [day for day in (last_supply,) if day is not None]
         if last_production is not None:
             order.factory_day = last_production
-            candidates.append(
-                calendar.add(last_production, lead) if order.subcontracted else last_production
-            )
+            candidates.append(last_production)
         else:
             order.factory_day = last_supply if last_supply is not None else 0
         order.ready_day = max(candidates, default=0)
@@ -227,22 +227,27 @@ def oracle_orders(segments, lots, data) -> list[OracleOrder]:
                         latest_dispatch_day=calendar.subtract(day, lead) if subcontracted else None)
             for day, client, qty, _np in raw
         ]
-        _serve(orders, _events(segments, lots, data, {op.id for op in ops}), calendar, lead,
+        _serve(orders, _events(segments, lots, data, {op.id for op in ops}),
                sum(max(0, op.stk) for op in ops), [max(0, qty - np) for _d, _c, qty, np in raw])
         result.extend(orders)
     return result
 
 
-def oracle_checkpoints(segments, lots, data) -> dict[str, list[OracleOrder]]:
-    """OTD-D checkpoints: each positive net ISOP demand of each operation."""
+def oracle_checkpoints(segments, lots, data, *, dispatch: bool = False
+                       ) -> dict[str, list[OracleOrder]]:
+    """OTD-D checkpoints: each positive net ISOP demand of each operation.
 
-    calendar = WorkCalendar(data)
+    ``dispatch``: ``factory_day`` is the day the delivery leaves for the
+    subcontractor (whole lots leave when they end), not the stock day.
+    """
+
     result = {}
     for op in data.ops:
-        subcontracted, lead, _buffer = _subcontract(op)
+        subcontracted, _lead, _buffer = _subcontract(op)
         orders = [OracleOrder(op.sku, "", day, int(q), subcontracted)
                   for day, q in enumerate(op.d) if q > 0]
-        _serve(orders, _events(segments, lots, data, {op.id}), calendar, lead, 0, [0] * len(orders))
+        _serve(orders, _events(segments, lots, data, {op.id}, dispatch=dispatch), 0,
+               [0] * len(orders))
         result[op.id] = orders
     return result
 

@@ -12,13 +12,15 @@ Deliveries are judged as everywhere else (AGENTS §1.2, §2):
 
 * late orders come from the canonical order evaluator
   (``improvement.order_service``); the shortfall is the quantity not covered
-  on the customer day;
-* subcontracted deliveries are judged by their latest compatible dispatch
-  ``H`` (``delivery_portions``): the shortfall is what is not finished by
-  ``H``, and production must happen by ``H``. A lot that goes out whole
-  (material version 3, 13/10/2026) leaves when its last piece is made, so
-  its deliveries count as finished only when the whole lot is: the lot has
-  to end by ``H`` of its first delivery.
+  on the customer day. Subcontracted deliveries are judged the same way, on
+  the stock shown on Entregas (Luís, 14/10/2026), with the customer day as
+  their deadline;
+* only for the replan job (``dispatch_targets``, never shown): a
+  subcontracted delivery that leaves after its latest compatible dispatch
+  ``H`` is a case too, the planner's aim of finishing it before the
+  dispatch. The shortfall is what is not ready to leave by ``H``; a lot that
+  goes out whole (material version 3, 13/10/2026) leaves when its last piece
+  is made, so the lot has to end by ``H`` of its first delivery.
 
 The late deliveries of one lot (both sides of a twin cycle, several orders)
 are one case, listed once: the lot is a case when its late deliveries up to
@@ -34,9 +36,9 @@ day only the time after the current factory minute counts.
 The minutes needed follow the planning rules:
 
 * on a machine the lot already uses, the shortfall at the lot's rate, or —
-  when its pieces are only available at the lot end (cycle rule, a
-  subcontracted lot that goes out whole) — the rest of the lot not produced
-  by the deadline;
+  when its pieces are only available at the lot end (cycle rule; a
+  subcontracted lot that goes out whole, for ``dispatch_targets``) — the
+  rest of the lot not produced by the deadline;
 * on an alternative machine (rule 3), the whole lot at that machine's rate:
   a lot changes machine as a whole. A lot with production on the planning
   day or before has started (rule 4) and only counts its own machine;
@@ -93,6 +95,7 @@ def late_with_idle_capacity(
     planning_day: int | None = None,
     service=None,
     now: datetime | None = None,
+    dispatch_targets: bool = False,
 ) -> list[dict]:
     """Late lots whose deliveries idle shift time on an eligible machine could serve.
 
@@ -101,6 +104,8 @@ def late_with_idle_capacity(
     the planning day only the time after it is free); ``service`` reuses an
     already computed ``order_service``. One case per lot, naming its late
     deliveries, their window and the machine with the most spare time.
+    ``dispatch_targets`` also counts missed subcontract dispatches (the
+    replan job's aim; never for the gate report or the screen).
     """
 
     if data is None or not data.ops:
@@ -125,12 +130,7 @@ def late_with_idle_capacity(
             continue
         key = (portion.sku, int(portion.customer_delivery_day))
         portions_by_delivery[key].append(portion)
-        dispatch = portion.latest_subcontract_dispatch_day
-        if (
-            portion.is_subcontracted
-            and dispatch is not None
-            and (not portion.complete or portion.factory_day > dispatch)
-        ):
+        if dispatch_targets and _misses_dispatch(portion):
             deliveries.setdefault(key, _Delivery(key[0], key[1], set(), 0))
     if not deliveries:
         return []
@@ -141,7 +141,9 @@ def late_with_idle_capacity(
         planning_day = current_factory_day(data, config, now=current) if data.workdays else 0
     windows = []
     for key, delivery in deliveries.items():
-        window = _delivery_window(delivery, portions_by_delivery.get(key, []))
+        window = _delivery_window(
+            delivery, portions_by_delivery.get(key, []), dispatch_targets=dispatch_targets,
+        )
         if window is not None:
             windows.append(window)
     candidates = _lot_windows(windows, planning_day)
@@ -161,16 +163,27 @@ def late_with_idle_capacity(
     return cases
 
 
-def _delivery_window(delivery: _Delivery, portions) -> dict | None:
+def _misses_dispatch(portion) -> bool:
+    dispatch = portion.latest_subcontract_dispatch_day
+    return (
+        portion.is_subcontracted
+        and dispatch is not None
+        and (not portion.complete or portion.factory_day > dispatch)
+    )
+
+
+def _delivery_window(delivery: _Delivery, portions, *, dispatch_targets: bool) -> dict | None:
     """Shortfall, material release and production deadline of one delivery."""
 
     if not portions:
         return None
     subcontracted = [
         portion for portion in portions
-        if portion.is_subcontracted and portion.latest_subcontract_dispatch_day is not None
+        if dispatch_targets and portion.is_subcontracted
+        and portion.latest_subcontract_dispatch_day is not None
     ]
     if subcontracted:
+        # The planner's aim: ready to leave by the latest dispatch ``H``.
         deadline = min(int(portion.latest_subcontract_dispatch_day) for portion in subcontracted)
         shortfall = sum(
             max(0, int(portion.qty) - sum(
@@ -184,7 +197,13 @@ def _delivery_window(delivery: _Delivery, portions) -> dict | None:
             < int(portion.qty)
         ]
     else:
-        deadline = min(int(portion.production_due_day) for portion in portions)
+        # The customer day (stock rule, 14/10/2026); for in-house deliveries
+        # it is their production due day.
+        deadline = min(
+            int(portion.customer_delivery_day if portion.is_subcontracted
+                else portion.production_due_day)
+            for portion in portions
+        )
         shortfall = delivery.order_shortfall
         pending = [portion for portion in portions if not portion.complete] or portions
     if shortfall <= 0 or not pending:
@@ -194,17 +213,17 @@ def _delivery_window(delivery: _Delivery, portions) -> dict | None:
         "op_id": pending[0].op_id,
         "lot_id": pending[0].source.lot_id,
         "clients": sorted(delivery.clients),
-        "subcontracted": bool(subcontracted),
         "customer_delivery_day": delivery.customer_delivery_day,
         "production_due_day": deadline,
         "material_release_day": min(
             output_release_day(portion.source.output) for portion in portions
         ),
         "shortfall_qty": int(shortfall),
-        # Cycle rule, or a subcontracted lot that goes out whole: the pieces
-        # are only available when the lot ends.
+        # Cycle rule, or a subcontracted lot that goes out whole (dispatch
+        # targets): the pieces are only available when the lot ends.
         "lot_end_rule": any(
-            bool(portion.source.cycle_rule) or portion.whole_lot_dispatch for portion in pending
+            bool(portion.source.cycle_rule) or (bool(subcontracted) and portion.whole_lot_dispatch)
+            for portion in pending
         ),
     }
 
@@ -250,7 +269,6 @@ def _lot_windows(windows: list[dict], planning_day: int) -> list[list[dict]]:
                 "op_id": first["op_id"],
                 "lot_id": lot_id,
                 "clients": sorted({client for entry in served for client in entry["clients"]}),
-                "subcontracted": bool(first["subcontracted"]),
                 "customer_delivery_day": int(first["customer_delivery_day"]),
                 "production_due_day": deadline,
                 "material_release_day": release,
@@ -262,7 +280,6 @@ def _lot_windows(windows: list[dict], planning_day: int) -> list[list[dict]]:
                         "sku": entry["sku"],
                         "customer_delivery_day": int(entry["customer_delivery_day"]),
                         "production_due_day": int(entry["production_due_day"]),
-                        "subcontracted": bool(entry["subcontracted"]),
                     }
                     for entry in served
                 ],
@@ -468,20 +485,11 @@ def idle_capacity_notice(cases: list[dict], data: EngineData, limit: int = 3) ->
     def describe(case: dict) -> str:
         deliveries = case.get("deliveries") or [case]
         orders = list(dict.fromkeys(
-            label(item["customer_delivery_day"])
-            for item in deliveries if not item.get("subcontracted")
+            label(item["customer_delivery_day"]) for item in deliveries
         ))
-        dispatches = list(dict.fromkeys(
-            label(item["production_due_day"]) for item in deliveries if item.get("subcontracted")
-        ))
-        dues = []
-        if orders:
-            dues.append(f"{'entregas' if len(orders) > 1 else 'entrega'} {joined(orders)}")
-        if dispatches:
-            kind = "envios" if len(dispatches) > 1 else "envio"
-            dues.append(f"{kind} para subcontratação {joined(dispatches)}")
+        dues = f"{'entregas' if len(orders) > 1 else 'entrega'} {joined(orders)}"
         skus = list(dict.fromkeys(case.get("skus") or [case["sku"]]))
-        return f"{joined(skus)} ({joined(dues)})"
+        return f"{joined(skus)} ({dues})"
 
     machines = {case["machine_id"] for case in cases}
     shown = cases[:limit]

@@ -147,26 +147,22 @@ describe("linhas de detalhe sem abreviaturas", () => {
     gate.jit_window_detail = [{
       lot_id: "L1", sku: "SKU1", machine_id: "PRM019", start_day: 3, material_reference_day: 9, excess_workdays: 2,
     } as unknown as GateReport["jit_window_detail"][number]];
-    gate.subcontract_dispatch_detail = [{
-      lot_id: "L2", op_id: "O2", sku: "SKU2", qty: 10, customer_delivery_day: 20,
-      subcontract_dispatch_day: 15, completion_day: 16, late_workdays: 1,
-    } as unknown as NonNullable<GateReport["subcontract_dispatch_detail"]>[number]];
     const { container } = render(<GateReportCard gate={gate} />);
     const text = container.textContent ?? "";
     expect(text).toContain("2 dias úteis antes do permitido");
-    expect(text).toContain("1 dia útil de atraso");
     expect(text).not.toMatch(/\d+du\b/);
     expect(text).not.toContain("excesso");
   });
 
-  it("um lote subcontratado que sai inteiro mostra o fim do lote", () => {
-    const gate = report("completed");
+  it("não mostra envios para subcontratação, nem em relatórios antigos (14/10/2026)", () => {
+    const gate = report("completed") as GateReport & Record<string, unknown>;
     gate.subcontract_dispatch_detail = [{
       lot_id: "L2", op_id: "O2", sku: "SKU2", qty: 10, customer_delivery_day: 20,
       subcontract_dispatch_day: 15, completion_day: 16, late_workdays: 1, whole_lot: true,
-    } as unknown as NonNullable<GateReport["subcontract_dispatch_detail"]>[number]];
+    }];
+    gate.metrics = { ...gate.metrics, subcontract_dispatch_misses: 1 };
     const { container } = render(<GateReportCard gate={gate} />);
-    expect(container.textContent).toContain("SKU2 · lote completo D16 · envio necessário D15");
+    expect(container.textContent).not.toMatch(/subcontrata|envios sub/i);
   });
 
   it("ações sugeridas e transferências mantidas ficam dentro de Detalhes técnicos", () => {

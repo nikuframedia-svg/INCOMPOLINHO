@@ -29,7 +29,7 @@ function proposalMetricLine(proposal: GateProposal) {
   const before = proposal.before as Record<string, unknown> | undefined;
   const after = proposal.after_target as Record<string, unknown> | undefined;
   if (!before || !after) return null;
-  const keys = ["early_window_violations", "subcontract_dispatch_misses", "otd_d", "tardy_count"];
+  const keys = ["early_window_violations", "otd_d", "tardy_count"];
   const parts = keys
     .filter((key) => key in before || key in after)
     .map((key) => `${key}: ${String(before[key] ?? "-")} → ${String(after[key] ?? "-")}`);
@@ -153,7 +153,7 @@ export function JitViolationPanel({
                     Detalhes técnicos
                   </summary>
                   <div style={{ color: T.secondary, fontSize: 10, marginTop: 4, fontFamily: T.mono }}>
-                    Material fora da janela {metricValue(metrics, "early_window_violations")} · envios sub. em atraso {metricValue(metrics, "subcontract_dispatch_misses")} · OTD-D {metricValue(metrics, "otd_d")}% · cobertura em falta {metricValue(metrics, "missing_lots")} lote(s) / {metricValue(metrics, "missing_qty")} pç · gémeas repetidas {metricValue(metrics, "duplicate_twin_output_qty")} pç · lotes em atraso {metricValue(metrics, "tardy_count")}
+                    Material fora da janela {metricValue(metrics, "early_window_violations")} · OTD-D {metricValue(metrics, "otd_d")}% · cobertura em falta {metricValue(metrics, "missing_lots")} lote(s) / {metricValue(metrics, "missing_qty")} pç · gémeas repetidas {metricValue(metrics, "duplicate_twin_output_qty")} pç · lotes em atraso {metricValue(metrics, "tardy_count")}
                   </div>
                 </details>
               )}

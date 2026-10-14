@@ -830,7 +830,8 @@ export interface GateReport {
   physical_gate_passed: boolean;
   coverage_gate_passed: boolean;
   delivery_gate_passed: boolean;
-  subcontract_dispatch_gate_passed: boolean;
+  /** Legacy: plans saved before 14/10/2026. */
+  subcontract_dispatch_gate_passed?: boolean;
   jit_window_gate_passed: boolean;
   /** Legacy: robustness no longer gates plans; old revisions may still carry it. */
   robustness_gate_passed?: boolean | null;
@@ -841,26 +842,6 @@ export interface GateReport {
   /** Late orders, max 50, most late first. Old reports lack it. */
   late_order_detail?: LateOrderDetail[];
   jit_window_detail: JitWindowViolation[];
-  subcontract_dispatch_detail?: Array<{
-    lot_id: string;
-    op_id: string;
-    sku: string;
-    qty: number;
-    subcontract_company_id?: string | null;
-    customer_delivery_day: number;
-    customer_delivery_date?: string | null;
-    latest_subcontract_dispatch_day?: number | null;
-    latest_subcontract_dispatch_date?: string | null;
-    subcontract_dispatch_day: number;
-    subcontract_dispatch_date?: string | null;
-    production_due_day: number;
-    production_due_date?: string | null;
-    completion_day: number;
-    completion_date?: string | null;
-    late_workdays: number;
-    /** The whole lot goes out when its last piece is made (since 13/10/2026). */
-    whole_lot?: boolean;
-  }>;
   setup_overlap_detail: Record<string, unknown>[];
   proposals: GateProposal[];
   solver_trace?: SolverTrace;

@@ -6,6 +6,7 @@ import {
   BACKEND_APPROVAL_REASONS,
   capacityShortfalls,
   decisionReasonLabels,
+  decisionReasons,
   gateReasonLabel,
   gateSummaryLines,
   isLegacyReason,
@@ -38,11 +39,11 @@ describe("dicionário único dos motivos de aprovação", () => {
     expect(label.length).toBeGreaterThan(10);
   });
 
-  it("cobre exatamente os 7 motivos do backend", () => {
+  it("cobre exatamente os 6 motivos do backend", () => {
     expect([...BACKEND_APPROVAL_REASONS].sort()).toEqual([
       "delivery_risk", "jit_window_blocked", "material_release_blocked",
       "operational_sequence_not_evaluated", "operational_sequence_review",
-      "operator_capacity_shortage", "subcontract_dispatch_risk",
+      "operator_capacity_shortage",
     ]);
   });
 
@@ -84,6 +85,18 @@ describe("dicionário único dos motivos de aprovação", () => {
   it("o limite de dias seguidos, retirado, só aparece como critério antigo", () => {
     expect(isLegacyReason("long_production")).toBe(true);
     expect(approvalReasonLabel("long_production")).toContain("critério antigo");
+  });
+
+  it("envios para subcontratação em risco (retirado a 14/10/2026) só aparece como critério antigo", () => {
+    expect(isLegacyReason("subcontract_dispatch_risk")).toBe(true);
+    expect(approvalReasonLabel("subcontract_dispatch_risk")).toContain("critério antigo");
+    expect(decisionReasons({ approval_reasons: ["delivery_risk", "subcontract_dispatch_risk"] }))
+      .toEqual(["delivery_risk"]);
+  });
+
+  it("não fala de envios para subcontratação", () => {
+    const lines = gateSummaryLines(gate({ metrics: { orders_late: 0, orders_total: 5, subcontract_dispatch_misses: 2 } }));
+    expect(lines.join(" ")).not.toMatch(/subcontrata/);
   });
 
   it("nunca devolve um código desconhecido em bruto", () => {

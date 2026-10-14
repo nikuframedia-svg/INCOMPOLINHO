@@ -368,7 +368,7 @@ def test_two_late_deliveries_do_not_count_the_same_idle_time():
     assert [case["sku"] for case in cases] == ["OP1"]
 
 
-def test_subcontract_dispatch_is_judged_by_its_latest_dispatch_day():
+def test_subcontracted_delivery_is_judged_on_the_stock_by_its_customer_day():
     data = _data(_op("OP1", "T1", due_day=11))
     config = _config("M1")
     config.subcontract_companies = [{"id": "SUP", "name": "Sup", "lead_time_workdays": 5}]
@@ -379,22 +379,31 @@ def test_subcontract_dispatch_is_judged_by_its_latest_dispatch_day():
     lot = _lots(data, config)["OP1"]
     assert lot.is_subcontracted and lot.latest_subcontract_dispatch_day == 4
     assert lot.subcontract_dispatch_day == 3  # the planned dispatch keeps a buffer day
-    # 50 pieces on day 2, the rest on day 7: the dispatch (latest day 4) and
-    # the delivery (day 11) are late. The lot goes out whole when it ends
-    # (13/10/2026), so all 200 pieces miss day 4 and the rest of the lot
-    # (150 pieces) must be made by then.
-    segments = _segments(lot, [(2, 420, 50, 30), (7, 420, 150, 30)])
-
-    (case,) = late_with_idle_capacity(segments, [lot], data, config, planning_day=0)
-    assert case["subcontracted"] and case["production_due_day"] == 4
-    assert case["customer_delivery_day"] == 11 and case["shortfall_qty"] == 200
-    assert case["lot_end_rule"]
-    assert case["needed_min"] == pytest.approx(case["setup_min"] + lot.prod_min * 150 / 200)
-    assert "envio para subcontratação 06/03" in idle_capacity_notice([case], data)
-
-    # Ready on the dispatch day: nothing to report.
+    # 50 pieces on day 2, the rest on day 7: the dispatch (latest day 4) is
+    # missed, but the stock covers the delivery on day 11 (Luís, 14/10/2026).
+    missed_dispatch = _segments(lot, [(2, 420, 50, 30), (7, 420, 150, 30)])
+    assert late_with_idle_capacity(missed_dispatch, [lot], data, config, planning_day=0) == []
+    # The replan job still aims at the dispatch (``dispatch_targets``): the
+    # lot goes out whole when it ends (13/10/2026), so the rest of the lot
+    # (150 pieces) must be made by day 4.
+    (aim,) = late_with_idle_capacity(missed_dispatch, [lot], data, config, planning_day=0,
+                                     dispatch_targets=True)
+    assert aim["production_due_day"] == 4 and aim["shortfall_qty"] == 200
+    assert aim["lot_end_rule"]
+    assert aim["needed_min"] == pytest.approx(aim["setup_min"] + lot.prod_min * 150 / 200)
     on_time = _segments(lot, [(4, 420, 200, 30)])
-    assert late_with_idle_capacity(on_time, [lot], data, config, planning_day=0) == []
+    assert late_with_idle_capacity(on_time, [lot], data, config, planning_day=0,
+                                   dispatch_targets=True) == []
+
+    # The rest on day 12: the stock is short on day 11, a late delivery whose
+    # 150 missing pieces fit in the idle time before it.
+    segments = _segments(lot, [(2, 420, 50, 30), (12, 420, 150, 30)])
+    (case,) = late_with_idle_capacity(segments, [lot], data, config, planning_day=0)
+    assert case["production_due_day"] == case["customer_delivery_day"] == 11
+    assert case["shortfall_qty"] == 150 and not case["lot_end_rule"]
+    assert case["needed_min"] == pytest.approx(case["setup_min"] + lot.prod_min * 150 / 200)
+    notice = idle_capacity_notice([case], data)
+    assert "entrega" in notice and "subcontrata" not in notice
 
 
 def test_gate_report_lists_the_cases_and_never_blocks(monkeypatch):
@@ -423,7 +432,7 @@ def test_a_failing_check_gives_no_cases(monkeypatch):
 def test_notice_lists_at_most_three_lots_in_plain_words():
     data = _data(_op("OP1", "T1"))
     case = {"sku": "A1", "customer_delivery_day": 4, "production_due_day": 4,
-            "subcontracted": False, "machine_id": "M1"}
+            "machine_id": "M1"}
     assert idle_capacity_notice([], data) is None
     assert idle_capacity_notice([case], data) == (
         "Possível melhoria: A1 (entrega 06/03) está atrasada e a M1 tem tempo livre "
@@ -434,12 +443,10 @@ def test_notice_lists_at_most_three_lots_in_plain_words():
         "Possíveis melhorias: A1 (entrega 06/03), A2 (entrega 06/03), A3 (entrega 06/03) "
         "e mais 2 estão atrasadas e a M1 tem tempo livre suficiente antes dos prazos."
     )
-    mixed = [case, {**case, "sku": "B1", "machine_id": "M2", "subcontracted": True,
-                    "production_due_day": 2}]
+    mixed = [case, {**case, "sku": "B1", "machine_id": "M2"}]
     assert idle_capacity_notice(mixed, data) == (
-        "Possíveis melhorias: A1 (entrega 06/03) na M1 e B1 (envio para subcontratação "
-        "04/03) na M2 estão atrasadas e essas máquinas têm tempo livre suficiente antes "
-        "dos prazos."
+        "Possíveis melhorias: A1 (entrega 06/03) na M1 e B1 (entrega 06/03) na M2 estão "
+        "atrasadas e essas máquinas têm tempo livre suficiente antes dos prazos."
     )
     # It says what is possible, never which button to press.
     assert all("Recalcular" not in idle_capacity_notice(cases, data)
@@ -484,16 +491,17 @@ def _replan_time(snapshot, hour: int, minute: int) -> datetime:
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=LISBON)
 
 
-def test_rev127_stored_plan_reports_both_late_deliveries_on_prm043():
+def test_rev127_stored_plan_reports_the_late_delivery_on_prm043():
     snapshot = load_snapshot("rev127")
     result = snapshot.result
     # Revision 127 was calculated on 13/10 at 15:39: the morning had gone by.
     cases = late_with_idle_capacity(result.segments, result.lots, snapshot.data,
                                     snapshot.config, planning_day=snapshot.freeze_day,
                                     now=_replan_time(snapshot, 15, 39))
-    assert [(case["sku"], case["machine_id"], case["subcontracted"]) for case in cases] == [
-        ("6800016767A.10", "PRM043", False),
-        ("CF589MMA1A02.20", "PRM043", True),
+    # CF589MMA1A02.20 only missed its subcontract dispatch: the stock covers
+    # its delivery, so it is not late (Luís, 14/10/2026).
+    assert [(case["sku"], case["machine_id"]) for case in cases] == [
+        ("6800016767A.10", "PRM043"),
     ]
     assert all(case["free_min"] >= case["needed_min"] for case in cases)
     # The started JTE001 run is still mounted on PRM043: no setup needed.

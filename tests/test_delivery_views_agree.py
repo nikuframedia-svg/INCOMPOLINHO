@@ -7,11 +7,13 @@ revision 121: an economic lot covering several deliveries (F1), the same lot
 subcontracted with the shape of 6800017267C.30 (F2), with economic surplus
 (F3) and with opening stock and a committed supply (F5).
 
-Since 13/10/2026 a subcontracted economic lot of the current contract goes
-out whole when it ends (AGENTS §2): F2-whole is that case (the 21/10 and
-16/10 orders wait for the lot). F2, F3 and F5 keep the per-delivery dispatch
-of a lot taken over from an older plan (``material_upgraded_from``), which
-each view still reads from the same evaluator.
+Since 14/10/2026 a subcontracted delivery is late only when the stock shown
+on Entregas (pieces on the day they are made) is short on its day, like any
+reference (AGENTS §2). Its subcontract dispatch (the planner's aim, never
+lateness) still follows the lot: a subcontracted economic lot of the current
+contract goes out whole when it ends (13/10/2026, F2-whole); F2, F3 and F5
+keep the per-delivery dispatch of a lot taken over from an older plan
+(``material_upgraded_from``). F2-late misses the stock on the 26th.
 """
 
 from __future__ import annotations
@@ -95,7 +97,7 @@ def _segments(lot, blocks) -> list[Segment]:
 # 6800017267C.30 in revision 121: 362 + 2175 + 73 of one economic lot, made
 # on days 3, 7 (two blocks) and 13. Input order is shuffled on purpose.
 SHAPE = [(13, 814, 880, 73), (7, 835, 930, 461), (3, 1276, 1364, 362), (7, 930, 1060, 1714)]
-SHAPE_LATE = [(24, 814, 880, 73), (7, 835, 930, 461), (3, 1276, 1364, 362), (7, 930, 1060, 1714)]
+SHAPE_LATE = [(28, 814, 880, 73), (7, 835, 930, 461), (3, 1276, 1364, 362), (7, 930, 1060, 1714)]
 ONE_CLIENT = [_entry("ACURION", 12, 362), _entry("ACURION", 19, 2175), _entry("ACURION", 26, 73)]
 TWO_CLIENTS = [_entry("A", 12, 362), _entry("A", 19, 1000), _entry("B", 19, 1175),
                _entry("B", 26, 73)]
@@ -179,11 +181,11 @@ def _order_key(client, day, qty):
 # ── Oracle anchors (the oracle itself must be right) ─────────────────────
 
 
-def test_oracle_subcontracted_portions_follow_their_own_completion():
+def test_oracle_subcontracted_orders_are_ready_when_their_pieces_are_made():
     segments, lots, data = f2()
     ready = [(o.due_day, o.factory_day, o.ready_day) for o in oracle_orders(segments, lots, data)]
-    # 12/10 + 5 working days = 19/10 (day 10); 16/10 -> 23/10; 22/10 -> 29/10.
-    assert ready == [(12, 3, 10), (19, 7, 14), (26, 13, 20)]
+    # Stock rule (14/10/2026): no return trip is added.
+    assert ready == [(12, 3, 3), (19, 7, 7), (26, 13, 13)]
     assert WorkCalendar(data).add(3, 5) == 10
 
 
@@ -193,15 +195,20 @@ def test_oracle_marks_only_the_slipped_portion_late():
 
 
 def test_oracle_sends_a_current_lot_whole_when_it_ends():
-    """The same lot under the current contract: everything leaves on day 13,
-    the lot's last day, and is back on day 20; the orders of days 12 and 19
-    are late, the one of day 26 is not."""
+    """The same lot under the current contract: everything leaves for the
+    subcontractor on day 13, the lot's last day (the planner's aim), but no
+    order is late: the stock covers each one on its day."""
     segments, lots, data = f2_whole()
     ready = [(o.due_day, o.factory_day, o.ready_day, o.late)
              for o in oracle_orders(segments, lots, data)]
-    assert ready == [(12, 13, 20, True), (19, 13, 20, True), (26, 13, 20, False)]
-    # Not all made (the day-13 block missing): nothing leaves at all.
-    assert all(o.ready_day is None for o in oracle_orders(segments[1:], lots, data))
+    assert ready == [(12, 3, 3, False), (19, 7, 7, False), (26, 13, 13, False)]
+    (dispatch,) = oracle_checkpoints(segments, lots, data, dispatch=True).values()
+    assert [(c.due_day, c.factory_day) for c in dispatch] == [(12, 13), (19, 13), (26, 13)]
+    # Not all made (the day-13 block missing): the lot never leaves, and only
+    # the order whose pieces are missing is late.
+    assert [o.late for o in oracle_orders(segments[1:], lots, data)] == [False, False, True]
+    (dispatch,) = oracle_checkpoints(segments[1:], lots, data, dispatch=True).values()
+    assert all(c.factory_day is None for c in dispatch)
 
 
 # ── T1: all views agree with the oracle, order by order ──────────────────
@@ -244,16 +251,14 @@ def test_every_view_agrees_with_the_oracle(name):
     # Risks: a lot is late exactly when one of its orders is.
     assert [r.status == "late" for r in views["risks"]] == [bool(late)]
 
-    # Subcontracting: dispatch detail, misses and no-loss lateness per portion.
+    # Subcontract dispatch: the planner's aim (score, no-loss comparator),
+    # never an approval reason or a list (14/10/2026).
     calendar = WorkCalendar(data)
-    portions = [c for c in oracle_checkpoints(segments, lots, data)[OP_ID]
+    portions = [c for c in oracle_checkpoints(segments, lots, data, dispatch=True)[OP_ID]
                 if c.subcontracted and c.allocations]
-    late_dispatch = sorted(
-        (c.due_day, c.factory_day, calendar.between(calendar.subtract(c.due_day, 5), c.factory_day))
-        for c in portions if c.factory_day > calendar.subtract(c.due_day, 5))
-    assert sorted(
-        (row["customer_delivery_day"], row["completion_day"], row["late_workdays"])
-        for row in gate["subcontract_dispatch_detail"]) == late_dispatch
+    late_dispatch = [c for c in portions if c.factory_day > calendar.subtract(c.due_day, 5)]
+    assert "subcontract_dispatch_detail" not in gate
+    assert "subcontract_dispatch_risk" not in gate["approval_reasons"]
     assert score["subcontract_dispatch_misses"] == len(late_dispatch)
     assert score["subcontract_dispatch_total"] == len(portions)
     assert sorted(views["subcontract"].values()) == sorted(
@@ -282,7 +287,6 @@ def test_on_time_plan_is_on_time_everywhere(name):
         assert score[key] == 0, key
     assert gate["metrics"]["orders_late"] == 0
     assert gate["late_order_detail"] == []
-    assert gate["subcontract_dispatch_detail"] == []
     assert "delivery_risk" not in gate["approval_reasons"]
     assert "subcontract_dispatch_risk" not in gate["approval_reasons"]
     assert views["late"].analyses == []
@@ -301,8 +305,9 @@ def _cross_lot(subcontracted: bool):
     The day-12 lot finishes after its own delivery, but the day-14 lot's
     pieces serve the day-12 order in time and the day-12 lot's pieces still
     reach the day-14 order: no order is late. In-house: made on days 13 and
-    7. Subcontracted (5 working days out and back): made on days 6 and 3, so
-    the day-12 lot alone would come back on day 13.
+    7. Subcontracted: made on days 6 and 3, so the day-12 lot alone would
+    miss its dispatch (5 working days before the delivery) while the day-14
+    lot's pieces leave in time for it.
     """
 
     data = _data(subcontracted=subcontracted, eco_lot=400,
@@ -324,10 +329,12 @@ def test_cross_lot_on_time_orders_are_no_delivery_risk(subcontracted):
     views = _views(segments, lots, data)
     score, gate = views["score"], views["gate"]
 
-    # The lot metric ("Lotes no prazo") still sees the day-12 lot finishing
-    # after its own delivery; it informs, it does not decide approval.
-    assert score["tardy_count"] == views["late"].tardy_count == 1
-    assert [a.lot_id for a in views["late"].analyses] == [lots[0].id]
+    # The lot metric ("Lotes no prazo") still sees the in-house day-12 lot
+    # finishing after its own delivery; it informs, it does not decide
+    # approval. The subcontracted lots are made before their deliveries.
+    tardy = 0 if subcontracted else 1
+    assert score["tardy_count"] == views["late"].tardy_count == tardy
+    assert [a.lot_id for a in views["late"].analyses] == [lots[0].id] * tardy
 
     # Every order view agrees with the oracle: nothing is late.
     assert gate["metrics"]["orders_late"] == 0
@@ -353,7 +360,6 @@ def test_cross_lot_on_time_orders_are_no_delivery_risk(subcontracted):
 
     # Subcontract dispatch is judged per delivery too: each one leaves in time.
     assert score["subcontract_dispatch_misses"] == 0
-    assert gate["subcontract_dispatch_detail"] == []
     assert "subcontract_dispatch_risk" not in gate["approval_reasons"]
     assert set(views["subcontract"].values()) <= {0.0}
     assert len(views["subcontract"]) == (2 if subcontracted else 0)
@@ -393,9 +399,9 @@ def test_readiness_requires_the_factory_calendar():
     assert all(record.customer_ready_day is None for record in factory)
     with_calendar = delivery_readiness(lots, segments, data)
     assert [r.factory_day for r in factory] == [r.factory_day for r in with_calendar]
-    # 21/10 (day 12) portion made on Monday 12/10 (day 3): back on 19/10 (day
-    # 10), five working days later across the weekend, not on day 8.
-    assert with_calendar[0].customer_ready_day == 10
+    # 21/10 (day 12) portion made on Monday 12/10 (day 3): ready that day,
+    # the stock shown on Entregas (14/10/2026).
+    assert with_calendar[0].customer_ready_day == 3
 
 
 # Lot-end readiness ("the order is ready when the economic lot ends", plus the
@@ -472,7 +478,7 @@ def test_minute_of_day_counterexample_serves_the_first_delivery_first():
     assert by_day == {3: [(12, 362)], 7: [(19, 461), (19, 1714)], 13: [(26, 73)]}
     ready = {x["delivery_day"]: x["customer_ready_day"]
              for trace in traces for x in trace["delivery_allocations"]}
-    assert ready == {12: 10, 19: 14, 26: 20}
+    assert ready == {12: 3, 19: 7, 26: 13}
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -519,7 +525,7 @@ def test_each_order_shows_its_own_portion_dispatch():
                     key=lambda o: o.delivery_day)
     assert [(o.delivery_day, o.factory_ready_day, o.customer_ready_day,
              o.subcontract_dispatch_day) for o in orders] == [
-        (due, made, calendar.add(made, 5), calendar.subtract(due, 5))
+        (due, made, made, calendar.subtract(due, 5))
         for due, made in ((12, 3), (19, 7), (26, 13))
     ]
     assert all(o.is_subcontracted and o.status == "ready" for o in orders)
@@ -627,7 +633,7 @@ def test_rev121_views_agree(rev121):
     assert score["otd_d_failures"] == oracle_otd_d_failures(segments, lots, data)
     ruptures = oracle_first_rupture(segments, lots, data)
     assert {op_id: p.stockout_day for op_id, p in stock.items()} == ruptures
-    assert len(gate["subcontract_dispatch_detail"]) == score["subcontract_dispatch_misses"]
+    assert "subcontract_dispatch_risk" not in gate["approval_reasons"]
     if not oracle_late:
         assert not any(r.status == "late" for r in compute_lot_risks(segments, lots, data, config))
         assert "delivery_risk" not in gate["approval_reasons"]

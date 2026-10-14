@@ -9,9 +9,10 @@ Production comes from real Segments. Demand from EngineData op.d.
 Every reference, subcontracted or not, counts its pieces on the day they are
 produced in the factory (14/10/2026: the screen does not show trips to and
 from the subcontractor). The rupture (``stockout_day``) follows that same
-stock: the first day it goes negative (Incompol, 14/10/2026). The subcontract
-rule (production finished five working days before the delivery) is enforced
-by the planner and reported with the late orders, not as a rupture.
+stock: the first day it goes negative (Incompol, 14/10/2026). A subcontracted
+delivery is late exactly when this stock is short on its day (Luís,
+14/10/2026); finishing five working days before it is the planner's aim,
+never reported as a delay.
 """
 
 from __future__ import annotations
@@ -72,11 +73,9 @@ def build_production_by_op(
 ) -> dict[str, dict[int, int]]:
     """Production by (op_id, day_idx), from the shared readiness evaluator.
 
-    Without ``engine_data`` every piece counts on the day it is produced
-    (factory view). With it, the customer view: a subcontracted delivery
-    (served first-in-first-out by all lots of its operation) counts when it
-    returns, its own completion plus the lead time in working days, and
-    committed supplies count on their available day.
+    Every piece counts on the day it is produced, subcontracted ones too
+    (14/10/2026). With ``engine_data``, committed supplies count on their
+    available day.
     """
     if engine_data is None:
         prod: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
@@ -84,24 +83,14 @@ def build_production_by_op(
             for item in record.slices:
                 prod[record.op_id][item.day_idx] += item.qty
         return prod
-    return _customer_production(delivery_portions(lots, segments, engine_data), engine_data)
+    return _production(delivery_portions(lots, segments, engine_data), engine_data)
 
 
-def _customer_production(
+def _production(
     portions: list[DeliveryPortion],
     engine_data: EngineData,
 ) -> dict[str, dict[int, int]]:
     prod = production_by_op(portions)
-    for supply in engine_data.committed_supplies:
-        prod[supply.op_id][supply.available_day] += supply.qty
-    return prod
-
-
-def _factory_production(
-    portions: list[DeliveryPortion],
-    engine_data: EngineData,
-) -> dict[str, dict[int, int]]:
-    prod = production_by_op(portions, customer=False)
     for supply in engine_data.committed_supplies:
         prod[supply.op_id][supply.available_day] += supply.qty
     return prod
@@ -117,7 +106,7 @@ def compute_stock_projections(
     portions = delivery_portions(lots, segments, engine_data)
     # Every piece on the day it is produced (subcontracted ones too); the
     # rupture is read from this same stock.
-    prod = _factory_production(portions, engine_data)
+    prod = _production(portions, engine_data)
 
     # Build machine-by-(op_id, day) for the machine field
     op_machine: dict[str, dict[int, str]] = defaultdict(dict)

@@ -71,7 +71,9 @@ def test_uncommitted_surplus_has_no_delivery_warning():
     assert [risk.lot_id for risk in risks] == ["L1"]
 
 
-def test_subcontract_lead_is_included_in_customer_readiness():
+def test_subcontracted_delivery_is_judged_on_the_stock():
+    """Luís, 14/10/2026: the subcontract lead is not added; a subcontracted
+    delivery is late only when its pieces are not made by its day."""
     data = _engine()
     data.client_demands = {"SKU1": [demand("SKU1", 0, 100)]}
     lot = _lot(edd=0)
@@ -79,8 +81,10 @@ def test_subcontract_lead_is_included_in_customer_readiness():
     lot.is_subcontracted = True
     lot.subcontract_lead_time_days = 1
     risk = compute_lot_risks([_seg(day=0, qty=500)], [lot], data)[0]
-    assert risk.status == "late"
-    assert risk.completion_day == 1
+    assert risk.status != "late"
+    assert risk.completion_day == 0
+    late = compute_lot_risks([_seg(day=1, qty=500)], [lot], data)[0]
+    assert late.status == "late"
 
 
 def test_short_slack_uses_required_quantity_not_tail():

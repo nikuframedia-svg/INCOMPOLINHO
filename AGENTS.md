@@ -224,10 +224,10 @@ mantém esta libertação e só muda o tamanho do lote, acima).
 - Gémeas: o ciclo usa `R_ciclo`, o `R` da primeira entrega servida por
   qualquer dos dois lados (em todos os dados reais igual ao menor `R` do
   lote); o tempo continua a ser o de uma execução.
-- A prontidão para o cliente (OTD, OTD-D, atrasos, envio para subcontratação)
-  continua a medir-se por entrega (`delivery_readiness`), e a antecipação por
-  entrega (§1.3). Na subcontratação cada entrega sai e volta com o lote
-  inteiro (decisão abaixo, implementada a 14/10/2026).
+- A prontidão para o cliente (OTD, OTD-D, atrasos) continua a medir-se por
+  entrega (`delivery_readiness`), e a antecipação por entrega (§1.3). Na
+  subcontratação cada entrega sai com o lote inteiro (decisão abaixo), mas o
+  atraso mede-se pelo stock (decisão de 14/10/2026, abaixo).
 - Motivo: a janela por entrega partia cada lote económico em várias produções
   pequenas (setups de cerca de 180 para cerca de 470 por plano, de 3 para 9 por
   dia útil). Esta é a regra que o sistema usava até 07/10/2026.
@@ -243,48 +243,53 @@ mantém esta libertação e só muda o tamanho do lote, acima).
   - Gémeas: `R_ciclo`.
   - **Subcontratação (decidido a 13/10, implementado a 14/10/2026):** o lote
     económico inteiro vai ao subcontratado de uma só vez, quando o lote acaba,
-    e todas as peças voltam juntas no fim do lote + prazo do subcontratado
-    (dias úteis). Todas as entregas de um lote subcontratado ficam prontas em
-    `fim do lote + lead`, e o lote tem de acabar até ao último envio `H` da
-    sua primeira entrega (o `H` do lote, `latest_subcontract_dispatch_day`,
-    já é o da primeira entrega). Está no avaliador único
+    e o motor aponta para o lote acabar até ao último envio `H` da sua
+    primeira entrega (o `H` do lote, `latest_subcontract_dispatch_day`, já é
+    o da primeira entrega). Está no avaliador único
     (`material_quantities.whole_lot_subcontract`, `_whole_lot_dispatch`):
     num lote da versão 3 cada output subcontratado tem `factory_day` = dia
     da última peça do lote (o envio; `missing_day` enquanto o lote não está
-    todo feito, excedente incluído) e `customer_ready_day` = esse dia +
-    `lead` dias úteis; nas `delivery_portions` cada peça desse lote só fica
-    disponível nesse dia (`whole_lot_dispatch`). O lado feito em casa de um
+    todo feito, excedente incluído); nas `delivery_portions` cada peça desse
+    lote sai nesse dia (`whole_lot_dispatch`, `available_day`). Desde
+    14/10/2026 o envio é só o alvo do motor; a entrega fica pronta quando as
+    suas peças são feitas (abaixo). O lado feito em casa de um
     ciclo gémeo continua pronto com as suas peças; um lote passado à versão
     3 a partir das versões 1-2 (`material_upgraded_from`) pode ainda ter as
     produções separadas do contrato antigo e mantém o envio por entrega até
     ao «Recalcular plano»; se uma âncora manual o mantém (com os lotes da
     mesma ferramenta montada que o alimentam,
     `frozen._protected_lots(mount_suppliers=True)`), mantém-no em cada
-    «Recalcular» até a âncora ser removida. Leem-no sem regra própria: o gate
-    (`subcontract_dispatch_detail`, com `whole_lot`; o cartão mostra «lote
-    completo»), o score (`subcontract_dispatch_misses`), a comparação por
-    encomenda, o aviso de capacidade livre (as peças só contam no fim do
-    lote: conta o resto do lote) e os `subcontract_trips` de
-    `order_tracking.compute_segment_deliveries` (cada segmento com a viagem
-    do seu lote, `PortionSlice.lot_ready_day`; hoje sem uso no ecrã).
-    Ecrã simples (14/10/2026, decisão do Luís): a regra da subcontratação é
-    só «produção acabada 5 dias úteis antes da entrega»; o sistema não mostra
-    nem avisa quando as peças saem ou voltam. O ecrã de Entregas/Stock trata
-    a referência como qualquer outra (+N no dia em que é produzida na
-    fábrica, −N no dia da entrega; `stock_projection` usa a vista da
-    fábrica), marca-a com um «S» (tooltip com os dias úteis do servidor,
-    `subcontract_due_workdays`). A rutura (`stockout_day`, «esgota dia», «N
-    em risco de ruptura», consola, auditoria de cobertura, copilot) segue o
-    stock mostrado: é o primeiro dia em que esse stock fica negativo, como em
-    qualquer referência (Incompol, 14/10/2026: a CF589MMA1A02.20 aparecia a
-    vermelho com stock positivo). Produção acabada depois do prazo de 5 dias
-    úteis é reportada como encomenda atrasada / envio para subcontratação em
-    atraso, não como rutura. O tooltip do Gantt diz «Subcontratado —
-    acabar até DD/MM» (o `production_due_day` do lado subcontratado).
+    «Recalcular» até a âncora ser removida. Leem-no sem regra própria:
+    o score (`subcontract_dispatch_misses`), o comparador sem perdas e o
+    gatilho do replaneamento por capacidade libertada (conta o resto do
+    lote).
+    **Atraso pelo stock (decidido pelo Luís a 14/10/2026, sem opção para
+    ligar/desligar):** uma entrega subcontratada só está atrasada se faltarem
+    peças no stock mostrado em Entregas (cada peça conta no dia em que é
+    feita na fábrica), como qualquer referência, em todo o sistema:
+    encomendas a tempo, OTD/OTD-D, motivos de aprovação, riscos e ações do
+    Hoje, relatório de atrasos e aviso de capacidade livre. No avaliador
+    único `customer_ready_day` = dia em que as peças da entrega são feitas
+    (sem somar o prazo do subcontratado); `factory_day` continua a ser o
+    envio (o lote inteiro sai quando acaba). O motor continua a apontar para
+    acabar 5 dias úteis antes da entrega (`production_due_day`; score
+    `subcontract_dispatch_misses`, comparador sem perdas
+    `improvement.subcontract_lateness`, e o replaneamento por capacidade
+    libertada conta envios falhados como casos de capacidade livre,
+    `late_with_idle_capacity(dispatch_targets=True)`), mas falhar isso não
+    é atraso e não aparece no ecrã: saem o motivo `subcontract_dispatch_risk`
+    (revisões antigas: «critério antigo»), a lista «envios para
+    subcontratação em atraso», os cartões «Envios sub. em atraso», o aviso
+    do movimento manual e as viagens `subcontract_trips`. Caso real: a
+    CF589MMA1A02.20 (829 pç para 16/10 feitas a 13/10) deixa de estar
+    atrasada e de pedir aprovação. O ecrã de Entregas/Stock trata a
+    referência como qualquer outra (+N no dia em que é produzida, −N no dia
+    da entrega), marca-a com um «S» (`subcontract_due_workdays`) e a rutura
+    segue esse stock. O tooltip do Gantt diz «Subcontratado — acabar até
+    DD/MM» (o `production_due_day` do lado subcontratado).
     Revisão 128 recalculada: todos os lotes subcontratados (HAN002, JTE003,
-    gémeas BFP178/BFP186) ficam prontos no fim do lote + 5 dias úteis; num
-    lote HAN002 que cobre duas semanas a primeira entrega deixa de sair
-    antes de o lote acabar.
+    gémeas BFP178/BFP186) saem no fim do lote; num lote HAN002 que cobre
+    duas semanas a primeira entrega deixa de sair antes de o lote acabar.
 
 Implementação (13/10/2026):
 
@@ -632,9 +637,10 @@ versões 1-2:
 expedição, subcontratação, atrasos, riscos, tooltip, propostas, CTP,
 robustez e o ciclo de melhoria usam `material_quantities.delivery_readiness`.
 As peças são fungíveis por referência: a prontidão de cada encomenda é FIFO por
-tempo absoluto sobre todos os lotes da operação. Num lote subcontratado da
-versão 3 as peças só ficam disponíveis no dia em que o lote acaba (sai
-inteiro e volta junto, §2, `whole_lot_subcontract`). O motivo de aprovação
+tempo absoluto sobre todos os lotes da operação. Subcontratadas incluídas:
+cada peça conta no dia em que é feita (14/10/2026, §2); o envio de um lote
+da versão 3 (sai inteiro quando acaba, `whole_lot_subcontract`) é só o alvo
+do motor. O motivo de aprovação
 `delivery_risk` é por encomenda; `tardy_count` ("Lotes no prazo") é só
 indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
 
@@ -766,9 +772,8 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   legendas ou funcionalidades para mascarar um defeito de planeamento.
 - **Atraso com capacidade livre (13/10/2026, só informação):**
   `scheduler/idle_capacity.late_with_idle_capacity` procura entregas atrasadas
-  (`improvement.order_service`) e envios para subcontratação depois de `H`
-  (um lote subcontratado só sai quando acaba: conta o resto do lote)
-  com tempo de turno livre (`calendar.free_shift_intervals`; hoje só depois
+  (`improvement.order_service`; subcontratadas pelo stock, 14/10/2026) com
+  tempo de turno livre (`calendar.free_shift_intervals`; hoje só depois
   da hora atual) numa máquina elegível ativa entre `max(hoje, R)` e o prazo
   de produção. Um caso por lote (gémeas juntas). Na máquina do lote conta o
   que falta; numa alternativa conta o lote inteiro (regra 3); peças que só

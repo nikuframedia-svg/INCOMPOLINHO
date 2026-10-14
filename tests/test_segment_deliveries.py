@@ -71,7 +71,7 @@ def test_net_demand_does_not_deduct_stock_twice():
     assert trace["delivery_allocations"][0]["qty"] == 100
 
 
-def test_subcontracted_parts_keep_customer_availability():
+def test_subcontracted_parts_count_on_the_day_they_are_made():
     data = _engine()
     data.client_demands = {"SKU1": [demand("SKU1", 1, 100)]}
     lot = _lot()
@@ -79,7 +79,8 @@ def test_subcontracted_parts_keep_customer_availability():
     lot.is_subcontracted = True
     lot.subcontract_lead_time_days = 1
     trace = compute_segment_deliveries([_seg(day=0, qty=200)], [lot], data)[0]
-    assert trace["delivery_allocations"][0]["customer_ready_day"] == 1
+    # Stock rule (14/10/2026): no return trip is added.
+    assert trace["delivery_allocations"][0]["customer_ready_day"] == 0
 
 
 def test_unavailable_order_detail_is_not_claimed_as_stock():

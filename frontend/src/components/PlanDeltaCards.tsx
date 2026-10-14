@@ -37,8 +37,6 @@ export function PlanDeltaCards({ delta }: { delta: DeltaReport }) {
       <DeltaCard label="Cumprimento diário" before={delta.otd_d_before} after={delta.otd_d_after} suffix="%" higher />
       <DeltaCard label="Setups" before={delta.setups_before} after={delta.setups_after} />
       <DeltaCard label="Lotes atrasados" before={delta.tardy_before} after={delta.tardy_after} />
-      <DeltaCard label="Envios sub. em atraso" before={delta.subcontract_dispatch_before ?? 0} after={delta.subcontract_dispatch_after ?? 0} />
-      <DeltaCard label="Atraso sub." before={delta.subcontract_dispatch_late_workdays_before ?? 0} after={delta.subcontract_dispatch_late_workdays_after ?? 0} suffix="du" />
       <DeltaCard label="Antecipação" before={delta.earliness_before} after={delta.earliness_after} suffix="d" />
       <DeltaCard label="Material fora janela" before={delta.early_window_before ?? 0} after={delta.early_window_after ?? 0} />
       <DeltaCard label="Ocupação média" before={delta.utilization_before ?? 0} after={delta.utilization_after ?? 0} suffix="%" />

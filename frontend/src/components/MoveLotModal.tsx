@@ -111,7 +111,6 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     preview.delta.otd_after < preview.delta.otd_before - 0.001
     || preview.delta.otd_d_after < preview.delta.otd_d_before - 0.001
     || preview.delta.tardy_after > preview.delta.tardy_before
-    || (preview.delta.subcontract_dispatch_after ?? 0) > (preview.delta.subcontract_dispatch_before ?? 0)
   );
 
   useEffect(() => {
