@@ -399,12 +399,18 @@ def compute_segment_deliveries(segments, lots, data):
         if not portion.is_subcontracted or not portion.produced_qty:
             continue
         for item in portion.slices:
-            if 0 <= item.segment_index < len(segments):
-                trips[item.segment_index].add((
-                    item.available_day if portion.whole_lot_dispatch else portion.factory_day,
-                    portion.customer_ready_day,
-                    portion.whole_lot_dispatch,
-                ))
+            if not 0 <= item.segment_index < len(segments):
+                continue
+            if item.whole_lot and item.lot_ready_day is not None:
+                # Its own lot's trip: out at that lot's end, back with that
+                # lot, even when the delivery also waits for another lot.
+                trip = (item.available_day, item.lot_ready_day, True)
+            else:
+                # Per-delivery dispatch (a lot taken over from material
+                # versions 1-2, a twin cycle): out when the delivery's pieces
+                # are complete, back with it.
+                trip = (portion.factory_day, portion.customer_ready_day, False)
+            trips[item.segment_index].add(trip)
     untraced_skus = {
         op.sku for op in data.ops
         if any(qty > 0 for qty in op.d) and not data.client_demands.get(op.sku)

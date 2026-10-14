@@ -1393,6 +1393,31 @@ def lot_productions(
     return finder.productions({lot.id for lot in lots})
 
 
+def plan_lot_split_violations(
+    segments: list[Segment],
+    lots: list[Lot],
+    data: EngineData | None,
+    config: FactoryConfig | None,
+) -> list[dict[str, Any]]:
+    """``lot_split_violations`` of a complete plan, at ``data``'s history boundary.
+
+    Only the one-production check, without the rest of ``validate_plan``:
+    whether a stored plan is still one production per economic lot when it
+    is judged from another boundary (from D0 for «Recalcular plano»).
+    """
+
+    config = config or FactoryConfig()
+    by_machine: dict[str, list[Segment]] = {}
+    for segment in segments:
+        if segment.end_min > segment.start_min:
+            by_machine.setdefault(segment.machine_id, []).append(segment)
+    ordered = {
+        machine_id: sorted(items, key=lambda item: segment_abs(item, config)[0])
+        for machine_id, items in by_machine.items()
+    }
+    return lot_split_violations(ordered, {lot.id: lot for lot in lots}, data, config)
+
+
 def lot_split_violations(
     ordered_by_machine: dict[str, list[Segment]],
     lots_by_id: dict[str, Lot],

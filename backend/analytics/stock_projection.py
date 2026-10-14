@@ -124,7 +124,8 @@ def _subcontract_movements(
     for portion in portions:
         if portion.is_subcontracted and portion.whole_lot_dispatch:
             for item in portion.slices:
-                whole_lots[item.lot_id].append(item)
+                if item.whole_lot:
+                    whole_lots[item.lot_id].append(item)
 
     for portion in portions:
         if not portion.is_subcontracted or not portion.produced_qty:

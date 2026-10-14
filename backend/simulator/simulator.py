@@ -65,6 +65,10 @@ class SimulateResponse:
     mutated_data: EngineData
     mutated_config: object | None
     improvement_report: dict | None = None
+    # The calculation's history boundary (AGENTS §2 rule 4,
+    # ``scheduler.history``): applying the scenario or the CTP promise saves
+    # the plan with it, so the commit judges history as history.
+    history_boundary: list[int] | None = None
 
 
 def simulate(
@@ -164,6 +168,13 @@ def _simulate(
             )
         if result.preserved_lot_proofs is not None:
             mutated.preserved_lot_proofs = dict(result.preserved_lot_proofs)
+        if result.history_boundary is not None:
+            from backend.scheduler.canonical import stored_history_boundary
+
+            # Every later validation of this plan (apply, commit, a saved
+            # scenario) reads the boundary of the calculation that made it,
+            # never the one of the plan it started from.
+            mutated.history_boundary = stored_history_boundary(result.history_boundary)
         if not result.lots:
             result.score = compute_score(result.segments, result.lots, mutated, sim_config)
         gate_report = (
@@ -234,6 +245,7 @@ def _simulate(
         mutated_data=mutated,
         mutated_config=sim_config,
         improvement_report=copy.deepcopy(result.improvement_report),
+        history_boundary=copy.deepcopy(result.history_boundary),
     )
 
 

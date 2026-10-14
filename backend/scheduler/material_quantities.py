@@ -360,6 +360,12 @@ class PortionSlice:
     # subcontracted lot that goes out whole, its dispatch day).
     available_day: int
     qty: int
+    # Its lot goes out whole (``whole_lot_subcontract``): the pieces leave on
+    # ``available_day`` and are back on ``lot_ready_day`` (the lot's own trip:
+    # a delivery served by two lots waits for the later one). A portion may
+    # mix them with the slices of a per-delivery lot (``None``).
+    whole_lot: bool = False
+    lot_ready_day: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -736,6 +742,8 @@ def delivery_portions(
                         else item.day_idx
                     ),
                     item.qty,
+                    record.whole_lot_dispatch,
+                    record.customer_ready_day if record.whole_lot_dispatch else None,
                 )
                 for record in op_records
                 for item in record.slices

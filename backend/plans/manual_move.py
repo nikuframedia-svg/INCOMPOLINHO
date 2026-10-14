@@ -1408,9 +1408,14 @@ def _move_lot(
 
     # A plan of material version 1-2 is moved under version 3 (AGENTS §2);
     # each lot taken over keeps the productions it has here, never more.
-    # Counted without a history boundary: a move result carries none, so
-    # its validation judges the whole plan.
-    lots = with_current_material(SimpleNamespace(segments=segments, lots=lots), data, config).lots
+    # Counted at the plan's stored history boundary: a move result carries
+    # none of its own, so every validation of it (the final view below, the
+    # apply and the commit) reads that one, and a history break it does not
+    # judge must not be allowed as a production either.
+    lots = with_current_material(
+        SimpleNamespace(segments=segments, lots=lots), data, config,
+        getattr(data, "history_boundary", None),
+    ).lots
 
     candidate_segments = copy.deepcopy(segments)
     candidate_lots = copy.deepcopy(lots)

@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from backend import calendar as factory_calendar
+from backend.api.data import stored_plan_needs_rebuild
 from backend.config.types import FactoryConfig, MachineConfig
 from backend.plans import frozen
 from backend.scheduler.canonical import result_validation_data
@@ -436,9 +437,7 @@ def test_recalculate_from_start_ignores_the_clock():
     """«Recalcular plano» plans from D0: no started production, nothing elapsed."""
     config = _config()
     data = _data()
-    # The lot started at 07:00 of day 1, in one production (MORNING pauses it
-    # over free shift time: judged from D0 that is a split, 13/10/2026).
-    baseline, _lots = _plan(data, config, {"OP1": [(1, 420, 200, 30)]})
+    baseline, _lots = _plan(data, config, MORNING)
     now = _at(1, 600)
 
     _data_copy, _baseline, freeze_day, plan_now = frozen._recalculation_context(
@@ -447,13 +446,70 @@ def test_recalculate_from_start_ignores_the_clock():
     assert freeze_day == 0 and plan_now == _at(0, 0)
     assert frozen.elapsed_on_planning_day(0, data, config, plan_now) == 0
 
+    # Judged from D0 nothing is history: MORNING pauses the lot over free
+    # shift time, two productions, so «Recalcular plano» rebuilds it as one
+    # instead of compacting (review of 13/10/2026).
+    assert stored_plan_needs_rebuild(data, baseline.segments, baseline.lots, config)
+    rebuilt = [
+        frozen.optimize_preserving_started_lots(
+            data, config, copy.deepcopy(baseline), mode="quick",
+            recalculate_from_start=True, now=when,
+        )
+        for when in (now, _at(1, 390))
+    ]
+    assert _rows(rebuilt[0].segments) == _rows(rebuilt[1].segments)
+    for result in rebuilt:
+        assert result.history_boundary == [0, 0]
+        assert_plan_valid(
+            result.segments, result_validation_data(data, result), config, lots=result.lots,
+        )
+
+    # A plan of one production per lot is compacted, the clock ignored too.
+    single, _lots = _plan(data, config, {"OP1": [(1, 420, 200, 30)]})
+    assert not stored_plan_needs_rebuild(data, single.segments, single.lots, config)
     late = frozen.compact_preserving_started_lots(
-        data, config, copy.deepcopy(baseline), recalculate_from_start=True, now=now,
+        data, config, copy.deepcopy(single), recalculate_from_start=True, now=now,
     )
     early = frozen.compact_preserving_started_lots(
-        data, config, copy.deepcopy(baseline), recalculate_from_start=True, now=_at(1, 390),
+        data, config, copy.deepcopy(single), recalculate_from_start=True, now=_at(1, 390),
     )
     assert _rows(late.segments) == _rows(early.segments)
+
+
+def test_recalculate_after_an_outage_added_and_removed_rebuilds_the_cut_lot():
+    """Review probe (13/10/2026): OP1 runs since 09:00; an outage of
+    09:30–12:00 is entered at 10:00 and removed at 11:00. Both replans are
+    valid at their own boundary, but from D0 the free time 10:00–11:00 is a
+    pause: compaction would refuse the plan as a lot «partido», so
+    «Recalcular plano» rebuilds it as one production."""
+    from backend.scheduler.validation import PlanValidationError
+
+    config = _config()
+    data = _data()
+    baseline, _lots = _plan(data, config, {"OP1": [(1, 540, 200, 30)]})
+    outage = _replan(_blocked(data, 570, 720), config, baseline, _at(1, 600))
+    assert _shape(outage.segments)[0] == (1, 540, 600, 50, 30)
+    removed = _replan(data, config, outage, _at(1, 660))
+    assert removed.history_boundary == [1, 660]
+    assert [(day, start) for day, start, *_ in _shape(removed.segments)] == [(1, 540), (1, 660)]
+    stored = copy.deepcopy(data)
+    stored.history_boundary = removed.history_boundary
+
+    assert stored_plan_needs_rebuild(stored, removed.segments, removed.lots, config)
+    with pytest.raises(PlanValidationError) as refused:
+        frozen.compact_preserving_started_lots(
+            stored, config, copy.deepcopy(removed), recalculate_from_start=True,
+            now=_at(1, 700),
+        )
+    assert [v["kind"] for v in refused.value.violations] == ["lot_split"]
+    rebuilt = frozen.optimize_preserving_started_lots(
+        stored, config, copy.deepcopy(removed), mode="quick", recalculate_from_start=True,
+        now=_at(1, 700),
+    )
+    assert_plan_valid(
+        rebuilt.segments, result_validation_data(stored, rebuilt), config, lots=rebuilt.lots,
+    )
+    assert len(rebuilt.segments) == 1
 
 
 # ── Commit guard ────────────────────────────────────────────────────────

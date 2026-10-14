@@ -207,6 +207,55 @@ def test_gantt_segments_show_one_trip_for_the_whole_lot():
     assert trips == [[{"sent_day": 2, "return_day": 9, "whole_lot": True}]] * 2
 
 
+def _delivery_of_two_lots(*, first_upgraded=False):
+    """Lot A (120: 100 for day 9, 20 for day 16) is made on day 4, lot B (240:
+    180 for day 16, 60 surplus) on day 1. FIFO, B's pieces serve day 9 and
+    part of day 16, whose other 60 pieces are A's: one delivery, two lots."""
+    data = _data({9: 100, 16: 200}, eco_lot=120)
+    first, second = create_lots(data, _config())
+    assert (first.qty, second.qty) == (120, 240)
+    if first_upgraded:
+        for output in second.output_milestones:
+            output[UPGRADED_MATERIAL_KEY] = 2
+    segments = _segments(second, [(1, 240)]) + _segments(first, [(4, 120)])
+    (mixed,) = [
+        p for p in delivery_portions([first, second], segments, data)
+        if p.is_demand and len(p.lot_ids) == 2
+    ]
+    assert mixed.customer_ready_day == 11  # day 4 + 5 working days
+    return data, [first, second], segments
+
+
+def test_gantt_trip_of_a_lot_is_its_own_when_a_delivery_waits_for_two_lots():
+    """Review of 13/10/2026: B leaves whole on day 1 and is back on day 8,
+    although the delivery it shares with A is ready only on day 11."""
+    data, lots, segments = _delivery_of_two_lots()
+    trips = [row["subcontract_trips"] for row in compute_segment_deliveries(segments, lots, data)]
+    assert trips == [
+        [{"sent_day": 1, "return_day": 8, "whole_lot": True}],
+        [{"sent_day": 4, "return_day": 11, "whole_lot": True}],
+    ]
+
+
+def test_gantt_trip_of_a_per_delivery_lot_mixed_with_a_whole_lot():
+    """B is taken over from the per-delivery contract: its pieces of the
+    shared delivery leave when that delivery is complete (day 4, with A's),
+    not on the day they were stamped; A still leaves whole."""
+    data, lots, segments = _delivery_of_two_lots(first_upgraded=True)
+    trips = [row["subcontract_trips"] for row in compute_segment_deliveries(segments, lots, data)]
+    assert trips == [
+        [
+            {"sent_day": 1, "return_day": 8, "whole_lot": False},
+            {"sent_day": 4, "return_day": 11, "whole_lot": False},
+        ],
+        [{"sent_day": 4, "return_day": 11, "whole_lot": True}],
+    ]
+    # The stock screen sends B's pieces on the days they were stamped.
+    (projection,) = compute_stock_projections(segments, lots, data)
+    assert [(day.day_idx, day.subcontract_sent) for day in projection.days
+            if day.subcontract_sent] == [(1, 240), (4, 120)]
+
+
 def test_idle_capacity_counts_the_rest_of_a_lot_that_goes_out_whole():
     """The lot ends on day 4, after H = day 2, with the machine idle on days
     0-2: a possible improvement. Its first delivery's pieces exist on day 0,

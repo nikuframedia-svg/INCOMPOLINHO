@@ -316,6 +316,8 @@ def _schedule_result_from_simulation(sim):
         improvement_report=copy.deepcopy(getattr(sim, "improvement_report", None)),
         solver_status=(getattr(sim, "gate_report", None) or {}).get("solver_status"),
         feasibility=(getattr(sim, "gate_report", None) or {}).get("feasibility"),
+        # The plan is saved with the boundary of the calculation that made it.
+        history_boundary=copy.deepcopy(getattr(sim, "history_boundary", None)),
     )
 
 
@@ -487,21 +489,38 @@ def _recompute(config):
 
 
 def _recalculation_needs_rebuild(config) -> bool:
-    """Whether "Recalcular" from D0 must rebuild lots instead of compacting.
+    """Whether "Recalcular" from D0 must rebuild lots instead of compacting."""
+    from backend.plans.context import recalculation_from_start
+
+    if state.engine_data is None or not recalculation_from_start():
+        return False
+    return stored_plan_needs_rebuild(state.engine_data, state.segments, state.lots, config)
+
+
+def stored_plan_needs_rebuild(engine_data, segments, lots, config) -> bool:
+    """Whether the stored plan cannot be compacted from D0 («Recalcular plano»).
 
     Recalculation from the start drops the date-derived protection, so lots
     planned under an older configuration (e.g. before an OEE change) are
     checked against the current one. Compaction only moves segments and
     cannot fix their durations, so it would fail; the full optimizer rebuilds
     them (reproduced on the frozen revision 87 after an OEE change).
-    """
-    from backend.plans.context import recalculation_from_start
-    from backend.scheduler.canonical import source_contract_violations
 
-    if state.engine_data is None or not recalculation_from_start():
-        return False
-    detached = copy.copy(state.engine_data)
+    Judged from D0 nothing is history either (no history boundary): a lot
+    that a replan during the day cut at "now" (AGENTS §2 rule 4: the rest
+    after an urgent order, after an outage removed meanwhile, after an
+    operator absence) is two productions. Compaction only moves segments and
+    does not join them, so its plan would be refused as a lot «partido»;
+    the rebuild makes the lot one production again (review of
+    13/10/2026: outage at 09:30 declared at 10:00, removed at 11:00, then
+    «Recalcular plano»).
+    """
+    from backend.scheduler.canonical import source_contract_violations
+    from backend.scheduler.validation import plan_lot_split_violations
+
+    detached = copy.copy(engine_data)
     detached.preserved_lot_proofs = {}
+    detached.history_boundary = None
     from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION, UPGRADED_MATERIAL_KEY
     from backend.scheduler.material_quantities import lot_material_version
 
@@ -512,11 +531,13 @@ def _recalculation_needs_rebuild(config) -> bool:
     if any(
         0 < lot_material_version(lot) < QUANTITY_MATERIAL_VERSION
         or any(output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or [])
-        for lot in state.lots
+        for lot in lots
     ):
         return True
+    if plan_lot_split_violations(segments, lots, detached, config):
+        return True
     return bool(source_contract_violations(
-        state.segments, state.lots, detached, config, require_current_material=True,
+        segments, lots, detached, config, require_current_material=True,
     ))
 
 
