@@ -160,8 +160,15 @@ Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamen
 Históricos (política antiga JIT, não comparáveis): ISOP 27/02 e 17/03 com
 OTD=100%, 125/136 setups, <500ms no modo quick.
 
-Atuais (revisão 90, ISOP 17/09, recálculo a 02/10, 1 núcleo): 0 violações
-físicas; OTD 96,5%, OTD-D 99,1%, 7 atrasados (capacidade PRM042); ciclo de
-melhoria ~11,5 s p50, 128 MiB. Com corte por tempo o resultado **não é
-garantidamente determinístico** (AGENTS §6). Ver
-`docs/plano-solver-2026-10-02.md` §10–12.
+Atuais (lote económico = uma produção, decisão de 13/10; ensaio de 14/10
+numa cópia da revisão 128, ISOP 13/10): 0 violações físicas, 0 lotes
+partidos, 0 produção antes do `R` do lote; 178 setups (antes 445), 1 entrega
+atrasada (HAN002 de 16/10, lote já para lá do envio, igual a antes); cada
+recálculo < 60 s (~44 s). Revisão 90 (ISOP 17/09): 5 atrasados (antes 11),
+188 setups (antes 538). Custo da regra: mais stock e produção mais cedo
+(AGENTS §1.1, §2). Com corte por tempo o resultado **não é garantidamente
+determinístico** (AGENTS §6).
+
+Anteriores (revisão 90, janela por entrega, recálculo a 02/10, 1 núcleo):
+OTD 96,5%, OTD-D 99,1%, 7 atrasados (capacidade PRM042); ciclo de melhoria
+~11,5 s p50, 128 MiB. Ver `docs/plano-solver-2026-10-02.md` §10–12.

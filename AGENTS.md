@@ -203,7 +203,10 @@ versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
     inteiro no dia em que acaba e volta junto, com os dias e máquinas em
     que foi estampado, `stock_projection._subcontract_movements`) e o
     tooltip do Gantt («Subcontratado — o lote inteiro sai a … e volta a …»,
-    `subcontract_trips` de `order_tracking.compute_segment_deliveries`).
+    `subcontract_trips` de `order_tracking.compute_segment_deliveries`; cada
+    segmento mostra a viagem do seu lote, `PortionSlice.lot_ready_day`, mesmo
+    quando a entrega também espera por outro lote; as peças de um lote das
+    versões 1-2 na mesma entrega saem quando a entrega está completa).
     Revisão 128 recalculada: todos os lotes subcontratados (HAN002, JTE003,
     gémeas BFP178/BFP186) ficam prontos no fim do lote + 5 dias úteis; num
     lote HAN002 que cobre duas semanas a primeira entrega deixa de sair
@@ -251,7 +254,19 @@ Implementação (13/10/2026):
   hoje (com o dia do relógio esse plano era recusado como `lot_split`). No
   problema residual a produção congelada é ela própria um bloqueio de
   máquina e ferramenta. Sem fronteira (carregar um ISOP, «Recalcular plano»
-  desde D0, movimentos manuais) tudo é julgado. O verificador do
+  desde D0) tudo é julgado. Um cenário e uma promessa (CTP) levam a
+  fronteira da sua simulação (`SimulateResponse.history_boundary`, também
+  nos dados do cenário guardado), nunca a do plano de que partem: sem ela,
+  aplicar CTP ou cenário na revisão 128 (13/10) era recusado, porque um lote
+  HAN002 de um contrato anterior «passava de 1 para 2 produções» com a
+  parte de D0 julgada como nova. Um movimento manual não tem fronteira
+  própria: é julgado, e as produções permitidas dos lotes passados à versão
+  3 contadas, com a fronteira guardada no plano. Desde D0 a pausa ou o corte
+  da regra 4 de um plano guardado (o resto depois de uma encomenda urgente,
+  de uma avaria retirada entretanto, de uma ausência de operadores) é uma
+  segunda produção: o «Recalcular plano» reconstrói então os lotes em vez de
+  compactar (`api/data.stored_plan_needs_rebuild`; revisão de 13/10:
+  compactar recusava o plano como `lot_split`). O verificador do
   contrato confirma também que nenhum lote da versão 3 produz ou prepara
   antes do `R` do lote (`canonical.source_contract_violations`).
 - Planos antigos: um plano das versões 0, 1 ou 2 continua válido (as suas
@@ -275,7 +290,7 @@ Implementação (13/10/2026):
   `productions` e `allowed_productions`). Margem conhecida: uma quebra do
   plano guardado desculpada por uma avaria conta como produção permitida.
   O «Recalcular plano» desde o início redimensiona-os sempre
-  (`api/data._recalculation_needs_rebuild`).
+  (`api/data.stored_plan_needs_rebuild`).
 - Resto de um lote começado: como o lote inteiro já tem material, o resto
   costuma retomar logo a seguir à parte começada, com a ferramenta ainda
   montada. A validação do problema residual vê essa parte começada como
@@ -609,7 +624,19 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   documenta a sequência. Se lotes protegidos ficarem com durações de uma
   configuração anterior (ex.: OEE alterado), o recálculo reconstrói os lotes
   com o optimizador completo em vez de compactar
-  (`api/data._recalculation_needs_rebuild`).
+  (`api/data.stored_plan_needs_rebuild`). O mesmo com lotes das versões 1-2
+  (§2) e com um lote que, julgado desde D0, tem mais de uma produção (corte
+  da regra 4 durante o dia): a compactação não junta as partes.
+  **Consequência operacional (ensaio de 13/10/2026, aceite por este §5):**
+  a reconstrução também refaz o que já se fez hoje e, com um ISOP antigo, os
+  dias anteriores; a compactação mantinha-os na prática. No primeiro
+  «Recalcular» de um plano das versões 1-2 (revisão 128) foram substituídas
+  5 linhas da manhã que já tinham feito peças (às 10:00), 14 às 15:39, e a
+  14/10 às 07:00 com o ISOP de 13/10 29 linhas de 13/10, embora o ecrã diga
+  «os dias anteriores são considerados já produzidos». Recomendação: fazer
+  a primeira conversão com um ISOP novo, ou com «Recalcular» antes das
+  07:00; depois de um corte da regra 4, preferir um replaneamento normal ao
+  «Recalcular».
 - **Hora atual (13/10/2026):** fora de «Recalcular plano», o passado
   protegido acaba no minuto atual da fábrica, não no início de hoje: o que
   começou hoje antes do cálculo fica como está e nada novo é posto em horas
