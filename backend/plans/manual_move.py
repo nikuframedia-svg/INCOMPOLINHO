@@ -129,8 +129,8 @@ _FROZEN_CHANGED = (
     "a produzir; o histórico deve permanecer intacto."
 )
 _NO_ROOM = (
-    "com o lote nessa posição, as outras produções já não cabem inteiras no "
-    "horizonte do plano."
+    "com o lote nessa posição, o motor não encontrou lugar para as outras "
+    "produções, inteiras, dentro do horizonte do plano."
 )
 _QUANTITIES_CHANGED = "a reorganização alteraria as quantidades ou identidades dos lotes."
 _TARGET_MISSED = (

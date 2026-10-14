@@ -236,7 +236,7 @@ def test_every_view_agrees_with_the_oracle(name):
     assert [a.delay_days for a in views["late"].analyses] == (
         [score["max_tardiness"]] if late else [])
 
-    # OTD-D and stock ruptures (same customer availability).
+    # OTD-D (customer availability) and stock ruptures (the stock grid).
     assert score["otd_d_failures"] == oracle_otd_d_failures(segments, lots, data)
     ruptures = {p.op_id: p.stockout_day for p in views["stock"]}
     assert ruptures == oracle_first_rupture(segments, lots, data)

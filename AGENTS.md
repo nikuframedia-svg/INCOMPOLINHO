@@ -866,8 +866,12 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   movimentos fisicamente possíveis passam (antes: 9 de 10 «inconclusiva»),
   sem atrasos novos nem lotes partidos; antes do dia de libertação e em
   feriado continuam recusados. Com a melhoria de novo ativa, cada movimento
-  usa o orçamento (~50 s, como decidido a 05/10) e mexe em 6–25 outros lotes
-  (sem melhoria, a reconstrução mexia em 31–45).
+  usa o orçamento (~50 s, como decidido a 05/10; confirmado pelo Luís a
+  14/10: sempre com melhoria). Quando o lote cabe em tempo livre, a melhoria
+  pode mexer noutros lotes (12–16 no ensaio) sem baixar atrasos nem setups;
+  quando é preciso reorganizar, mexe em 6–17 (sem ela, 24–39). Uma recusa
+  por falta de lugar diz «o motor não encontrou lugar»: é o resultado de uma
+  tentativa do construtor, não uma prova de impossibilidade.
   Recusa imediata, antes de planear, com mensagem simples:
   dia de produção sem material libertado, afinação que começaria antes de
   `earliest_allowed_start` (ex.: produção às 07:00 do dia de libertação com a
