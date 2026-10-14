@@ -165,15 +165,33 @@ describe("StockPage", () => {
       expect(subcontractBadgeTitle(undefined)).toBe("Subcontratada: produção acabada antes da entrega.");
     });
 
-    it("produção depois do prazo: a entrega fica a vermelho mesmo com stock", async () => {
-      endpointMocks.getStockSummary.mockResolvedValue([{ ...summary, stockout_day: 8 }]);
+    it("a ruptura segue o stock mostrado: com stock positivo nada fica a vermelho", async () => {
+      // 14/10/2026: produção depois do prazo dos 5 dias úteis é uma encomenda
+      // atrasada do plano, não uma ruptura enquanto o stock cobre a entrega.
+      endpointMocks.getStockSummary.mockResolvedValue([summary]);
+
+      const view = render(<StockPage />);
+
+      await screen.findByText(`+${(7_680).toLocaleString()}`);
+      expect(screen.queryByText(/esgota dia/)).toBeNull();
+      expect(screen.queryByText(/em risco de ruptura/)).toBeNull();
+      const cells = [...view.container.querySelectorAll<HTMLElement>("[title^='Stock:']")];
+      expect(cells.length).toBeGreaterThan(0);
+      expect(cells.every((cell) => cell.style.background === "transparent")).toBe(true);
+    });
+
+    it("stock negativo numa subcontratada fica a vermelho, como em qualquer referência", async () => {
+      const short = { ...deliveryDay, stock: -100 };
+      endpointMocks.getStockSummary.mockResolvedValue([
+        { ...summary, stockout_day: 8, days: [{ ...producedDay, stock: 7_580, produced: 7_580 }, short] },
+      ]);
 
       const view = render(<StockPage />);
 
       expect(await screen.findByText(/esgota dia 8/)).toBeTruthy();
       const cells = [...view.container.querySelectorAll<HTMLElement>("[title^='Stock:']")];
       const late = cells.find((cell) => cell.title.includes(`Procura: ${(7_680).toLocaleString()}`));
-      const made = cells.find((cell) => cell.title.includes(`Produção: ${(7_680).toLocaleString()}`));
+      const made = cells.find((cell) => cell.title.includes(`Produção: ${(7_580).toLocaleString()}`));
       expect(late?.style.background).not.toBe("transparent");
       expect(made?.style.background).toBe("transparent");
     });

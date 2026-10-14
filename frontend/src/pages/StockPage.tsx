@@ -26,12 +26,10 @@ function fmtDate(iso: string): { short: string; dow: string } {
   return parseStockDate(iso) ?? { short: iso, dow: "" };
 }
 
-function cellBg(day: StockDayCompact, coverageDays: number, stockoutDay: number | null): string {
+function cellBg(day: StockDayCompact, coverageDays: number): string {
   if (day.is_buffer) return `${T.blue}10`; // buffer day → subtle blue
   if (!day.workday) return T.border; // weekend/holiday → grey
-  // ruptura → red; a subcontracted delivery made after its deadline is late
-  // on its delivery day even with pieces in stock.
-  if (day.stock < 0 || day.day === stockoutDay) return `${T.red}30`;
+  if (day.stock < 0) return `${T.red}30`; // ruptura → red
   if (coverageDays < 3 && coverageDays > 0 && day.stock > 0 && day.demand > 0)
     return `${T.orange}20`; // low coverage → yellow-ish
   return "transparent";
@@ -283,7 +281,7 @@ export function StockPage() {
 
                 {/* Day cells */}
                 {(row.days ?? []).map((day) => {
-                  const bg = cellBg(day, row.coverage_days, row.stockout_day);
+                  const bg = cellBg(day, row.coverage_days);
                   const color = cellColor(day);
                   return (
                     <div

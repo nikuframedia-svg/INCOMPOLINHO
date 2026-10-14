@@ -25,7 +25,8 @@ EXPECTED = expected_private_fixtures()
 
 def test_manifests_name_every_known_real_plan():
     # A deleted manifest would silently drop its fixture from this check.
-    known = {"rev82", "rev85", "rev87", "rev90", "rev91_compact", "rev121", "rev124", "rev128"}
+    known = {"rev82", "rev85", "rev87", "rev90", "rev91_compact", "rev121", "rev124", "rev128",
+             "rev142"}
     assert known <= set(EXPECTED)
     for name, path in EXPECTED.items():
         assert path.name == f"{name}.json.gz"

@@ -260,12 +260,33 @@ def oracle_otd_d_failures(segments, lots, data) -> int:
 
 
 def oracle_first_rupture(segments, lots, data) -> dict[str, int | None]:
-    """First day each operation's projected stock goes negative."""
+    """First day each operation's shown stock goes negative (Entregas grid).
 
-    return {
-        op_id: next((c.due_day for c in checkpoints if c.late), None)
-        for op_id, checkpoints in oracle_checkpoints(segments, lots, data).items()
-    }
+    Pieces count on the day they are produced, subcontracted ones too
+    (Incompol, 14/10/2026): cumulative production (committed supplies on
+    their available day, buffer days before day 0) against cumulative
+    positive ISOP demand. Not the customer readiness of ``oracle_checkpoints``.
+    """
+
+    op_of_lot = {lot.id: lot.op_id for lot in lots}
+    made: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for segment in segments:
+        outputs = segment.twin_outputs or [(op_of_lot.get(segment.lot_id), segment.sku, segment.qty)]
+        for op_id, _sku, qty in outputs:
+            made[op_id][segment.day_idx] += int(qty)
+    for supply in data.committed_supplies:
+        made[supply.op_id][supply.available_day] += int(supply.qty)
+    result = {}
+    for op in data.ops:
+        produced = sum(qty for day, qty in made[op.id].items() if day < 0)
+        demanded, result[op.id] = 0, None
+        for day in range(data.n_days):
+            produced += made[op.id].get(day, 0)
+            demanded += max(0, int(op.d[day])) if day < len(op.d) else 0
+            if produced < demanded:
+                result[op.id] = day
+                break
+    return result
 
 
 # ── Material window per delivery (independent of lot sizing's dates) ─────

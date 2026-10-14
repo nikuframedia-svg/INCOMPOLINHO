@@ -380,9 +380,16 @@ def _machine_better(candidate: _MachineOption, best: _MachineOption, primary: st
 
 
 class _CampaignBuilder:
-    def __init__(self, lots: list[Lot], data, config, *, campaigns: bool = True) -> None:
+    def __init__(
+        self, lots: list[Lot], data, config, *, campaigns: bool = True,
+        pinned: dict[str, tuple[str, list[Segment]]] | None = None,
+    ) -> None:
         # ``campaigns=False`` is the previous safe behaviour, kept as the
         # fallback: one run per portion, no continuation, no retention break.
+        # ``pinned``: lot id -> (machine, segments) of a lot already placed by
+        # the planner (manual move). It is part of the plan from the start:
+        # the other lots are placed around it and the plan is validated with
+        # every lot of its operation, never with the lot credited as stock.
         self.campaigns = campaigns
         self.data = data
         self.config = config
@@ -421,6 +428,12 @@ class _CampaignBuilder:
         self.cursor: dict[str, float] = {}
         self.placed: dict[tuple[str, int], _Placement] = {}
         self.next_index = {lot.id: 0 for lot in lots}
+        for lot_id, (machine, segments) in (pinned or {}).items():
+            if lot_id not in self.portions:
+                raise ValueError(f"Lote fixado {lot_id} não pertence ao plano.")
+            self.segments.extend(copy.deepcopy(segments))
+            self.locked[lot_id] = machine
+            self.next_index[lot_id] = len(self.portions[lot_id])
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -964,7 +977,10 @@ FALLBACK_WARNING = (
 )
 
 
-def schedule_quantity_releases(lots, data, config, *, notes: list[str] | None = None):
+def schedule_quantity_releases(
+    lots, data, config, *, notes: list[str] | None = None,
+    pinned: dict[str, tuple[str, list[Segment]]] | None = None,
+):
     """Schedule released portions as campaigns, using the shared allocator.
 
     Temporary portions are never returned as new lots. Each economic lot keeps
@@ -972,10 +988,12 @@ def schedule_quantity_releases(lots, data, config, *, notes: list[str] | None = 
     A portion that needs a new mounting starts a new physical run; one that
     continues a mounted tool joins that run without setup. ``notes`` receives
     the plain warning shown with the plan when the fallback is used.
+    ``pinned``: lots of ``lots`` already placed (lot id -> machine and
+    segments, a manual move); they stay exactly there.
     """
 
     try:
-        segments, result_lots = _CampaignBuilder(lots, data, config).build()
+        segments, result_lots = _CampaignBuilder(lots, data, config, pinned=pinned).build()
         assert_plan_valid(segments, data, config, lots=result_lots)
         return segments, result_lots
     except ValueError as error:  # includes PlanValidationError; never a timeout
@@ -987,6 +1005,8 @@ def schedule_quantity_releases(lots, data, config, *, notes: list[str] | None = 
         )
         if notes is not None:
             notes.append(FALLBACK_WARNING)
-    segments, result_lots = _CampaignBuilder(lots, data, config, campaigns=False).build()
+    segments, result_lots = _CampaignBuilder(
+        lots, data, config, campaigns=False, pinned=pinned,
+    ).build()
     assert_plan_valid(segments, data, config, lots=result_lots)
     return segments, result_lots

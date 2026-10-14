@@ -273,10 +273,13 @@ mantém esta libertação e só muda o tamanho do lote, acima).
     a referência como qualquer outra (+N no dia em que é produzida na
     fábrica, −N no dia da entrega; `stock_projection` usa a vista da
     fábrica), marca-a com um «S» (tooltip com os dias úteis do servidor,
-    `subcontract_due_workdays`) e continua a julgar a rutura
-    (`stockout_day`, «esgota dia», consola, auditoria de cobertura) pela vista
-    do cliente: produção acabada depois do prazo deixa a entrega a vermelho
-    mesmo com stock nesse dia. O tooltip do Gantt diz «Subcontratado —
+    `subcontract_due_workdays`). A rutura (`stockout_day`, «esgota dia», «N
+    em risco de ruptura», consola, auditoria de cobertura, copilot) segue o
+    stock mostrado: é o primeiro dia em que esse stock fica negativo, como em
+    qualquer referência (Incompol, 14/10/2026: a CF589MMA1A02.20 aparecia a
+    vermelho com stock positivo). Produção acabada depois do prazo de 5 dias
+    úteis é reportada como encomenda atrasada / envio para subcontratação em
+    atraso, não como rutura. O tooltip do Gantt diz «Subcontratado —
     acabar até DD/MM» (o `production_due_day` do lado subcontratado).
     Revisão 128 recalculada: todos os lotes subcontratados (HAN002, JTE003,
     gémeas BFP178/BFP186) ficam prontos no fim do lote + 5 dias úteis; num
@@ -844,6 +847,27 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   (`_replan_around_fixed_lot`); a melhoria fica com o tempo poupado (~8 s na
   revisão 124; em 320 tentativas, mesmos resultados e os 15 candidatos
   idênticos antes da melhoria; uma verificação inconclusiva demora metade).
+  **Corrigido em 14/10/2026** (Incompol: mover JTE001 para 04/12 15:30 dava
+  «Verificação inconclusiva»; quase todos os movimentos falhavam): o lote
+  movido não é trabalho começado, por isso nunca entra na proteção nem é
+  creditado como stock no dia 0 (`frozen._install_frozen_reservations`); isso
+  invalidava o contrato da operação (`source_contract`) e desligava a
+  melhoria (`reference_invalid`). Agora fica fixado dentro do mesmo construtor
+  (`schedule_quantity_releases(pinned=...)`), que coloca os outros lotes à
+  volta dele e valida a operação com todos os seus lotes. A afinação do lote
+  movido só é dispensada quando a produção começa colada a um segmento já
+  começado com a mesma afinação (`_materialize_target(partial_layout=True)`):
+  um intervalo vazio nesse esboço não prova a ferramenta montada. Na
+  melhoria final o lote movido fica no plano (a âncora mantém o início); se a
+  melhoria mexer nos seus segmentos, não é usada. Quando o movimento não é
+  possível, a mensagem diz porquê («Não é possível iniciar … : …»);
+  «inconclusiva» fica só para falta de tempo sem resposta. Medido na revisão
+  142 (`tests/test_manual_move_pinned.py`): o caso da Incompol e os outros 9
+  movimentos fisicamente possíveis passam (antes: 9 de 10 «inconclusiva»),
+  sem atrasos novos nem lotes partidos; antes do dia de libertação e em
+  feriado continuam recusados. Com a melhoria de novo ativa, cada movimento
+  usa o orçamento (~50 s, como decidido a 05/10) e mexe em 6–25 outros lotes
+  (sem melhoria, a reconstrução mexia em 31–45).
   Recusa imediata, antes de planear, com mensagem simples:
   dia de produção sem material libertado, afinação que começaria antes de
   `earliest_allowed_start` (ex.: produção às 07:00 do dia de libertação com a

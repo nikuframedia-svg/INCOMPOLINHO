@@ -101,6 +101,13 @@ def _started_lot_proofs(protection) -> dict:
     )
 
 
+def _lot_rows(segments: list[Segment], lot_id: str) -> list[tuple]:
+    """The physical rows of one lot, in order (its exact placement)."""
+    from backend.scheduler.improvement import _segment_physical_row
+
+    return sorted(_segment_physical_row(item) for item in segments if item.lot_id == lot_id)
+
+
 def _keeps_frozen(segments: list[Segment], frozen_segments: list[Segment]) -> bool:
     """Every frozen segment is still in the plan, physically unchanged."""
     from collections import Counter
@@ -121,6 +128,20 @@ _FROZEN_CHANGED = (
     "O movimento alteraria produção já iniciada ou a ferramenta montada que continua "
     "a produzir; o histórico deve permanecer intacto."
 )
+_NO_ROOM = (
+    "com o lote nessa posição, as outras produções já não cabem inteiras no "
+    "horizonte do plano."
+)
+_QUANTITIES_CHANGED = "a reorganização alteraria as quantidades ou identidades dos lotes."
+_TARGET_MISSED = (
+    "o motor não conseguiu respeitar exatamente o dia, a hora e a máquina pedidos."
+)
+_HISTORY_CHANGED = (
+    "a reorganização alteraria produção já iniciada ou a ferramenta montada que "
+    "continua a produzir."
+)
+_REORGANISED_INVALID = "o plano reorganizado não cumpre as regras físicas ou de quantidade."
+logger = logging.getLogger(__name__)
 
 
 def _overlaps(start: float, end: float, other_start: float, other_end: float) -> bool:
@@ -627,7 +648,16 @@ def _materialize_target(
     target_day: int,
     target_machine: str,
     target_start_min: int,
+    *,
+    partial_layout: bool = False,
 ) -> list[Segment]:
+    """The moved lot's segments, starting production exactly at the target.
+
+    ``partial_layout``: ``segments`` are only part of the plan (the started
+    work); the rest is placed afterwards, possibly in any gap before the
+    target. A gap then proves nothing about the mounted tool, so its setup is
+    kept unless production follows a same-setup segment with no gap at all.
+    """
     from backend.transform.calendars import calendar_window
 
     planning_checkpoint()
@@ -641,7 +671,14 @@ def _materialize_target(
     identity = segment_setup_identity(replace(
         template, tool_id=lot.tool_id, twin_outputs=lot.twin_outputs,
     ))
-    if retained_setup_at(segments, target_machine, identity, target_day, target_start_min):
+    if retained_setup_at(
+        segments, target_machine, identity, target_day, target_start_min,
+    ) and (not partial_layout or any(
+        item.machine_id == target_machine
+        and (item.day_idx, item.end_min) == (target_day, target_start_min)
+        and segment_setup_identity(item) == identity
+        for item in segments
+    )):
         setup_total = 0.0
     setup_remaining = setup_total
     run_id = f"manual_{uuid4().hex[:12]}"
@@ -958,13 +995,25 @@ def _allocate_existing_lots(
     time_budget_s: float | None = None,
     protection=None,
     now: datetime | None = None,
+    pinned: dict[str, tuple[str, list[Segment]]] | None = None,
+    reasons: list[str] | None = None,
 ) -> ScheduleResult | None:
     """Allocate existing productions using the shared physical solver, without lot sizing.
 
     ``protection`` (a ``frozen.ProtectedPlan``; derived from ``baseline_result``
     when omitted) stays exactly as in the baseline. The rest of a started lot
     is allocated as its pre-sized remainder and rejoins the lot (rule 4).
+    ``pinned``: lots of ``source_lots`` already placed (lot id -> machine and
+    segments); only the campaign builder (material released by quantity)
+    takes them. ``reasons`` receives a plain pt-PT reason when ``None`` is
+    returned.
     """
+
+    def refuse(reason: str) -> None:
+        if reasons is not None:
+            reasons.append(reason)
+        return None
+
     from backend.plans.frozen import (
         _current_planning_day,
         _install_frozen_reservations,
@@ -1008,14 +1057,21 @@ def _allocate_existing_lots(
         with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
             try:
                 built_segments, built_lots = schedule_quantity_releases(
-                    movable, residual_data, config,
+                    movable, residual_data, config, pinned=pinned,
                 )
-            except ValueError:  # includes PlanValidationError
-                return None
+            except ValueError as error:  # includes PlanValidationError
+                from backend.scheduler.validation import PlanValidationError
+
+                logger.info("Realocação recusada: %s", error)
+                return refuse(
+                    _REORGANISED_INVALID if isinstance(error, PlanValidationError) else _NO_ROOM
+                )
             planning_checkpoint()
         result = ScheduleResult(built_segments, built_lots, {}, 0, [], [])
         runs = []
     else:
+        if pinned:
+            raise ValueError("Lotes fixados exigem o construtor por quantidades libertadas.")
         _legacy_logger.warning("motor antigo usado: %s", "manual_move._allocate_existing_lots")
         runs = create_tool_runs(
             movable, config=config,
@@ -1040,11 +1096,11 @@ def _allocate_existing_lots(
     result = _splice_frozen_started_lots(result, protected_segments, protected_lots, partial)
     if any(segment.day_idx < 0 or segment.day_idx >= candidate_data.n_days
            for segment in result.segments):
-        return None
+        return refuse(_NO_ROOM)
     if not _preserves_production(result, source_lots):
-        return None
+        return refuse(_QUANTITIES_CHANGED)
     if not _keeps_frozen(result.segments, protected_segments):
-        return None
+        return refuse(_HISTORY_CHANGED)
     result.score = compute_score(result.segments, result.lots, candidate_data, config)
     return result
 
@@ -1069,6 +1125,25 @@ def _reallocation_ignores_target(source_lots: list[Lot], protection) -> bool:
     )
 
 
+def _refused_move(lot_id, day, minute, machine_id, data, detail, *, gate_report=None):
+    """A move that was checked and cannot be applied, with its reason."""
+    date = str(data.workdays[day])[:10] if 0 <= day < len(data.workdays) else ""
+    when = f"no dia {day}" + (f" ({date})" if date else "")
+    return ManualMoveError(
+        f"Não é possível iniciar {lot_id} {when}, às {minute // 60:02d}:{minute % 60:02d}, "
+        f"em {machine_id}: {detail} O plano não foi alterado.",
+        gate_report=gate_report,
+    )
+
+
+def _gate_failure_kinds(gate_report: dict | None) -> list[str]:
+    violations = (gate_report or {}).get("violations") or []
+    return sorted({
+        str(item.get("kind") or item.get("type") or "?")
+        for item in violations if isinstance(item, dict)
+    })
+
+
 def _replan_around_fixed_lot(
     candidate_data: EngineData,
     config: FactoryConfig,
@@ -1086,6 +1161,125 @@ def _replan_around_fixed_lot(
     now: datetime | None = None,
 ) -> ScheduleResult | None:
     """Place the moved lot exactly, then allocate the rest around it.
+
+    ``protection`` (``frozen.ProtectedPlan``) is kept as in the baseline; the
+    rest of each started lot is re-allocated as its remainder (rule 4). The
+    moved lot is not started work: it is pinned inside the same allocation
+    as the other lots (never credited as stock), so the plan is checked with
+    every lot of its operation. Raises ``ManualMoveError`` with the reason
+    when no valid plan keeps the lot there. Lots of the legacy engine keep
+    the previous attempt (``None`` when it finds no plan).
+    """
+    from backend.planning_control import planning_scope
+    from backend.plans.frozen import (
+        _current_planning_day,
+        _install_frozen_reservations,
+        _splice_frozen_started_lots,
+        calculation_now,
+        elapsed_on_planning_day,
+    )
+    from backend.scheduler.canonical import preserved_lot_proofs
+
+    if not _reallocation_ignores_target(source_lots, protection):
+        return _legacy_replan_around_fixed_lot(
+            candidate_data, config, source_lots, protection, frozen_proofs, lot, template,
+            target_day, target_machine, target_start_min, optimization_mode,
+            cancel_event, time_budget_s, now,
+        )
+
+    def refused(detail, gate_report=None):
+        logger.info(
+            "Movimento de %s recusado: %s %s", lot.id, detail, _gate_failure_kinds(gate_report),
+        )
+        return _refused_move(
+            lot.id, target_day, target_start_min, target_machine, candidate_data, detail,
+            gate_report=gate_report,
+        )
+
+    now = calculation_now(config, now)
+    freeze_day = _current_planning_day(candidate_data, config, now)
+    frozen_segments = list(protection.segments)
+    partial = list(protection.partial)
+    pinned_segments = _materialize_target(
+        frozen_segments, lot, template, candidate_data, config,
+        target_day, target_machine, target_start_min, partial_layout=True,
+    )
+    protected_lots = list(protection.lots)
+    protected_ids = {item.id for item in protected_lots}
+    rests = {original.id: rest for original, rest in partial}
+    residual_data = copy.deepcopy(candidate_data)
+    residual_data.plan_anchors = [
+        anchor for anchor in residual_data.plan_anchors
+        if anchor.lot_id not in protected_ids and anchor.lot_id != lot.id
+    ]
+    _install_frozen_reservations(
+        residual_data, frozen_segments, protected_lots, freeze_day, config, partial,
+        now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
+    )
+    reasons: list[str] = []
+    with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
+        result = _allocate_existing_lots(
+            residual_data, source_lots=[
+                rests.get(item.id, item) for item in source_lots
+                if item.id not in protected_ids
+            ], config=config, cancel_event=cancel_event,
+            time_budget_s=time_budget_s, now=now,
+            pinned={lot.id: (target_machine, pinned_segments)}, reasons=reasons,
+        )
+        if result is None:
+            raise refused(reasons[0] if reasons else _NO_ROOM)
+        result = _splice_frozen_started_lots(
+            result, frozen_segments, protected_lots, partial,
+        )
+        if not _preserves_production(result, source_lots):
+            raise refused(_QUANTITIES_CHANGED)
+        if not _keeps_frozen(result.segments, frozen_segments):
+            raise refused(_HISTORY_CHANGED)
+        if frozen_proofs:
+            frozen_ids = set(frozen_proofs)
+            actual_proofs = preserved_lot_proofs(
+                [item for item in result.segments if item.lot_id in frozen_ids],
+                [item for item in result.lots if item.id in frozen_ids],
+            )
+            if actual_proofs != frozen_proofs:
+                raise refused(_HISTORY_CHANGED)
+        validation_data = copy.copy(candidate_data)
+        validation_data.preserved_lot_proofs = frozen_proofs
+        result.score = compute_score(result.segments, result.lots, validation_data, config)
+        result.gate_report = build_gate_report(
+            result.segments, result.lots, result.score, validation_data, config,
+        )
+        if not (
+            result.gate_report.get("physical_gate_passed")
+            and result.gate_report.get("coverage_gate_passed")
+        ):
+            raise refused(_REORGANISED_INVALID, result.gate_report)
+        if not _matches_target(
+            _production_start(result.segments, lot.id),
+            day=target_day, minute=target_start_min, machine=target_machine,
+        ):
+            raise refused(_TARGET_MISSED, result.gate_report)
+    return result
+
+
+def _legacy_replan_around_fixed_lot(
+    candidate_data: EngineData,
+    config: FactoryConfig,
+    source_lots: list[Lot],
+    protection,
+    frozen_proofs: dict,
+    lot: Lot,
+    template: Segment,
+    target_day: int,
+    target_machine: str,
+    target_start_min: int,
+    optimization_mode: str,
+    cancel_event: threading.Event | None,
+    time_budget_s: float,
+    now: datetime | None = None,
+) -> ScheduleResult | None:
+    """Legacy engine (lots without material released by quantity): place the
+    moved lot exactly, then allocate the rest around it.
 
     ``protection`` (``frozen.ProtectedPlan``) is kept as in the baseline; the
     rest of each started lot is re-allocated as its remainder (rule 4).
@@ -1283,27 +1477,37 @@ def _finalize_move_candidate(
             now = calculation_now(config, now)
             freeze_day = _current_planning_day(candidate_data, config, now)
             # Rule 4: of a started lot only what started is fixed, its rest
-            # may still improve. The requested lot stays exactly where it was
-            # placed; as before, what precedes it may still be improved (the
-            # merged plan is validated, so its mounting is never lost).
+            # may still improve. The requested lot is not started work: it
+            # stays in the improved plan with every lot of its operation
+            # (protecting it would credit it as stock from day 0 and make the
+            # plan invalid). Its manual position (plan anchor) is kept by the
+            # improvement; it must also keep its exact segments, or the
+            # improvement is not used. What precedes it may still be improved
+            # (the merged plan is validated, so its mounting is never lost).
             if lot_id is None:
                 protection = _protected_plan(result, freeze_day, candidate_data, config, now=now)
             else:
                 protection = _move_protection(
                     result, freeze_day, candidate_data, config, lot_id, now=now,
                 )
-                protection.segments = [*protection.segments, *(
-                    copy.deepcopy(item) for item in result.segments if item.lot_id == lot_id
-                )]
-                protection.lots = [*protection.lots, *(
-                    copy.deepcopy(item) for item in result.lots if item.id == lot_id
-                )]
+            unimproved = result
             result, report = improve_preserving_protected_lots(
                 result, candidate_data, copy.deepcopy(candidate_data), config,
                 protection.segments, protection.lots, freeze_day, time_budget_s=budget,
                 partial=protection.partial, now=now,
                 cut=protection.cut,
             )
+            if lot_id is not None and _lot_rows(result.segments, lot_id) != _lot_rows(
+                unimproved.segments, lot_id,
+            ):
+                result = unimproved
+                report = {
+                    **report, "status": "partial", "stop_reason": "moved_lot_changed",
+                    "rolled_back_moves": int(report.get("rolled_back_moves", 0))
+                    + int(report.get("moves_accepted", 0)),
+                    "moves_accepted": 0, "accepted_by_scope": {},
+                    "final": report.get("reference"), "final_signature": signature,
+                }
         else:
             report = {"status": "not_evaluated", "stop_reason": "no_time_left"}
     planning_checkpoint()
@@ -1526,8 +1730,11 @@ def _move_lot(
             segments, lots, lot_id, target_day, machine_id, start_min,
             data, config, candidate_data, frozen_proofs, frozen_segments,
         )
-    except ManualMoveError:
+    except ManualMoveError as exc:
+        logger.info("Movimento de %s com as outras produções fixas recusado: %s", lot_id, exc)
         result = None
+    # Why the reorganised attempt refused the move (shown when nothing works).
+    refusal: ManualMoveError | None = None
     # With material released by quantity the reallocation builder does not
     # read plan anchors: it leaves the moved lot where the campaigns put it
     # and cannot honour the requested start. The budget then goes straight
@@ -1589,7 +1796,12 @@ def _move_lot(
                     target_day, machine_id, start_min, optimization_mode,
                     cancel_event, remaining_budget,
                 )
-            except (ManualMoveError, NoValidCandidateError, PlanningTimeout):
+            except ManualMoveInconclusive:
+                fixed_result = None
+            except ManualMoveError as exc:
+                refusal = exc
+                fixed_result = None
+            except (NoValidCandidateError, PlanningTimeout):
                 if cancel_event is not None and cancel_event.is_set():
                     raise PlanningCancelled("O movimento foi cancelado.") from None
                 fixed_result = None
@@ -1606,6 +1818,10 @@ def _move_lot(
         minute=start_min,
         machine=machine_id,
     ):
+        if cancel_event is not None and cancel_event.is_set():
+            raise PlanningCancelled("O movimento foi cancelado.")
+        if refusal is not None:
+            raise refusal
         raise _inconclusive_move(lot_id, target_day, start_min, machine_id)
     complete = ScheduleResult(
         candidate_segments, candidate_lots, score, 0, [], [], gate_report=gate_report,
@@ -1614,12 +1830,10 @@ def _move_lot(
                             and result.lots == candidate_lots else None),
         preserved_lot_proofs=frozen_proofs,
     )
-    try:
-        complete = _finalize_move_candidate(
-            complete, candidate_data, config, lots, frozen_segments, lot_id=lot_id,
-        )
-    except ManualMoveError as exc:
-        raise _inconclusive_move(lot_id, target_day, start_min, machine_id) from exc
+    # A refusal of the final validation is a real reason, shown as it is.
+    complete = _finalize_move_candidate(
+        complete, candidate_data, config, lots, frozen_segments, lot_id=lot_id,
+    )
     candidate_segments, candidate_lots = complete.segments, complete.lots
     # Its setup too: nothing new is placed in time already gone today.
     if any(

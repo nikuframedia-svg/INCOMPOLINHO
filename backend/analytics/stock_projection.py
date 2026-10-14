@@ -8,9 +8,10 @@ Production comes from real Segments. Demand from EngineData op.d.
 
 Every reference, subcontracted or not, counts its pieces on the day they are
 produced in the factory (14/10/2026: the screen does not show trips to and
-from the subcontractor). The subcontract rule is the production deadline,
-five working days before the delivery, which the planner enforces; whether a
-delivery is late is still read from the customer view (``stockout_day``).
+from the subcontractor). The rupture (``stockout_day``) follows that same
+stock: the first day it goes negative (Incompol, 14/10/2026). The subcontract
+rule (production finished five working days before the delivery) is enforced
+by the planner and reported with the late orders, not as a rupture.
 """
 
 from __future__ import annotations
@@ -114,11 +115,9 @@ def compute_stock_projections(
 ) -> list[StockProjection]:
     """Compute stock projection for every EOp."""
     portions = delivery_portions(lots, segments, engine_data)
-    # Shown: every piece on the day it is produced (subcontracted ones too).
+    # Every piece on the day it is produced (subcontracted ones too); the
+    # rupture is read from this same stock.
     prod = _factory_production(portions, engine_data)
-    # Judged: a subcontracted delivery is late when its pieces are not back
-    # by the delivery day, i.e. production missed its deadline.
-    customer_prod = _customer_production(portions, engine_data)
 
     # Build machine-by-(op_id, day) for the machine field
     op_machine: dict[str, dict[int, str]] = defaultdict(dict)
@@ -200,8 +199,8 @@ def compute_stock_projections(
                 )
             )
 
-        stockout_day, coverage = _customer_stockout(
-            op, customer_prod.get(op.id, {}), buffer_days, engine_data.n_days,
+        stockout_day, coverage = _stockout(
+            op, op_prod, buffer_days, engine_data.n_days,
         )
 
         projections.append(
@@ -234,27 +233,24 @@ def compute_stock_projections(
     return projections
 
 
-def _customer_stockout(
+def _stockout(
     op,
-    customer_prod: dict[int, int],
+    op_prod: dict[int, int],
     buffer_days: int,
     n_days: int,
 ) -> tuple[int | None, float]:
-    """First day the customer lacks pieces (``stockout_day``) and the days
+    """First day the shown stock goes negative (``stockout_day``) and the days
     covered until then (buffer days excluded, the whole horizon if none).
 
-    Cumulative available minus cumulative demand, like the grid, with
-    subcontracted pieces available when they are back: for in-house
-    references this is the grid's first negative day; a subcontracted
-    delivery whose production ends after its deadline (five working days
-    before it) is late here although the grid, which shows production days,
-    has stock that day.
+    Cumulative production minus cumulative demand, exactly like the grid, for
+    every reference: a subcontracted one is judged on the stock shown (its
+    pieces on the day they are produced), never on the day they are back.
     """
-    available = sum(customer_prod.get(day, 0) for day in range(-buffer_days, 0))
+    available = sum(op_prod.get(day, 0) for day in range(-buffer_days, 0))
     demanded = 0
     for day_idx in range(n_days):
         demanded += max(op.d[day_idx], 0) if day_idx < len(op.d) else 0
-        available += customer_prod.get(day_idx, 0)
+        available += op_prod.get(day_idx, 0)
         if available < demanded:
             return day_idx, float(day_idx)
     return None, float(n_days)

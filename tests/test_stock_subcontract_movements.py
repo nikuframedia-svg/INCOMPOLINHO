@@ -1,8 +1,9 @@
 """Stock screen (Entregas), 14/10/2026: a subcontracted reference behaves like
 any other one. Its pieces count on the day they are produced in the factory;
-no trips to or from the subcontractor are shown. The subcontract rule is the
-production deadline (five working days before the delivery): a delivery
-whose production misses it is still reported as a rupture."""
+no trips to or from the subcontractor are shown. The rupture follows that
+stock (Incompol, 14/10/2026): a production that misses the subcontract
+deadline (five working days before the delivery) is a late order, reported by
+the plan, not a rupture while the stock shown covers the delivery."""
 
 from __future__ import annotations
 
@@ -64,18 +65,37 @@ def test_lot_made_over_several_days_shows_each_days_pieces():
     assert projection.stockout_day is None
 
 
-def test_production_after_its_deadline_is_still_a_rupture():
+def test_production_after_its_deadline_is_not_a_rupture_while_stock_covers():
     _op_, data, lot, segments = _subcontracted_plan([8])
 
     projection = compute_stock_projections(segments, [lot], data)[0]
     days = {day.day_idx: day for day in projection.days}
 
-    # Shown on its production day ...
+    # Finished one working day after its deadline (day 7): a late order for
+    # the plan, but the stock shown never goes negative, so no rupture.
     assert days[8].produced == 100 and days[14].stock == 0
-    # ... but finished one working day after its deadline (day 7): the
-    # delivery of day 14 is late, as before.
+    assert all(day.stock >= 0 for day in projection.days)
+    assert projection.stockout_day is None
+    assert projection.coverage_days == float(data.n_days)
+
+
+def test_subcontracted_rupture_is_the_first_negative_day_shown():
+    _op_, data, lot, segments = _subcontracted_plan([15])
+
+    projection = compute_stock_projections(segments, [lot], data)[0]
+    days = {day.day_idx: day for day in projection.days}
+
+    assert days[14].stock == -100 and days[15].stock == 0
     assert projection.stockout_day == 14
     assert projection.coverage_days == 14.0
+
+
+def test_late_subcontracted_production_is_still_a_late_order():
+    from backend.analytics.late_delivery import analyze_late_deliveries
+
+    _op_, data, lot, segments = _subcontracted_plan([8])
+    report = analyze_late_deliveries(segments, [lot], data, _config())
+    assert report.tardy_count == 1
 
 
 def test_in_house_reference_is_unchanged():
