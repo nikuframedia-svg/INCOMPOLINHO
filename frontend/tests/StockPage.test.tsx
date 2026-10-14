@@ -17,7 +17,7 @@ vi.mock("../src/api/endpoints", async (importOriginal) => {
 });
 
 import { formatStockoutLabel } from "../src/lib/stockDates";
-import { stockCellTitle } from "../src/lib/stockSubcontract";
+import { stockCellTitle, subcontractBadgeTitle } from "../src/lib/stockCell";
 import { StockPage } from "../src/pages/StockPage";
 
 const compactDays = [
@@ -125,68 +125,57 @@ describe("StockPage", () => {
   });
 
   describe("referências subcontratadas", () => {
-    const back = {
-      qty: 7_680, stamped_from_day: 3, stamped_to_day: 3,
-      stamped_from_date: "2026-10-12", stamped_to_date: "2026-10-12", machines: ["PRM043"],
-    };
-    const sentDay = {
-      day: 3, date: "2026-10-12", stock: -100, demand: 0, produced: 0, workday: true, subcontract_sent: 7_680,
-    };
-    const returnDay = {
-      day: 8, date: "2026-10-19", stock: 7_580, demand: 0, produced: 7_680, workday: true,
-      subcontract_returns: [back],
+    // Made on 12/10 for a delivery on 19/10: shown like any other reference.
+    const producedDay = { day: 3, date: "2026-10-12", stock: 7_680, demand: 0, produced: 7_680, workday: true };
+    const deliveryDay = { day: 8, date: "2026-10-19", stock: 0, demand: 7_680, produced: 0, workday: true };
+    const summary: StockSummary = {
+      op_id: "OP-SUB", sku: "CF589MMA1A02.20", client: "CLIENTE", machine: "PRM043", tool: "JTE001",
+      initial_stock: 0, stockout_day: null, coverage_days: 10, total_demand: 7_680, total_produced: 7_680,
+      subcontract_company_id: "SUBCONTRATO", subcontract_due_workdays: 5, days: [producedDay, deliveryDay],
     };
 
-    it("explica no tooltip o envio e a volta da subcontratação", () => {
-      expect(stockCellTitle(sentDay).split("\n")).toEqual([
-        "Stock: -100", "Procura: 0", "Produção: 0", `Enviado para subcontratação: ${(7_680).toLocaleString()}`,
+    it("tooltip do dia só com stock, procura e produção", () => {
+      expect(stockCellTitle(producedDay).split("\n")).toEqual([
+        `Stock: ${(7_680).toLocaleString()}`, "Procura: 0", `Produção: ${(7_680).toLocaleString()}`,
       ]);
-      expect(stockCellTitle(returnDay).split("\n")).toEqual([
-        `Stock: ${(7_580).toLocaleString()}`, "Procura: 0",
-        `Volta da subcontratação: ${(7_680).toLocaleString()} (estampadas a 12/10 na PRM043)`,
-      ]);
-    });
-
-    it("mostra vários dias e máquinas de estampagem e a produção da casa à parte", () => {
-      const title = stockCellTitle({
-        ...returnDay, produced: 7_700,
-        subcontract_returns: [{
-          ...back, stamped_from_day: 2, stamped_from_date: "2026-10-09", machines: ["PRM019", "PRM043"],
-        }],
-      });
-      expect(title.split("\n").slice(2)).toEqual([
-        "Produção: 20",
-        `Volta da subcontratação: ${(7_680).toLocaleString()} (estampadas de 09/10 a 12/10 na PRM019 e PRM043)`,
-      ]);
-      expect(stockCellTitle({ ...returnDay, subcontract_returns: [{ ...back, stamped_from_date: "", stamped_to_date: "" }] }))
-        .toContain("(estampadas a dia 3 na PRM043)");
-    });
-
-    it("sem dados de subcontratação mantém o tooltip antigo", () => {
-      expect(stockCellTitle({ stock: 5, demand: 1, produced: 6, workday: true }))
-        .toBe("Stock: 5\nProcura: 1\nProdução: 6");
       expect(stockCellTitle({ stock: 5, demand: 0, produced: 0, workday: false })).toBe("Fim-de-semana / Feriado");
     });
 
-    it("marca na grelha o dia de envio e o dia de volta, com legenda", async () => {
-      const summary: StockSummary = {
-        op_id: "OP-SUB", sku: "CF589MMA1A02.20", client: "CLIENTE", machine: "PRM043", tool: "JTE001",
-        initial_stock: 0, stockout_day: null, coverage_days: 10, total_demand: 7_680, total_produced: 7_680,
-        subcontract_company_id: "SUB", days: [sentDay, returnDay],
-      };
+    it("mostra a produção no dia em que é feita e a saída no dia da entrega, sem setas", async () => {
       endpointMocks.getStockSummary.mockResolvedValue([summary]);
 
       const view = render(<StockPage />);
 
-      const sent = await screen.findByLabelText(`Enviado para subcontratação: ${(7_680).toLocaleString()}`);
-      expect(sent.textContent).toBe(`↗${(7_680).toLocaleString()}`);
-      const returned = screen.getByLabelText(`Volta da subcontratação: ${(7_680).toLocaleString()}`);
-      expect(returned.textContent).toBe(`↩+${(7_680).toLocaleString()}`);
-      // The return is not shown twice as in-house production.
-      expect(screen.queryByText(/^\+7/)).toBeNull();
-      expect(view.container.querySelector('[title*="estampadas a 12/10 na PRM043"]')).toBeTruthy();
-      expect(screen.getByText("Volta da subcontratação (entra no stock)")).toBeTruthy();
-      expect(screen.getByText("Enviado para subcontratação (ainda não conta)")).toBeTruthy();
+      expect(await screen.findByText(`+${(7_680).toLocaleString()}`)).toBeTruthy();
+      expect(screen.getByLabelText(`Saída de stock: ${(7_680).toLocaleString()}`)).toBeTruthy();
+      expect(view.container.textContent).not.toMatch(/[↗↩]/);
+      expect(screen.queryByText(/subcontratação/i)).toBeNull();
+      expect(view.container.querySelector('[title*="subcontratação"]')).toBeNull();
+    });
+
+    it("marca a referência com um S e explica a regra dos 5 dias úteis", async () => {
+      endpointMocks.getStockSummary.mockResolvedValue([summary, { ...summary, op_id: "OP-CASA", sku: "CASA", subcontract_company_id: null, subcontract_due_workdays: null }]);
+
+      render(<StockPage />);
+
+      const badge = await screen.findByText("S");
+      expect(badge.getAttribute("title")).toBe("Subcontratada: produção acabada 5 dias úteis antes da entrega.");
+      expect(screen.getAllByText("S")).toHaveLength(1);
+      expect(subcontractBadgeTitle(1)).toBe("Subcontratada: produção acabada 1 dia útil antes da entrega.");
+      expect(subcontractBadgeTitle(undefined)).toBe("Subcontratada: produção acabada antes da entrega.");
+    });
+
+    it("produção depois do prazo: a entrega fica a vermelho mesmo com stock", async () => {
+      endpointMocks.getStockSummary.mockResolvedValue([{ ...summary, stockout_day: 8 }]);
+
+      const view = render(<StockPage />);
+
+      expect(await screen.findByText(/esgota dia 8/)).toBeTruthy();
+      const cells = [...view.container.querySelectorAll<HTMLElement>("[title^='Stock:']")];
+      const late = cells.find((cell) => cell.title.includes(`Procura: ${(7_680).toLocaleString()}`));
+      const made = cells.find((cell) => cell.title.includes(`Produção: ${(7_680).toLocaleString()}`));
+      expect(late?.style.background).not.toBe("transparent");
+      expect(made?.style.background).toBe("transparent");
     });
   });
 });

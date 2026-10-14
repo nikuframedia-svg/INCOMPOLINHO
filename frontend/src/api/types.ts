@@ -99,8 +99,6 @@ export interface Segment extends PlanningMilestoneFields {
     customer_ready_day: number;
   }[] | null;
   unallocated_output?: { sku: string; qty: number }[] | null;
-  /** Subcontracted references: when the segment's pieces leave and come back (older servers omit it). */
-  subcontract_trips?: { sent_day: number; return_day: number; whole_lot: boolean }[];
   lot_id: string;
   run_id: string;
   machine_id: string;
@@ -195,24 +193,7 @@ export interface DatasetInfo {
 
 // ── Analytics ────────────────────────────────────────────────
 
-/** One return from the subcontractor, counted in `produced` on its return day. */
-export interface SubcontractReturn {
-  qty: number;
-  stamped_from_day: number;
-  stamped_to_day: number;
-  stamped_from_date: string;
-  stamped_to_date: string;
-  machines: string[];
-}
-
-/** Subcontracted references only; older servers omit both. */
-interface StockSubcontractMovements {
-  /** Pieces stamped and sent to the subcontractor on this day (not in `produced`). */
-  subcontract_sent?: number;
-  subcontract_returns?: SubcontractReturn[];
-}
-
-export interface StockDayCompact extends StockSubcontractMovements {
+export interface StockDayCompact {
   day: number;
   date: string;
   stock: number;
@@ -234,11 +215,13 @@ export interface StockSummary {
   total_demand: number;
   total_produced: number;
   subcontract_company_id?: string | null;
+  /** Subcontracted: production finished this many working days before each delivery. */
+  subcontract_due_workdays?: number | null;
   internal_deadline_min?: number | null;
   days: StockDayCompact[];
 }
 
-export interface StockDay extends StockSubcontractMovements {
+export interface StockDay {
   day_idx: number;
   date: string;
   demand: number;

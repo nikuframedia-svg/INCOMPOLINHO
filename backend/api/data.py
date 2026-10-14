@@ -1026,6 +1026,7 @@ async def get_stock_summary():
             "total_demand": p.total_demand,
             "total_produced": p.total_produced,
             "subcontract_company_id": getattr(p, "subcontract_company_id", None),
+            "subcontract_due_workdays": getattr(p, "subcontract_due_workdays", None),
             "internal_deadline_min": getattr(p, "internal_deadline_min", None),
             "days": [
                 {
@@ -1036,23 +1037,12 @@ async def get_stock_summary():
                     "produced": d.produced,
                     "workday": True if d.is_buffer else _is_workday(d.date, d.day_idx),
                     "is_buffer": d.is_buffer,
-                    **_subcontract_day_fields(d),
                 }
                 for d in p.days
             ],
         }
         for p in state.stock_projections
     ]
-
-
-def _subcontract_day_fields(day) -> dict:
-    """Optional subcontract movements of a stock day (absent when none)."""
-    fields: dict = {}
-    if getattr(day, "subcontract_sent", 0):
-        fields["subcontract_sent"] = day.subcontract_sent
-    if getattr(day, "subcontract_returns", None):
-        fields["subcontract_returns"] = day.subcontract_returns
-    return fields
 
 
 @router.get("/stock/{sku}")
@@ -1064,12 +1054,7 @@ async def get_stock_detail(sku: str):
     proj = next((p for p in state.stock_projections if p.sku == sku), None)
     if not proj:
         raise HTTPException(404, f"SKU {sku} não encontrado.")
-    detail = asdict(proj)
-    for day, raw in zip(detail["days"], proj.days):
-        day.pop("subcontract_sent", None)
-        day.pop("subcontract_returns", None)
-        day.update(_subcontract_day_fields(raw))
-    return detail
+    return asdict(proj)
 
 
 @router.get("/expedition")

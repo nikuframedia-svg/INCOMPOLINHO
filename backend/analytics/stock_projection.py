@@ -5,13 +5,19 @@ Day-by-day stock projection per EOp:
 
 NP negativo já desconta stock inicial, por isso initial_stock NÃO entra na fórmula.
 Production comes from real Segments. Demand from EngineData op.d.
+
+Every reference, subcontracted or not, counts its pieces on the day they are
+produced in the factory (14/10/2026: the screen does not show trips to and
+from the subcontractor). The subcontract rule is the production deadline,
+five working days before the delivery, which the planner enforces; whether a
+delivery is late is still read from the customer view (``stockout_day``).
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from backend.config.planning import planning_milestones_for_op
 from backend.scheduler.jit_policy import calendar_holidays
@@ -36,12 +42,6 @@ class StockDay:
     stock: int  # cum_produced - cum_demand (NP já desconta stock inicial)
     machine: str | None  # where it was produced (None if nothing produced)
     is_buffer: bool = False
-    # Subcontracted SKUs: pieces stamped on this day that go to the
-    # subcontractor (counted in ``produced`` only on their return day) and the
-    # returns that make up ``produced`` here, each with its stamping days and
-    # machines.
-    subcontract_sent: int = 0
-    subcontract_returns: list[dict] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -56,6 +56,9 @@ class StockProjection:
     total_demand: int
     total_produced: int
     subcontract_company_id: str | None = None
+    # Subcontracted: production must be finished this many working days
+    # before each delivery (subcontract lead time plus its buffer).
+    subcontract_due_workdays: int | None = None
     internal_deadline_min: int | None = None
     first_production_due_day: int | None = None
     first_subcontract_dispatch_day: int | None = None
@@ -93,67 +96,14 @@ def _customer_production(
     return prod
 
 
-def _subcontract_movements(
+def _factory_production(
     portions: list[DeliveryPortion],
-    segments: list[Segment],
-) -> tuple[dict[str, dict[int, int]], dict[str, dict[int, list[dict]]]]:
-    """Pieces sent to and returned from the subcontractor, per (op_id, day).
-
-    Read from the shared evaluator (``delivery_portions``). A lot that goes
-    out whole (material version 3, ``whole_lot_subcontract``, 13/10/2026)
-    is shown leaving whole on its completion day and back together on its
-    return day, stamped over the whole lot's days and machines. Older lots
-    keep the per-delivery rule: a portion's pieces leave on the days they are
-    stamped (its slices) and come back together on its customer-ready day.
-    Portions stamped on the same days and machines that come back on the
-    same day are one return.
-    """
-    sent: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
-    returns: dict[str, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
-    by_origin: dict[tuple, dict] = {}
-
-    def machines_of(items) -> set[str]:
-        return {
-            segments[item.segment_index].machine_id
-            for item in items
-            if 0 <= item.segment_index < len(segments)
-        }
-
-    # Stamping days and machines of each whole lot, over all its portions.
-    whole_lots: dict[str, list] = defaultdict(list)
-    for portion in portions:
-        if portion.is_subcontracted and portion.whole_lot_dispatch:
-            for item in portion.slices:
-                if item.whole_lot:
-                    whole_lots[item.lot_id].append(item)
-
-    for portion in portions:
-        if not portion.is_subcontracted or not portion.produced_qty:
-            continue
-        for item in portion.slices:
-            leaves = item.available_day if item.lot_id in whole_lots else item.day_idx
-            sent[portion.op_id][leaves] += item.qty
-        lots_out_whole = {item.lot_id for item in portion.slices if item.lot_id in whole_lots}
-        stamped_items = [
-            *portion.slices, *(item for lot_id in lots_out_whole for item in whole_lots[lot_id]),
-        ]
-        stamped = [item.day_idx for item in stamped_items]
-        machines = sorted(machines_of(stamped_items))
-        first = min(stamped, default=portion.factory_day)
-        last = max(stamped, default=portion.factory_day)
-        for day, qty in portion.credits():
-            key = (portion.op_id, day, first, last, tuple(machines))
-            if key in by_origin:
-                by_origin[key]["qty"] += qty
-                continue
-            by_origin[key] = {
-                "qty": qty,
-                "stamped_from_day": first,
-                "stamped_to_day": last,
-                "machines": machines,
-            }
-            returns[portion.op_id][day].append(by_origin[key])
-    return sent, returns
+    engine_data: EngineData,
+) -> dict[str, dict[int, int]]:
+    prod = production_by_op(portions, customer=False)
+    for supply in engine_data.committed_supplies:
+        prod[supply.op_id][supply.available_day] += supply.qty
+    return prod
 
 
 def compute_stock_projections(
@@ -164,8 +114,11 @@ def compute_stock_projections(
 ) -> list[StockProjection]:
     """Compute stock projection for every EOp."""
     portions = delivery_portions(lots, segments, engine_data)
-    prod = _customer_production(portions, engine_data)
-    sub_sent, sub_returns = _subcontract_movements(portions, segments)
+    # Shown: every piece on the day it is produced (subcontracted ones too).
+    prod = _factory_production(portions, engine_data)
+    # Judged: a subcontracted delivery is late when its pieces are not back
+    # by the delivery day, i.e. production missed its deadline.
+    customer_prod = _customer_production(portions, engine_data)
 
     # Build machine-by-(op_id, day) for the machine field
     op_machine: dict[str, dict[int, str]] = defaultdict(dict)
@@ -196,7 +149,6 @@ def compute_stock_projections(
         initial_stock = op.stk
         cum_demand = 0
         cum_produced = 0
-        stockout_day: int | None = None
         days: list[StockDay] = []
 
         op_prod = prod.get(op.id, {})
@@ -231,10 +183,6 @@ def compute_stock_projections(
             cum_demand += demand
             cum_produced += produced
             stock = cum_produced - cum_demand
-
-            if stock < 0 and stockout_day is None:
-                stockout_day = day_idx
-
             machine = op_machine.get(op.id, {}).get(day_idx)
 
             days.append(
@@ -252,8 +200,9 @@ def compute_stock_projections(
                 )
             )
 
-        _attach_subcontract_movements(days, sub_sent.get(op.id, {}), sub_returns.get(op.id, {}))
-        coverage = _calc_coverage(days)
+        stockout_day, coverage = _customer_stockout(
+            op, customer_prod.get(op.id, {}), buffer_days, engine_data.n_days,
+        )
 
         projections.append(
             StockProjection(
@@ -267,6 +216,7 @@ def compute_stock_projections(
                 total_demand=cum_demand,
                 total_produced=cum_produced,
                 subcontract_company_id=op.subcontract_company_id,
+                subcontract_due_workdays=_subcontract_due_workdays(op),
                 internal_deadline_min=_first_internal_deadline(op, engine_data),
                 first_production_due_day=_first_milestone(
                     op,
@@ -284,36 +234,38 @@ def compute_stock_projections(
     return projections
 
 
-def _attach_subcontract_movements(
-    days: list[StockDay],
-    sent: dict[int, int],
-    returns: dict[int, list[dict]],
-) -> None:
-    if not sent and not returns:
-        return
-    date_of = {day.day_idx: day.date for day in days}
-    for day in days:
-        day.subcontract_sent = sent.get(day.day_idx, 0)
-        day.subcontract_returns = [
-            {
-                **item,
-                "stamped_from_date": date_of.get(item["stamped_from_day"], ""),
-                "stamped_to_date": date_of.get(item["stamped_to_day"], ""),
-            }
-            for item in returns.get(day.day_idx, [])
-        ]
+def _customer_stockout(
+    op,
+    customer_prod: dict[int, int],
+    buffer_days: int,
+    n_days: int,
+) -> tuple[int | None, float]:
+    """First day the customer lacks pieces (``stockout_day``) and the days
+    covered until then (buffer days excluded, the whole horizon if none).
+
+    Cumulative available minus cumulative demand, like the grid, with
+    subcontracted pieces available when they are back: for in-house
+    references this is the grid's first negative day; a subcontracted
+    delivery whose production ends after its deadline (five working days
+    before it) is late here although the grid, which shows production days,
+    has stock that day.
+    """
+    available = sum(customer_prod.get(day, 0) for day in range(-buffer_days, 0))
+    demanded = 0
+    for day_idx in range(n_days):
+        demanded += max(op.d[day_idx], 0) if day_idx < len(op.d) else 0
+        available += customer_prod.get(day_idx, 0)
+        if available < demanded:
+            return day_idx, float(day_idx)
+    return None, float(n_days)
 
 
-def _calc_coverage(days: list[StockDay]) -> float:
-    """Days until first stockout (buffer days excluded)."""
-    n_regular = 0
-    for d in days:
-        if d.is_buffer:
-            continue
-        n_regular += 1
-        if d.stock < 0:
-            return float(d.day_idx)
-    return float(n_regular)
+def _subcontract_due_workdays(op) -> int | None:
+    lead = max(0, int(getattr(op, "subcontract_lead_time_days", 0) or 0))
+    buffer = max(0, int(getattr(op, "subcontract_buffer_days", 0) or 0))
+    if not (getattr(op, "is_subcontracted", False) or op.subcontract_company_id or lead):
+        return None
+    return lead + buffer
 
 
 def _first_internal_deadline(op, engine_data: EngineData) -> int | None:

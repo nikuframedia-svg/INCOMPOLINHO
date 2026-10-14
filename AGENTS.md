@@ -264,14 +264,20 @@ mantém esta libertação e só muda o tamanho do lote, acima).
     (`subcontract_dispatch_detail`, com `whole_lot`; o cartão mostra «lote
     completo»), o score (`subcontract_dispatch_misses`), a comparação por
     encomenda, o aviso de capacidade livre (as peças só contam no fim do
-    lote: conta o resto do lote), o ecrã de Entregas/Stock (o lote sai
-    inteiro no dia em que acaba e volta junto, com os dias e máquinas em
-    que foi estampado, `stock_projection._subcontract_movements`) e o
-    tooltip do Gantt («Subcontratado — o lote inteiro sai a … e volta a …»,
-    `subcontract_trips` de `order_tracking.compute_segment_deliveries`; cada
-    segmento mostra a viagem do seu lote, `PortionSlice.lot_ready_day`, mesmo
-    quando a entrega também espera por outro lote; as peças de um lote das
-    versões 1-2 na mesma entrega saem quando a entrega está completa).
+    lote: conta o resto do lote) e os `subcontract_trips` de
+    `order_tracking.compute_segment_deliveries` (cada segmento com a viagem
+    do seu lote, `PortionSlice.lot_ready_day`; hoje sem uso no ecrã).
+    Ecrã simples (14/10/2026, decisão do Luís): a regra da subcontratação é
+    só «produção acabada 5 dias úteis antes da entrega»; o sistema não mostra
+    nem avisa quando as peças saem ou voltam. O ecrã de Entregas/Stock trata
+    a referência como qualquer outra (+N no dia em que é produzida na
+    fábrica, −N no dia da entrega; `stock_projection` usa a vista da
+    fábrica), marca-a com um «S» (tooltip com os dias úteis do servidor,
+    `subcontract_due_workdays`) e continua a julgar a rutura
+    (`stockout_day`, «esgota dia», consola, auditoria de cobertura) pela vista
+    do cliente: produção acabada depois do prazo deixa a entrega a vermelho
+    mesmo com stock nesse dia. O tooltip do Gantt diz «Subcontratado —
+    acabar até DD/MM» (o `production_due_day` do lado subcontratado).
     Revisão 128 recalculada: todos os lotes subcontratados (HAN002, JTE003,
     gémeas BFP178/BFP186) ficam prontos no fim do lote + 5 dias úteis; num
     lote HAN002 que cobre duas semanas a primeira entrega deixa de sair

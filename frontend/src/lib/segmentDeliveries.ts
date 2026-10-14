@@ -103,29 +103,25 @@ function subcontractedSkus(segment: Segment): Set<string> | null {
   return segment.is_subcontracted ? null : new Set();
 }
 
-function joinWithAnd(items: string[]): string {
-  return items.length > 1 ? `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}` : items.join("");
-}
-
-type SubcontractTrip = NonNullable<Segment["subcontract_trips"]>[number];
-
 function dayText(day: number, dateAt: (day: number) => string | null): string {
   const isoDate = dateAt(day);
   return isoDate ? fmtDeliveryDate(isoDate) : `dia ${day}`;
 }
 
-/** "o lote inteiro sai a 16/11 e volta a 23/11" / "sai a 13/11 e volta a 20/11" */
-function tripText(trip: SubcontractTrip, dateAt: (day: number) => string | null): string {
-  const what = trip.whole_lot ? "o lote inteiro sai" : "sai";
-  return `${what} a ${dayText(trip.sent_day, dateAt)} e volta a ${dayText(trip.return_day, dateAt)}`;
+/** Prazo de produção do lado subcontratado: o mais cedo das suas entregas. */
+function subcontractProductionDue(segment: Segment): number | null {
+  const dues = (segment.output_milestones ?? [])
+    .filter((output) => output.is_subcontracted && !output.is_coproduced_surplus && !output.is_economic_surplus)
+    .map((output) => output.production_due_day);
+  return dues.length ? Math.min(...dues) : segment.production_due_day ?? null;
 }
 
 /**
- * "Subcontratado — o lote inteiro sai a 16/11 e volta a 23/11" para um
- * segmento de uma referência subcontratada. Os dias vêm do servidor
- * (subcontract_trips: um lote subcontratado vai inteiro quando acaba e volta
- * inteiro; servidores antigos só mandam o customer_ready_day de cada entrega);
- * dateAt só converte o dia útil em data. Null se não é subcontratado.
+ * "Subcontratado — acabar até 16/11" para um segmento de uma referência
+ * subcontratada: a produção tem de estar acabada até ao prazo de produção do
+ * servidor (5 dias úteis antes da entrega). Não diz quando sai nem quando
+ * volta (14/10/2026). dateAt só converte o dia útil em data. Null se não é
+ * subcontratado.
  */
 export function segmentSubcontractLine(
   segment: Segment,
@@ -133,17 +129,8 @@ export function segmentSubcontractLine(
 ): string | null {
   const skus = subcontractedSkus(segment);
   if ((skus && !skus.size) || !hasProduction(segment)) return null;
-  const trips = segment.subcontract_trips;
-  if (trips?.length) {
-    return `Subcontratado — ${joinWithAnd(trips.map((trip) => tripText(trip, dateAt)))}`;
-  }
-  const returnDays = [...new Set(
-    (segment.delivery_allocations ?? [])
-      .filter((entry) => !skus || skus.has(entry.sku))
-      .map((entry) => entry.customer_ready_day),
-  )].sort((left, right) => left - right);
-  if (!returnDays.length) return "Subcontratado";
-  return `Subcontratado — volta a ${joinWithAnd(returnDays.map((day) => dayText(day, dateAt)))}`;
+  const due = subcontractProductionDue(segment);
+  return due == null ? "Subcontratado" : `Subcontratado — acabar até ${dayText(due, dateAt)}`;
 }
 
 /** Uma linha por entrega (e o excedente no fim), para a janela de detalhe e a tabela. */

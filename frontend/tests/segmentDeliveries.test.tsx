@@ -106,17 +106,26 @@ describe("segmentDeliveries", () => {
       material_reference_kind: "subcontract_dispatch", material_release_day: 2,
     });
 
-    it("diz quando o segmento volta da subcontratação, com o dia do servidor", () => {
+    it("diz até quando a produção tem de estar acabada, com o prazo do servidor", () => {
       expect(segmentSubcontractLine({
-        ...base, is_subcontracted: true,
+        ...base, is_subcontracted: true, production_due_day: 10,
         delivery_allocations: [ready("SKU1", 600, 14, 12), ready("SKU1", 400, 12, 10)], unallocated_output: [],
-      }, dateAt)).toBe("Subcontratado — volta a 19/10 e 21/10");
+      }, dateAt)).toBe("Subcontratado — acabar até 19/10");
     });
 
-    it("sem data conhecida mostra o dia útil; sem entregas fica só a indicação", () => {
+    it("não diz quando sai nem quando volta", () => {
+      const line = segmentSubcontractLine({
+        ...base, is_subcontracted: true, production_due_day: 10,
+        delivery_allocations: [ready("SKU1", 600, 14, 12)], unallocated_output: [],
+      }, dateAt);
+      expect(line).not.toMatch(/sai|volta/);
+    });
+
+    it("sem data conhecida mostra o dia útil; sem prazo fica só a indicação", () => {
       expect(segmentSubcontractLine({
-        ...base, is_subcontracted: true, delivery_allocations: [ready("SKU1", 10, 30, 30)], unallocated_output: [],
-      }, dateAt)).toBe("Subcontratado — volta a dia 30");
+        ...base, is_subcontracted: true, production_due_day: 30,
+        delivery_allocations: [ready("SKU1", 10, 30, 30)], unallocated_output: [],
+      }, dateAt)).toBe("Subcontratado — acabar até dia 30");
       expect(segmentSubcontractLine({
         ...base, is_subcontracted: true, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],
       }, dateAt)).toBe("Subcontratado");
@@ -128,33 +137,17 @@ describe("segmentDeliveries", () => {
       expect(segmentSubcontractLine({ ...base, is_subcontracted: true, qty: 0, prod_min: 0 }, dateAt)).toBeNull();
     });
 
-    it("o lote subcontratado vai inteiro quando acaba e volta inteiro (dias do servidor)", () => {
+    it("nas gémeas só conta o prazo do lado subcontratado", () => {
       expect(segmentSubcontractLine({
-        ...base, is_subcontracted: true,
-        delivery_allocations: [ready("SKU1", 600, 14, 12), ready("SKU1", 400, 30, 12)], unallocated_output: [],
-        subcontract_trips: [{ sent_day: 10, return_day: 12, whole_lot: true }],
-      }, dateAt)).toBe("Subcontratado — o lote inteiro sai a 19/10 e volta a 21/10");
-      // Só excedente: a viagem do lote continua a aparecer.
-      expect(segmentSubcontractLine({
-        ...base, is_subcontracted: true, delivery_allocations: [], unallocated_output: [{ sku: "SKU1", qty: 10 }],
-        subcontract_trips: [{ sent_day: 10, return_day: 30, whole_lot: true }],
-      }, dateAt)).toBe("Subcontratado — o lote inteiro sai a 19/10 e volta a dia 30");
-    });
-
-    it("um lote de um plano anterior sai com as peças de cada entrega", () => {
-      expect(segmentSubcontractLine({
-        ...base, is_subcontracted: true, delivery_allocations: [ready("SKU1", 10, 14, 12)], unallocated_output: [],
-        subcontract_trips: [{ sent_day: 10, return_day: 12, whole_lot: false }],
-      }, dateAt)).toBe("Subcontratado — sai a 19/10 e volta a 21/10");
-    });
-
-    it("nas gémeas só conta o lado subcontratado", () => {
-      expect(segmentSubcontractLine({
-        ...base,
-        output_milestones: [milestone("SKU1", false), milestone("SKU2", true)],
+        ...base, production_due_day: 7,
+        output_milestones: [
+          { ...milestone("SKU1", false), production_due_day: 7 },
+          { ...milestone("SKU2", true), production_due_day: 12 },
+          { ...milestone("SKU2", true), production_due_day: 10, is_economic_surplus: true },
+        ],
         delivery_allocations: [ready("SKU1", 10, 11, 11), ready("SKU2", 10, 14, 12)],
         unallocated_output: [],
-      }, dateAt)).toBe("Subcontratado — volta a 21/10");
+      }, dateAt)).toBe("Subcontratado — acabar até 21/10");
     });
   });
 });

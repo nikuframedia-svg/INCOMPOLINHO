@@ -1,4 +1,8 @@
-"""Stock screen: a subcontracted lot leaves whole when it ends and counts on return."""
+"""Stock screen (Entregas), 14/10/2026: a subcontracted reference behaves like
+any other one. Its pieces count on the day they are produced in the factory;
+no trips to or from the subcontractor are shown. The subcontract rule is the
+production deadline (five working days before the delivery): a delivery
+whose production misses it is still reported as a rupture."""
 
 from __future__ import annotations
 
@@ -24,62 +28,57 @@ def _subcontracted_plan(stamping_days: list[int]):
     return op, data, lot, segments
 
 
-def test_subcontracted_pieces_are_sent_on_stamping_day_and_return_with_origin():
+def test_production_deadline_is_five_working_days_before_the_delivery():
+    from backend.config.planning import planning_milestones_for_op
+    from backend.scheduler.jit_policy import calendar_holidays
+
+    op, data, _lot, _segments = _subcontracted_plan([7])
+    holidays = calendar_holidays(data, -90, data.n_days + 14)
+    # Delivery Mon 21/09 (day 14): production finished by Mon 14/09 (day 7),
+    # five working days before (the weekend does not count).
+    milestones = planning_milestones_for_op(op, 14, holidays)
+    assert milestones.production_due_day == 7
+
+
+def test_subcontracted_pieces_count_on_the_day_they_are_produced():
+    _op_, data, lot, segments = _subcontracted_plan([7])
+
+    projection = compute_stock_projections(segments, [lot], data)[0]
+    days = {day.day_idx: day for day in projection.days}
+
+    assert days[7].produced == 100 and days[7].stock == 100
+    assert sum(day.produced for day in projection.days) == 100
+    assert days[14].demand == 100 and days[14].stock == 0
+    # Made on its deadline: on time.
+    assert projection.stockout_day is None
+
+
+def test_lot_made_over_several_days_shows_each_days_pieces():
+    _op_, data, lot, segments = _subcontracted_plan([6, 7])
+
+    projection = compute_stock_projections(segments, [lot], data)[0]
+    days = {day.day_idx: day for day in projection.days}
+
+    assert (days[6].produced, days[7].produced) == (50, 50)
+    assert (days[6].stock, days[7].stock) == (50, 100)
+    assert projection.stockout_day is None
+
+
+def test_production_after_its_deadline_is_still_a_rupture():
     _op_, data, lot, segments = _subcontracted_plan([8])
 
     projection = compute_stock_projections(segments, [lot], data)[0]
     days = {day.day_idx: day for day in projection.days}
 
-    # Stamped on day 8 (Tue 15/09): leaves that day, back five working days later.
-    assert days[8].subcontract_sent == 100
-    assert days[8].produced == 0
-    assert days[15].produced == 100
-    assert days[15].subcontract_returns == [{
-        "qty": 100,
-        "stamped_from_day": 8,
-        "stamped_to_day": 8,
-        "machines": ["M1"],
-        "stamped_from_date": "2026-09-15",
-        "stamped_to_date": "2026-09-15",
-    }]
-    assert sum(day.subcontract_sent for day in projection.days) == 100
-    assert [day.day_idx for day in projection.days if day.subcontract_returns] == [15]
-    # Back on day 15 for a day-14 delivery: the screen shows it late.
+    # Shown on its production day ...
+    assert days[8].produced == 100 and days[14].stock == 0
+    # ... but finished one working day after its deadline (day 7): the
+    # delivery of day 14 is late, as before.
     assert projection.stockout_day == 14
+    assert projection.coverage_days == 14.0
 
 
-def test_subcontracted_lot_stamped_over_several_days_is_sent_whole_when_it_ends():
-    _op_, data, lot, segments = _subcontracted_plan([7, 8])
-
-    projection = compute_stock_projections(segments, [lot], data)[0]
-    days = {day.day_idx: day for day in projection.days}
-
-    # The economic lot goes out whole on its last stamping day (13/10/2026)
-    # and comes back together, with the days it was stamped.
-    assert (days[7].subcontract_sent, days[8].subcontract_sent) == (0, 100)
-    assert days[7].produced == days[8].produced == 0
-    (back,) = days[15].subcontract_returns
-    assert (back["qty"], back["stamped_from_day"], back["stamped_to_day"]) == (100, 7, 8)
-    assert back["stamped_from_date"] == "2026-09-14"
-
-
-def test_lot_taken_over_from_the_per_delivery_contract_is_sent_on_each_stamping_day():
-    from backend.scheduler.lot_sizing import UPGRADED_MATERIAL_KEY
-
-    _op_, data, lot, segments = _subcontracted_plan([7, 8])
-    for output in lot.output_milestones:
-        output[UPGRADED_MATERIAL_KEY] = 2
-
-    projection = compute_stock_projections(segments, [lot], data)[0]
-    days = {day.day_idx: day for day in projection.days}
-
-    # Each stamping day shows its own pieces; they all come back together.
-    assert (days[7].subcontract_sent, days[8].subcontract_sent) == (50, 50)
-    (back,) = days[15].subcontract_returns
-    assert (back["qty"], back["stamped_from_day"], back["stamped_to_day"]) == (100, 7, 8)
-
-
-def test_in_house_reference_has_no_subcontract_movements():
+def test_in_house_reference_is_unchanged():
     op = _op(delivery_day=14)
     data = _engine(op)
     config = _config(subcontracted=False)
@@ -89,61 +88,31 @@ def test_in_house_reference_has_no_subcontract_movements():
     projection = compute_stock_projections([_segment(lot, 8)], [lot], data)[0]
 
     assert projection.days[8].produced == 100
-    assert all(day.subcontract_sent == 0 and day.subcontract_returns == []
-               for day in projection.days)
+    assert projection.stockout_day is None
+    assert projection.subcontract_due_workdays is None
+    late = compute_stock_projections([_segment(lot, 15)], [lot], data)[0]
+    assert late.stockout_day == 14 and late.days[14].stock == -100
 
 
-def test_stock_endpoint_sends_movements_only_on_days_that_have_them(monkeypatch):
-    from backend.api.data import get_stock_summary
+def test_stock_endpoints_send_no_subcontract_movements(monkeypatch):
+    from backend.api.data import get_stock_detail, get_stock_summary
     from backend.copilot.state import state
 
-    _op_, data, lot, segments = _subcontracted_plan([8])
+    _op_, data, lot, segments = _subcontracted_plan([7])
     monkeypatch.setattr(state, "engine_data", data)
     monkeypatch.setattr(state, "stock_projections",
                         compute_stock_projections(segments, [lot], data))
 
     (row,) = asyncio.run(get_stock_summary())
     days = {day["day"]: day for day in row["days"]}
-
-    assert days[8]["subcontract_sent"] == 100
-    assert days[15]["produced"] == 100
-    assert days[15]["subcontract_returns"][0]["stamped_from_date"] == "2026-09-15"
-    assert days[15]["subcontract_returns"][0]["machines"] == ["M1"]
-    untouched = [day for index, day in days.items() if index not in (8, 15)]
-    assert all("subcontract_sent" not in day and "subcontract_returns" not in day
-               for day in untouched)
-
-
-def test_deliveries_stamped_together_come_back_as_one_return():
-    op = _op(delivery_day=14)
-    op.d[14] = 60
-    op.d[12] = 40
-    data = _engine(op)
-    apply_effective_planning_config(data, _config())
-    lots = create_lots(data, _config())
-    segments = [_segment(lot, 8) for lot in lots]
-
-    projection = compute_stock_projections(segments, lots, data)[0]
-    days = {day.day_idx: day for day in projection.days}
-
-    assert days[8].subcontract_sent == 100
-    assert [(item["qty"], item["stamped_from_day"]) for item in days[15].subcontract_returns] == [
-        (100, 8),
-    ]
-
-
-def test_stock_detail_endpoint_keeps_old_shape_on_days_without_movements(monkeypatch):
-    from backend.api.data import get_stock_detail
-    from backend.copilot.state import state
-
-    _op_, data, lot, segments = _subcontracted_plan([8])
-    monkeypatch.setattr(state, "engine_data", data)
-    monkeypatch.setattr(state, "stock_projections",
-                        compute_stock_projections(segments, [lot], data))
+    assert days[7]["produced"] == 100
+    assert row["subcontract_company_id"] == "SUPPLIER"
+    # The «S» badge says how many working days before the delivery.
+    assert row["subcontract_due_workdays"] == 5
+    assert set(days[7]) == {"day", "date", "stock", "demand", "produced", "workday", "is_buffer"}
 
     detail = asyncio.run(get_stock_detail("SUB"))
-    days = {day["day_idx"]: day for day in detail["days"]}
-
-    assert days[8]["subcontract_sent"] == 100
-    assert days[15]["subcontract_returns"][0]["qty"] == 100
-    assert "subcontract_sent" not in days[0] and "subcontract_returns" not in days[0]
+    detail_days = {day["day_idx"]: day for day in detail["days"]}
+    assert detail_days[7]["produced"] == 100
+    assert all("subcontract_sent" not in day and "subcontract_returns" not in day
+               for day in detail["days"])

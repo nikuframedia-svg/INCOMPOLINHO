@@ -185,19 +185,16 @@ def test_in_house_lots_are_ready_with_their_own_pieces():
     ]
 
 
-def test_stock_screen_sends_the_whole_lot_when_it_ends_and_gets_it_back_together():
+def test_stock_screen_shows_the_whole_lot_on_its_production_days():
+    """14/10/2026: the stock screen shows no trips; the lot's pieces count on
+    the days they are stamped, and finishing on its deadline (day 2) is on
+    time."""
     data, lot = _two_deliveries()
     segments = _segments(lot, [(1, 150), (2, 150)])
     (projection,) = compute_stock_projections(segments, [lot], data)
     days = {day.day_idx: day for day in projection.days}
-    assert [(day.day_idx, day.subcontract_sent) for day in projection.days
-            if day.subcontract_sent] == [(2, 300)]
-    assert [day.day_idx for day in projection.days if day.subcontract_returns] == [9]
-    (back,) = days[9].subcontract_returns
-    assert (back["qty"], back["stamped_from_day"], back["stamped_to_day"], back["machines"]) == (
-        300, 1, 2, ["M1"],
-    )
-    assert days[9].produced == 300 and days[1].produced == days[2].produced == 0
+    assert (days[1].produced, days[2].produced, days[9].produced) == (150, 150, 0)
+    assert projection.stockout_day is None
 
 
 def test_gantt_segments_show_one_trip_for_the_whole_lot():
@@ -251,10 +248,10 @@ def test_gantt_trip_of_a_per_delivery_lot_mixed_with_a_whole_lot():
         ],
         [{"sent_day": 4, "return_day": 11, "whole_lot": True}],
     ]
-    # The stock screen sends B's pieces on the days they were stamped.
+    # The stock screen shows each lot on the day it is stamped.
     (projection,) = compute_stock_projections(segments, lots, data)
-    assert [(day.day_idx, day.subcontract_sent) for day in projection.days
-            if day.subcontract_sent] == [(1, 180), (4, 120)]
+    assert [(day.day_idx, day.produced) for day in projection.days
+            if day.produced] == [(1, 180), (4, 120)]
 
 
 def test_idle_capacity_counts_the_rest_of_a_lot_that_goes_out_whole():

@@ -8,7 +8,7 @@ import { Label } from "../components/ui/Label";
 import { Dot } from "../components/ui/Dot";
 import { Pill } from "../components/ui/Pill";
 import { formatStockoutLabel, parseStockDate } from "../lib/stockDates";
-import { stockCellTitle, subcontractReturnLine, subcontractReturnedQty } from "../lib/stockSubcontract";
+import { stockCellTitle, subcontractBadgeTitle } from "../lib/stockCell";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -26,17 +26,15 @@ function fmtDate(iso: string): { short: string; dow: string } {
   return parseStockDate(iso) ?? { short: iso, dow: "" };
 }
 
-function cellBg(day: StockDayCompact, coverageDays: number): string {
+function cellBg(day: StockDayCompact, coverageDays: number, stockoutDay: number | null): string {
   if (day.is_buffer) return `${T.blue}10`; // buffer day → subtle blue
   if (!day.workday) return T.border; // weekend/holiday → grey
-  if (day.stock < 0) return `${T.red}30`; // ruptura → red
+  // ruptura → red; a subcontracted delivery made after its deadline is late
+  // on its delivery day even with pieces in stock.
+  if (day.stock < 0 || day.day === stockoutDay) return `${T.red}30`;
   if (coverageDays < 3 && coverageDays > 0 && day.stock > 0 && day.demand > 0)
     return `${T.orange}20`; // low coverage → yellow-ish
   return "transparent";
-}
-
-function hasSubcontractMovement(day: Pick<StockDayCompact, "subcontract_sent" | "subcontract_returns">): boolean {
-  return (day.subcontract_sent ?? 0) > 0 || (day.subcontract_returns?.length ?? 0) > 0;
 }
 
 function cellColor(day: StockDayCompact): string {
@@ -87,7 +85,6 @@ export function StockPage() {
   const loadDetail = useCallback(() => detailSku ? getStockDetail(detailSku) : Promise.resolve(null), [detailSku]);
   const { data: detail, error: detailError } = usePlanQuery(JSON.stringify(detailSku), loadDetail);
   const detailLoading = Boolean(detailSku && !detail && !detailError);
-  const detailHasSubcontract = Boolean(detail?.days.some(hasSubcontractMovement));
 
   // Unique filter options
   const clients = useMemo(() => {
@@ -257,6 +254,23 @@ export function StockPage() {
                       onClick={() => openDetail(row.sku)}
                       style={{ fontSize: 11, fontWeight: 600, color: T.blue, fontFamily: T.mono, cursor: "pointer" }}
                     >{row.sku}</span>
+                    {row.subcontract_company_id && (
+                      <span
+                        title={subcontractBadgeTitle(row.subcontract_due_workdays)}
+                        aria-label={subcontractBadgeTitle(row.subcontract_due_workdays)}
+                        style={{
+                          fontSize: 8,
+                          fontWeight: 600,
+                          fontFamily: T.mono,
+                          color: T.secondary,
+                          border: `1px solid ${T.border}`,
+                          borderRadius: 3,
+                          padding: "0 3px",
+                          lineHeight: "12px",
+                          cursor: "help",
+                        }}
+                      >S</span>
+                    )}
                   </div>
                   <div style={{ fontSize: 9, color: T.tertiary }}>
                     {row.client}
@@ -269,11 +283,8 @@ export function StockPage() {
 
                 {/* Day cells */}
                 {(row.days ?? []).map((day) => {
-                  const bg = cellBg(day, row.coverage_days);
+                  const bg = cellBg(day, row.coverage_days, row.stockout_day);
                   const color = cellColor(day);
-                  const returned = subcontractReturnedQty(day);
-                  const inHouse = day.produced - returned;
-                  const sent = day.subcontract_sent ?? 0;
                   return (
                     <div
                       key={day.day}
@@ -294,32 +305,16 @@ export function StockPage() {
                       }}
                       title={stockCellTitle(day)}
                     >
-                      {!day.workday && !hasSubcontractMovement(day) ? (
+                      {!day.workday ? (
                         <span style={{ color: T.tertiary }}>—</span>
                       ) : (
                         <>
                           <span style={{ fontWeight: day.stock < 0 ? 700 : 400 }}>
                             {fmtStock(day.stock)}
                           </span>
-                          {inHouse > 0 && (
+                          {day.produced > 0 && (
                             <span style={{ fontSize: 8, color: T.green, marginTop: 1 }}>
-                              +{fmtStock(inHouse)}
-                            </span>
-                          )}
-                          {returned > 0 && (
-                            <span
-                              aria-label={`Volta da subcontratação: ${returned.toLocaleString()}`}
-                              style={{ fontSize: 8, color: T.teal, marginTop: 1 }}
-                            >
-                              ↩+{fmtStock(returned)}
-                            </span>
-                          )}
-                          {sent > 0 && (
-                            <span
-                              aria-label={`Enviado para subcontratação: ${sent.toLocaleString()}`}
-                              style={{ fontSize: 8, color: T.purple, marginTop: 1 }}
-                            >
-                              ↗{fmtStock(sent)}
+                              +{fmtStock(day.produced)}
                             </span>
                           )}
                           {day.demand > 0 && (
@@ -362,14 +357,6 @@ export function StockPage() {
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10, color: T.green }}>+N</span>
           <span style={{ fontSize: 10, color: T.tertiary }}>Produção</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: T.teal }}>↩+N</span>
-          <span style={{ fontSize: 10, color: T.tertiary }}>Volta da subcontratação (entra no stock)</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: T.purple }}>↗N</span>
-          <span style={{ fontSize: 10, color: T.tertiary }}>Enviado para subcontratação (ainda não conta)</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10, color: T.blue }}>-N</span>
@@ -415,9 +402,6 @@ export function StockPage() {
                       <th style={{ textAlign: "right", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Produção</th>
                       <th style={{ textAlign: "right", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Stock</th>
                       <th style={{ textAlign: "left", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Maquina</th>
-                      {detailHasSubcontract && (
-                        <th style={{ textAlign: "left", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Subcontratação</th>
-                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -428,14 +412,6 @@ export function StockPage() {
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.produced > 0 ? T.green : T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.produced > 0 ? d.produced.toLocaleString() : "-"}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.stock < 0 ? T.red : T.primary, fontWeight: d.stock < 0 ? 600 : 400, borderBottom: `1px solid ${T.border}` }}>{d.stock.toLocaleString()}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, color: T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.machine ?? "-"}</td>
-                        {detailHasSubcontract && (
-                          <td style={{ padding: "3px 6px", fontSize: 10, color: T.secondary, borderBottom: `1px solid ${T.border}` }}>
-                            {[
-                              ...(d.subcontract_returns ?? []).map(subcontractReturnLine),
-                              ...((d.subcontract_sent ?? 0) > 0 ? [`Enviado para subcontratação: ${(d.subcontract_sent ?? 0).toLocaleString()}`] : []),
-                            ].join("; ") || "-"}
-                          </td>
-                        )}
                       </tr>
                     ))}
                   </tbody>
