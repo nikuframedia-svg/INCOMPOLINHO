@@ -461,8 +461,8 @@ def _compute_otd_d(
 ) -> dict[str, int | float]:
     """OTD-D: for each op, at each demand day, cum_prod >= cum_demand.
 
-    Production enters on the day it is available to the customer, from the
-    shared delivery portions (a subcontracted delivery when it returns).
+    Production enters on the day it is made, from the shared delivery
+    portions (subcontracted too: lateness follows the stock on Entregas).
     Returns a bounded percentage plus explicit checkpoint and quantity deficits.
     """
     if portions is None:

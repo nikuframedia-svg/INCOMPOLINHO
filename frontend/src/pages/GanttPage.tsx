@@ -555,14 +555,12 @@ function exportGantt(
   // Section 3: KPIs
   lines.push("");
   lines.push("--- KPIs ---");
-  lines.push("OTD,OTD-D,Atrasos_cliente,Envios_sub_atraso,Atraso_sub_dias_uteis,Setups,Antecipação_média,Material_max_dias_uteis,Violações_libertação");
+  lines.push("OTD,OTD-D,Atrasos_cliente,Setups,Antecipação_média,Material_max_dias_uteis,Violações_libertação");
   lines.push(
     [
       `${score.otd?.toFixed(1)}%`,
       `${score.otd_d?.toFixed(1)}%`,
       score.tardy_count,
-      String(score.subcontract_dispatch_misses ?? ""),
-      String(score.subcontract_dispatch_late_workdays ?? ""),
       score.setups,
       `${score.earliness_avg_days?.toFixed(1)}d`,
       String(score.start_anticipation_max_workdays ?? ""),

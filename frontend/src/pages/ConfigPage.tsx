@@ -639,7 +639,7 @@ function cleanRule(rule: SkuPlanningRule): SkuPlanningRule {
 function metricDelta(res: { delta?: PlanningDelta } | null) {
   if (!res?.delta) return null;
   const d = res.delta;
-  return `Lotes no prazo ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Envios a subcontratado falhados ${d.subcontract_dispatch_misses >= 0 ? "+" : ""}${d.subcontract_dispatch_misses} · Dias úteis de atraso no subcontratado ${d.subcontract_dispatch_late_workdays >= 0 ? "+" : ""}${d.subcontract_dispatch_late_workdays} · Setups ${d.setups >= 0 ? "+" : ""}${d.setups}`;
+  return `Lotes no prazo ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Setups ${d.setups >= 0 ? "+" : ""}${d.setups}`;
 }
 
 const NOT_APPLIED = "Alteração não aplicada. O plano não mudou.";

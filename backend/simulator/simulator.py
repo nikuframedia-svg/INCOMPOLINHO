@@ -285,18 +285,6 @@ def _delta_summary(delta: DeltaReport) -> str:
             f"Atrasos: {direction}{tardy_diff} ({delta.tardy_before} → {delta.tardy_after})"
         )
 
-    dispatch_diff = (
-        delta.subcontract_dispatch_after - delta.subcontract_dispatch_before
-    )
-    if dispatch_diff != 0:
-        direction = "+" if dispatch_diff > 0 else ""
-        parts.append(
-            "Envios de subcontratação em atraso: "
-            f"{direction}{dispatch_diff} "
-            f"({delta.subcontract_dispatch_before} → "
-            f"{delta.subcontract_dispatch_after})"
-        )
-
     if not parts:
         return "Sem alterações significativas nos KPIs."
 
