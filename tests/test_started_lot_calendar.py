@@ -240,7 +240,10 @@ def test_started_lot_rest_is_planned_with_the_new_material_windows():
     # ... taken over as version 3 and dated by the current calendar: the
     # delivery's own R moves back over the new holiday, U to the workday
     # before the delivery holiday; the whole lot keeps the lot R.
-    assert _unmarked(original) == {lot.id: lot for lot in create_lots(data, config)}[lot_l.id]
+    # (Version 3, the rounded sizing of its time: never the current one.)
+    assert _unmarked(original) == {
+        lot.id: lot for lot in create_lots(data, config, quantity_material=3)
+    }[lot_l.id]
     current = _delivery(original, 9)
     assert (current["delivery_material_release_day"], current["production_due_day"]) == (1, 7)
     assert current["material_release_day"] == original.material_release_day < 1
@@ -267,10 +270,11 @@ def test_holiday_added_after_a_lot_started_gives_a_valid_plan(monkeypatch):
     view = result_validation_data(data, result)
     assert_plan_valid(result.segments, view, config, lots=result.lots)
     assert source_contract_violations(result.segments, result.lots, view, config) == []
-    sized_now = {lot.id: lot for lot in create_lots(data, config)}
+    sized_now = {lot.id: lot for lot in create_lots(data, config, quantity_material=3)}
     by_id = {lot.id: lot for lot in result.lots}
-    # Lot sizing ran once and nothing was re-sized; the started lot carries
-    # the dates of the current calendar.
+    # Lot sizing ran once and nothing was re-sized (needs below the economic
+    # lot: the same sizes under both rules); the started lot, taken over as
+    # version 3, carries the dates of the current calendar.
     assert {lot_id: lot.qty for lot_id, lot in by_id.items()} == {
         lot.id: lot.qty for lot in baseline.lots
     }
@@ -570,6 +574,7 @@ def test_rev124_holiday_write_gives_an_activatable_plan(monkeypatch):
     from backend.replan.jobs import _result_snapshot
     from backend.scheduler.canonical import result_validation_data as validation_view
     from tests.snapshot_fixture import load_payload, pin_factory_clock
+    from tests.test_eco_lot_minimum import assert_replan_sizes
 
     manifest, payload = load_payload("rev124")
     freeze_day = manifest["freeze_day"]
@@ -589,9 +594,7 @@ def test_rev124_holiday_write_gives_an_activatable_plan(monkeypatch):
     )
     _assert_activatable_payload(candidate)
     assert frozen.historical_schedule_changes(payload, candidate, today=manifest["as_of"]) == []
-    assert {lot["id"]: lot["qty"] for lot in candidate["lots"]} == {
-        lot["id"]: lot["qty"] for lot in payload["lots"]
-    }
+    assert_replan_sizes(payload, candidate, freeze_day)
     holiday_day = data.workdays.index("2026-10-23")
     assert not any(s.day_idx == holiday_day and s.end_min > s.start_min
                    for s in result.segments)

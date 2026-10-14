@@ -80,7 +80,8 @@ Valores NP nas datas:
 - Vazio = sem dados
 
 Stock real = último positivo antes do primeiro negativo.
-Lote económico: HARD — arredonda sempre para cima ao eco lot.
+Lote económico: HARD — é o MÍNIMO; nunca múltiplos. Lote = max(lote económico,
+necessidade) (decisão do Luís, 14/10/2026; AGENTS §2).
 
 ## ═══ LOTE ECONÓMICO = UMA PRODUÇÃO (decisão do Luís, 13/10/2026) ═══
 Regra da Incompol; detalhe no `AGENTS.md` §2 («Lote económico = uma produção»).
@@ -88,6 +89,12 @@ Estado: implementada a 13/10/2026 (contrato de material versão 3). Planos antig
 continuam válidos (não pedem «Recalcular»); o «Recalcular plano» redimensiona-os.
 - Sempre que se produz um SKU, produz-se pelo menos o lote económico, numa só
   produção (um setup). O lote económico cumpre-se sempre.
+- **Lote económico = mínimo, nunca múltiplos (14/10/2026, versão 4):** se a
+  necessidade da entrega que abre o lote é maior do que o lote económico,
+  produz-se essa quantidade (27 641 com lote de 23 040 → 27 641, não 46 080).
+  Planos das versões 1-3 (arredondados) são reconstruídos pelo «Recalcular
+  plano»; num replaneamento os lotes começados mantêm o tamanho antigo
+  (regra 4) e contam como oferta já comprometida.
 - A janela de 5 dias úteis de matéria-prima vale só para a PRIMEIRA entrega que
   o lote serve. As outras entregas que o lote cobre e o excedente não têm janela
   própria: considera-se que há MP para o lote económico inteiro.
@@ -107,7 +114,8 @@ continuam válidos (não pedem «Recalcular»); o «Recalcular plano» redimensi
 
 ## ═══ PEÇAS GÉMEAS ═══
 Mesma ferramenta + máquina, produção SIMULTÂNEA.
-Quantidade por SKU = exactamente o que precisa (eco lot per-SKU).
+Quantidade por ciclo = a maior das necessidades dos dois lados (cada uma pelo
+menos o seu lote económico, sem arredondar); os dois SKUs recebem essa quantidade.
 Tempo = UMA execução (max(time_A, time_B), não dobro).
 Surplus carry-forward independente por SKU.
 
@@ -122,7 +130,7 @@ DAY_CAP = 1020 min. Noite: SÓ EMERGÊNCIA.
 
 ## ═══ SCHEDULER — 5 FASES ═══
 
-1. **Lot Sizing** (lot_sizing.py): EOps → Lots. Eco lot HARD + carry-forward + twins.
+1. **Lot Sizing** (lot_sizing.py): EOps → Lots. Lote económico mínimo (max(eco, necessidade)) + carry-forward + twins.
 2. **Tool Grouping** (tool_grouping.py): Lots → ToolRuns. Split por EDD gap e infeasibilidade.
 3. **Dispatch** (dispatch.py): Assign machines (EDD-aware) + Sequence (campaign + interleave urgent + 2-opt) + Allocate segments.
 4. **JIT** (jit.py): Histórico. O objetivo atual é o oposto: produzir o mais cedo possível após a libertação de material (5 dias úteis); ver `AGENTS.md`, que prevalece sobre este ficheiro. Setups extra desempatam, não vetam (decisão 02/10/2026).

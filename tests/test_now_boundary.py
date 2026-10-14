@@ -722,9 +722,11 @@ def test_rev127_outage_removed_at_1539_places_nothing_before_now(monkeypatch):
     data, result = plan["engine_data"], plan["result"]
     rest = [s for s in result.segments if s.lot_id == REST_LOT and s.day_idx >= freeze_day]
     assert rest and min((s.day_idx, s.start_min) for s in rest) >= (freeze_day, now_min)
-    assert {lot["id"]: lot["qty"] for lot in candidate["lots"]} == {
-        lot["id"]: lot["qty"] for lot in payload["lots"]
-    }
+    # Started lots keep their size; the rest follows the economic lot as a
+    # minimum (14/10/2026).
+    from tests.test_eco_lot_minimum import assert_replan_sizes
+
+    assert_replan_sizes(payload, candidate, freeze_day, now_min)
     # Honest physics: with the time left after 15:39 the deliveries are met.
     late = [
         key for key, service in order_service(result.segments, result.lots, data).items()

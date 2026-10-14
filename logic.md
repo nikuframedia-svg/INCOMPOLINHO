@@ -303,6 +303,11 @@ Para cada dia com demand > 0:
 
 ### 5.2 Eco Lot HARD
 
+> **Nota de arquivo (14/10/2026):** histórico. Desde 14/10/2026 o lote
+> económico é um mínimo, nunca múltiplos: `qty = max(eco_lot, deficit)`
+> (decisão do Luís; `AGENTS.md` §2 prevalece). O arredondamento abaixo só
+> descreve planos das versões de material 0-3.
+
 ```
 Se eco_lot <= 0 ou demand <= 0: retorna demand
 Senão: ceil(demand / eco_lot) × eco_lot    # SEMPRE arredonda para CIMA

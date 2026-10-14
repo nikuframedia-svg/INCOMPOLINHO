@@ -149,10 +149,65 @@ entre as duas entregas que formam o ciclo (a que o controla e a sua par):
 individuais; não aplicar inadvertidamente `max(R_outputs)` de um modelo genérico.
 Stock coproduzido não cria encomenda ou expedição fictícia.
 
+**Lote económico = mínimo, nunca múltiplos (decidido pelo Luís a 14/10/2026,
+com a resposta da Incompol).** «Produz-se pelo menos o lote económico; se a
+necessidade é maior, produz-se essa quantidade, nunca o dobro do lote
+económico.» Estado: implementado a 14/10/2026 como contrato de material
+versão 4 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 4`,
+`MINIMUM_ECO_LOT_VERSION`).
+
+- Quantidade do lote = `max(lote económico, necessidade)`
+  (`lot_sizing._apply_eco_lot`). A necessidade é a de sempre: a falta da
+  entrega que abre o lote, depois do stock e do excedente do lote anterior
+  (carry-forward). Sem olhar para entregas seguintes (só as regras de
+  campanha por SKU, se configuradas).
+- Gémeas: cada lado pede a sua necessidade (pelo menos o seu lote
+  económico); o ciclo faz a maior das duas, sem arredondar, e os dois lados
+  recebem a mesma quantidade (o lado que precisa de menos fica com
+  excedente).
+- Tudo o resto da regra de 13/10 fica igual: uma produção por lote, janela de
+  material só na primeira entrega, subcontratação com o lote inteiro.
+- Motivo: a regra «arredondar sempre para cima ao múltiplo do lote
+  económico» estava no sistema desde o início e nunca veio da Incompol
+  (exemplo: entrega de 27 641 com lote de 23 040 produzia 46 080).
+- Consequência: quando uma entrega pede mais do que o lote económico deixa
+  de sobrar excedente, e a entrega seguinte abre um lote novo (um setup).
+  No ISOP de 13/10 (revisões 128/129, «Recalcular» desde D0, modo normal):
+  187 lotes e 178 setups como antes, 1 encomenda atrasada como antes, peças
+  a mais (excedente) 391 791 → 384 057; 19 lotes mudam de tamanho (ex.:
+  JDE002 TP042173-0060-1 de 28 000 = 2 × 14 000 para 17 500).
+- Planos anteriores (versões 0-3, lotes arredondados): continuam legíveis e
+  válidos pela regra com que foram feitos (`create_lots(quantity_material=3)`
+  arredonda; `lot_sizing.rounded_sizing`). O «Recalcular plano» reconstrói-os
+  (`api/data.stored_plan_needs_rebuild`: qualquer lote das versões 1-3; os
+  instantâneos da versão 0, sem outputs por entrega, compactam como antes), em
+  vez de compactar. Um replaneamento (avaria, feriado, operadores, cenário)
+  num plano assim mantém os lotes começados com o tamanho antigo (regra 4:
+  nunca redimensionar; passam à libertação da versão 3,
+  `WHOLE_LOT_MATERIAL_VERSION`) e dimensiona o resto pela regra nova; esses
+  lotes antigos são oferta já comprometida, creditados por inteiro e nunca
+  contados como sobreprodução (`lot_sizing.older_sizing_lots`,
+  `credit_committed_lots`, lidos por `canonical.source_contract_violations`
+  e `validation.demand_coverage_metrics`). Um movimento manual ou uma
+  reparação local não redimensionam nada: o plano fica na versão em que
+  estava até ao «Recalcular». Ensaio na cópia da revisão 129 (14/10, às
+  10:00 e às 15:39; avaria da PRM043 e feriado de 23/10, modo normal):
+  planos válidos, 11-12 lotes começados com o tamanho antigo, 0 peças em
+  excesso ou em falta face à procura, 0 alterações ao histórico, cerca de
+  50 s.
+- Comparador sem perdas: o atraso de envio para subcontratação conta-se uma
+  vez por entrega (`improvement.subcontract_lateness`, o maior atraso das
+  suas porções), não por porção. Com a regra nova uma entrega que dois lotes
+  arredondados serviam pode ser servida por um só; contada por porção, a
+  porção que faltava lia-se como «nunca sai» e o comparador recusava um
+  replaneamento melhor (revisão 127, capacidade libertada às 15:39: entregas
+  HAN002 dos dias 35, 42 e 70).
+
 **Lote económico = uma produção (decidido pelo Luís a 13/10/2026, a pedido
 da Incompol; substitui a «Janela por entrega» e as «Gémeas por entrega»
 abaixo).** Estado: implementado a 13/10/2026 como contrato de material
-versão 3 (`lot_sizing.QUANTITY_MATERIAL_VERSION = 3`).
+versão 3 (`lot_sizing.WHOLE_LOT_MATERIAL_VERSION = 3`; a versão 4 de 14/10
+mantém esta libertação e só muda o tamanho do lote, acima).
 
 - Sempre que se produz um SKU, produz-se pelo menos o seu lote económico, numa
   só produção: um setup, e a produção continua pelos turnos, noites, fins de
@@ -286,10 +341,13 @@ Implementação (13/10/2026):
   os lotes passam à versão 3 tal como estão
   (`lot_sizing.upgrade_plan_material`, `frozen.with_current_material`,
   `manual_move._move_lot`): o lote começado congela só o que começou
-  (regra 4) e o plano nunca mistura versões. Esses lotes ficam marcados
-  (`material_upgraded_from`) e podem manter as produções separadas que o
-  contrato antigo criou, **mas nunca ganhar outra** (revisão de 13/10: um
-  replaneamento partia lotes como BFP082_14 e o gate aceitava). Cada
+  (regra 4) e o plano nunca mistura contratos de libertação. Ficam com o
+  tamanho arredondado da versão em que foram feitos (versão 3, nunca a 4):
+  desde 14/10 o «Recalcular plano» redimensiona-os pela regra do mínimo.
+  Esses lotes ficam marcados (`material_upgraded_from`) e podem manter as
+  produções separadas que o contrato antigo criou, **mas nunca ganhar
+  outra** (revisão de 13/10: um replaneamento partia lotes como BFP082_14 e
+  o gate aceitava). Cada
   cálculo regista nos outputs quantas produções o lote tem no plano de que
   parte (`material_upgraded_productions`, escrito por
   `frozen.with_current_material` no início do replaneamento, da reparação,
@@ -580,8 +638,10 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
 - Ignorar `Prz.Fabrico` e `STOCK-A` como fontes de procura. PRM020 está fora
   do âmbito: diagnosticar a importação incompatível, nunca perder procura
   silenciosamente ou criar capacidade nessa máquina.
-- Dimensionar o lote económico efetivo e carry-forward uma vez. Um movimento
-  altera alocação, não inventa novos lotes, compromissos ou quantidades.
+- Dimensionar o lote económico efetivo e carry-forward uma vez. O lote
+  económico é um mínimo: lote = `max(lote económico, necessidade)`, nunca um
+  múltiplo (Luís, 14/10/2026, §2). Um movimento altera alocação, não inventa
+  novos lotes, compromissos ou quantidades.
 - Gémeas produzem simultaneamente quantidades positivas iguais em cada ciclo;
   eco-lots efetivos incompatíveis bloqueiam. Não usar LCM para esconder isso.
 - Recalcular duração/setup ao trocar de máquina: elegibilidade, pH, OEE e
@@ -638,8 +698,10 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   configuração anterior (ex.: OEE alterado), o recálculo reconstrói os lotes
   com o optimizador completo em vez de compactar
   (`api/data.stored_plan_needs_rebuild`). O mesmo com lotes das versões 1-2
-  (§2) e com um lote que, julgado desde D0, tem mais de uma produção (corte
-  da regra 4 durante o dia): a compactação não junta as partes.
+  (§2), desde 14/10/2026 com qualquer lote das versões 1-3 (arredondado a
+  múltiplos do lote económico; a compactação não redimensiona) e com um
+  lote que, julgado desde D0, tem mais de uma produção (corte da regra 4
+  durante o dia): a compactação não junta as partes.
   **Consequência operacional (ensaio de 13/10/2026, aceite por este §5):**
   a reconstrução também refaz o que já se fez hoje e, com um ISOP antigo, os
   dias anteriores; a compactação mantinha-os na prática. No primeiro

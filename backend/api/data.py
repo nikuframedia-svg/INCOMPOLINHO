@@ -514,6 +514,10 @@ def stored_plan_needs_rebuild(engine_data, segments, lots, config) -> bool:
     the rebuild makes the lot one production again (review of
     13/10/2026: outage at 09:30 declared at 10:00, removed at 11:00, then
     «Recalcular plano»).
+
+    A plan with lots sized to eco-lot multiples (material versions 1-3,
+    before 14/10/2026) is rebuilt too: the economic lot is now a minimum
+    (``lot_sizing.MINIMUM_ECO_LOT_VERSION``), and compaction never re-sizes.
     """
     from backend.scheduler.canonical import source_contract_violations
     from backend.scheduler.validation import plan_lot_split_violations
@@ -521,16 +525,18 @@ def stored_plan_needs_rebuild(engine_data, segments, lots, config) -> bool:
     detached = copy.copy(engine_data)
     detached.preserved_lot_proofs = {}
     detached.history_boundary = None
-    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION, UPGRADED_MATERIAL_KEY
+    from backend.scheduler.lot_sizing import rounded_sizing
     from backend.scheduler.material_quantities import lot_material_version
 
-    # A plan of the per-delivery contract (material versions 1-2) stays
-    # valid, but only rebuilding its lots applies the current one (economic
-    # lot = one production): compaction would keep the productions its old
-    # contract split. Version 0 lots were already one production each.
+    # Material versions 1-3 sized lots to eco-lot multiples; since 14/10/2026
+    # the economic lot is a minimum (version 4), and only rebuilding sizes
+    # them again: compaction keeps every lot's quantity. This also covers a
+    # plan of the per-delivery contract (versions 1-2, or taken over as
+    # version 3, ``UPGRADED_MATERIAL_KEY``), whose productions only a rebuild
+    # joins into one per lot. Version 0 snapshots (no per-delivery outputs,
+    # before 07/10/2026) keep compaction, as before.
     if any(
-        0 < lot_material_version(lot) < QUANTITY_MATERIAL_VERSION
-        or any(output.get(UPGRADED_MATERIAL_KEY) for output in lot.output_milestones or [])
+        0 < (version := lot_material_version(lot)) and rounded_sizing(version)
         for lot in lots
     ):
         return True

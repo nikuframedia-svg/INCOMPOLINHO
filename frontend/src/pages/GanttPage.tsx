@@ -1750,7 +1750,7 @@ export function GanttPage() {
                       const setupOnly = isSetupOnlySegment(s);
                       const segmentTitle = setupOnly
                         ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min de preparação | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`
-                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString("pt-PT")} pç | Lote: ${lotQty.toLocaleString("pt-PT")} pç | Lote económico: ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString("pt-PT")} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`;
+                        : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString("pt-PT")} pç | Lote: ${lotQty.toLocaleString("pt-PT")} pç | Lote económico (mínimo): ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString("pt-PT")} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`;
                       const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
@@ -2290,7 +2290,7 @@ export function GanttPage() {
                 {lotCoversSeveralDeliveries && (
                   <p style={{ margin: "8px 0 0", fontSize: 12, color: T.secondary, lineHeight: 1.45 }}>
                     {wholeLotRelease
-                      ? "O lote económico cobre também entregas seguintes e é produzido de uma só vez, com um único setup: o material do lote inteiro é libertado com a primeira entrega."
+                      ? "O lote económico (mínimo) é maior do que a falta da primeira entrega: as peças a mais cobrem também entregas seguintes. O lote é produzido de uma só vez, com um único setup, e o material do lote inteiro é libertado com a primeira entrega."
                       : "O lote económico cobre também entregas seguintes; cada parte só é produzida depois de libertado o material da sua entrega."}
                   </p>
                 )}

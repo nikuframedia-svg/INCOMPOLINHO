@@ -38,7 +38,7 @@ from backend.scheduler.canonical import (
     legacy_material_plan,
     source_contract_violations,
 )
-from backend.scheduler.lot_sizing import create_lots
+from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION, create_lots
 from backend.scheduler.material_quantities import (
     delivery_readiness,
     material_portions,
@@ -164,7 +164,7 @@ def test_eco_lot_is_conserved_per_side_and_never_counted_twice():
         assert made == recorded  # every piece belongs to one output
         assert demand == sum(op.d)  # each delivery covered exactly once
     for lot in lots:
-        assert lot.qty % 3000 == 0  # eco lot HARD
+        assert lot.qty >= 3000  # economic lot = minimum (14/10/2026)
         for _op_id, _sku, qty in lot.twin_outputs:
             assert qty == lot.qty  # equal pieces of each side per cycle
 
@@ -717,7 +717,9 @@ def test_current_contract_every_output_takes_the_cycle_release():
     ]
     assert _delivery_releases(lot, A_ID) == [7, 21, 21]
     assert _delivery_releases(lot, B_ID) == [8, 23, 23]
-    assert {o["quantity_material_version"] for o in lot.output_milestones} == {3}
+    assert {o["quantity_material_version"] for o in lot.output_milestones} == {
+        QUANTITY_MATERIAL_VERSION
+    }
     assert lot.material_release_day == 7
 
 

@@ -78,17 +78,17 @@ Exemplo: produção 700 + setup 60 em 1 010 disponíveis dão **75,2%**. Com man
 **Dimensionamento.** Percorre necessidades datadas, usa excedentes anteriores e cria lotes. Correções por SKU podem alterar eco-lote, mínimos de quantidade/tempo, agrupamento, prioridade e buffers; distinguir origem ISOP do valor efetivo.
 
 ```text
-Quantidade = teto(necessidade ajustada / eco-lote) × eco-lote
+Quantidade = máximo(eco-lote, necessidade ajustada)
 Cadência efetiva = peças/hora nominais × OEE efetivo
 Produção (min) = quantidade / cadência efetiva × 60
 Setup (min) = setup configurado em horas × 60
 ```
 
-Sem eco-lote positivo, mantém a quantidade solicitada. Necessidade 2 500 e eco-lote 1 000 originam 3 000 peças; as 500 excedentes cobrem procura posterior, não representam duplicação.
+Sem eco-lote positivo, mantém a quantidade solicitada. **O eco-lote é um mínimo, nunca um múltiplo (decisão de 14/10/2026, com a resposta da Incompol).** Necessidade 600 e eco-lote 1 000 originam 1 000 peças; as 400 excedentes cobrem procura posterior, não representam duplicação. Necessidade 2 500 e eco-lote 1 000 originam 2 500 peças, sem excedente: a entrega seguinte abre um lote novo. Até 14/10/2026 a necessidade era arredondada ao múltiplo do eco-lote (2 500 → 3 000); um plano feito antes é refeito pelo «Recalcular plano», e num replaneamento os lotes já começados mantêm o tamanho antigo.
 
 **OEE.** Fator configurado, não medição de eficiência real. Base **0,66**, com override por máquina. Exemplo: 2 400 peças a 1 200 peças/hora e OEE 0,66 requerem **181,82 minutos**; com 30 de setup, **211,82 minutos** de carga. Mínimo produtivo atual: 1 minuto.
 
-**Gémeas.** Um ciclo gera dois outputs 1:1. Eco-lotes efetivos têm de ser iguais. O emparelhamento admite necessidades até cinco índices diários de distância, não cinco dias úteis. Após arredondamento:
+**Gémeas.** Um ciclo gera dois outputs 1:1. Eco-lotes efetivos têm de ser iguais. O emparelhamento admite necessidades até cinco índices diários de distância, não cinco dias úteis. Cada lado pede a sua necessidade, pelo menos o seu eco-lote, sem arredondar:
 
 ```text
 Quantidade comum = máximo(quantidade A, quantidade B)

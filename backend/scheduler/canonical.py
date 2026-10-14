@@ -13,14 +13,16 @@ from backend.scheduler.lot_sizing import (
     QUANTITY_MATERIAL_VERSION,
     UPGRADED_MATERIAL_KEY,
     UPGRADED_PRODUCTIONS_KEY,
+    WHOLE_LOT_MATERIAL_VERSION,
     _aggregate_milestones,
     create_lots,
+    credit_committed_lots,
     material_version,
+    older_sizing_lots,
 )
 from backend.scheduler.material_quantities import lot_material_version
 from backend.scheduler.resources import build_setup_override_map, effective_oee, resolve_setup_hours
 from backend.scheduler.setup_identity import segment_setup_identity
-from backend.types import CommittedSupply
 
 # ``QUANTITY_MATERIAL_VERSION`` (defined in lot_sizing, imported from here by
 # the planning model identity): the material contract written on each lot
@@ -267,6 +269,15 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
             preserved.append(lot)
             continue
         remaining.append(lot)
+    # Lots sized to eco-lot multiples (before 14/10/2026) that a replan kept
+    # beside lots of the current sizing (rule 4: a started lot is never
+    # re-sized): committed supply, as a preserved lot, and never judged
+    # against the current sizing. Their physical data is still checked.
+    older = {id(lot) for lot in older_sizing_lots(remaining, data)}
+    credited = [lot for lot in remaining if id(lot) in older]
+    remaining_sized = [lot for lot in remaining if id(lot) not in older]
+    for lot in remaining:
+        physical = by_lot[lot.id]
         machines = {s.machine_id for s in physical if s.prod_min > 0}
         if len(machines) > 1:
             fail(lot, "machine_id")
@@ -304,23 +315,23 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
             fail(lot, "setup_min", lot.setup_min, expected_setup)
 
     residual = data
-    if preserved:
-        residual = copy.copy(data)
-        residual.committed_supplies = list(data.committed_supplies)
-        for lot in preserved:
-            for op_id, sku, qty in lot.twin_outputs or [(lot.op_id, lot.sku, lot.qty)]:
-                residual.committed_supplies.append(CommittedSupply(
-                    op_id=str(op_id), sku=str(sku), qty=int(qty), available_at="",
-                    available_day=0, machine_id=lot.machine_id, tool_id=lot.tool_id,
-                ))
-    version = quantity_material_version(remaining)
-    # Old snapshots remain readable under their recorded model. Operational
-    # persistence and explicit recalculation request the current contract.
+    if preserved or credited:
+        residual = credit_committed_lots(data, [*preserved, *credited])
+    version = quantity_material_version(remaining_sized)
+    # Old snapshots remain readable under their recorded model (sizing
+    # included: versions 0-3 rounded to eco-lot multiples). Operational
+    # persistence and explicit recalculation request the current release
+    # contract (one production per lot, version 3); the sizing of a rounded
+    # plan is renewed by «Recalcular plano» (``stored_plan_needs_rebuild``).
     expected_lots = contract_lots(residual, config, quantity_material=version)
     expected_by_id = {lot.id: lot for lot in expected_lots}
-    if require_current_material and version < QUANTITY_MATERIAL_VERSION:
-        current_lots = {lot.id: lot for lot in contract_lots(residual, config)}
-        for lot in remaining:
+    if require_current_material and version < WHOLE_LOT_MATERIAL_VERSION:
+        current_lots = {
+            lot.id: lot for lot in contract_lots(
+                residual, config, quantity_material=WHOLE_LOT_MATERIAL_VERSION,
+            )
+        }
+        for lot in remaining_sized:
             expected = current_lots.get(lot.id)
             # Version 1 already releases non-twin lots per delivery; only its
             # twin cycles changed (Fase B2).
@@ -335,7 +346,7 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
         for lot in current_lots.values():
             if not lot.is_twin and not version:
                 current_by_op[lot.op_id].append(lot)
-        for lot in remaining:
+        for lot in remaining_sized:
             if not lot.is_twin and not version:
                 actual_by_op[lot.op_id].extend((s, lot) for s in by_lot[lot.id])
         for op_id, entries in actual_by_op.items():
@@ -357,7 +368,7 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
                         message=_material_message(lot, segment, allowed, data),
                     )
                     break
-    for lot in remaining:
+    for lot in remaining_sized:
         expected = expected_by_id.get(lot.id)
         if expected is not None and (lot.edd != expected.edd or lot.tool_id != expected.tool_id):
             fail(lot, "edd/tool", [lot.edd, lot.tool_id], [expected.edd, expected.tool_id])
@@ -377,9 +388,9 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
 
     # Historical snapshots without output metadata retain the older quantity
     # check; every newly constructed lot has the full canonical contract.
-    if any(lot.output_milestones for lot in remaining):
+    if any(lot.output_milestones for lot in remaining_sized):
         available = obligations(expected_lots)
-        for lot in remaining:
+        for lot in remaining_sized:
             if not lot.output_milestones:
                 continue
             actual = obligations([lot])

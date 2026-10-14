@@ -156,7 +156,7 @@ describe("GanttPage", () => {
     }]);
     fireEvent.click(view.container.querySelector('[title*="Segmento: 10"]')!);
     expect(await screen.findByText("Libertação do material do lote")).toBeTruthy();
-    expect(screen.getByText(/é produzido de uma só vez, com um único setup: o material do lote inteiro é libertado com a primeira entrega\./)).toBeTruthy();
+    expect(screen.getByText(/O lote económico \(mínimo\) é maior do que a falta da primeira entrega: as peças a mais cobrem também entregas seguintes\. O lote é produzido de uma só vez, com um único setup, e o material do lote inteiro é libertado com a primeira entrega\./)).toBeTruthy();
     expect(screen.queryByText(/cada parte só é produzida/)).toBeNull();
     const table = screen.getByRole("table", {name: "Datas por referência"});
     const [first, later] = within(table).getAllByRole("row").slice(1);
@@ -173,7 +173,7 @@ describe("GanttPage", () => {
     const bar = view.container.querySelector('[title*="Próxima entrega"]');
     expect(bar).toBeTruthy();
     expect(bar?.getAttribute("title")).toBe(
-      "T1 | SKU1 | Segmento: 10 pç | Lote: 10 pç | Lote económico: 0 pç | 07:00–08:00"
+      "T1 | SKU1 | Segmento: 10 pç | Lote: 10 pç | Lote económico (mínimo): 0 pç | 07:00–08:00"
       + "\nPróxima entrega: dia 1 (17/03) · Cliente B · 7 pç"
       + "\nExcedente: 3 pç (fica em stock)",
     );
@@ -196,7 +196,7 @@ describe("GanttPage", () => {
     }]);
     const title = view.container.querySelector('[title*="Próxima entrega"]')?.getAttribute("title") ?? "";
     expect(title.split("\n")).toEqual([
-      "T1 | SKU1 | Segmento: 150 pç | Lote: 150 pç | Lote económico: 0 pç | 07:00–08:00",
+      "T1 | SKU1 | Segmento: 150 pç | Lote: 150 pç | Lote económico (mínimo): 0 pç | 07:00–08:00",
       "Próxima entrega: dia 13 (26/10) · F. POLSKA · 494 pç",
       "Cobre até dia 14 (27/10) — 3 entregas no total",
     ]);
@@ -258,7 +258,7 @@ describe("GanttPage", () => {
     const firstDelivery = await screen.findByText("Primeira entrega do lote");
     // Sem marcos de entrega não se mostra o prazo do lote como se fosse uma entrega.
     expect(firstDelivery.parentElement?.textContent).toBe("Primeira entrega do lote-");
-    expect(screen.queryByText(/O lote económico cobre também/)).toBeNull();
+    expect(screen.queryByText(/cobrem? também entregas seguintes/)).toBeNull();
   });
   it("ordena a coluna de entregas pelo dia da primeira entrega, em número", async () => {
     const at = (lot: string, sku: string, day: number) => ({

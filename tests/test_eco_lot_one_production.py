@@ -16,9 +16,11 @@ import pytest
 from backend.config.types import FactoryConfig, MachineConfig
 from backend.scheduler.canonical import legacy_material_plan, source_contract_violations
 from backend.scheduler.lot_sizing import (
+    MINIMUM_ECO_LOT_VERSION,
     QUANTITY_MATERIAL_VERSION,
     UPGRADED_MATERIAL_KEY,
     UPGRADED_PRODUCTIONS_KEY,
+    WHOLE_LOT_MATERIAL_VERSION,
     create_lots,
     redate_lot_outputs,
     upgrade_lot_material,
@@ -32,6 +34,7 @@ from backend.scheduler.material_quantities import (
 from backend.scheduler.quantity_dispatch import has_quantity_releases
 from backend.scheduler.scheduler import schedule_all
 from backend.scheduler.validation import validate_plan
+from tests.test_eco_lot_minimum import assert_minimum_sizing
 from tests.test_material_quantity_windows import scenario
 
 CONFIG = FactoryConfig(machines={"MACHINE": MachineConfig(id="MACHINE", group="Grandes")})
@@ -47,8 +50,9 @@ def _with_other_tool(day: int = 14, qty: int = 1000):
     return data
 
 
-def test_current_contract_is_version_3():
-    assert QUANTITY_MATERIAL_VERSION == 3
+def test_current_contract_is_version_4_with_the_whole_lot_release_of_version_3():
+    assert QUANTITY_MATERIAL_VERSION == MINIMUM_ECO_LOT_VERSION == 4
+    assert WHOLE_LOT_MATERIAL_VERSION == 3
 
 
 def test_every_output_inherits_the_first_delivery_release():
@@ -61,10 +65,10 @@ def test_every_output_inherits_the_first_delivery_release():
          o["delivery_material_release_day"], o["quantity_material_version"])
         for o in lot.output_milestones
     ] == [
-        (5680, 13, 6, 6, 3),
-        (14400, 16, 6, 9, 3),
-        (2400, 19, 6, 12, 3),
-        (9520, 20, 6, 13, 3),
+        (5680, 13, 6, 6, 4),
+        (14400, 16, 6, 9, 4),
+        (2400, 19, 6, 12, 4),
+        (9520, 20, 6, 13, 4),
     ]
 
 
@@ -418,7 +422,8 @@ def test_plans_of_older_contracts_are_valid_and_never_ask_to_recalculate(version
 def test_a_version_2_lot_is_taken_over_as_the_current_lot():
     data = scenario()
     old = create_lots(data, quantity_material=2)[0]
-    current = create_lots(data)[0]
+    # Taken over with its rounded size: version 3, never the current sizing.
+    current = create_lots(data, quantity_material=WHOLE_LOT_MATERIAL_VERSION)[0]
     upgraded = upgrade_lot_material(old, data)
     assert all(o[UPGRADED_MATERIAL_KEY] == 2 for o in upgraded.output_milestones)
     stripped = [
@@ -471,11 +476,16 @@ def test_an_outage_interrupting_a_started_lot_resumes_it_with_one_setup(monkeypa
     from backend.scheduler.canonical import result_validation_data
     from backend.scheduler.validation import lot_split_violations
 
+    from tests.snapshot_fixture import pin_factory_clock
+
     data = _with_other_tool()
     baseline = schedule_all(copy.deepcopy(data), config=CONFIG)
     (lot,) = [lot for lot in baseline.lots if lot.sku == "SKU"]
     assert {s.day_idx for s in baseline.segments if s.lot_id == lot.id} == {6, 7}
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_args, **_kw: 7)
+    # Day 7 is 14/10/2026: on that real day the factory clock would put the
+    # history boundary inside the shift (rule 4); 06:00 is before it.
+    pin_factory_clock(monkeypatch, data.workdays[7])
     outage = copy.deepcopy(data)
     outage.machine_blocked_days = {"MACHINE": {7}}
 
@@ -602,8 +612,10 @@ def test_rev128_real_cases_are_one_production_per_lot():
     """ISOP of 13/10 (rev128, saved under version 2). Recalculated under the
     current contract every economic lot is one production: BFP114 went
     from 20 setups (7/6/6/1 for 4 lots) to 4, the twin BFP125 from 19 to
-    3, JTE001 has one setup per lot, and lots of several economic lots
-    (JDE002 28 000 = 2 x 14 000, HAN002 9 984 = 2 x 4 992) too."""
+    3, JTE001 has one setup per lot, and the lots above the economic lot
+    too. Since 14/10/2026 the economic lot is a minimum: JDE002 (lot 14 000)
+    makes the 17 500 of its delivery, no longer 28 000 = 2 x 14 000, and
+    HAN002 (lot 4 992) the 5 821 of its delivery, no longer 9 984."""
     from backend.plans.serialize import deserialize_snapshot
     from backend.scheduler.validation import lot_split_violations
     from tests.snapshot_fixture import load_payload
@@ -625,10 +637,11 @@ def test_rev128_real_cases_are_one_production_per_lot():
     assert tool_setups(after, result.lots, "BFP125") == [1, 1, 1]
     assert set(tool_setups(after, result.lots, "JTE001")) == {1}
     eco = {op.id: op.eco_lot for op in data.ops}
-    several = [lot for lot in result.lots if eco.get(lot.op_id) and lot.qty >= 2 * eco[lot.op_id]]
-    assert {"LOT_JDE002_PRM042_TP042173-0060-1_20", "LOT_HAN002_PRM043_CF589MMA1A02.20_24"} <= {
-        lot.id for lot in several
-    }
+    several = [lot for lot in result.lots if eco.get(lot.op_id) and lot.qty > eco[lot.op_id]]
+    sizes = {lot.id: lot.qty for lot in several}
+    assert sizes["LOT_JDE002_PRM042_TP042173-0060-1_20"] == 17500
+    assert sizes["LOT_HAN002_PRM043_CF589MMA1A02.20_24"] == 5821
+    assert_minimum_sizing(result.lots, data)
     # One setup, or none when it continues the mounting of the lot before.
     assert all(after[lot.id] <= 1 for lot in several)
     # No lot of the plan has a second production, and none is split.
@@ -697,9 +710,11 @@ def test_started_version_2_lots_survive_a_change_on_real_plans(revision, clock, 
     """Rehearsal of 13/10: rev124 (as of 11/10, 10 started lots) and rev128
     (ISOP 13/10 on 16/10, 23 started lots), both saved under version 2. A
     PRM043 breakdown, a new holiday and a manual move each give a valid
-    plan: the started history is unchanged, no lot is re-sized, every lot
-    is taken over as version 3, and no lot that had not started has two
-    productions."""
+    plan: the started history is unchanged, no started lot is re-sized (rule
+    4: taken over as version 3, its rounded size credited as committed
+    supply), a replan sizes the rest with the economic lot as a minimum
+    (version 4, 14/10/2026), a move sizes nothing, and no lot that had not
+    started has two productions."""
     from types import SimpleNamespace
 
     from backend.plans import frozen
@@ -734,8 +749,24 @@ def test_started_version_2_lots_survive_a_change_on_real_plans(revision, clock, 
     assert frozen.candidate_history_changes(
         payload, plan, view_data, view_config, freeze_day=freeze_day,
     ) == []
-    assert {lot.id: lot.qty for lot in result.lots} == {lot.id: lot.qty for lot in baseline.lots}
-    assert {lot_material_version(lot) for lot in result.lots} == {3}
+    sizes = {lot.id: lot.qty for lot in result.lots}
+    if case == "move":
+        # A move never sizes lots again: the plan stays under version 3.
+        assert sizes == {lot.id: lot.qty for lot in baseline.lots}
+        assert {lot_material_version(lot) for lot in result.lots} == {3}
+    else:
+        # A replan sizes again what has not started (economic lot = minimum,
+        # 14/10/2026); a started lot keeps its size and its version (rule 4).
+        before = {lot.id: lot.qty for lot in baseline.lots}
+        assert {lot_id: sizes.get(lot_id) for lot_id in started} == {
+            lot_id: before[lot_id] for lot_id in started
+        }
+        versions = {lot.id: lot_material_version(lot) for lot in result.lots}
+        assert {versions[lot_id] for lot_id in started} == {3}
+        assert {v for lot_id, v in versions.items() if lot_id not in started} == {4}
+        assert_minimum_sizing(
+            [lot for lot in result.lots if lot.id not in started], view_data,
+        )
     for lot in result.lots:
         assert {o["material_release_day"] for o in lot.output_milestones} == {
             lot.material_release_day

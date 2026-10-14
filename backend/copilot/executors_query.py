@@ -302,13 +302,18 @@ _LOGIC_EXPLANATIONS = {
         "Interrompido quando há runs com prazo de produção mais urgente."
     ),
     "eco_lot": (
-        "Eco lot HARD: cada lot é arredondado para cima ao múltiplo do lote económico. "
-        "Carry-forward: surplus de um lot reduz a demand do lot seguinte do mesmo SKU."
+        "Lote económico = mínimo (decisão de 14/10/2026): cada lote produz pelo menos "
+        "o lote económico; se a necessidade da entrega que o abre for maior, produz "
+        "essa quantidade, nunca um múltiplo do lote económico. É uma só produção (um setup). "
+        "Carry-forward: o excedente de um lote cobre as entregas seguintes do mesmo SKU "
+        "antes de se abrir um lote novo."
     ),
     "twins": (
         "Peças gémeas: 2 SKUs produzidos em simultâneo com a mesma ferramenta. "
         "1 ciclo → 2 peças. Tempo = max(tempo_A, tempo_B). "
-        "Cada SKU recebe exactamente o que precisa."
+        "Cada lado pede a sua necessidade (pelo menos o lote económico); o ciclo faz a "
+        "maior das duas e os dois SKUs recebem a mesma quantidade: o lado que precisa "
+        "de menos fica com excedente."
     ),
     "scoring": (
         "Scoring: 3 componentes com pesos — earliness (0.40), setups (0.30), "
@@ -329,7 +334,7 @@ _LOGIC_EXPLANATIONS = {
     ),
     "lot_sizing": (
         "Lot sizing (Phase 1): converte EOps em Lots. Para cada demand > 0 num dia, "
-        "cria um lot com qty = max(demand - surplus, eco_lot arredondado). "
+        "cria um lot com qty = max(demand - surplus, eco_lot), sem arredondar a múltiplos. "
         "Twins geram super-ops com twin_outputs."
     ),
     "tool_grouping": (

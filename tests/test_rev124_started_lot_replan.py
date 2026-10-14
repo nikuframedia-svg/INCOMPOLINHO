@@ -5,7 +5,8 @@ plan: started lots continued, without setup, on tools mounted by lots that
 were not frozen, and whole-lot freezing also kept started production inside
 the new outage. Only what started is frozen now (AGENTS §2, rule 4). Each
 breakdown must give a valid, activatable plan inside the 60 s replan budget,
-with the started history unchanged and no lot re-sized.
+with the started history unchanged and no started lot re-sized (the rest is
+sized again with the economic lot as a minimum, 14/10/2026).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import time
 import pytest
 
 from tests.snapshot_fixture import load_payload, pin_factory_clock
+from tests.test_eco_lot_minimum import assert_replan_sizes
 
 OUTAGES = {
     "PRM031_three_weeks": ("PRM031", "2026-10-19T00:01", "2026-11-09T23:59"),
@@ -63,13 +65,12 @@ def test_breakdown_replan_on_rev124_is_valid_within_budget(outage, monkeypatch):
     assert elapsed < jobs.REPLAN_TOTAL_BUDGET_S
     candidate = store.get_candidate(job["id"])
     _assert_activatable_payload(candidate)
-    # The history that started is unchanged and no lot was re-sized.
+    # The history that started is unchanged and no started lot was
+    # re-sized; the rest follows the economic lot as a minimum.
     assert frozen.historical_schedule_changes(
         payload, candidate, today=manifest["as_of"],
     ) == []
-    before = {lot["id"]: lot["qty"] for lot in payload["lots"]}
-    after = {lot["id"]: lot["qty"] for lot in candidate["lots"]}
-    assert after == before
+    assert_replan_sizes(payload, candidate, freeze_day)
     assert not any(
         segment["machine_id"] == resource
         and start_at[:10] <= engine_data.workdays[segment["day_idx"]][:10] <= end_at[:10]

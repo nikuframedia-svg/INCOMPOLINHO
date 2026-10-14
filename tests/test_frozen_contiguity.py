@@ -433,9 +433,11 @@ def test_rev127_capacity_release_replan_has_no_late_order(monkeypatch):
     assert frozen.historical_schedule_changes(
         payload, candidate, today=engine_data.workdays[freeze_day][:10],
     ) == []
-    assert {lot["id"]: lot["qty"] for lot in candidate["lots"]} == {
-        lot["id"]: lot["qty"] for lot in payload["lots"]
-    }
+    # Started lots keep their size; the complete constructor sizes the rest
+    # with the economic lot as a minimum (14/10/2026).
+    from tests.test_eco_lot_minimum import assert_replan_sizes
+
+    assert_replan_sizes(payload, candidate, freeze_day, 15 * 60 + 39)
     plan = deserialize_snapshot(copy.deepcopy(candidate))
     data, result = plan["engine_data"], plan["result"]
     late = [

@@ -1,6 +1,10 @@
 """Phase 1 — Lot Sizing: Spec 02 v6 §3.
 
-Converts EOps → Lots with eco lot HARD and twin super-ops.
+Converts EOps → Lots and twin super-ops. The economic lot is a minimum
+(Luís, 14/10/2026): a lot is ``max(economic lot, need)``, never a multiple
+of the economic lot (``_apply_eco_lot``). Material versions 0-3 rounded up
+to multiples: their stored plans are judged under that rule; «Recalcular
+plano» rebuilds those of versions 1-3.
 surplus=0 (first negative NP already has stock deducted).
 Fix 5: prod_min minimum = MIN_PROD_MIN to avoid micro-lots.
 """
@@ -19,9 +23,10 @@ from backend.config.planning import (
 from backend.config.types import FactoryConfig
 from backend.scheduler.constants import DEFAULT_OEE, MIN_PROD_MIN
 from backend.scheduler.jit_policy import calendar_holidays
+from backend.scheduler.material_quantities import lot_material_version
 from backend.scheduler.setup_identity import configured_setup_family
 from backend.scheduler.types import Lot
-from backend.types import EngineData, EOp, TwinGroup
+from backend.types import CommittedSupply, EngineData, EOp, TwinGroup
 
 TWIN_MAX_PAIR_GAP_DAYS = 5
 
@@ -35,7 +40,25 @@ TWIN_MAX_PAIR_GAP_DAYS = 5
 #    ``R_ciclo``); the other covered deliveries and the surplus inherit it.
 #    Each output keeps its own ``R`` as ``delivery_material_release_day``
 #    (traceability only); readiness stays per delivery.
-QUANTITY_MATERIAL_VERSION = 3
+# 4: the economic lot is a minimum, never a multiple (Luís, 14/10/2026,
+#    after the Incompol's answer): a lot is ``max(economic lot, need)``, need
+#    being the shortfall of the delivery that opens it, as before. Release
+#    and outputs as version 3. Versions 0-3 rounded the need up to a multiple
+#    of the economic lot; a plan saved under them stays readable under its
+#    own rule (``create_lots(quantity_material=3)``), is rebuilt by
+#    «Recalcular plano» from version 1 on
+#    (``api.data.stored_plan_needs_rebuild``), and its
+#    started lots keep their size (AGENTS §2, rule 4), credited as supply
+#    already committed (``older_sizing_lots``).
+QUANTITY_MATERIAL_VERSION = 4
+
+# Economic lot = one production (13/10/2026): the whole lot is released at
+# the lot ``R``. Every version from this one on; a version 1-2 plan is taken
+# over as this version (``upgrade_plan_material``), sizes unchanged.
+WHOLE_LOT_MATERIAL_VERSION = 3
+
+# Economic lot = minimum, never multiples (14/10/2026).
+MINIMUM_ECO_LOT_VERSION = 4
 
 # Marks the outputs of a lot sized under the per-delivery contract (version 1
 # or 2) and upgraded to version 3 by ``upgrade_lot_material``. Such a lot may
@@ -83,6 +106,60 @@ def material_version(quantity_material: bool | int | None) -> int:
     if not quantity_material:
         return 0
     return int(quantity_material)
+
+
+def rounded_sizing(version: int) -> bool:
+    """Whether lots of this material version were sized to eco-lot multiples.
+
+    Versions 0-3 (before 14/10/2026); from ``MINIMUM_ECO_LOT_VERSION`` on the
+    economic lot is a minimum.
+    """
+
+    return int(version) < MINIMUM_ECO_LOT_VERSION
+
+
+def older_sizing_lots(lots: list[Lot], data: EngineData | None = None) -> list[Lot]:
+    """Lots sized to eco-lot multiples inside a plan of the current sizing.
+
+    After the change of 14/10/2026 a replan keeps the started lots of a
+    rounded plan as they are (AGENTS §2, rule 4: a started lot is never
+    re-sized) and sizes the rest under the current rule. Those older lots
+    are supply already committed: the demand checks credit their whole
+    quantity, like a preserved lot (``canonical.source_contract_violations``,
+    ``validation.demand_coverage_metrics``), and never count it as
+    overproduction. Empty for a plan whose lots share one sizing rule. The
+    rest of a started lot in a residual problem (``residual_lot_remainders``
+    of ``data``) is left out: ``create_lots`` returns it as it is, and the
+    whole lot is already credited.
+    """
+
+    carried = {str(raw.get("id")) for raw in getattr(data, "residual_lot_remainders", None) or []}
+    versions = [lot_material_version(lot) for lot in lots]
+    if not any(not rounded_sizing(version) for version in versions):
+        return []
+    return [
+        lot for lot, version in zip(lots, versions)
+        if lot.output_milestones and rounded_sizing(version) and lot.id not in carried
+    ]
+
+
+def credit_committed_lots(data: EngineData, lots: list[Lot]) -> EngineData:
+    """A shallow copy of ``data`` with each lot's output credited as supply.
+
+    The whole quantity of every side is committed from day 0, as for the
+    preserved lots of a replan; ``create_lots`` then sizes only what they
+    leave uncovered.
+    """
+
+    credited = copy.copy(data)
+    credited.committed_supplies = list(data.committed_supplies)
+    for lot in lots:
+        for op_id, sku, qty in lot.twin_outputs or [(lot.op_id, lot.sku, lot.qty)]:
+            credited.committed_supplies.append(CommittedSupply(
+                op_id=str(op_id), sku=str(sku), qty=int(qty), available_at="",
+                available_day=0, machine_id=lot.machine_id, tool_id=lot.tool_id,
+            ))
+    return credited
 
 
 @dataclass(slots=True)
@@ -265,7 +342,10 @@ def upgrade_lot_material(lot: Lot, data: EngineData) -> Lot:
     Quantities, covered deliveries and surplus stay; every output is dated by
     the current inputs (``redate_lot_outputs``) and released at the lot
     ``R``. The outputs are marked (``UPGRADED_MATERIAL_KEY``): the lot may
-    already be split into several productions by its old contract.
+    already be split into several productions by its old contract. Its
+    quantities were rounded to eco-lot multiples, so it becomes version 3,
+    never the current sizing (``MINIMUM_ECO_LOT_VERSION``): «Recalcular
+    plano» sizes it again.
     """
 
     if not upgradable_material(lot):
@@ -275,13 +355,13 @@ def upgrade_lot_material(lot: Lot, data: EngineData) -> Lot:
     )
     upgraded = copy.deepcopy(lot)
     for output in upgraded.output_milestones:
-        output["quantity_material_version"] = QUANTITY_MATERIAL_VERSION
+        output["quantity_material_version"] = WHOLE_LOT_MATERIAL_VERSION
         output[UPGRADED_MATERIAL_KEY] = previous
         output["delivery_material_release_day"] = output["material_release_day"]
     redated = redate_lot_outputs(upgraded, data)
     if redated is upgraded:
         # An output's operation left the scenario: only the release changes.
-        _inherit_lot_release(upgraded.output_milestones, QUANTITY_MATERIAL_VERSION)
+        _inherit_lot_release(upgraded.output_milestones, WHOLE_LOT_MATERIAL_VERSION)
         for field, value in _aggregate_milestones(upgraded.output_milestones).items():
             setattr(upgraded, field, value)
     return redated
@@ -292,7 +372,7 @@ def upgrade_plan_material(lots: list[Lot], data: EngineData) -> list[Lot]:
 
     A plan is upgraded whole or not at all: the source contract compares all
     its lots with the lots sized under one version. Plans of version 0, with
-    a version 1 twin cycle, or already current are returned unchanged.
+    a version 1 twin cycle, or of version 3 or later are returned unchanged.
     """
 
     if data is None or not getattr(data, "ops", None):
@@ -303,7 +383,7 @@ def upgrade_plan_material(lots: list[Lot], data: EngineData) -> list[Lot]:
         and max(
             int(output.get("quantity_material_version") or 0)
             for output in lot.output_milestones
-        ) < QUANTITY_MATERIAL_VERSION
+        ) < WHOLE_LOT_MATERIAL_VERSION
     ]
     if not pending or not all(upgradable_material(lot) for lot in pending):
         return lots
@@ -328,9 +408,12 @@ def _create_solo_lots(
 ) -> list[Lot]:
     """Create lots for a solo (non-twin) operation.
 
-    Eco lot HARD: each lot qty = max(demand, eco_lot), rounded up.
-    Carry-forward: surplus from earlier lot reduces demand of later lots.
+    Economic lot = minimum (14/10/2026): each lot is ``max(need, eco_lot)``,
+    need being the shortfall of the delivery that opens it; never a multiple
+    (``_apply_eco_lot``). Carry-forward: the surplus of a lot covers the
+    following deliveries before a new lot opens.
     """
+    version = material_version(quantity_material)
     lots: list[Lot] = []
     surplus = 0  # First negative NP already has stock deducted
     oee = op.oee or oee_default
@@ -345,7 +428,7 @@ def _create_solo_lots(
 
         deficit = demand - surplus
         requested_qty, campaign_source = _requested_qty_with_campaign(op, day_idx, deficit, oee)
-        qty = _apply_eco_lot(requested_qty, op.eco_lot)
+        qty = _apply_eco_lot(requested_qty, op.eco_lot, version)
         surplus = qty - deficit
 
         if op.pH > 0 and oee > 0:
@@ -402,7 +485,6 @@ def _create_solo_lots(
             )
         )
 
-    version = material_version(quantity_material)
     if not version:
         return lots
 
@@ -512,10 +594,14 @@ def _create_twin_lots(
             else None
         )
 
-        current_qty = _apply_eco_lot(current.remaining, current.op.eco_lot)
+        # Each side asks for its own need (at least its economic lot); the
+        # cycle makes the larger, one piece of each reference per stroke.
+        current_qty = _apply_eco_lot(current.remaining, current.op.eco_lot, material_version)
         active_events = [current]
         if partner is not None:
-            partner_qty = _apply_eco_lot(partner.remaining, partner.op.eco_lot)
+            partner_qty = _apply_eco_lot(
+                partner.remaining, partner.op.eco_lot, material_version,
+            )
             run_qty = max(current_qty, partner_qty)
             active_events.append(partner)
             planning_source = "twin_joint"
@@ -777,11 +863,21 @@ def _op_after_committed_supply(op: EOp, data: EngineData) -> EOp:
     return replace(op, d=adjusted)
 
 
-def _apply_eco_lot(demand: int, eco_lot: int) -> int:
-    """Apply eco lot HARD: round up to eco lot multiple."""
+def _apply_eco_lot(
+    demand: int, eco_lot: int, version: int = QUANTITY_MATERIAL_VERSION,
+) -> int:
+    """Lot quantity for a need: at least the economic lot, never a multiple.
+
+    Luís, 14/10/2026 (Incompol): «produz-se pelo menos o lote económico; se a
+    necessidade é maior, produz-se essa quantidade». Material versions 0-3
+    rounded up to a multiple of the economic lot; old plans are rebuilt
+    under their own version (``rounded_sizing``).
+    """
     if eco_lot <= 0 or demand <= 0:
         return demand
-    return math.ceil(demand / eco_lot) * eco_lot
+    if rounded_sizing(version):
+        return math.ceil(demand / eco_lot) * eco_lot
+    return max(demand, eco_lot)
 
 
 def _output_milestone(

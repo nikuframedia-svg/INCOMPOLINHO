@@ -1846,9 +1846,22 @@ def demand_coverage_metrics(
     lots: list[Lot],
     config: FactoryConfig | None = None,
 ) -> dict[str, int]:
-    """Reconcile candidate lot obligations with the current source demand."""
+    """Reconcile candidate lot obligations with the current source demand.
 
-    from backend.scheduler.lot_sizing import create_lots
+    The expected lots are sized under the rule the plan's lots were sized
+    with (``quantity_material_version``: versions 0-3 rounded to eco-lot
+    multiples, the current one takes ``max(eco, need)``). In a plan that
+    mixes both, the lots of the older sizing kept by a replan (started lots,
+    AGENTS §2 rule 4) are supply already committed: credited whole, never
+    overproduction (``lot_sizing.older_sizing_lots``).
+    """
+
+    from backend.scheduler.canonical import quantity_material_version
+    from backend.scheduler.lot_sizing import (
+        create_lots,
+        credit_committed_lots,
+        older_sizing_lots,
+    )
 
     def quantities(candidate_lots: list[Lot]) -> dict[str, int]:
         result: dict[str, int] = {}
@@ -1858,7 +1871,15 @@ def demand_coverage_metrics(
                 result[str(op_id)] = result.get(str(op_id), 0) + int(qty)
         return result
 
-    expected = quantities(create_lots(data, config))
+    older = older_sizing_lots(lots, data)
+    sized = data
+    if older:
+        sized = credit_committed_lots(data, older)
+    older_ids = {id(lot) for lot in older}
+    version = quantity_material_version([lot for lot in lots if id(lot) not in older_ids])
+    expected = quantities(create_lots(sized, config, quantity_material=version))
+    for op_id, qty in quantities(older).items():
+        expected[op_id] = expected.get(op_id, 0) + qty
     actual = quantities(lots)
     op_ids = set(expected) | set(actual)
     missing = sum(max(0, expected.get(op_id, 0) - actual.get(op_id, 0)) for op_id in op_ids)

@@ -142,7 +142,7 @@ def validate_all(result: ScheduleResult, data: EngineData, label: str, config=No
         f"{len(cap_violations)} violations" + (f": {cap_violations[:3]}" if cap_violations else ""),
     )
 
-    # 10. Eco lot — quantidades arredondadas para cima ao lote económico
+    # 10. Lote económico — cada lote produz pelo menos o lote económico (mínimo)
     eco_violations = _check_eco_lot(lots, data)
     results["Eco lot"] = (
         len(eco_violations) == 0,
@@ -334,15 +334,15 @@ def _check_day_capacity(segs: list) -> list[str]:
 
 
 def _check_eco_lot(lots: list, data: EngineData) -> list[str]:
-    """Check eco lot rounding."""
+    """Check the economic lot is a minimum (Luís, 14/10/2026: never multiples)."""
     violations = []
     eco_lots = {op.id: op.eco_lot for op in data.ops if op.eco_lot > 0}
 
     for lot in lots:
         if lot.op_id in eco_lots and lot.qty > 0 and not lot.is_twin:
             eco = eco_lots[lot.op_id]
-            if lot.qty % eco != 0:
-                violations.append(f"{lot.id}: qty={lot.qty} not multiple of eco={eco}")
+            if lot.qty < eco:
+                violations.append(f"{lot.id}: qty={lot.qty} below eco={eco}")
     return violations
 
 

@@ -174,25 +174,27 @@ def subcontract_lateness(
     """Days each subcontracted delivery leaves after its latest dispatch day.
 
     Judged per delivery, like the orders (``delivery_portions``): the pieces
-    of all lots of the operation serve its deliveries in due order. Keyed by
-    ``(op_id, customer delivery day, occurrence)`` so the key survives a
-    move between lots. A delivery the plan does not complete is missing.
+    of all lots of the operation serve its deliveries in due order, and a
+    delivery leaves with its last portion (the largest lateness of its
+    portions). Keyed by ``(op_id, customer delivery day, 0)``: one key per
+    delivery, whatever the number of lots that serve it, so the key survives
+    a move between lots and a change of lot sizing (14/10/2026: with the
+    economic lot as a minimum a delivery that two rounded lots served may be
+    served by one; keyed by portion, the missing second portion read as a
+    delivery that never leaves). A delivery the plan does not complete is
+    missing.
     """
 
     result: dict[tuple[str, int, int], float] = {}
-    seen: Counter[tuple[str, int]] = Counter()
     for portion in delivery_portions(lots, segments, data):
         if not portion.is_demand or not portion.is_subcontracted:
             continue
         due = portion.latest_subcontract_dispatch_day
         if due is None:
             continue
-        base = (portion.op_id, portion.customer_delivery_day)
-        key = (*base, seen[base])
-        seen[base] += 1
-        result[key] = (
-            float(max(0, portion.factory_day - due)) if portion.complete else _MISSING
-        )
+        key = (portion.op_id, portion.customer_delivery_day, 0)
+        lateness = float(max(0, portion.factory_day - due)) if portion.complete else _MISSING
+        result[key] = max(result.get(key, 0.0), lateness)
     return result
 
 

@@ -180,8 +180,16 @@ class TestEcoLot:
     def test_exact(self):
         assert _apply_eco_lot(1000, 1000) == 1000
 
-    def test_multiple(self):
-        assert _apply_eco_lot(2500, 1000) == 3000
+    def test_need_above_eco_lot_is_produced_as_is(self):
+        """Luís, 14/10/2026: the economic lot is a minimum, never multiples."""
+        assert _apply_eco_lot(2500, 1000) == 2500
+        assert _apply_eco_lot(1050, 1000) == 1050
+
+    def test_rounded_plans_keep_their_own_rule(self):
+        """Material versions 0-3 rounded up to multiples; an old plan is
+        judged (and rebuilt when kept) under the rule it was sized with."""
+        assert _apply_eco_lot(2500, 1000, 3) == 3000
+        assert _apply_eco_lot(2500, 1000, 0) == 3000
 
     def test_eco_lot_carry_forward(self):
         op = _make_eop(d=[0, 500, 0, 300], eco_lot=1000)

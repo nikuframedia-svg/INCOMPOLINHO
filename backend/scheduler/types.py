@@ -14,7 +14,7 @@ class Lot:
     tool_id: str
     machine_id: str  # primária
     alt_machine_id: str | None
-    qty: int  # peças (eco lot rounded)
+    qty: int  # peças: max(lote económico, necessidade), 14/10/2026
     prod_min: float  # minutos de produção
     setup_min: float  # minutos de setup (do YAML)
     edd: int  # deadline (day_idx)

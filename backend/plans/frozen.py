@@ -827,7 +827,7 @@ def _protected_plan(
     rule of ``scheduler.history`` that validation and the commit guard read).
     """
     from backend.scheduler.history import rest_of_cut
-    from backend.scheduler.lot_sizing import QUANTITY_MATERIAL_VERSION
+    from backend.scheduler.lot_sizing import WHOLE_LOT_MATERIAL_VERSION
     from backend.scheduler.material_quantities import lot_material_version
 
     if baseline_result is None:
@@ -880,7 +880,7 @@ def _protected_plan(
     def keeps_whole(lot_id: str) -> bool:
         lot = lots_by_id.get(lot_id)
         if lot is None or lot_id in anchored or (
-            lot_material_version(lot) < QUANTITY_MATERIAL_VERSION
+            lot_material_version(lot) < WHOLE_LOT_MATERIAL_VERSION
         ):
             forced_whole.add(lot_id)
             return True
@@ -914,7 +914,7 @@ def _protected_plan(
     for lot_id in sorted(released_lots):
         lot = lots_by_id.get(lot_id)
         if lot is None or lot_id in anchored or (
-            lot_material_version(lot) < QUANTITY_MATERIAL_VERSION
+            lot_material_version(lot) < WHOLE_LOT_MATERIAL_VERSION
         ):
             forced_whole.add(lot_id)
             selected.update(by_lot[lot_id])
@@ -962,7 +962,9 @@ def with_current_material(
     A plan saved under versions 1-2 stays valid (``legacy_material_plan``);
     a replan, repair or manual move takes its lots over as version 3
     (``lot_sizing.upgrade_plan_material``), so the started ones are frozen
-    only where they started (rule 4) and the plan never mixes versions.
+    only where they started (rule 4) and the plan never mixes release
+    contracts. Their quantities stay as sized (multiples of the economic lot,
+    before 14/10/2026); «Recalcular plano» sizes them again.
 
     Each lot taken over records how many productions it has in this
     baseline (``lot_sizing.UPGRADED_PRODUCTIONS_KEY``, counted by

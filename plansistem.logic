@@ -48,6 +48,8 @@ MAQUINAS:
        a. Percorrer array de procura op.d[] (80 dias)
        b. Cada valor negativo no ISOP = 1 encomenda independente
        c. Arredondar para cima ao eco lot: qty = ceil(demand / eco_lot) * eco_lot
+          [ARQUIVO 14/10/2026: agora qty = max(eco_lot, necessidade), nunca
+          multiplos; ver AGENTS.md §2, que prevalece]
        d. Carry-forward: surplus de lote anterior reduz procura do proximo
        e. Tempo producao = qty / (pH * OEE)
 

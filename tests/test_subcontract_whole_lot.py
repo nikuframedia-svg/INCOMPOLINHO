@@ -208,16 +208,17 @@ def test_gantt_segments_show_one_trip_for_the_whole_lot():
 
 
 def _delivery_of_two_lots(*, first_upgraded=False):
-    """Lot A (120: 100 for day 9, 20 for day 16) is made on day 4, lot B (240:
-    180 for day 16, 60 surplus) on day 1. FIFO, B's pieces serve day 9 and
-    part of day 16, whose other 60 pieces are A's: one delivery, two lots."""
+    """Lot A (120: 100 for day 9, 20 for day 16) is made on day 4, lot B (180
+    for day 16: the economic lot is a minimum, 14/10/2026) on day 1. FIFO,
+    B's pieces serve day 9 and part of day 16, whose other 120 pieces are
+    A's: one delivery, two lots."""
     data = _data({9: 100, 16: 200}, eco_lot=120)
     first, second = create_lots(data, _config())
-    assert (first.qty, second.qty) == (120, 240)
+    assert (first.qty, second.qty) == (120, 180)
     if first_upgraded:
         for output in second.output_milestones:
             output[UPGRADED_MATERIAL_KEY] = 2
-    segments = _segments(second, [(1, 240)]) + _segments(first, [(4, 120)])
+    segments = _segments(second, [(1, 180)]) + _segments(first, [(4, 120)])
     (mixed,) = [
         p for p in delivery_portions([first, second], segments, data)
         if p.is_demand and len(p.lot_ids) == 2
@@ -253,7 +254,7 @@ def test_gantt_trip_of_a_per_delivery_lot_mixed_with_a_whole_lot():
     # The stock screen sends B's pieces on the days they were stamped.
     (projection,) = compute_stock_projections(segments, lots, data)
     assert [(day.day_idx, day.subcontract_sent) for day in projection.days
-            if day.subcontract_sent] == [(1, 240), (4, 120)]
+            if day.subcontract_sent] == [(1, 180), (4, 120)]
 
 
 def test_idle_capacity_counts_the_rest_of_a_lot_that_goes_out_whole():

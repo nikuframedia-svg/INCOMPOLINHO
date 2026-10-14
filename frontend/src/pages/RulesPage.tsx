@@ -28,7 +28,7 @@ function buildRules(config: FactoryConfig): SchedulerRule[] {
     { id: "J03", categoria: "Antecipação", descricao: "Produzir no primeiro intervalo viável depois da libertação de material, em qualquer máquina elegível", valor: "O mais cedo possível", activo: true },
     { id: "S01", categoria: "Subcontratação", descricao: "Concluir a produção antes da data planeada de envio ao subcontratante", valor: "Gate de aprovação", activo: true },
     { id: "S02", categoria: "Subcontratação", descricao: "Manter a entrega ao cliente como compromisso e KPI, acrescentando o prazo externo do fornecedor à conclusão na fábrica", valor: "OTD cliente", activo: true },
-    { id: "B01", categoria: "Negócio", descricao: "Eco lot hard", valor: String(config.eco_lot_mode), activo: true },
+    { id: "B01", categoria: "Negócio", descricao: "Lote económico é o mínimo: produz-se pelo menos o lote económico; se a necessidade for maior, produz-se essa quantidade, nunca múltiplos", valor: "Obrigatório", activo: true },
     { id: "B02", categoria: "Negócio", descricao: "Gémeas produzem em simultâneo", valor: `${config.twins.length} regras`, activo: true },
     { id: "P01", categoria: "Preferências", descricao: "Sem perdas de entrega, preferir o início de produção mais cedo, lote a lote pela prioridade comercial (prazo, rutura, prioridade)", valor: "Antecipação primeiro", activo: true },
     { id: "P02", categoria: "Preferências", descricao: "Com a mesma antecipação, preferir menos setups e menos minutos de setup; um setup extra nunca impede uma antecipação", valor: "Desempate", activo: true },

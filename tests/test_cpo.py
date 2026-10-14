@@ -2265,7 +2265,8 @@ class TestHardConstraints:
             )
 
     def test_eco_lot(self, normal_result, realistic_data):
-        """Quantities rounded up to eco lot."""
+        """Every lot makes at least its economic lot (a minimum since
+        14/10/2026, never rounded to multiples)."""
         eco_lots = {op.id: op.eco_lot for op in realistic_data.ops if op.eco_lot > 0}
         lot_qtys: dict[str, int] = defaultdict(int)
 
@@ -2276,8 +2277,8 @@ class TestHardConstraints:
         for lot in normal_result.lots:
             if lot.op_id in eco_lots and lot.qty > 0:
                 eco = eco_lots[lot.op_id]
-                assert lot.qty % eco == 0 or lot.is_twin, (
-                    f"Lot {lot.id}: qty={lot.qty} not multiple of eco_lot={eco}"
+                assert lot.qty >= eco, (
+                    f"Lot {lot.id}: qty={lot.qty} below eco_lot={eco}"
                 )
 
     def test_demand_conservation(self, normal_result, realistic_data):
