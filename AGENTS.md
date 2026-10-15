@@ -897,6 +897,45 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   iniciar a verificação como ao aplicar). Desde a versão 3 de material
   (13/10/2026) nenhum plano anterior é recusado assim: os lotes passam à
   versão 3 no início do movimento (§2).
+  **Lote que não cabe numa só produção: recusa imediata com sugestão
+  (decidido pelo Luís a 15/10/2026).** Antes de reorganizar, o movimento
+  verifica se a afinação e a produção do lote (com as durações dessa
+  máquina) cabem seguidas desde o início pedido, contando só tempo de turno
+  em que o lote pode trabalhar (noites, fins de semana, feriados,
+  indisponibilidades e turnos sem operadores interrompem; tempo de turno
+  livre não), antes do próximo trabalho que fica onde está: a proteção do
+  próprio movimento (`_move_protection`: produção começada, execução montada,
+  lotes fixados à mão) e a ferramenta que essa proteção mantém montada até
+  uma continuação sem afinação (`plans/move_fit.py`). Só recusa quando é
+  certo: tudo o resto ainda se pode mexer, e um bloqueio da máquina ou da
+  ferramenta em tempo de trabalho pelo meio (que desculpa a quebra,
+  `validation._BreakFinder`) deixa seguir para a verificação completa; lotes
+  de contratos anteriores que podem ter várias produções não são
+  verificados. A mensagem diz quanto tempo falta e o que está no caminho
+  («fixada à mão para …» ou «que fica onde está»), sem ids internos.
+  A sugestão (`suggestion: {day, start_min, machine, label}` no erro, no job
+  e na API; botão «Usar este início» no `MoveLotModal`, que só preenche os
+  campos) é o primeiro início, a partir do pedido, da hora atual e do
+  material, em que o lote cabe pela mesma verificação: afinação e primeiro
+  minuto de produção no mesmo turno (§4), pelo menos
+  `MIN_FREE_INTERVAL_MIN` de produção nessa janela, e as verificações
+  rápidas do movimento; primeiro na mesma máquina, depois na alternativa.
+  Quando um movimento que cabia falha mais tarde, oferece-se, se houver
+  tempo, o primeiro início depois do próximo trabalho que fica onde está
+  (o mesmo intervalo livre falharia da mesma maneira). Medido na revisão 154 (mover JTE001 para 03/12
+  08:45 na PRM043): recusa em 0,05 s (antes 1,6 s nesta máquina e 2–50 s em
+  produção, com causas técnicas): «o lote precisa de 23,4 h seguidas (1 h de
+  afinação antes das 08:45 + 22,4 h de produção); a partir de 03/12 às 08:45
+  só há 7,8 h livres até 03/12 às 16:30, quando começa a afinação da
+  Referência 6800017267C.30 (PRM043), fixada à mão para 03/12 17:30»;
+  sugestão 07/12 às 08:00 (PRM043). **Pendente (defeito anterior):** nessa
+  revisão o movimento para a sugestão ainda é recusado pela reorganização,
+  como qualquer movimento que precise de reorganizar: os lotes fixados à
+  mão entram na proteção e são creditados como stock no dia 0
+  (`frozen._install_frozen_reservations`), e os outros lotes das mesmas
+  operações deixam de coincidir com o ISOP (`source_contract`); o lote
+  movido já não é creditado desde 14/10, os fixados antes ainda são
+  (`tests/test_move_fit_precheck.py`, teste marcado `xfail`).
 - Decidido em 07/10/2026: a robustez já não consome orçamento do solver nem
   corre dentro de planeamento, melhoria, movimento ou recálculo (§1.6).
 - Decidido em 08/10/2026: no modo `normal`, instâncias com 50 ou mais

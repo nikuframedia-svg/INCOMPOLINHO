@@ -231,3 +231,29 @@ it("shows the concrete causes of a refused move (15/10/2026)", async () => {
   expect(screen.getByText("Porquê:")).toBeTruthy();
   expect(screen.getByText(/choca com a alteração manual da Referência 6800017267C.30/)).toBeTruthy();
 });
+
+it("offers the first start where the lot fits and only fills the fields (15/10/2026)", async () => {
+  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, status: "failed", result: null,
+    code: "blocked",
+    error: "Não é possível iniciar a Referência 6800016767A.10 (PRM043) no dia 51 (03/12), às 08:45, em PRM043: o lote precisa de 23,4 h seguidas (1 h de afinação antes das 08:45 + 22,4 h de produção); a partir de 03/12 às 08:45 só há 7,8 h livres até 03/12 às 16:30. O plano não foi alterado.",
+    causes: ["Um lote faz-se numa só produção."],
+    suggestion: { day: 1, start_min: 480, machine: "M2", label: "18/09 às 08:00 (M2)" } } });
+  render(<MoveLotModal {...props} initialTargetDay={0} />);
+  fireEvent.click(screen.getByRole("button", { name: "Verificar riscos" }));
+  const use = await screen.findByRole("button", { name: "Usar este início: 18/09 às 08:00 (M2)" });
+  fireEvent.click(use);
+  expect((screen.getByLabelText("Dia exato") as HTMLSelectElement).value).toBe("1");
+  expect((screen.getByLabelText("Início exato da produção") as HTMLInputElement).value).toBe("08:00");
+  expect((screen.getByLabelText("Máquina") as HTMLSelectElement).value).toBe("M2");
+  // Nothing is applied or checked by itself: the refusal is gone, the planner checks again.
+  expect(screen.queryByText(/só há 7,8 h livres/)).toBeNull();
+  expect(screen.queryByRole("button", { name: /Usar este início/ })).toBeNull();
+  expect(mocks.startManualMovePreview).toHaveBeenCalledTimes(1);
+  expect(mocks.applyManualMove).not.toHaveBeenCalled();
+  mocks.startManualMovePreview.mockResolvedValue({ job: ready });
+  fireEvent.click(screen.getByRole("button", { name: "Verificar riscos" }));
+  await screen.findByRole("button", { name: "Aplicar movimento" });
+  expect(mocks.startManualMovePreview).toHaveBeenLastCalledWith(expect.objectContaining({
+    target_day: 1, target_machine: "M2", target_start_min: 480,
+  }));
+});

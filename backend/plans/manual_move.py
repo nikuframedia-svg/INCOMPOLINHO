@@ -44,11 +44,15 @@ class ManualMoveError(ValueError):
         *,
         gate_report: dict | None = None,
         causes: list[str] | None = None,
+        suggestion: dict | None = None,
     ) -> None:
         super().__init__(message)
         self.gate_report = gate_report
         # Concrete pt-PT causes (``plans.refusal``), shown under the message.
         self.causes = list(causes or [])
+        # ``{day, start_min, machine, label}``: a start where the lot fits in
+        # one production (``plans.move_fit``); offered, never applied.
+        self.suggestion = suggestion
 
 
 class ManualMoveInconclusive(ManualMoveError):
@@ -1156,6 +1160,7 @@ def _reallocation_ignores_target(source_lots: list[Lot], protection) -> bool:
 
 def _refused_move(
     lot_id, day, minute, machine_id, data, detail, *, gate_report=None, causes=None, lot=None,
+    suggestion=None,
 ):
     """A move that was checked and cannot be applied, with its reason and causes."""
     return ManualMoveError(
@@ -1164,6 +1169,7 @@ def _refused_move(
         f"em {machine_id}: {detail} O plano não foi alterado.",
         gate_report=gate_report,
         causes=causes or _gate_causes(gate_report, data, subject=lot_id),
+        suggestion=suggestion,
     )
 
 
@@ -1629,6 +1635,167 @@ def move_lot(
         )
 
 
+def _fit_machines(lot: Lot, machine_id: str, data: EngineData) -> list[str]:
+    """The requested machine, then the lot's alternative when it is active."""
+    active = {machine.id for machine in data.machines}
+    machines = [machine_id]
+    for other in (lot.machine_id, lot.alt_machine_id):
+        if other and other not in machines and other in active:
+            machines.append(other)
+    return machines
+
+
+def _fit_timeline(data, config, protected_segments, lot, template, machine_id, freeze_day, now_min):
+    """``(timeline, setup_min, prod_min)`` of the lot on ``machine_id``.
+
+    Durations as the move computes them on that machine (``_rebound_target``,
+    the setup of ``_materialize_target``).
+    """
+    from backend.plans.move_fit import MachineTimeline
+
+    rebound_lot, rebound_template = _rebound_target(
+        copy.deepcopy(lot), template, machine_id, data, config,
+    )
+    setup = float(max(
+        rebound_lot.setup_min, rebound_template.run_setup_min, rebound_template.setup_min,
+    ))
+    timeline = MachineTimeline(
+        data, config, protected_segments, rebound_lot, rebound_template, machine_id,
+        freeze_day=freeze_day, now_min=now_min,
+    )
+    return timeline, setup, float(rebound_lot.prod_min)
+
+
+def _move_suggestion(
+    data, config, protected_segments, lot, template, machines, from_day, from_min,
+    freeze_day, now_min, *, after: bool = False,
+) -> dict | None:
+    """The first start from the requested one where the lot fits in one production.
+
+    Same machine first, then the alternative. Every start offered also passes
+    the move's own quick checks (calendar, material, unavailability,
+    operators: ``_check_immutable_start``). A suggestion, never applied.
+    """
+    from backend.plans.move_fit import DAY_MIN, at_label, earliest_fit
+    from backend.scheduler.material_quantities import released_quantity
+
+    for machine_id in machines:
+        planning_checkpoint()
+        timeline, setup, prod = _fit_timeline(
+            data, config, protected_segments, lot, template, machine_id, freeze_day, now_min,
+        )
+
+        def accept(candidate, machine_id=machine_id):
+            day, minute = divmod(candidate, DAY_MIN)
+            try:
+                _check_immutable_start(
+                    data, config, protected_segments, lot, template, day, minute,
+                    machine_id, mount_layouts=(protected_segments,),
+                )
+            except ManualMoveError:
+                return False
+            return True
+
+        found = earliest_fit(
+            timeline, setup, prod, from_day * DAY_MIN + int(from_min), after=after,
+            day_ok=lambda day: released_quantity(lot, day) > 0, accept=accept,
+        )
+        if found is not None:
+            day, minute = divmod(found, DAY_MIN)
+            return {
+                "day": int(day), "start_min": int(minute), "machine": machine_id,
+                "label": f"{at_label(found, data)} ({machine_id})",
+            }
+    return None
+
+
+def _later_suggestion(
+    data, config, protected_segments, lot, template, machine_id, target_day, start_min,
+    freeze_day, now_min,
+) -> dict | None:
+    """After a refusal for other reasons: the next start where the lot fits in a row.
+
+    Only windows later than the requested start (that one fits in a row and
+    still failed); a cheap hint, never a promise. ``None`` when the search
+    itself cannot run (out of time, or anything unexpected).
+    """
+    from backend.planning_control import PlanningCancelled
+    from backend.plans.move_fit import one_production_lot
+
+    if not one_production_lot(lot):
+        return None
+    try:
+        return _move_suggestion(
+            data, config, protected_segments, lot, template,
+            _fit_machines(lot, machine_id, data), target_day, start_min,
+            freeze_day, now_min, after=True,
+        )
+    except PlanningCancelled:
+        raise
+    except Exception:  # a hint must never hide the refusal it goes with
+        logger.warning("Sugestão de início não calculada para %s", lot.id, exc_info=True)
+        return None
+
+
+def _contiguous_fit_refusal(
+    data, config, protected_segments, lot, template, target_day, start_min, machine_id,
+    *, lots, layouts, freeze_day, now_min,
+) -> ManualMoveError | None:
+    """Refusal, before any reorganisation, of a lot that cannot be one production.
+
+    Decision of 15/10/2026 (Luís): setup + production must fit in a row from
+    the requested start, in working time, before the next work that stays
+    where it is (``plans.move_fit``). Only a certain impossibility is refused
+    here; anything else goes on to the full check.
+    """
+    from backend.plans.move_fit import DAY_MIN, one_production_lot, refusal_texts
+    from backend.scheduler.setup_identity import retained_setup_at, segment_setup_identity
+
+    if not one_production_lot(lot):
+        return None
+    started = time.perf_counter()
+    timeline, setup, prod = _fit_timeline(
+        data, config, protected_segments, lot, template, machine_id, freeze_day, now_min,
+    )
+    identity = segment_setup_identity(replace(
+        template, tool_id=lot.tool_id, twin_outputs=lot.twin_outputs,
+    ))
+    # The setup the move places around the work that stays (``_materialize_target``
+    # with ``partial_layout``): saved only right after the same mounting.
+    shown_setup = 0.0 if any(
+        item.machine_id == machine_id
+        and (item.day_idx, item.end_min) == (target_day, start_min)
+        and segment_setup_identity(item) == identity
+        for item in protected_segments
+    ) else setup
+    # A mounted tool saves the setup on some layout: the least the lot needs.
+    if any(
+        retained_setup_at(list(layout), machine_id, identity, target_day, start_min)
+        for layout in layouts
+    ):
+        setup = 0.0
+    verdict = timeline.check(target_day * DAY_MIN + int(start_min), setup, prod)
+    if verdict is None or verdict.fits or verdict.excusable:
+        return None
+    if not verdict.setup_blocked:
+        verdict = replace(verdict, setup_min=shown_setup)
+    lots_by_id = {item.id: item for item in lots}
+    detail, causes = refusal_texts(verdict, timeline, data, lots_by_id)
+    suggestion = _move_suggestion(
+        data, config, protected_segments, lot, template,
+        _fit_machines(lot, machine_id, data), target_day, start_min, freeze_day, now_min,
+    )
+    logger.info(
+        "Movimento de %s recusado antes de planear (%.0f ms): %s Sugestão: %s",
+        lot.id, (time.perf_counter() - started) * 1000, detail,
+        suggestion["label"] if suggestion else "nenhuma",
+    )
+    return _refused_move(
+        lot.id, target_day, start_min, machine_id, data, detail,
+        causes=causes, lot=lot, suggestion=suggestion,
+    )
+
+
 def _move_lot(
     segments: list[Segment],
     lots: list[Lot],
@@ -1756,6 +1923,15 @@ def _move_lot(
         target_day, start_min, machine_id,
         mount_layouts=(candidate_segments, frozen_segments),
     )
+    # One production or nothing (AGENTS §6, 15/10/2026): refused here, in
+    # milliseconds, when it is certain; otherwise the full check decides.
+    fit_refusal = _contiguous_fit_refusal(
+        data, config, frozen_segments, lot, first_moved, target_day, start_min, machine_id,
+        lots=lots, layouts=(frozen_segments, candidate_segments),
+        freeze_day=freeze_day, now_min=now_min,
+    )
+    if fit_refusal is not None:
+        raise fit_refusal
     timezone = ZoneInfo(config.timezone)
     target_date = datetime.fromisoformat(str(data.workdays[target_day])[:10])
     target_at = target_date.replace(
@@ -1884,15 +2060,19 @@ def _move_lot(
     ):
         if cancel_event is not None and cancel_event.is_set():
             raise PlanningCancelled("O movimento foi cancelado.")
-        if refusal is not None:
-            if not refusal.causes:
-                refusal.causes = list(fixed_causes)
-            raise refusal
-        inconclusive = _inconclusive_move(
-            lot_id, target_day, start_min, machine_id, lot=lot, data=candidate_data,
-        )
-        inconclusive.causes = list(fixed_causes)
-        raise inconclusive
+        failure = refusal
+        if failure is None:
+            failure = _inconclusive_move(
+                lot_id, target_day, start_min, machine_id, lot=lot, data=candidate_data,
+            )
+        if not failure.causes:
+            failure.causes = list(fixed_causes)
+        if failure.suggestion is None:
+            failure.suggestion = _later_suggestion(
+                data, config, frozen_segments, lot, first_moved, machine_id,
+                target_day, start_min, freeze_day, now_min,
+            )
+        raise failure
     complete = ScheduleResult(
         candidate_segments, candidate_lots, score, 0, [], [], gate_report=gate_report,
         improvement_report=(result.improvement_report if result is not None

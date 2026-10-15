@@ -230,7 +230,7 @@ class ManualMoveJobManager:
                 job_id, status="failed", progress=100, phase="failed",
                 code="inconclusive",
                 message="Verificação inconclusiva", error=str(exc),
-                causes=list(exc.causes),
+                causes=list(exc.causes), suggestion=exc.suggestion,
             )
         except ManualMoveError as exc:
             self._update(
@@ -245,6 +245,8 @@ class ManualMoveJobManager:
                     exc.gate_report, engine_data, lots, subject=lot_id,
                 ),
                 gate_report=exc.gate_report,
+                # A start where the lot fits in one production (``plans.move_fit``).
+                suggestion=exc.suggestion,
             )
         except Exception:  # defensive job boundary: never show raw (English) text
             logger.exception("Unexpected manual-move preview failure")

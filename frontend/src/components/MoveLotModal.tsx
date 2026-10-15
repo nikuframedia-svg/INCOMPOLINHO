@@ -5,7 +5,7 @@ import {
   getManualMovePreview,
   startManualMovePreview,
 } from "../api/endpoints";
-import type { GateReport, Lot, ManualMoveResponse, Segment } from "../api/types";
+import type { GateReport, Lot, ManualMoveResponse, ManualMoveSuggestion, Segment } from "../api/types";
 import { getManualMoveApplyError } from "../lib/manualMoveContract";
 import { jobFailureText } from "../lib/jobFailure";
 import { RefusalError, refusalCauses } from "../lib/refusal";
@@ -47,6 +47,10 @@ function dayLabel(day: number, workdays: string[]) {
 
 const POLL_INTERVAL_MS = 300;
 
+function clockLabel(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
 function elapsedLabel(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -87,9 +91,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
         ? segment.machine_id
         : machines[0],
   );
-  const [targetTime, setTargetTime] = useState(
-    `${String(Math.floor(initialProductionStart / 60)).padStart(2, "0")}:${String(initialProductionStart % 60).padStart(2, "0")}`,
-  );
+  const [targetTime, setTargetTime] = useState(clockLabel(initialProductionStart));
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<ManualMoveResponse | null>(null);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
@@ -102,6 +104,8 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
   const [error, setError] = useState<string | null>(null);
   const [errorGate, setErrorGate] = useState<GateReport | null>(null);
   const [errorCauses, setErrorCauses] = useState<string[]>([]);
+  // A start where the refused lot fits in one production (decisão de 15/10/2026).
+  const [suggestion, setSuggestion] = useState<ManualMoveSuggestion | null>(null);
   const [applyCauses, setApplyCauses] = useState<string[]>([]);
   const [applyError, setApplyError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -153,6 +157,15 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     setError(null);
     setErrorCauses([]);
     setErrorGate(null);
+    setSuggestion(null);
+  };
+
+  // Fills the fields only; the planner checks the risks again before applying.
+  const fillFromSuggestion = (start: ManualMoveSuggestion) => {
+    invalidatePreview();
+    setTargetDay(start.day);
+    setTargetTime(clockLabel(start.start_min));
+    setTargetMachine(start.machine);
   };
 
   const handleClose = () => {
@@ -174,6 +187,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     setError(null);
     setErrorCauses([]);
     setErrorGate(null);
+    setSuggestion(null);
     setPreview(null);
     setPreviewJobId(null);
     setPreviewProgress(0);
@@ -218,6 +232,8 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       if (job.status === "failed") {
         // The causes say why; the gate card is only for a gate verdict without them.
         setErrorGate(job.causes?.length ? null : job.gate_report ?? null);
+        const offered = job.suggestion;
+        setSuggestion(offered && machines.includes(offered.machine) && offered.day < dayCount ? offered : null);
         throw new RefusalError(
           jobFailureText(job, "A verificação do movimento falhou. O plano não foi alterado.", "move"),
           job.causes,
@@ -392,6 +408,16 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
           <div style={{ color: T.red, background: `${T.red}10`, border: `1px solid ${T.red}35`, borderRadius: 8, padding: 10, fontSize: 11 }}>
             {error}
             <RefusalDetails causes={errorCauses} />
+            {suggestion && (
+              <button
+                type="button"
+                onClick={() => fillFromSuggestion(suggestion)}
+                disabled={busy !== null}
+                style={{ ...fieldStyle, marginTop: 8, cursor: "pointer", color: T.blue, borderColor: `${T.blue}55`, fontFamily: "inherit", fontWeight: 600 }}
+              >
+                Usar este início: {suggestion.label}
+              </button>
+            )}
           </div>
         )}
         {errorGate && <GateReportCard gate={errorGate} />}
