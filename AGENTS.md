@@ -936,6 +936,24 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   produção nem reiniciar o serviço com alterações por guardar; uma só sessão
   mexe na árvore de produção de cada vez. Experiências fazem-se em worktrees
   ou cópias isoladas com `PP1_DATA_DIR`/`PP1_CONFIG_PATH` próprios.
+- **Recusas com causas (decidido pelo Luís a 15/10/2026).** Uma alteração
+  recusada nunca chega ao planeador só como contagem («Plano inválido: 1
+  conflito.») nem num alerta do browser. Todas as recusas que vêm da
+  validação física levam `causes`: frases simples feitas a partir dos
+  conflitos do próprio validador, com dia, hora e referência (nunca o id
+  interno do lote), físicas primeiro, e dizem quando o conflito envolve um
+  lote fixado à mão («choca com a alteração manual da Referência …»).
+  Um só formato (`plans/refusal.py`: `refusal_http`, `refusal_detail`,
+  `refusal_causes`): respostas HTTP `{code, message, causes}`, jobs com
+  `causes`, executores de dados mestre com `causes`; os logs guardam as
+  primeiras causas, não só a contagem. No ecrã, `RefusalDetails` («Porquê:»)
+  por baixo da mensagem. Proibido `HTTPException(4xx, str(exc))` nas APIs e
+  `alert(` no frontend (testes em `tests/test_refusal.py` e
+  `frontend/tests/refusal.test.tsx`). Casos reais: revisões 154 (mover JTE001
+  para 03/12 08:45: a ferramenta JTE003 fica montada entre os dois lotes
+  JTE003 fixados à mão) e 156 (feriado 07/12: 43 940 peças em falta, porque
+  os lotes fixados à mão ficam com as datas do calendário antigo); sem
+  fixações (revisão 148) os dois são aceites.
 
 - **Limpeza pendente (código que já não corre, 13/10/2026).** Desde a versão
   3 de material `canonical.legacy_material_plan` devolve sempre falso, por

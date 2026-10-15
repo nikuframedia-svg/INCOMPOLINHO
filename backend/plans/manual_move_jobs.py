@@ -15,6 +15,7 @@ from backend.plans.manual_move import (
     ManualMoveError,
     ManualMoveInconclusive,
     ManualMoveResult,
+    _gate_causes,
     move_lot,
 )
 from backend.plans.serialize import planning_input_fingerprints
@@ -229,14 +230,9 @@ class ManualMoveJobManager:
                 job_id, status="failed", progress=100, phase="failed",
                 code="inconclusive",
                 message="Verificação inconclusiva", error=str(exc),
+                causes=list(exc.causes),
             )
         except ManualMoveError as exc:
-            detail = str(exc)
-            violations = (exc.gate_report or {}).get("violations") or []
-            if violations and isinstance(violations[0], dict):
-                explanation = str(violations[0].get("message", "")).strip()
-                if explanation and explanation not in detail:
-                    detail = f"{detail} {explanation}"
             self._update(
                 job_id,
                 status="failed",
@@ -244,7 +240,10 @@ class ManualMoveJobManager:
                 phase="failed",
                 code="blocked",
                 message="Não foi possível verificar o movimento",
-                error=detail,
+                error=str(exc),
+                causes=list(exc.causes) or _gate_causes(
+                    exc.gate_report, engine_data, lots, subject=lot_id,
+                ),
                 gate_report=exc.gate_report,
             )
         except Exception:  # defensive job boundary: never show raw (English) text

@@ -975,6 +975,8 @@ export interface ReplanJob {
   error: string | null;
   /** Stable failure code (planning_timeout, invalid_plan, blocked, history_protected, internal_error, interrupted). */
   code?: string | null;
+  /** Concrete causes of a failure, plain Portuguese (decisão de 15/10/2026). */
+  causes?: string[];
   request_fingerprint?: string | null;
   deduplicated?: boolean;
   stale?: boolean;
@@ -1422,6 +1424,8 @@ export interface ManualMoveJob {
   dataset_id: string;
   base_revision: number;
   error: string | null;
+  /** Concrete causes of a refusal, plain Portuguese (decisão de 15/10/2026). */
+  causes?: string[];
   gate_report?: GateReport | null;
   result: ManualMoveResponse | null;
 }

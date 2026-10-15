@@ -21,6 +21,7 @@ from backend.config.unavailability import (
     update_unavailability_entry,
 )
 from backend.copilot.state import state
+from backend.plans.refusal import refusal_http
 from backend.plans.serialize import serialize_snapshot
 from backend.plans.transactions import plan_writer
 from backend.replan.jobs import canonical_replan_fingerprint, manager, replan_base_fingerprints
@@ -233,9 +234,9 @@ async def start_replan(body: dict):
         try:
             update_unavailability_entry(candidate, candidate_data, entry_id, raw_entry)
         except UnavailabilityConflict as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise refusal_http(409, exc) from exc
         except (TypeError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
         previous_kind, previous_entry = original_entries[entry_id]
         current_kind = next_kind.rstrip("s") or previous_kind
         current_entry = next(
@@ -279,9 +280,9 @@ async def start_replan(body: dict):
         try:
             add_unavailability_entry(candidate, candidate_data, raw_entry)
         except UnavailabilityConflict as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise refusal_http(409, exc) from exc
         except (TypeError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
 
     for key, value in updates.items():
         if key in _CALENDAR_ONLY_UPDATES:
@@ -441,7 +442,7 @@ async def start_replan(body: dict):
                     previous_day_capacity,
                 )
             except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
             continue
         if key != "setup_crews_by_group":
             raise HTTPException(400, f"Parâmetro desconhecido: {key}")
@@ -541,7 +542,7 @@ async def cancel_replan(job_id: str):
         try:
             job = manager.cancel(job_id)
         except ValueError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise refusal_http(404, exc) from exc
     return {"job": job}
 
 

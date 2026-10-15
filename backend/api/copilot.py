@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -140,12 +141,18 @@ async def plan_validation_handler(_request: Request, exc: PlanValidationError):
     before per-delivery material, asks for «Recalcular plano» (review of
     11/10/2026). The active plan is left untouched by the rollback.
     """
-    detail = {
-        "code": getattr(exc, "code", "invalid_plan"),
-        "message": f"{exc} O plano ativo não foi alterado.",
-        "requires_recalculation": bool(getattr(exc, "requires_recalculation", False)),
-    }
-    return JSONResponse(status_code=409, content={"detail": detail})
+    from backend.copilot.state import state as copilot_state
+    from backend.plans.refusal import refusal_detail
+
+    detail = refusal_detail(
+        exc,
+        data=copilot_state.engine_data,
+        lots=copilot_state.lots,
+        message=f"{exc} O plano ativo não foi alterado.",
+        code=getattr(exc, "code", "invalid_plan"),
+    )
+    detail["requires_recalculation"] = bool(getattr(exc, "requires_recalculation", False))
+    return JSONResponse(status_code=409, content=jsonable_encoder({"detail": detail}))
 
 
 @app.exception_handler(HistoricalPlanProtectedError)

@@ -42,6 +42,8 @@ import {
 } from "../lib/gateApproval";
 import { getReadIdentity } from "../lib/planRevision";
 import { jobFailureText } from "../lib/jobFailure";
+import { refusalCauses } from "../lib/refusal";
+import { RefusalDetails } from "../components/RefusalDetails";
 
 type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "setup_overrides" | "operadores" | "feriados" | "indisponibilidades" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes" | "qualidade_dados";
 type ConfigGroup = "factory" | "articles" | "calendar" | "availability" | "engine";
@@ -483,7 +485,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       onDelta(res.score_previous, res.score);
       assertRefreshed(await refreshAfterCommit(refreshAll), true);
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setSaving(false);
     }
@@ -521,7 +523,7 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
       setActivePreset(name);
       assertRefreshed(await refreshAfterCommit(refreshAll), true);
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setSaving(false);
     }
@@ -657,6 +659,11 @@ function justificationAsker(prompt: ConfirmContextValue["prompt"]) {
   });
 }
 
+/** `failureMessage` followed by the refusal's concrete causes, for one-line messages. */
+function failureWithCauses(error: unknown) {
+  return [failureMessage(error), ...refusalCauses(error)].join(" ");
+}
+
 /** "Erro: …", except when the change was saved and only the screen is behind. */
 function failureMessage(error: unknown) {
   return isAppliedRefreshError(error) ? error.message : `Erro: ${apiErrorMessage(error)}`;
@@ -735,7 +742,7 @@ function SkuPlanningEditor({
       const res = await previewSkuPlanning(sku, cleanRule(ruleFor(sku)));
       setPreview({ ...preview, [sku]: res });
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setBusySku(null);
     }
@@ -759,7 +766,7 @@ function SkuPlanningEditor({
       setMsg(`Aplicado ${sku}: ${metricDelta(res) ?? "plano recalculado"}`);
       await onReload();
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setBusySku(null);
     }
@@ -781,7 +788,7 @@ function SkuPlanningEditor({
       setMsg(`Reposto para ISOP: ${sku}`);
       await onReload();
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setBusySku(null);
     }
@@ -1026,7 +1033,7 @@ function SubcontractEditor({
       setPreviewDelta(res.delta ?? null);
       setMsg(`Impacto revisto: ${metricDelta(res) ?? "plano recalculado"}`);
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setBusy(null);
     }
@@ -1046,7 +1053,7 @@ function SubcontractEditor({
       setMsg(`${selected.size} referência${selected.size === 1 ? "" : "s"} guardada${selected.size === 1 ? "" : "s"} para subcontrato.`);
       await onReload();
     } catch (e) {
-      setMsg(failureMessage(e));
+      setMsg(failureWithCauses(e));
     } finally {
       setBusy(null);
     }
@@ -1196,7 +1203,13 @@ export function ConfigPage() {
   const [machineActiveEdits, setMachineActiveEdits] = useState<Record<string, boolean>>({});
   const [shiftEdits, setShiftEdits] = useState<FactoryConfig["shifts"] | null>(null);
   const [crewEdits, setCrewEdits] = useState<Record<string, number>>({});
-  const [replanMessage, setReplanMessage] = useState<string | null>(null);
+  const [replanMessage, setReplanMessageText] = useState<string | null>(null);
+  // Concrete causes of a refused change, shown under the message (15/10/2026).
+  const [replanCauses, setReplanCauses] = useState<string[]>([]);
+  const setReplanMessage = useCallback((message: string | null, causes: readonly string[] = []) => {
+    setReplanMessageText(message);
+    setReplanCauses([...causes]);
+  }, []);
   const [activeReplanJobId, setActiveReplanJobId] = useState<string | null>(null);
   const [replanStartedAt, setReplanStartedAt] = useState<number | null>(null);
   const [replanElapsedSeconds, setReplanElapsedSeconds] = useState(0);
@@ -1438,7 +1451,7 @@ export function ConfigPage() {
           setActiveReplanJobId(null);
           setSaving(false);
           setReplanConnectionMessage(null);
-          setReplanMessage(failureMessage(failure));
+          setReplanMessage(failureMessage(failure), refusalCauses(failure));
           return;
         }
         consecutivePollingFailures += 1;
@@ -1465,7 +1478,10 @@ export function ConfigPage() {
       return;
     }
     if (job.status === "failed") {
-      setReplanMessage(`Erro: ${jobFailureText(job, "O replaneamento falhou. O plano não foi alterado.")}`);
+      setReplanMessage(
+        `Erro: ${jobFailureText(job, "O replaneamento falhou. O plano não foi alterado.")}`,
+        job.causes ?? [],
+      );
       return;
     }
     if (job.status === "completed") {
@@ -1475,7 +1491,7 @@ export function ConfigPage() {
         await loadConfiguration();
         assertRefreshed(await refreshAfterCommit(refreshAll), true);
       } catch (failure) {
-        if (stillFollowing()) setReplanMessage(failureMessage(failure));
+        if (stillFollowing()) setReplanMessage(failureMessage(failure), refusalCauses(failure));
       }
       return;
     }
@@ -1487,7 +1503,7 @@ export function ConfigPage() {
     setReplanMessage(job.result?.gate_report.apply_decision === "blocked"
       ? job.message
       : "Candidato pronto. Revê as alterações antes de aplicar.");
-  }, [loadConfiguration, refreshAll]);
+  }, [loadConfiguration, refreshAll, setReplanMessage]);
 
   useEffect(() => {
     let disposed = false;
@@ -1541,7 +1557,7 @@ export function ConfigPage() {
         setReplanMessage(e.message);
         return true;
       }
-      alert(failureMessage(e));
+      setReplanMessage(failureMessage(e), refusalCauses(e));
       return false;
     } finally {
       setSaving(false);
@@ -1577,7 +1593,7 @@ export function ConfigPage() {
       }, generation);
     } catch (failure) {
       if (!mounted.current || generation !== replanPollGeneration.current) return;
-      setReplanMessage(failureMessage(failure));
+      setReplanMessage(failureMessage(failure), refusalCauses(failure));
       setActiveReplanJobId(null);
       setReplanConnectionMessage(null);
       setSaving(false);
@@ -1661,7 +1677,7 @@ export function ConfigPage() {
       setPendingReplan(null);
       await reload();
     } catch (failure) {
-      if (mounted.current && generation === replanPollGeneration.current) setReplanMessage(failureMessage(failure));
+      if (mounted.current && generation === replanPollGeneration.current) setReplanMessage(failureMessage(failure), refusalCauses(failure));
     } finally {
       if (mounted.current && generation === replanPollGeneration.current) setSaving(false);
     }
@@ -2198,6 +2214,7 @@ export function ConfigPage() {
                 )}
                 <span>
                   {activeReplanJobId ? `Fase atual: ${replanMessage}` : replanMessage}
+                  {!activeReplanJobId && <RefusalDetails causes={replanCauses} />}
                   {activeReplanJobId && (
                     <span style={{ display: "block", marginTop: 2, color: T.tertiary }}>
                       Tempo decorrido: {formatElapsedTime(replanElapsedSeconds)}

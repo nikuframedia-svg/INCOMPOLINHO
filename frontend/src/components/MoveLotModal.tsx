@@ -8,12 +8,14 @@ import {
 import type { GateReport, Lot, ManualMoveResponse, Segment } from "../api/types";
 import { getManualMoveApplyError } from "../lib/manualMoveContract";
 import { jobFailureText } from "../lib/jobFailure";
+import { RefusalError, refusalCauses } from "../lib/refusal";
 import { useDataStore } from "../stores/useDataStore";
 import { useAppStore } from "../stores/useAppStore";
 import { ApiError } from "../api/client";
 import { T } from "../theme/tokens";
 import { GateReportCard } from "./GateReportCard";
 import { PlanDeltaCards } from "./PlanDeltaCards";
+import { RefusalDetails } from "./RefusalDetails";
 import { Modal } from "./ui/Modal";
 
 interface Props {
@@ -99,6 +101,8 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
   const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorGate, setErrorGate] = useState<GateReport | null>(null);
+  const [errorCauses, setErrorCauses] = useState<string[]>([]);
+  const [applyCauses, setApplyCauses] = useState<string[]>([]);
   const [applyError, setApplyError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const requestGenerationRef = useRef(0);
@@ -145,7 +149,9 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     setPreviewElapsedSeconds(0);
     setConfirmed(false);
     setApplyError(null);
+    setApplyCauses([]);
     setError(null);
+    setErrorCauses([]);
     setErrorGate(null);
   };
 
@@ -166,6 +172,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     const requestSnapshot = { ...request };
     setBusy("preview");
     setError(null);
+    setErrorCauses([]);
     setErrorGate(null);
     setPreview(null);
     setPreviewJobId(null);
@@ -174,6 +181,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     setPreviewElapsedSeconds(0);
     setConfirmed(false);
     setApplyError(null);
+    setApplyCauses([]);
     try {
       const started = await startManualMovePreview(requestSnapshot);
       let job = started.job;
@@ -208,8 +216,12 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       if (!mountedRef.current || requestGenerationRef.current !== generation) return;
       activeJobIdRef.current = null;
       if (job.status === "failed") {
-        setErrorGate(job.gate_report ?? null);
-        throw new Error(jobFailureText(job, "A verificação do movimento falhou. O plano não foi alterado.", "move"));
+        // The causes say why; the gate card is only for a gate verdict without them.
+        setErrorGate(job.causes?.length ? null : job.gate_report ?? null);
+        throw new RefusalError(
+          jobFailureText(job, "A verificação do movimento falhou. O plano não foi alterado.", "move"),
+          job.causes,
+        );
       }
       if (job.status === "cancelled") {
         throw new Error("A verificação foi cancelada.");
@@ -230,6 +242,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       if (!mountedRef.current || requestGenerationRef.current !== generation) return;
       const message = failure instanceof Error ? failure.message : String(failure);
       setError(`Não foi possível verificar o movimento: ${message}`);
+      setErrorCauses(refusalCauses(failure));
     } finally {
       if (mountedRef.current && requestGenerationRef.current === generation) {
         setBusy(null);
@@ -248,6 +261,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       : null;
     if (validationError) {
       setError(null);
+      setErrorCauses([]);
       setApplyError(validationError);
       window.requestAnimationFrame(() => {
         const input = confirmed ? reasonInputRef.current : confirmationInputRef.current;
@@ -260,7 +274,9 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     const generation = requestGenerationRef.current;
     setBusy("apply");
     setError(null);
+    setErrorCauses([]);
     setApplyError(null);
+    setApplyCauses([]);
     try {
       await applyManualMove({
         ...request,
@@ -280,6 +296,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       if (!mountedRef.current || requestGenerationRef.current !== generation) return;
       const message = failure instanceof Error ? failure.message : String(failure);
       setApplyError(failure instanceof RefreshError && failure.applied ? message : `Não foi possível aplicar o movimento: ${message}`);
+      setApplyCauses(refusalCauses(failure));
       const detail = failure instanceof ApiError && failure.detail !== null && typeof failure.detail === "object"
         ? failure.detail as { code?: string; current_revision?: number } : null;
       const originConflict = failure instanceof ApiError && failure.status === 409 && detail !== null && (
@@ -288,7 +305,9 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
       );
       if (originConflict) {
         setError(`Não foi possível aplicar o movimento: ${message}`);
+        setErrorCauses(refusalCauses(failure));
         setApplyError(null);
+        setApplyCauses([]);
         setPreview(null);
         setPreviewJobId(null);
         setPreviewBase(null);
@@ -369,7 +388,12 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
             {previewMessage || "A verificar"} · {elapsedLabel(previewElapsedSeconds)} decorridos. Em planos completos pode demorar vários minutos.
           </div>
         )}
-        {error && <div style={{ color: T.red, background: `${T.red}10`, border: `1px solid ${T.red}35`, borderRadius: 8, padding: 10, fontSize: 11 }}>{error}</div>}
+        {error && (
+          <div style={{ color: T.red, background: `${T.red}10`, border: `1px solid ${T.red}35`, borderRadius: 8, padding: 10, fontSize: 11 }}>
+            {error}
+            <RefusalDetails causes={errorCauses} />
+          </div>
+        )}
         {errorGate && <GateReportCard gate={errorGate} />}
 
         {preview && (
@@ -400,6 +424,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                     onChange={(event) => {
                       setReason(event.target.value);
                       setApplyError(null);
+                      setApplyCauses([]);
                     }}
                     placeholder="Ex.: prioridade do cliente, teste pedido, falta de material…"
                     style={fieldStyle}
@@ -413,6 +438,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                     onChange={(event) => {
                       setConfirmed(event.target.checked);
                       setApplyError(null);
+                      setApplyCauses([]);
                     }}
                   />
                   Confirmo que aceito estas exceções do plano.
@@ -432,6 +458,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                     onChange={(event) => {
                       setReason(event.target.value);
                       setApplyError(null);
+                      setApplyCauses([]);
                     }}
                     placeholder="Ex.: prioridade do cliente, teste pedido, falta de material…"
                     style={fieldStyle}
@@ -453,6 +480,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                 }}
               >
                 {applyError}
+                <RefusalDetails causes={applyCauses} />
               </div>
             )}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

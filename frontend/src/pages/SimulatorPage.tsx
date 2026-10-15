@@ -23,6 +23,7 @@ import { PlanDeltaCards } from "../components/PlanDeltaCards";
 import { GateReportCard } from "../components/GateReportCard";
 import { useConfirm } from "../components/ui/confirmContext";
 import { approvalGateFromError, approvalImpactMessage, gateStatusLabel } from "../lib/gateApproval";
+import { refusalText } from "../lib/refusal";
 
 // ── Mutation schema ──────────────────────────────────────────
 
@@ -351,7 +352,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       }
       acceptSimulation(generation, res, submitted);
     } catch (e) {
-      if (mounted.current && generation === useSimulatorStore.getState().generation) setError(String(e));
+      if (mounted.current && generation === useSimulatorStore.getState().generation) setError(refusalText(e));
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -399,7 +400,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       if (mounted.current) setApplied(true);
       appliedNow = true;
     } catch (e) {
-      if (mounted.current) setError(String(e));
+      if (mounted.current) setError(refusalText(e));
     } finally {
       if (mounted.current) setApplying(false);
     }
@@ -434,7 +435,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       setScenarioName((current) => current === submittedName ? "" : current);
       setScenarioMessage("Cenário guardado. O plano verdadeiro não foi alterado.");
     } catch (exception) {
-      if (mounted.current) setScenarioMessage(String(exception));
+      if (mounted.current) setScenarioMessage(refusalText(exception));
     } finally {
       if (mounted.current) setSavedScenarioBusy(null);
     }
@@ -465,7 +466,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       setScenarioMessage(`Cenário “${scenario.name}” aplicado como realidade.`);
       onApplied?.();
     } catch (exception) {
-      if (mounted.current) setScenarioMessage(String(exception));
+      if (mounted.current) setScenarioMessage(refusalText(exception));
     } finally {
       if (mounted.current) setSavedScenarioBusy(null);
     }

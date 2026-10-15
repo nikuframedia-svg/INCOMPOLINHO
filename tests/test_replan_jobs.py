@@ -983,7 +983,10 @@ def test_slow_local_repair_keeps_budget_for_complete_pipeline(ready_replan, monk
         assert current["message"] == jobs.FAILURE_TEXTS[expected][0]
         assert "não foram alterados" in current["error"]
         if outcome == "invalid":
-            assert current["error"].endswith("Primeiros conflitos: Conflito injetado.")
+            # One format (decisão de 15/10/2026): the conflicts are causes,
+            # not glued to the error text.
+            assert current["causes"] == ["Conflito injetado."]
+            assert "Primeiros conflitos" not in current["error"]
         assert manager.store.get_candidate(job["id"]) is None
     assert live.plan_revision == 1
     assert live.segments == result.segments
@@ -1174,11 +1177,15 @@ def test_failure_summary_is_plain_portuguese_without_internal_tuples():
          seg("LOT_VUL115_PRM042_8718696125_1", "VUL115", "8718696125", 8, 0)],
         data,
     )
-    summary = jobs._violation_summary(PlanValidationError(violations))
-    assert "('" not in summary and "LOT_" not in summary
-    assert "ferramenta VUL115 (ref. 8718696125) entra na PRM042 depois da JDE001" in summary
-    assert summary.endswith(".")
-    assert "Primeiros conflitos" not in summary  # the caller adds the heading once
+    causes = jobs._violation_causes(PlanValidationError(violations), data)
+    assert causes
+    for cause in causes:
+        assert "('" not in cause and "LOT_" not in cause
+        assert cause.endswith(".")
+    assert any(
+        "ferramenta VUL115 (ref. 8718696125) entra na PRM042 depois da JDE001" in cause
+        for cause in causes
+    )
 
 
 def test_failure_texts_are_plain_and_say_nothing_changed():

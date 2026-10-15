@@ -1209,6 +1209,7 @@ def _install_frozen_reservations(
             "start_day": start_day, "start_min": int(start_min),
             "end_day": segment.day_idx, "end_min": int(segment.start_min),
             "category": "Plano passado", "reason": "Continuação sem reinstalação",
+            "lot_id": segment.lot_id, "tool_id": segment.tool_id,
         }
         for day in range(start_day, segment.day_idx + 1):
             daily = {**block, "start_day": day, "end_day": day,
@@ -1230,6 +1231,9 @@ def _install_frozen_reservations(
             "end_day": int(segment.day_idx), "end_min": int(segment.end_min),
             "category": "Plano passado",
             "reason": "Lote iniciado antes do dia atual",
+            # Which lot holds the reservation: a refusal can then name it
+            # (e.g. a lot pinned by hand), plans.refusal.
+            "lot_id": segment.lot_id,
         }
         engine_data.machine_blocked_intervals.setdefault(segment.machine_id, []).append(
             copy.deepcopy(block)

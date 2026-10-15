@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.api.locks import plan_mutation_lock
 from backend.copilot.state import state
+from backend.plans.refusal import refusal_http
 from backend.plans.restore import restore_plan_into_state
 from backend.plans.transactions import plan_writer
 from backend.validation import strict_bool
@@ -54,7 +55,7 @@ async def restore_plan(plan_id: str, body: dict):
         recalculate = strict_bool(body.get("recalculate", False), "recalculate")
         approval = _approval_args(body)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     async with plan_mutation_lock:
         expected_revision = _require_expected_revision(body)
         plan = state.get_plans_store().get(plan_id)

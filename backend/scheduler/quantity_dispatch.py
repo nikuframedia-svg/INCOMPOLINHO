@@ -1000,8 +1000,11 @@ def schedule_quantity_releases(
         # A builder defect must not turn into a failed recalculation while the
         # previous behaviour (one run per portion) still gives a valid plan.
         # The planner sees it with the plan, not only in the server log.
+        from backend.plans.refusal import causes_for_log
+
         logger.warning(
-            "Campanhas por partes falharam (%s); plano por partes separadas.", error,
+            "Campanhas por partes falharam (%s %s); plano por partes separadas.",
+            error, causes_for_log(error, data, lots),
         )
         if notes is not None:
             notes.append(FALLBACK_WARNING)

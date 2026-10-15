@@ -46,6 +46,7 @@ from backend.copilot.executors_master import (
     exec_remover_twin,
 )
 from backend.copilot.state import state
+from backend.plans.refusal import refusal_http
 from backend.plans.transactions import plan_writer
 from backend.validation import ApprovalInput, IntegerInput, finite_float, strict_bool, strict_int
 
@@ -96,7 +97,7 @@ def _normalize_shift_updates(raw_shifts) -> list[ShiftConfig]:
     try:
         return normalize_shift_updates(raw_shifts)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
 
 
 def _validate_mutations(raw_mutations: list[BaseModel], require_non_empty: bool = False):
@@ -125,7 +126,7 @@ def _validate_mutations(raw_mutations: list[BaseModel], require_non_empty: bool 
                 apply_mutation(validation_data, item.type, params, validation_config)
             seen.add(key)
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
         mutations.append(Mutation(type=item.type, params=params))
     return mutations
 
@@ -187,17 +188,7 @@ def _pending_mutations(pending) -> list[dict]:
 
 
 def _plan_validation_error(exc):
-    from backend.scheduler.validation import PlanValidationError
-
-    if isinstance(exc, PlanValidationError):
-        return HTTPException(
-            400,
-            {
-                "message": str(exc),
-                "violations": exc.violations,
-            },
-        )
-    return HTTPException(400, str(exc))
+    return refusal_http(400, exc)
 
 
 def _result_gate_report(result) -> dict | None:
@@ -1157,7 +1148,7 @@ async def get_capacity(granularity: str = "day"):
     try:
         return compute_capacity(state.segments, state.engine_data, state.config, granularity)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
 
 
 @router.get("/blocked-days")
@@ -1579,7 +1570,7 @@ async def preview_sku_planning(sku: str, body: dict):
     try:
         rule = normalize_sku_planning_rule(sku, body)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
 
     candidate = copy.deepcopy(state.config)
     if rule:
@@ -1624,7 +1615,7 @@ async def update_sku_planning(sku: str, body: dict):
     try:
         rule = normalize_sku_planning_rule(sku, body)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
 
     candidate = copy.deepcopy(state.config)
     if rule:
@@ -1706,7 +1697,7 @@ async def preview_subcontracts(body: dict):
         ]
         sku_subcontracts = clean_sku_subcontracts(body.get("sku_subcontracts", {}))
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     _validate_subcontract_rules(companies, sku_subcontracts)
 
     candidate = copy.deepcopy(state.config)
@@ -1750,7 +1741,7 @@ async def update_subcontracts(body: dict):
         ]
         sku_subcontracts = clean_sku_subcontracts(body.get("sku_subcontracts", {}))
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     _validate_subcontract_rules(companies, sku_subcontracts)
 
     candidate = copy.deepcopy(state.config)
@@ -1829,7 +1820,7 @@ async def update_config(updates: dict):
             try:
                 new_val = _coerce_tunable_value(key, getattr(candidate, key), updates[key])
             except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
             updates_to_apply.append((key, new_val))
 
     if not updates_to_apply:
@@ -2552,6 +2543,13 @@ def _exec_result(result_json: str) -> dict:
     """Parse executor JSON result, raise HTTPException on error."""
     result = json.loads(result_json)
     if "error" in result:
+        if result.get("causes"):
+            # A refused plan keeps its concrete causes (decisão de 15/10/2026).
+            raise HTTPException(400, {
+                "code": result.get("code") or "invalid_plan",
+                "message": result["error"],
+                "causes": result["causes"],
+            })
         raise HTTPException(400, result["error"])
     return result
 
@@ -2577,7 +2575,7 @@ async def edit_machine(mid: str, body: dict):
         try:
             body["activa"] = _coerce_bool(body["activa"])
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
     body["id"] = mid
     return _exec_result(exec_editar_maquina(body))
 
@@ -2601,7 +2599,7 @@ async def add_machine(body: dict):
     try:
         active = _coerce_bool(body.get("active", body.get("activa", True)))
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     from backend.api.replan import start_replan
 
     return await start_replan(
@@ -2861,9 +2859,9 @@ async def add_unavailability(body: dict):
     try:
         entry = add_unavailability_entry(candidate, state.engine_data, body)
     except UnavailabilityConflict as exc:
-        raise HTTPException(409, str(exc)) from exc
+        raise refusal_http(409, exc) from exc
     except (TypeError, ValueError) as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, entry=entry)
 
@@ -2968,7 +2966,7 @@ async def apply_preset_endpoint(name: str, body: dict):
     try:
         get_preset(name)  # validate name early
     except KeyError as e:
-        raise HTTPException(400, str(e))
+        raise refusal_http(400, e) from e
 
     # Reset only fields owned by presets. Factory master data and all other
     # live configuration remain authoritative.

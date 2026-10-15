@@ -38,9 +38,17 @@ _legacy_logger = logging.getLogger("backend.legacy")
 class ManualMoveError(ValueError):
     """A requested move cannot return an applicable candidate."""
 
-    def __init__(self, message: str, *, gate_report: dict | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        gate_report: dict | None = None,
+        causes: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.gate_report = gate_report
+        # Concrete pt-PT causes (``plans.refusal``), shown under the message.
+        self.causes = list(causes or [])
 
 
 class ManualMoveInconclusive(ManualMoveError):
@@ -997,6 +1005,7 @@ def _allocate_existing_lots(
     now: datetime | None = None,
     pinned: dict[str, tuple[str, list[Segment]]] | None = None,
     reasons: list[str] | None = None,
+    violations: list[dict] | None = None,
 ) -> ScheduleResult | None:
     """Allocate existing productions using the shared physical solver, without lot sizing.
 
@@ -1060,9 +1069,15 @@ def _allocate_existing_lots(
                     movable, residual_data, config, pinned=pinned,
                 )
             except ValueError as error:  # includes PlanValidationError
+                from backend.plans.refusal import causes_for_log, violations_of
                 from backend.scheduler.validation import PlanValidationError
 
-                logger.info("Realocação recusada: %s", error)
+                logger.info(
+                    "Realocação recusada: %s %s", error,
+                    causes_for_log(error, candidate_data, source_lots),
+                )
+                if violations is not None:
+                    violations.extend(violations_of(error))
                 return refuse(
                     _REORGANISED_INVALID if isinstance(error, PlanValidationError) else _NO_ROOM
                 )
@@ -1125,14 +1140,31 @@ def _reallocation_ignores_target(source_lots: list[Lot], protection) -> bool:
     )
 
 
-def _refused_move(lot_id, day, minute, machine_id, data, detail, *, gate_report=None):
-    """A move that was checked and cannot be applied, with its reason."""
+def _refused_move(
+    lot_id, day, minute, machine_id, data, detail, *, gate_report=None, causes=None,
+):
+    """A move that was checked and cannot be applied, with its reason and causes."""
     date = str(data.workdays[day])[:10] if 0 <= day < len(data.workdays) else ""
     when = f"no dia {day}" + (f" ({date})" if date else "")
     return ManualMoveError(
         f"Não é possível iniciar {lot_id} {when}, às {minute // 60:02d}:{minute % 60:02d}, "
         f"em {machine_id}: {detail} O plano não foi alterado.",
         gate_report=gate_report,
+        causes=causes or _gate_causes(gate_report, data, subject=lot_id),
+    )
+
+
+def _gate_causes(gate_report: dict | None, data, lots=None, subject=None) -> list[str]:
+    """Causes from a gate report's physical violations (``plans.refusal``)."""
+    return _violation_causes((gate_report or {}).get("violations") or [], data, lots, subject)
+
+
+def _violation_causes(violations, data, lots=None, subject=None) -> list[str]:
+    from backend.plans.refusal import refusal_causes
+
+    return refusal_causes(
+        [item for item in violations if isinstance(item, dict)], data,
+        lots=lots, subject=subject,
     )
 
 
@@ -1187,13 +1219,15 @@ def _replan_around_fixed_lot(
             cancel_event, time_budget_s, now,
         )
 
-    def refused(detail, gate_report=None):
+    def refused(detail, gate_report=None, causes=None):
+        causes = causes or _gate_causes(gate_report, candidate_data, source_lots, lot.id)
         logger.info(
-            "Movimento de %s recusado: %s %s", lot.id, detail, _gate_failure_kinds(gate_report),
+            "Movimento de %s recusado: %s %s %s", lot.id, detail,
+            _gate_failure_kinds(gate_report), " | ".join(causes[:3]),
         )
         return _refused_move(
             lot.id, target_day, target_start_min, target_machine, candidate_data, detail,
-            gate_report=gate_report,
+            gate_report=gate_report, causes=causes,
         )
 
     now = calculation_now(config, now)
@@ -1217,6 +1251,7 @@ def _replan_around_fixed_lot(
         now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
     )
     reasons: list[str] = []
+    violations: list[dict] = []
     with planning_scope(timeout_s=time_budget_s, cancel_event=cancel_event):
         result = _allocate_existing_lots(
             residual_data, source_lots=[
@@ -1225,9 +1260,15 @@ def _replan_around_fixed_lot(
             ], config=config, cancel_event=cancel_event,
             time_budget_s=time_budget_s, now=now,
             pinned={lot.id: (target_machine, pinned_segments)}, reasons=reasons,
+            violations=violations,
         )
         if result is None:
-            raise refused(reasons[0] if reasons else _NO_ROOM)
+            # Causes read the full data: the residual copy has no plan anchors,
+            # so it could not say which lots were pinned by hand.
+            raise refused(
+                reasons[0] if reasons else _NO_ROOM,
+                causes=_violation_causes(violations, candidate_data, source_lots, lot.id),
+            )
         result = _splice_frozen_started_lots(
             result, frozen_segments, protected_lots, partial,
         )
@@ -1725,6 +1766,7 @@ def _move_lot(
     )
     if progress:
         progress("scheduling", 35, "A verificar o pedido mantendo as outras produções")
+    fixed_causes: list[str] = []
     try:
         result = _fixed_positions_move(
             segments, lots, lot_id, target_day, machine_id, start_min,
@@ -1732,6 +1774,15 @@ def _move_lot(
         )
     except ManualMoveError as exc:
         logger.info("Movimento de %s com as outras produções fixas recusado: %s", lot_id, exc)
+        # What collides when nothing else moves: the planner's clearest "why"
+        # when the reorganised attempt has no causes of its own.
+        fixed_causes = [
+            f"Mantendo as outras produções onde estão: {cause[0].lower()}{cause[1:]}"
+            for cause in exc.causes or _gate_causes(
+                exc.gate_report, candidate_data, lots, lot_id,
+            )
+            if cause and not cause.startswith("…")
+        ]
         result = None
     # Why the reorganised attempt refused the move (shown when nothing works).
     refusal: ManualMoveError | None = None
@@ -1821,8 +1872,12 @@ def _move_lot(
         if cancel_event is not None and cancel_event.is_set():
             raise PlanningCancelled("O movimento foi cancelado.")
         if refusal is not None:
+            if not refusal.causes:
+                refusal.causes = list(fixed_causes)
             raise refusal
-        raise _inconclusive_move(lot_id, target_day, start_min, machine_id)
+        inconclusive = _inconclusive_move(lot_id, target_day, start_min, machine_id)
+        inconclusive.causes = list(fixed_causes)
+        raise inconclusive
     complete = ScheduleResult(
         candidate_segments, candidate_lots, score, 0, [], [], gate_report=gate_report,
         improvement_report=(result.improvement_report if result is not None

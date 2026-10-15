@@ -237,6 +237,29 @@ def _setup_is_immediately_followed_by_production(
     )
 
 
+def _block_span(block: dict) -> str:
+    """``20:48 e 23:50`` (clock time), not raw minutes."""
+
+    def clock(value: Any) -> str:
+        minute = max(0, min(int(round(float(value or 0))), 24 * 60))
+        return f"{minute // 60:02d}:{minute % 60:02d}"
+
+    return f"{clock(block.get('start_min'))} e {clock(block.get('end_min'))}"
+
+
+def _block_holder(block: dict) -> str:
+    """Who holds a reservation: production that stays where it is (``frozen``)."""
+
+    if not block.get("lot_id"):
+        return ""
+    if block.get("tool_id") and block.get("reason") == "Continuação sem reinstalação":
+        return (
+            f": a ferramenta {block['tool_id']} fica montada entre duas produções "
+            "que ficam onde estão"
+        )
+    return ": ocupada por uma produção que fica onde está"
+
+
 def _violation(
     kind: str,
     message: str,
@@ -659,7 +682,7 @@ def _validate_plan(
                         "machine_down",
                         (
                             f"Máquina {seg.machine_id} indisponível entre "
-                            f"{block.get('start_min')} e {block.get('end_min')}."
+                            f"{_block_span(block)}{_block_holder(block)}."
                         ),
                         seg,
                         unavailability=block,
@@ -680,7 +703,7 @@ def _validate_plan(
                         "tool_down",
                         (
                             f"Ferramenta {seg.tool_id} indisponível entre "
-                            f"{block.get('start_min')} e {block.get('end_min')}."
+                            f"{_block_span(block)}{_block_holder(block)}."
                         ),
                         seg,
                         unavailability=block,

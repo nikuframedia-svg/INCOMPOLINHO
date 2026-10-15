@@ -20,6 +20,7 @@ from backend.plans.manual_move import (
     move_lot,
 )
 from backend.plans.manual_move_jobs import manager as move_job_manager
+from backend.plans.refusal import refusal_http
 from backend.plans.serialize import planning_input_fingerprints
 from backend.plans.transactions import clone_state, input_identity, plan_writer
 from backend.scheduler.gates import application_refusal_detail, authorize_application
@@ -77,7 +78,7 @@ def _request_values(body: dict) -> tuple[str, int, str | None, int | None, bool,
             body.get("approve_exceptions", body.get("confirm_delivery_risk", False))
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     reason = str(body.get("reason", "")).strip()
     author = str(body.get("author", "utilizador")).strip() or "utilizador"
     return (
@@ -111,7 +112,7 @@ def _candidate(body: dict) -> tuple[ManualMoveResult, bool]:
             optimization_mode="quick",
         )
     except ManualMoveError as exc:
-        detail: dict[str, object] = {"message": str(exc)}
+        detail: dict[str, object] = {"message": str(exc), "causes": list(exc.causes)}
         if isinstance(exc, ManualMoveInconclusive):
             detail["code"] = "verification_inconclusive"
         if exc.gate_report is not None:

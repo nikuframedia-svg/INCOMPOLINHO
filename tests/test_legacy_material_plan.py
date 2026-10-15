@@ -216,7 +216,10 @@ def test_source_contract_message_says_loaded_isop_data():
     for item in errors:
         assert "RENAMED" not in item["message"]
         if "não coincide" in item["message"]:
-            assert item["message"].endswith("não coincide com os dados carregados (ISOP).")
+            assert item["message"].endswith(
+                ("não coincide com os dados carregados (ISOP).",
+                 "não coincidem com os dados carregados (ISOP).")
+            )
 
 
 def test_startup_restore_of_a_legacy_plan_has_no_recalculation_note():

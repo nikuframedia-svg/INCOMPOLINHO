@@ -24,6 +24,7 @@ from backend import calendar as factory_calendar
 from backend.api.locks import commit_lock, plan_mutation_lock
 from backend.planning_control import planning_checkpoint, planning_scope
 from backend.plans.context import is_staging, stage_state
+from backend.plans.refusal import refusal_http
 from backend.plans.serialize import (
     planning_state_identity as input_identity,
 )
@@ -413,7 +414,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
             if "expected_revision" in body:
                 strict_int(body["expected_revision"], "expected_revision")
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
         operation_id = str(
             body.get("request_id")
             or (

@@ -131,3 +131,23 @@ it("cancelar não aplica nada", async () => {
   expect(mocks.addHoliday).toHaveBeenCalledTimes(1);
   expect(alert).not.toHaveBeenCalled();
 });
+
+it("uma recusa mostra as causas na página, sem alerta do browser (15/10/2026)", async () => {
+  mocks.addHoliday.mockRejectedValueOnce(new ApiError(400, "Plano inválido: 1 conflito.", {
+    code: "invalid_plan",
+    message: "Plano inválido: 1 conflito.",
+    causes: ["Procura e lotes não reconciliam: 43940 peça(s) em falta face à procura."],
+  }));
+  const alert = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+
+  render(<ConfirmProvider><ConfigPage /></ConfirmProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Calendário" }));
+  const input = document.querySelector<HTMLInputElement>('input[type="date"]')!;
+  fireEvent.change(input, { target: { value: "2026-12-07" } });
+  fireEvent.click(screen.getByRole("button", { name: "Adicionar dia" }));
+
+  expect(await screen.findByText("Erro: Plano inválido: 1 conflito.")).toBeTruthy();
+  expect(screen.getByText("Porquê:")).toBeTruthy();
+  expect(screen.getByText(/43940 peça\(s\) em falta/)).toBeTruthy();
+  expect(alert).not.toHaveBeenCalled();
+});

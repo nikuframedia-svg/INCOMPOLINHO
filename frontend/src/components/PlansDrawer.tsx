@@ -4,6 +4,7 @@ import type { PlanSummary } from "../api/types";
 import { useDataStore } from "../stores/useDataStore";
 import { T } from "../theme/tokens";
 import { useConfirm } from "./ui/confirmContext";
+import { refusalText } from "../lib/refusal";
 
 interface Props {
   onClose: () => void;
@@ -107,7 +108,7 @@ export function PlansDrawer({ onClose }: Props) {
           : `Plano reposto com aviso: ${response.gate_report.status}.`,
       );
     } catch (error) {
-      setMessage(error instanceof RefreshError && error.applied ? error.message : `Erro ao repor: ${error}`);
+      setMessage(error instanceof RefreshError && error.applied ? error.message : `Erro ao repor: ${refusalText(error)}`);
     } finally {
       setBusy(null);
     }

@@ -114,8 +114,19 @@ def _transactional_master(fn):
                 isinstance(exc, HTTPException) and api_write_context() is not None
             ):
                 raise
-            logger.exception("Master executor %s rolled back", fn.__name__)
-            return _dumps({"error": str(exc)})
+            from backend.plans.refusal import causes_for_log, refusal_causes, violations_of
+
+            logger.exception(
+                "Master executor %s rolled back: %s", fn.__name__,
+                causes_for_log(exc, state.engine_data, state.lots),
+            )
+            failure = {"error": str(exc)}
+            if violations_of(exc):
+                failure["code"] = "invalid_plan"
+                failure["causes"] = refusal_causes(
+                    violations_of(exc), state.engine_data, lots=state.lots,
+                )
+            return _dumps(failure)
         finally:
             _PENDING_CONFIG.reset(config_token)
             _PENDING_APPROVAL_BODY.reset(approval_token)

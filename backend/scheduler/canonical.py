@@ -242,7 +242,8 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
 
     def fail(lot, field, actual=None, expected=None):
         label = _FIELD_LABELS.get(field, "um dado do lote")
-        message = f"{_lot_label(lot)}: {label} não coincide com os dados carregados (ISOP)."
+        verb = "coincidem" if label.startswith(("as ", "os ")) else "coincide"
+        message = f"{_lot_label(lot)}: {label} não {verb} com os dados carregados (ISOP)."
         violations.append({"kind": "source_contract", "lot_id": lot.id, "message": message,
                            "field": field, "actual": actual, "expected": expected})
 

@@ -125,20 +125,12 @@ class _ProtectedHistoryChanged(ValueError):
 PROTECTED_HISTORY_TEXT = FAILURE_TEXTS["history_protected"][1]
 
 
-def _violation_summary(exc) -> str:
-    """First distinct conflicts in plain Portuguese, separated by "; "."""
+def _violation_causes(exc, data=None, lots=None) -> list[str]:
+    """The refusal causes shown under the failure (``plans.refusal``)."""
 
-    messages: list[str] = []
-    for violation in getattr(exc, "violations", None) or []:
-        message = str(violation.get("message", "")).strip().rstrip(".")
-        machine = str(violation.get("machine_id", "")).strip()
-        if not message and machine:
-            message = f"conflito na {machine}"
-        if message and message not in messages:
-            messages.append(message)
-        if len(messages) == 3:
-            break
-    return "; ".join(messages) + "." if messages else ""
+    from backend.plans.refusal import refusal_causes, violations_of
+
+    return refusal_causes(violations_of(exc), data, lots=lots)
 
 
 def _baseline_needs_material_rebuild(restored_baseline: dict) -> bool:
@@ -380,7 +372,7 @@ class ReplanJobStore:
     _metadata_columns = (
         "id,created_at,updated_at,status,progress,phase,message,reason,dataset_id,"
         "base_revision,request_fingerprint,base_input_fingerprints_json,worker_id,"
-        "worker_pid,result_json,warnings_json,error,code"
+        "worker_pid,result_json,warnings_json,error,code,causes_json"
     )
     def __init__(
         self,
@@ -424,7 +416,8 @@ class ReplanJobStore:
                     candidate_json TEXT,
                     warnings_json TEXT,
                     error TEXT,
-                    code TEXT
+                    code TEXT,
+                    causes_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_replan_created
                     ON replan_jobs(created_at DESC);
@@ -448,6 +441,8 @@ class ReplanJobStore:
                 self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN worker_pid INTEGER")
             if "code" not in columns:
                 self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN code TEXT")
+            if "causes_json" not in columns:
+                self.conn.execute("ALTER TABLE replan_jobs ADD COLUMN causes_json TEXT")
             if "base_input_fingerprints_json" not in columns:
                 self.conn.execute(
                     "ALTER TABLE replan_jobs ADD COLUMN base_input_fingerprints_json TEXT"
@@ -507,6 +502,9 @@ class ReplanJobStore:
                 or (FAILURE_TEXTS["interrupted"][1] if interrupted else None)
             ),
             "code": "interrupted" if interrupted else row["code"],
+            "causes": (
+                [] if interrupted or not row["causes_json"] else json.loads(row["causes_json"])
+            ),
             "stale": interrupted,
             "interrupted": interrupted,
         }
@@ -628,6 +626,7 @@ class ReplanJobStore:
             "warnings",
             "error",
             "code",
+            "causes",
             "candidate",
             "base_input_fingerprints",
         }
@@ -636,6 +635,8 @@ class ReplanJobStore:
             values["result_json"] = json.dumps(values.pop("result"), ensure_ascii=False)
         if "warnings" in values:
             values["warnings_json"] = json.dumps(values.pop("warnings"), ensure_ascii=False)
+        if "causes" in values:
+            values["causes_json"] = json.dumps(values.pop("causes"), ensure_ascii=False)
         if "candidate" in values:
             values["candidate_json"] = json.dumps(
                 values.pop("candidate"),
@@ -817,7 +818,9 @@ class ReplanJobManager:
         job = self.store.get(job_id)
         return job is None or job["status"] in {"cancelled", "completed", "failed"}
 
-    def _fail(self, job_id: str, code: str, error: str | None = None) -> None:
+    def _fail(
+        self, job_id: str, code: str, error: str | None = None, causes: list[str] | None = None,
+    ) -> None:
         message, default_error = FAILURE_TEXTS[code]
         self.store.update(
             job_id,
@@ -826,6 +829,7 @@ class ReplanJobManager:
             code=code,
             message=message,
             error=error or default_error,
+            causes=list(causes or []),
         )
 
     @staticmethod
@@ -1643,13 +1647,16 @@ class ReplanJobManager:
             logger.exception("Replan job %s produced a blocked candidate", job_id)
             self._fail(job_id, "blocked", str(exc) or None)
         except PlanValidationError as exc:
-            logger.exception("Replan job %s produced no valid plan", job_id)
-            summary = _violation_summary(exc)
-            detail = FAILURE_TEXTS["invalid_plan"][1]
+            from backend.plans.refusal import causes_for_log
+
+            baseline_lots = (baseline_snapshot or {}).get("lots")
+            logger.exception(
+                "Replan job %s produced no valid plan: %s", job_id,
+                causes_for_log(exc, engine_data, baseline_lots),
+            )
             self._fail(
-                job_id,
-                "invalid_plan",
-                f"{detail} Primeiros conflitos: {summary}" if summary else None,
+                job_id, "invalid_plan",
+                causes=_violation_causes(exc, engine_data, baseline_lots),
             )
         except Exception:  # defensive job boundary: never show raw (English) text
             logger.exception("Replan job %s failed unexpectedly", job_id)

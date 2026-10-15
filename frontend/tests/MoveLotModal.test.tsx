@@ -219,3 +219,15 @@ it("does not present a bounded search failure as proven physical impossibility",
   expect(mocks.applyManualMove).not.toHaveBeenCalled();
   expect(useDataStore.getState().planRevision).toBe(21);
 });
+
+it("shows the concrete causes of a refused move (15/10/2026)", async () => {
+  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, status: "failed", result: null,
+    code: "blocked", error: "Não é possível iniciar o lote no dia 51: o plano reorganizado não cumpre as regras físicas ou de quantidade. O plano não foi alterado.",
+    causes: ["Falta afinação: a ferramenta JTE001 entra na PRM043 depois da JTE003; choca com a alteração manual da Referência 6800017267C.30 (PRM043) (fixada para 03/12 17:30)."],
+    gate_report: { ...gate, physical_gate_passed: false } } });
+  render(<MoveLotModal {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Verificar riscos" }));
+  expect(await screen.findByText(/Não foi possível verificar o movimento/)).toBeTruthy();
+  expect(screen.getByText("Porquê:")).toBeTruthy();
+  expect(screen.getByText(/choca com a alteração manual da Referência 6800017267C.30/)).toBeTruthy();
+});

@@ -213,9 +213,14 @@ def _apply_refusal(exc: Exception) -> HTTPException:
             )
         return HTTPException(409, detail)
     if isinstance(exc, PlanValidationError):
-        return HTTPException(
-            409, f"O cenário tem conflitos físicos e não pode ser aplicado: {exc}",
-        )
+        from backend.plans.refusal import refusal_detail
+
+        return HTTPException(409, refusal_detail(
+            exc,
+            data=state.engine_data,
+            lots=state.lots,
+            message=f"O cenário tem conflitos físicos e não pode ser aplicado: {exc}",
+        ))
     if isinstance(exc, ApplicationBlocked):
         detail = application_refusal_detail(exc)
         detail["message"] = f"O cenário não pode ser aplicado: {exc}"

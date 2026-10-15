@@ -1423,7 +1423,8 @@ def test_failed_move_job_returns_physical_violations(manual_api_state, monkeypat
         time.sleep(0.01)
 
     assert job["status"] == "failed"
-    assert "3 operadores para 2" in job["error"]
+    # One format (decisão de 15/10/2026): the conflict is a cause, not glued to the text.
+    assert any("3 operadores para 2" in cause for cause in job["causes"])
     assert job["gate_report"]["violations"][0]["kind"] == "operator_capacity"
 
 

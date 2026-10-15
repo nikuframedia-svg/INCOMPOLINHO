@@ -23,11 +23,15 @@ import { RulesPage } from "../pages/RulesPage";
 import { CapacityPage } from "../pages/CapacityPage";
 import { useConfirm } from "./ui/confirmContext";
 import type { MutationInput } from "../api/types";
+import { refusalCauses } from "../lib/refusal";
+import { RefusalDetails } from "./RefusalDetails";
 
 type OperationStatus = {
   phase: "idle" | "pending" | "success" | "error";
   message: string;
   detail: string;
+  /** Concrete causes of a refusal (decisão de 15/10/2026). */
+  causes?: string[];
 };
 
 const NAV_LABELS: Record<string, string> = {
@@ -232,6 +236,7 @@ export function Shell() {
         phase: "error",
         message: err instanceof RefreshError && err.applied ? "Alteração desfeita; ecrã por atualizar" : "Não foi possível desfazer",
         detail: err instanceof Error ? err.message : String(err),
+        causes: refusalCauses(err),
       });
     } finally {
       setReverting(false);
@@ -257,6 +262,7 @@ export function Shell() {
         phase: "error",
         message: "Não foi possível atualizar",
         detail: err instanceof Error ? err.message : String(err),
+        causes: refusalCauses(err),
       });
     } finally {
       setRefreshing(false);
@@ -320,6 +326,7 @@ export function Shell() {
             phase: "error",
             message: approvalError instanceof RefreshError && approvalError.applied ? "Plano aplicado; ecrã por atualizar" : "Não foi possível aplicar o plano",
             detail: approvalError instanceof Error ? approvalError.message : String(approvalError),
+            causes: refusalCauses(approvalError),
           });
         }
         return;
@@ -328,6 +335,7 @@ export function Shell() {
         phase: "error",
         message: err instanceof RefreshError && err.applied ? "Plano recalculado; ecrã por atualizar" : "Não foi possível recalcular",
         detail: err instanceof Error ? err.message : String(err),
+        causes: refusalCauses(err),
       });
     } finally {
       setRecalcing(false);
@@ -535,11 +543,17 @@ export function Shell() {
                 alignItems: "center",
                 gap: 10,
                 flexShrink: 0,
+                flexWrap: "wrap",
                 fontSize: 11,
               }}
             >
               <span style={{ color, fontWeight: 600 }}>{operationStatus.message}</span>
               <span style={{ color: T.secondary }}>{operationStatus.detail}</span>
+              {operationStatus.phase === "error" && operationStatus.causes?.length ? (
+                <div style={{ flexBasis: "100%" }}>
+                  <RefusalDetails causes={operationStatus.causes} />
+                </div>
+              ) : null}
             </div>
           );
         })()}
