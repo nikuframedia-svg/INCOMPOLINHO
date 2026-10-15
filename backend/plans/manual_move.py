@@ -1059,13 +1059,15 @@ def _allocate_existing_lots(
     freeze_day = _current_planning_day(candidate_data, config, now)
     if protection is None and baseline_result is not None:
         protection = _protected_plan(baseline_result, freeze_day, candidate_data, config, now=now)
-    protected_segments, protected_lots, partial = [], [], []
+    protected_segments, protected_lots, partial, not_started = [], [], [], set()
     if protection is not None:
         protected_segments = list(protection.segments)
         protected_lots, partial = list(protection.lots), list(protection.partial)
+        not_started = set(protection.pinned)
         _install_frozen_reservations(
             residual_data, protected_segments, protected_lots, freeze_day, config, partial,
             now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
+            pinned=not_started,
         )
     protected_ids = {lot.id for lot in protected_lots}
     rests = {original.id: rest for original, rest in partial}
@@ -1122,7 +1124,9 @@ def _allocate_existing_lots(
             machine_runs=allocated.machine_runs, solver_status=allocated.solver_status,
             feasibility=allocated.feasibility,
         )
-    result = _splice_frozen_started_lots(result, protected_segments, protected_lots, partial)
+    result = _splice_frozen_started_lots(
+        result, protected_segments, protected_lots, partial, not_started,
+    )
     if any(segment.day_idx < 0 or segment.day_idx >= candidate_data.n_days
            for segment in result.segments):
         return refuse(_NO_ROOM)
@@ -1262,6 +1266,7 @@ def _replan_around_fixed_lot(
     _install_frozen_reservations(
         residual_data, frozen_segments, protected_lots, freeze_day, config, partial,
         now_min=elapsed_on_planning_day(freeze_day, candidate_data, config, now),
+        pinned=protection.pinned,
     )
     reasons: list[str] = []
     violations: list[dict] = []
@@ -1283,7 +1288,7 @@ def _replan_around_fixed_lot(
                 causes=_violation_causes(violations, candidate_data, source_lots, lot.id),
             )
         result = _splice_frozen_started_lots(
-            result, frozen_segments, protected_lots, partial,
+            result, frozen_segments, protected_lots, partial, protection.pinned,
         )
         if not _preserves_production(result, source_lots):
             raise refused(_QUANTITIES_CHANGED)
@@ -1549,7 +1554,7 @@ def _finalize_move_candidate(
                 result, candidate_data, copy.deepcopy(candidate_data), config,
                 protection.segments, protection.lots, freeze_day, time_budget_s=budget,
                 partial=protection.partial, now=now,
-                cut=protection.cut,
+                cut=protection.cut, pinned=protection.pinned,
             )
             if lot_id is not None and _lot_rows(result.segments, lot_id) != _lot_rows(
                 unimproved.segments, lot_id,
