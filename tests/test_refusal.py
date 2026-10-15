@@ -213,7 +213,9 @@ def test_incompol_refused_move_says_it_clashes_with_earlier_manual_changes():
 
 
 def test_incompol_refused_holiday_says_which_rule_failed():
-    """Revision 156 (8 manual edits) + holiday 07/12: one conflict, now named."""
+    """Revision 156 (8 manual edits) + holiday 07/12. Refused on 15/10 with one
+    unnamed conflict (pins credited as day-0 stock); since part 3 the holiday
+    is accepted. If it is ever refused again, the causes must be named."""
     from backend.config.planning import synchronize_active_twin_groups
     from backend.plans.frozen import optimize_preserving_started_lots
     from backend.transform.calendars import apply_calendars

@@ -345,16 +345,6 @@ def test_incompol_move_that_fits_is_not_affected():
     assert _production_start(moved.segments, INCOMPOL_LOT) == (50, 420.0, "PRM043")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Defeito anterior, fora desta alteração: na reorganização de um movimento, "
-        "os lotes fixados à mão entram na proteção e são creditados como stock no "
-        "dia 0 (frozen._install_frozen_reservations); os outros lotes das mesmas "
-        "operações deixam de coincidir com o ISOP (source_contract). Na revisão 154 "
-        "todo o movimento que precisa de reorganizar é recusado assim."
-    ),
-    strict=False,
-)
 def test_incompol_suggested_start_is_accepted():
     data, config, result = _rev154()
     moved = move_lot(
