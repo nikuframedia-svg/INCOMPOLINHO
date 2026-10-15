@@ -39,12 +39,38 @@ function formatDate(iso: string): string {
   }).format(date);
 }
 
+/** Late orders and setups before → after, from the simulated candidate. */
+function StoppageImpact({ result, ordersLateBefore, period }: {
+  result: SimulateResponse;
+  ordersLateBefore: unknown;
+  period: string;
+}) {
+  const ordersLateAfter = result.gate_report?.metrics?.orders_late;
+  const lateRow = typeof ordersLateBefore === "number" && typeof ordersLateAfter === "number"
+    ? { label: "Encomendas atrasadas", before: ordersLateBefore, after: ordersLateAfter }
+    : { label: "Lotes atrasados", before: result.delta.tardy_before, after: result.delta.tardy_after };
+  const rows = [lateRow, { label: "Setups", before: result.delta.setups_before, after: result.delta.setups_after }];
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div>Período: {period}</div>
+      {rows.map((row) => (
+        <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 16, fontFamily: T.mono }}>
+          <span style={{ fontFamily: "inherit" }}>{row.label}</span>
+          <strong style={{ color: row.after > row.before ? T.red : row.after < row.before ? T.green : T.primary }}>
+            {row.before} → {row.after}
+          </strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MachineDowntimeQuickAction({
   currentDay,
   workdays,
   onApplied,
 }: MachineDowntimeQuickActionProps) {
-  const { prompt } = useConfirm();
+  const { confirm, prompt } = useConfirm();
   const config = useDataStore((state) => state.config);
   const activeMutations = useDataStore((state) => state.activeMutations);
   const applySimulation = useDataStore((state) => state.applySimulation);
@@ -114,7 +140,22 @@ export function MachineDowntimeQuickAction({
         candidateRef.current = { key, result: await simulate(mutations) };
       }
       if (!mounted.current) return;
-      await applySimulation(mutations, undefined, candidateRef.current.result);
+      // One confirmation with the impact; Aplicar applies exactly this candidate.
+      const candidate = candidateRef.current.result;
+      const approved = await confirm({
+        title: `Aplicar paragem de ${machineId}?`,
+        message: (
+          <StoppageImpact
+            result={candidate}
+            ordersLateBefore={useDataStore.getState().gateReport?.metrics?.orders_late}
+            period={start === end ? formatDate(workdays[start]) : `${formatDate(workdays[start])} a ${formatDate(workdays[end])}`}
+          />
+        ),
+        confirmLabel: "Aplicar",
+        cancelLabel: "Cancelar",
+      });
+      if (!approved || !mounted.current) return;
+      await applySimulation(mutations, undefined, candidate);
       applied = true;
     } catch (caught) {
       const gate = approvalGateFromError(caught);
@@ -162,7 +203,7 @@ export function MachineDowntimeQuickAction({
       <div style={{ marginBottom: 14 }}>
         <div style={{ color: T.primary, fontSize: 14, fontWeight: 700 }}>Parar máquina</div>
         <div style={{ color: T.secondary, fontSize: 11, lineHeight: 1.5, marginTop: 3 }}>
-          Escolhe o recurso e o intervalo. O plano será recalculado e poderá ser revertido.
+          Escolhe o recurso e o intervalo. Antes de aplicar vês o impacto; a paragem pode ser revertida.
         </div>
       </div>
 

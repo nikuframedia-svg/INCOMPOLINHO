@@ -1,5 +1,6 @@
 import { T } from "../theme/tokens";
 import { useAppStore } from "../stores/useAppStore";
+import { useConfigDraftStore } from "../stores/useConfigDraftStore";
 import { Label } from "./ui/Label";
 
 const NAV = [
@@ -18,6 +19,7 @@ export function Sidebar() {
   const hasData = useAppStore((s) => s.hasData);
   const accessMode = useAppStore((s) => s.accessMode);
   const setAccessMode = useAppStore((s) => s.setAccessMode);
+  const pendingConfig = useConfigDraftStore((s) => s.count);
 
   return (
     <nav
@@ -61,6 +63,25 @@ export function Sidebar() {
               }}
             >
               {n.label}
+              {n.id === "config" && pendingConfig > 0 && (
+                <span
+                  title={`${pendingConfig} ${pendingConfig === 1 ? "alteração por aplicar" : "alterações por aplicar"}`}
+                  style={{
+                    marginLeft: 8,
+                    display: "inline-block",
+                    minWidth: 18,
+                    padding: "1px 6px",
+                    borderRadius: 9,
+                    background: T.blue,
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textAlign: "center",
+                  }}
+                >
+                  {pendingConfig}
+                </span>
+              )}
             </button>
           );
         })}
