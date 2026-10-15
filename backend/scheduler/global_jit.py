@@ -452,8 +452,7 @@ def _build_model(
     customer_due_differs = False
     ops_by_id = {op.id: op for op in data.ops}
     machine_group = {
-        machine.id: config.machine_groups.get(machine.id, machine.group)
-        for machine in data.machines
+        machine.id: config.machine_group(machine.id) for machine in data.machines
     }
     active_machines = {
         machine_id
@@ -725,19 +724,25 @@ def _build_model(
     for intervals in tool_intervals.values():
         model.add_no_overlap(intervals)
     for group, intervals in crew_intervals.items():
-        for block in data.setup_crew_reservations:
-            if block["group"] == group:
-                fixed = _fixed_block_interval(
-                    model, block, working_days, day_cap, config, horizon,
-                    f"frozen_crew_{block['id']}",
-                )
-                if fixed is not None:
-                    intervals.append(fixed)
-        model.add_cumulative(
-            intervals,
-            [1] * len(intervals),
-            max(1, int(config.setup_crews_by_group.get(group, 1))),
-        )
+        capacity = max(1, int(config.setup_crews_by_group.get(group, 1)))
+        demands = [1] * len(intervals)
+        reserved = [
+            coords
+            for block in data.setup_crew_reservations
+            if block["group"] == group
+            and (coords := _fixed_block_coords(block, working_days, day_cap, config, horizon))
+        ]
+        # Reserved setups are history: a regrouped machine can put more of
+        # them on one crew than it has, which must not make the model
+        # infeasible.  Their occupancy is capped at the crew capacity (they
+        # still block every new setup), as the validator ignores conflicts
+        # made only of reservations.
+        for index, (start, end, load) in enumerate(_capped_profile(reserved, capacity)):
+            intervals.append(
+                model.new_interval_var(start, end - start, end, f"frozen_crew_{group}_{index}")
+            )
+            demands.append(load)
+        model.add_cumulative(intervals, demands, capacity)
 
     # Operator capacity is a physical cumulative resource.  Fixed intervals
     # consume the unavailable portion of each shift, allowing daily absences.
@@ -1195,15 +1200,13 @@ def _clock_to_coord(
     return slot * day_cap + offset
 
 
-def _fixed_block_interval(
-    model: Any,
+def _fixed_block_coords(
     block: dict,
     working_days: list[int],
     day_cap: int,
     config: FactoryConfig,
     horizon: int,
-    name: str,
-) -> Any | None:
+) -> tuple[int, int] | None:
     day_idx = int(block.get("start_day", -1))
     shifts = ordered_shifts(config)
     # The integer model must cover the whole physical reservation, not release
@@ -1216,7 +1219,46 @@ def _fixed_block_interval(
     end = _clock_to_coord(day_idx, end_min, working_days, day_cap, config)
     if start is None or end is None or end <= start or end > horizon:
         return None
+    return start, end
+
+
+def _fixed_block_interval(
+    model: Any,
+    block: dict,
+    working_days: list[int],
+    day_cap: int,
+    config: FactoryConfig,
+    horizon: int,
+    name: str,
+) -> Any | None:
+    coords = _fixed_block_coords(block, working_days, day_cap, config, horizon)
+    if coords is None:
+        return None
+    start, end = coords
     return model.new_interval_var(start, end - start, end, name)
+
+
+def _capped_profile(
+    intervals: list[tuple[int, int]],
+    capacity: int,
+) -> list[tuple[int, int, int]]:
+    """Occupancy of fixed intervals as (start, end, load ≤ capacity) pieces."""
+    events = sorted(
+        [(start, 1) for start, _end in intervals] + [(end, -1) for _start, end in intervals]
+    )
+    pieces: list[tuple[int, int, int]] = []
+    active = 0
+    previous = None
+    for instant, delta in events:
+        if previous is not None and active > 0 and instant > previous:
+            load = min(active, capacity)
+            if pieces and pieces[-1][1] == previous and pieces[-1][2] == load:
+                pieces[-1] = (pieces[-1][0], instant, load)
+            else:
+                pieces.append((previous, instant, load))
+        active += delta
+        previous = instant
+    return pieces
 
 
 def _add_exact_resource_blocks(
@@ -1720,7 +1762,7 @@ def _find_preemptive_setup_slot(
     """Find setup immediately followed by at least one productive minute."""
     from backend.scheduler.resources import protected_mounting_segments, reserved_setup_segments
 
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     setup_segments = [*segments, *reserved_setup_segments(data)]
     mounting_segments = [*segments, *protected_mounting_segments(data)]
     for day, shift_id, window_start, window_end in _preemptive_resource_windows(
@@ -1760,7 +1802,7 @@ def _find_preemptive_setup_slot(
                 if (
                     segment.day_idx == day
                     and segment.setup_min > 0
-                    and config.machine_groups.get(segment.machine_id, "Grandes") == group
+                    and config.machine_group(segment.machine_id) == group
                 ):
                     candidate_starts.add(int(math.ceil(segment.start_min + segment.setup_min)))
             for setup_start in sorted(candidate_starts):
@@ -1802,7 +1844,7 @@ def _allocate_preemptive_production(
 ) -> list[tuple[int, str, int, int]] | None:
     from backend.scheduler.material_quantities import released_quantity
 
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     remaining = duration
     chunks: list[tuple[int, str, int, int]] = []
     for day, shift_id, window_start, window_end in _preemptive_resource_windows(
@@ -1929,7 +1971,7 @@ def _preemptive_setup_capacity_available(
 ) -> bool:
     if end <= start:
         return True
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     capacity = max(1, int(config.setup_crews_by_group.get(group, 1)))
     overlaps: list[tuple[float, float]] = []
     boundaries = {start, end}
@@ -1939,7 +1981,7 @@ def _preemptive_setup_capacity_available(
         if (
             segment.day_idx != day
             or segment.setup_min <= 0
-            or config.machine_groups.get(segment.machine_id, "Grandes") != group
+            or config.machine_group(segment.machine_id) != group
         ):
             continue
         other_start = int(segment.start_min)

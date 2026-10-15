@@ -621,8 +621,10 @@ def group_reinsertion_proposals(
                 for run_id, run in movable.items()}
     # Runs are coupled through every shared resource: consecutive uses of a
     # machine, of a physical tool, and of the setup crew of a machine group.
-    machine_group = {machine.id: machine.group for machine in data.machines}
-    machine_group.update(config.machine_groups)
+    machine_group = {
+        machine_id: config.machine_group(machine_id)
+        for machine_id in {*(machine.id for machine in data.machines), *config.machines}
+    }
     sequences: dict[tuple[str, str], list[str]] = {}
 
     def follow(resource: tuple[str, str], run_id: str) -> None:

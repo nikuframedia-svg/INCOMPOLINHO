@@ -151,7 +151,7 @@ def _resource_indexes(
         interval = _BusyInterval(int(item.start_min), int(item.end_min), segment=item)
         machine[(item.machine_id, item.day_idx)].append(interval)
         tool[(item.tool_id, item.day_idx)].append(interval)
-        group = config.machine_groups.get(item.machine_id, "Grandes")
+        group = config.machine_group(item.machine_id)
         if item.setup_min > 0:
             setup[(group, item.day_idx)].append(
                 _BusyInterval(

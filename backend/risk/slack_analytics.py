@@ -255,13 +255,12 @@ def _binding_constraints_by_lot(
         for alert in compute_operator_alerts(segments, engine_data, effective_config)
     }
     if alert_keys:
-        machine_groups = effective_config.machine_groups
         for segment in segments:
             if segment.prod_min <= 0:
                 continue
             key = (
                 segment.day_idx,
-                machine_groups.get(segment.machine_id, "Grandes"),
+                effective_config.machine_group(segment.machine_id),
                 segment.shift,
             )
             if key in alert_keys:

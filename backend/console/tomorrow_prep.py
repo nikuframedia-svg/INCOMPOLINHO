@@ -56,7 +56,7 @@ def check_crew_bottleneck(
             continue
         group, start = violation["setup_group"], violation["overlap_start_min"]
         concurrent = [s for s in setups
-                      if config.machine_groups.get(s.machine_id, "Grandes") == group
+                      if config.machine_group(s.machine_id) == group
                       and s.start_min <= start < s.start_min + s.setup_min]
         capacity = violation["setup_capacity"]
         ends = sorted(s.start_min + s.setup_min for s in concurrent)

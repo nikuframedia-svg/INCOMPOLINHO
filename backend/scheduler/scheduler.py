@@ -2499,14 +2499,14 @@ def _setup_capacity_ok_for_trial(
     from backend.scheduler.resources import reserved_setup_segments
 
     ignored = ignored_lot_ids or set()
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     capacity = max(1, int(config.setup_crews_by_group.get(group, 1)))
     events: list[tuple[float, int]] = [(start_min, 1), (start_min + setup_min, -1)]
     # Crew occupancy of protected work (history) counts like plan setups.
     for segment in [*segments, *reserved_setup_segments(data)]:
         if segment.lot_id in ignored or segment.day_idx != day_idx or segment.setup_min <= 0:
             continue
-        if config.machine_groups.get(segment.machine_id, "Grandes") != group:
+        if config.machine_group(segment.machine_id) != group:
             continue
         events.extend(
             [
@@ -2543,13 +2543,13 @@ def _setup_aware_candidate_starts(
     ignored = ignored_lot_ids or set()
     candidates = {int(earliest)}
     if setup_min > 0:
-        group = config.machine_groups.get(machine_id, "Grandes")
+        group = config.machine_group(machine_id)
         for segment in [*segments, *reserved_setup_segments(data)]:
             if (
                 segment.lot_id in ignored
                 or segment.day_idx != day_idx
                 or segment.setup_min <= 0
-                or config.machine_groups.get(segment.machine_id, "Grandes") != group
+                or config.machine_group(segment.machine_id) != group
             ):
                 continue
             setup_end = math.ceil(segment.production_start_min)
@@ -3720,7 +3720,7 @@ def _repair_hard_constraints(
 
 
 def _setup_group(seg: Segment, config: FactoryConfig | None) -> str:
-    return (config.machine_groups if config else {}).get(seg.machine_id, "Grandes")
+    return config.machine_group(seg.machine_id) if config else "Grandes"
 
 
 def _setup_group_capacity(config: FactoryConfig | None, group: str) -> int:
@@ -3836,7 +3836,7 @@ def _serialize_crew_setups(
     """Serialize setups independently inside every machine group."""
     groups = sorted(
         {
-            (config.machine_groups if config else {}).get(segment.machine_id, "Grandes")
+            (config.machine_group(segment.machine_id) if config else "Grandes")
             for segment in segments
             if segment.setup_min > 0
         }
@@ -3877,9 +3877,7 @@ def _serialize_crew_setups_group(
     # Collect setups with absolute time (including buffer days)
     setup_entries: list[tuple[float, float, int]] = []
     for idx, seg in enumerate(segments):
-        seg_group = (config.machine_groups if config else {}).get(
-            seg.machine_id, "Grandes"
-        )
+        seg_group = config.machine_group(seg.machine_id) if config else "Grandes"
         if seg.setup_min > 0 and seg_group == group:
             abs_start = segment_abs(seg, config)[0]
             setup_entries.append((abs_start, seg.setup_min, idx))
@@ -4005,7 +4003,7 @@ def _serialize_crew_safe(
     """EDD-safe serialization independently inside each machine group."""
     groups = sorted(
         {
-            (config.machine_groups if config else {}).get(segment.machine_id, "Grandes")
+            (config.machine_group(segment.machine_id) if config else "Grandes")
             for segment in segments
             if segment.setup_min > 0
         }
@@ -4047,9 +4045,7 @@ def _serialize_crew_safe_group(
     # Collect setup intervals (including buffer days)
     setup_entries: list[tuple[float, float, int]] = []
     for idx, seg in enumerate(segments):
-        seg_group = (config.machine_groups if config else {}).get(
-            seg.machine_id, "Grandes"
-        )
+        seg_group = config.machine_group(seg.machine_id) if config else "Grandes"
         if seg.setup_min > 0 and seg_group == group:
             abs_start = segment_abs(seg, config)[0]
             setup_entries.append((abs_start, seg.setup_min, idx))

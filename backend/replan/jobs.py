@@ -38,7 +38,10 @@ from backend.plans.frozen import (
     optimize_preserving_started_lots,
     planning_boundary,
     preserved_lots_warning,
+    released_anchor_ledger,
+    released_anchor_notices_missing,
     with_current_material,
+    with_released_anchor_notices,
     without_calculation_notes,
 )
 
@@ -49,7 +52,7 @@ DEFAULT_DB_PATH = (
 DEFAULT_RETENTION_LIMIT = 100
 logger = logging.getLogger(__name__)
 
-REPLAN_TOTAL_BUDGET_S = 60.0
+REPLAN_TOTAL_BUDGET_S = 80.0
 # Time the bounded local calendar repair leaves for the complete constructor
 # (optimize_preserving_started_lots) when the repair cannot finish. The
 # constructor's own scope keeps a closing reserve (10 s) for merging and
@@ -987,7 +990,8 @@ class ReplanJobManager:
                 timeout_s=REPLAN_TOTAL_BUDGET_S,
                 cancelled=lambda: self._is_cancelled(job_id),
             ), factory_calendar.fixed_factory_clock(now):
-                self._run_planning(job_id, *args, now=now, **kwargs)
+                with released_anchor_ledger():
+                    self._run_planning(job_id, *args, now=now, **kwargs)
         except PlanningCancelled:
             # Also raised at scope exit after the job already failed; the store
             # never overwrites a terminal status.
@@ -1608,6 +1612,11 @@ class ReplanJobManager:
                 )
             if self._is_cancelled(job_id):
                 return
+            # A pin released by a calculation the job then discarded is gone
+            # from the staging data too: the planner is told (AGENTS §2).
+            result = with_released_anchor_notices(
+                result, released_anchor_notices_missing(engine_data),
+            )
             candidate = _result_snapshot(
                 engine_data,
                 config,

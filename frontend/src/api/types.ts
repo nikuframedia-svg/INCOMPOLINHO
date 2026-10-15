@@ -215,7 +215,10 @@ export interface StockSummary {
   op_id: string;
   sku: string;
   client: string;
+  /** Planned machine(s), joined with « / » (ISOP column G when nothing is planned). */
   machine: string;
+  /** Distinct machines the plan uses for this SKU, in plan order. */
+  machines?: string[];
   tool: string;
   initial_stock: number;
   stockout_day: number | null;

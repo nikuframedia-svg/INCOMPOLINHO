@@ -208,7 +208,7 @@ def _operator_free_gaps(
 ) -> list[tuple[int, int]]:
     return operator_free_windows(
         segments, data, config, day=day, shift=shift,
-        group=config.machine_groups.get(machine_id, "Grandes"), required=required,
+        group=config.machine_group(machine_id), required=required,
         start=shift_start, end=shift_end,
     )
 
@@ -274,13 +274,13 @@ def _crew_available(
 ) -> bool:
     if setup_min <= 0:
         return True
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     capacity = max(1, int(config.setup_crews_by_group.get(group, 1)))
     events: list[tuple[float, int]] = [(start, 1), (start + setup_min, -1)]
     for segment in segments:
         if segment is ignore or segment.day_idx != day or segment.setup_min <= 0:
             continue
-        if config.machine_groups.get(segment.machine_id, "Grandes") != group:
+        if config.machine_group(segment.machine_id) != group:
             continue
         events.extend(
             [
@@ -301,13 +301,13 @@ def _setup_crew_blockers(
     segments: list[Segment], config: FactoryConfig, machine_id: str,
     day: int, start: float, end: float,
 ) -> str:
-    group = config.machine_groups.get(machine_id, "Grandes")
+    group = config.machine_group(machine_id)
     conflicting = sorted(
         (
             segment for segment in segments
             if segment.day_idx == day
             and segment.setup_min > 0
-            and config.machine_groups.get(segment.machine_id, "Grandes") == group
+            and config.machine_group(segment.machine_id) == group
             and _overlaps(start, end, segment.start_min, segment.start_min + segment.setup_min)
         ),
         key=lambda item: (item.start_min, item.machine_id),
@@ -462,7 +462,7 @@ def _check_immutable_start(
                 machine_id=machine_id, required=required,
             )
             if not any(start <= minute < end for start, end in free):
-                group = config.machine_groups.get(machine_id, "Grandes")
+                group = config.machine_group(machine_id)
                 raise ManualMoveError(
                     context + f"Operadores {group}, turno {shift.id}: não há capacidade "
                     f"para {required} operador(es) nesse instante, considerando as "

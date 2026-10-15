@@ -557,7 +557,7 @@ def replay_scenario(
         )
         setup_duration = float(segment.setup_min) * float(manifest["setup_factor"])
         if setup_duration > 0:
-            group = config.machine_groups.get(segment.machine_id, "Grandes")
+            group = config.machine_group(segment.machine_id)
             capacity = max(1, int(config.setup_crews_by_group.get(group, 1)))
             crews = crew_available.setdefault(group, [float("-inf")] * capacity)
             crew_index = min(range(len(crews)), key=crews.__getitem__)
@@ -581,7 +581,7 @@ def replay_scenario(
             * float(manifest["processing_factor"][segment.machine_id])
             / efficiency
         )
-        group = config.machine_groups.get(segment.machine_id, "Grandes")
+        group = config.machine_group(segment.machine_id)
         end = _reserve_operator_work(
             setup_end,
             production_duration,

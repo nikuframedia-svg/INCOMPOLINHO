@@ -137,8 +137,10 @@ def local_cpsat_proposals(
     last_day = max(s.day_idx for s in ordered) + 60
     axis = _Axis(config, holidays, min(-20, min(s.day_idx for s in ordered)), last_day)
     eligible = {rid: _eligible_machines(run, data, config, ordered) for rid, run in movable.items()}
-    group_of = {machine.id: machine.group for machine in data.machines}
-    group_of.update(config.machine_groups)
+    group_of = {
+        machine_id: config.machine_group(machine_id)
+        for machine_id in {*(machine.id for machine in data.machines), *config.machines}
+    }
 
     def floor_abs(run: ToolRun) -> int:
         release = min(max(0, earliest_allowed_start(lot, holidays)) for lot in run.lots)

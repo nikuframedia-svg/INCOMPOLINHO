@@ -727,8 +727,7 @@ def _validate_plan(
                 {
                     "kind": "lot_production_minutes",
                     "message": (
-                        f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
-                        f"({lot.machine_id}): o plano tem "
+                        f"{_lot_label(lot)}: o plano tem "
                         f"{pt_int(actual_prod_min)} de {pt_int(expected_prod_min)} min "
                         "de produção."
                     ),
@@ -962,15 +961,19 @@ def _validate_plan(
         setup_end = setup_start + seg.setup_min
         setup_entries.append((setup_start, setup_end, seg))
 
-    machine_groups = config.machine_groups if config else {}
     from backend.scheduler.resources import reserved_setup_segments
 
+    # Reserved setups are protected history (frozen.py residual): context that
+    # occupies the crew for new setups, never judged against each other (a
+    # regrouped machine can make two past setups share one crew).
+    reserved_ids: set[int] = set()
     for fixed in reserved_setup_segments(data):
         start, _ = segment_abs(fixed, config)
         setup_entries.append((start, start + fixed.setup_min, fixed))
+        reserved_ids.add(id(fixed))
     setup_by_group: dict[str, list[tuple[float, int, Segment, float]]] = {}
     for start, end, segment in setup_entries:
-        group = machine_groups.get(segment.machine_id, "Grandes")
+        group = config.machine_group(segment.machine_id) if config else "Grandes"
         setup_by_group.setdefault(group, []).extend(
             [(start, 1, segment, end), (end, -1, segment, start)]
         )
@@ -992,6 +995,8 @@ def _validate_plan(
                 continue
             active_setups.append((segment, instant, other_end))
             if len(active_setups) <= capacity:
+                continue
+            if all(id(entry[0]) in reserved_ids for entry in active_setups):
                 continue
             first_seg, first_start, first_end = active_setups[0]
             day_idx, start_min = abs_to_day_min(instant, config)
@@ -1520,6 +1525,13 @@ def lot_split_violations(
     return violations
 
 
+def _lot_label(lot: Lot, machine_id: str | None = None) -> str:
+    """``Referência X · tool (machine)``; « · tool» only when the lot has one."""
+    from backend.scheduler.canonical import _lot_label as label
+
+    return label(lot, machine_id)
+
+
 def _split_violation(
     lot: Lot, item: _ProductionBreak, data: EngineData | None, *,
     productions: int | None = None, allowed: int | None = None,
@@ -1527,8 +1539,7 @@ def _split_violation(
     segment, before = item.after, item.before
     if productions is not None:
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
-            f"({segment.machine_id}): o lote económico "
+            f"{_lot_label(lot, segment.machine_id)}: o lote económico "
             f"passa de {allowed} para {productions} produções separadas (no "
             f"{day_label(segment.day_idx, data)}), sem avaria nem bloqueio pelo meio. "
             "Um lote de um plano anterior pode manter as produções que tinha, "
@@ -1536,16 +1547,14 @@ def _split_violation(
         )
     elif item.kind == "pause":
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
-            f"({segment.machine_id}): o lote económico "
+            f"{_lot_label(lot, segment.machine_id)}: o lote económico "
             f"para com a ferramenta montada e retoma no {day_label(segment.day_idx, data)}, "
             "com tempo de turno livre pelo meio. Um lote económico produz-se de uma só "
             "vez, sem paragens."
         )
     else:
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
-            f"({segment.machine_id}): o lote económico "
+            f"{_lot_label(lot, segment.machine_id)}: o lote económico "
             f"volta a ser produzido no {day_label(segment.day_idx, data)} "
             "numa produção separada, sem avaria nem bloqueio pelo meio. "
             "Um lote económico produz-se de uma só vez, com um único setup."

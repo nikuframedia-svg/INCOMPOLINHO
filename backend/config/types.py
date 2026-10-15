@@ -12,6 +12,14 @@ JIT_EARLINESS_POLICY = "jit"
 JIT_WINDOW_ENFORCEMENT = "hard"
 PLANNING_POLICY_VERSION = "setup-families-v1"
 OUT_OF_SCOPE_MACHINES = frozenset({"PRM020"})
+# Default Incompol machine → group mapping (used when no machine is configured).
+LEGACY_MACHINE_GROUPS: dict[str, str] = {
+    "PRM019": "Grandes",
+    "PRM031": "Grandes",
+    "PRM039": "Grandes",
+    "PRM043": "Grandes",
+    "PRM042": "Medias",
+}
 
 
 @dataclass
@@ -82,13 +90,19 @@ class FactoryConfig:
         if self.machines:
             return {mid: m.group for mid, m in self.machines.items() if m.active}
         # Default Incompol mapping when no machines configured
-        return {
-            "PRM019": "Grandes",
-            "PRM031": "Grandes",
-            "PRM039": "Grandes",
-            "PRM043": "Grandes",
-            "PRM042": "Medias",
-        }
+        return dict(LEGACY_MACHINE_GROUPS)
+
+    def machine_group(self, machine_id: str) -> str:
+        """Single source for a machine's crew/operator group.
+
+        The configured group wins even for an inactive machine (its started
+        or pinned work still uses that crew); otherwise the legacy Incompol
+        default, otherwise «Grandes».
+        """
+        machine = self.machines.get(machine_id)
+        if machine is not None and machine.group:
+            return machine.group
+        return LEGACY_MACHINE_GROUPS.get(machine_id, "Grandes")
 
     # Tools
     tools: dict[str, dict] = field(default_factory=dict)
