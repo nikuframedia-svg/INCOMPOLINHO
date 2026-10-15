@@ -1437,8 +1437,19 @@ export interface ManualMoveJob {
   error: string | null;
   /** Concrete causes of a refusal, plain Portuguese (decisão de 15/10/2026). */
   causes?: string[];
+  /** First start where the lot fits in one production; offered, never applied (15/10/2026). */
+  suggestion?: ManualMoveSuggestion | null;
   gate_report?: GateReport | null;
   result: ManualMoveResponse | null;
+}
+
+/** A start where a refused lot fits in one production (`plans/move_fit.py`). */
+export interface ManualMoveSuggestion {
+  day: number;
+  start_min: number;
+  machine: string;
+  /** "07/12 às 08:00 (PRM043)" */
+  label: string;
 }
 
 export interface JournalEntry {

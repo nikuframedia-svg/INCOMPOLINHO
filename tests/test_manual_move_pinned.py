@@ -128,7 +128,9 @@ def test_a_move_that_cannot_fit_says_why():
     with pytest.raises(ManualMoveError) as refused:
         _move(OTHER, 34, 1000)
     assert not isinstance(refused.value, ManualMoveInconclusive)
-    assert "Não há capacidade física para iniciar" in str(refused.value)
+    # Refused before any reorganisation since 15/10/2026 (``plans.move_fit``).
+    assert "seguidas" in str(refused.value)
+    assert "até ao fim do horizonte do plano" in str(refused.value)
     assert "inconclusiva" not in str(refused.value)
 
 

@@ -117,6 +117,8 @@ def _candidate(body: dict) -> tuple[ManualMoveResult, bool]:
             detail["code"] = "verification_inconclusive"
         if exc.gate_report is not None:
             detail["gate_report"] = exc.gate_report
+        if exc.suggestion is not None:
+            detail["suggestion"] = exc.suggestion
         raise HTTPException(409, detail) from exc
     return candidate, confirmed
 
