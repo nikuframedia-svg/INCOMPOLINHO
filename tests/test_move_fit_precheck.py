@@ -143,7 +143,7 @@ def test_lot_running_into_a_pinned_lot_is_refused_at_once_with_a_suggestion():
     message = str(refused.value)
     assert "15,5 h seguidas (30 min de afinação antes das 08:00 + 15 h de produção)" in message
     assert "só há 3,5 h livres" in message  # 08:00 → 11:30, the pinned lot's setup
-    assert "começa a afinação da Referência SKU2 (M1), fixada à mão para" in message
+    assert "começa a afinação da Referência SKU2 · T2 (M1), fixada à mão para" in message
     assert "LOT_" not in message and "OP2_" not in message
     assert any("choca com a alteração manual da Referência SKU2" in cause
                for cause in refused.value.causes)
@@ -324,7 +324,7 @@ def test_incompol_jte001_on_03_12_is_refused_at_once_naming_the_pinned_jte003():
     assert (
         "o lote precisa de 23,4 h seguidas (1 h de afinação antes das 08:45 + "
         "22,4 h de produção); a partir de 03/12 às 08:45 só há 7,8 h livres até "
-        "03/12 às 16:30, quando começa a afinação da Referência 6800017267C.30 "
+        "03/12 às 16:30, quando começa a afinação da Referência 6800017267C.30 · JTE003 "
         "(PRM043), fixada à mão para 03/12 17:30."
     ) in message
     assert "LOT_" not in message and not any("LOT_" in cause for cause in refused.value.causes)

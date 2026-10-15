@@ -188,7 +188,7 @@ def test_material_message_names_reference_machine_and_dated_day():
     for item in material:
         message = item["message"]
         assert lots[0].id not in message and "Lote " not in message
-        assert message.startswith("Referência SKU (MACHINE), dia ")
+        assert message.startswith("Referência SKU · TOOL (MACHINE), dia ")
         day = item["day_idx"]
         expected_date = (date(2026, 10, 7) + timedelta(days=day)).strftime("%d/%m")
         assert f"dia {day} ({expected_date})" in message

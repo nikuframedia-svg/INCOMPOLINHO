@@ -1094,7 +1094,13 @@ async def get_stock_detail(sku: str):
     proj = next((p for p in state.stock_projections if p.sku == sku), None)
     if not proj:
         raise HTTPException(404, f"SKU {sku} não encontrado.")
-    return asdict(proj)
+    detail = asdict(proj)
+    # Same machine/tool as the stock grid: the window header showed «ACURION |».
+    op = next((item for item in state.engine_data.ops if item.id == proj.op_id), None)
+    if op is not None:
+        detail["machine"] = detail.get("machine") or op.m
+        detail["tool"] = detail.get("tool") or op.t
+    return detail
 
 
 @router.get("/expedition")

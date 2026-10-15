@@ -121,9 +121,10 @@ def _lot_labels(lot_ids: list[str], *payloads: dict) -> list[str]:
         references = list(dict.fromkeys(
             str(output[1] or output[0]) for output in lot.get("twin_outputs") or []
         )) or [str(lot.get("sku") or lot.get("op_id") or "")]
-        machine = lot.get("machine_id")
+        machine, tool = lot.get("machine_id"), lot.get("tool_id")
         labels.append(
-            f"Referência {' + '.join(references)}" + (f" ({machine})" if machine else "")
+            f"Referência {' + '.join(references)}" + (f" · {tool}" if tool else "")
+            + (f" ({machine})" if machine else "")
         )
     return labels
 

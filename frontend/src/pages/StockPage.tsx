@@ -73,6 +73,16 @@ const LABEL_W = 180;
 
 // ── Main Component ───────────────────────────────────────────
 
+const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+/** «17/10 sex» from an ISO date; "-" when the day has no date. */
+function dayDateLabel(date: string | null | undefined): string {
+  const iso = (date ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "-";
+  const weekday = new Date(`${iso}T12:00:00Z`).getUTCDay();
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)} ${WEEKDAYS[weekday]}`;
+}
+
 export function StockPage() {
   const { data, error } = usePlanQuery("stock", getStockSummary);
   const [clientFilter, setClientFilter] = useState<string>("");
@@ -83,6 +93,10 @@ export function StockPage() {
   const loadDetail = useCallback(() => detailSku ? getStockDetail(detailSku) : Promise.resolve(null), [detailSku]);
   const { data: detail, error: detailError } = usePlanQuery(JSON.stringify(detailSku), loadDetail);
   const detailLoading = Boolean(detailSku && !detail && !detailError);
+  // Weekends and holidays in grey: the grid already knows which days are not worked.
+  const detailWorkdays = useMemo(() => new Map(
+    (data?.find((row) => row.sku === detailSku)?.days ?? []).map((day) => [day.day, day.workday] as const),
+  ), [data, detailSku]);
 
   // Unique filter options
   const clients = useMemo(() => {
@@ -273,6 +287,7 @@ export function StockPage() {
                   <div style={{ fontSize: 9, color: T.tertiary }}>
                     {row.client}
                     {row.machine && <span style={{ marginLeft: 6, color: T.tertiary }}>{row.machine}</span>}
+                    {row.tool && <span style={{ marginLeft: 6, color: T.tertiary }}>{row.tool}</span>}
                   </div>
                   {hasRisk && (
                     <Pill color={T.red}>{stockoutLabel}</Pill>
@@ -382,7 +397,8 @@ export function StockPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <div>
                     <span style={{ fontSize: 16, fontWeight: 700, fontFamily: T.mono, color: T.primary }}>{detail.sku}</span>
-                    <span style={{ fontSize: 12, color: T.secondary, marginLeft: 12 }}>{detail.client} | {detail.machine}</span>
+                    {detail.tool && <span style={{ fontSize: 14, fontWeight: 700, fontFamily: T.mono, color: T.secondary, marginLeft: 8 }}>· {detail.tool}</span>}
+                    <span style={{ fontSize: 12, color: T.secondary, marginLeft: 12 }}>{[detail.client, detail.machine].filter(Boolean).join(" · ")}</span>
                   </div>
                   <button onClick={() => setDetailSku(null)} style={{ background: "none", border: "none", color: T.secondary, cursor: "pointer", fontSize: 18 }}>x</button>
                 </div>
@@ -396,6 +412,7 @@ export function StockPage() {
                   <thead>
                     <tr>
                       <th style={{ textAlign: "left", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Dia</th>
+                      <th style={{ textAlign: "left", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Data</th>
                       <th style={{ textAlign: "right", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Procura</th>
                       <th style={{ textAlign: "right", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Produção</th>
                       <th style={{ textAlign: "right", color: T.tertiary, padding: "4px 6px", borderBottom: `1px solid ${T.border}`, fontSize: 10 }}>Stock</th>
@@ -406,6 +423,7 @@ export function StockPage() {
                     {detail.days.map((d) => (
                       <tr key={d.day_idx}>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, color: d.is_buffer ? T.blue : T.secondary, borderBottom: `1px solid ${T.border}` }}>{d.is_buffer ? `B${d.day_idx}` : `D${d.day_idx}`}</td>
+                        <td style={{ padding: "3px 6px", fontFamily: T.mono, color: detailWorkdays.get(d.day_idx) === false ? T.tertiary : T.secondary, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{dayDateLabel(d.date)}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.demand > 0 ? T.primary : T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.demand > 0 ? d.demand.toLocaleString() : "-"}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.produced > 0 ? T.green : T.tertiary, borderBottom: `1px solid ${T.border}` }}>{d.produced > 0 ? d.produced.toLocaleString() : "-"}</td>
                         <td style={{ padding: "3px 6px", fontFamily: T.mono, textAlign: "right", color: d.stock < 0 ? T.red : T.primary, fontWeight: d.stock < 0 ? 600 : 400, borderBottom: `1px solid ${T.border}` }}>{d.stock.toLocaleString()}</td>

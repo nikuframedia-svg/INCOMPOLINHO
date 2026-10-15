@@ -176,7 +176,7 @@ def test_durable_commit_rejects_retroactive_historical_move(planning, offsets):
     # Plain Portuguese for the planner: references and machines, no lot ids.
     assert str(refused.value) == (
         "O plano proposto alteraria a produção anterior a hoje ou já feita hoje, "
-        "que está protegida (Referência SKU1 (M1))."
+        "que está protegida (Referência SKU1 · T1 (M1))."
     )
     assert planning.store.runtime_identity() == before
     assert planning.store.active()["payload"] == baseline
@@ -302,7 +302,7 @@ def test_commit_refusal_maps_only_typed_refusals_to_plain_409():
 
     report = {"requires_approval": True, "approval_reasons": ["operational_sequence_review"]}
     refusals = {
-        "historical_plan_protected": HistoricalPlanProtectedError(["LOT1"], ["Referência SKU1 (M1)"]),
+        "historical_plan_protected": HistoricalPlanProtectedError(["LOT1"], ["Referência SKU1 · T1 (M1)"]),
         "recalculation_context": RecalculationContextChanged("dataset"),
         "approval_required": ApprovalRequired("O plano só pode ser aplicado ...", report),
         "blocked": ApplicationBlocked("O candidato tem conflitos físicos.", {}),

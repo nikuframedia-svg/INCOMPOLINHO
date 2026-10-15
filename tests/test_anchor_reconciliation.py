@@ -186,7 +186,7 @@ def test_a_pin_on_a_machine_that_goes_down_that_day_is_released_with_a_notice():
     [notice] = notices
     when = f"{late.start_at[8:10]}/{late.start_at[5:7]} {late.start_at[11:16]}"
     assert notice.startswith(
-        f"{RELEASED_ANCHOR_PREFIX} da Referência A (M1), fixada para {when}: a M1 fica "
+        f"{RELEASED_ANCHOR_PREFIX} da Referência A · TA (M1), fixada para {when}: a M1 fica "
         f"indisponível no dia {data.workdays[day][8:10]}/{data.workdays[day][5:7]} "
         "das 07:00 às 10:00"
     )
@@ -233,7 +233,7 @@ def test_released_pins_are_shown_as_plan_notices():
     from backend.api.data import _plan_notices
 
     data, config, result = _plan()
-    notice = f"{RELEASED_ANCHOR_PREFIX} da Referência A (M1), fixada para 30/10 08:00: x."
+    notice = f"{RELEASED_ANCHOR_PREFIX} da Referência A · TA (M1), fixada para 30/10 08:00: x."
     notes = _plan_notices(result.segments, result.lots, data, config,
                           [notice, "Outra nota do cálculo."])
     assert notes[0] == notice
@@ -303,7 +303,7 @@ def test_the_safety_net_releases_the_pins_and_tries_once_more():
     assert calls == [[10, 24], []]
     assert data.plan_anchors == []
     [notice] = _released(replanned.warnings)
-    assert notice.startswith(f"{RELEASED_ANCHOR_PREFIX} da Referência A (M1), fixada para ")
+    assert notice.startswith(f"{RELEASED_ANCHOR_PREFIX} da Referência A · TA (M1), fixada para ")
     assert "deixou de ter solução com o lote nesse sítio" in notice
     assert sorted(lot.id for lot in replanned.lots) == [EARLY, LATE, OTHER]
 
@@ -399,7 +399,7 @@ def test_incompol_outage_over_a_pin_releases_it_and_keeps_the_others():
         assert _rows(replanned.segments, lot_id) == _rows(result.segments, lot_id), lot_id
     notices = _released(replanned.warnings)
     assert len(notices) == 2
-    assert all("Referência 6800017267C.30 (PRM043)" in notice for notice in notices)
+    assert all("Referência 6800017267C.30 · JTE003 (PRM043)" in notice for notice in notices)
     assert all("LOT_" not in notice for notice in notices)
     assert any(
         "fixada para 03/12 17:30: a PRM043 fica indisponível no dia 03/12" in notice

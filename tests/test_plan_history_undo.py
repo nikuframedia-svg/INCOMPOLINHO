@@ -120,7 +120,7 @@ def test_three_moves_then_three_undos_return_to_the_starting_plan(plan_api):
         active = _active(store)
         # The name says what changed: reference, machine, date and time, no lot id.
         when = history.day_month(state.engine_data.workdays[day])
-        assert active["name"].startswith(f"Movido Referência SKU1 ({machine}) → {when} ")
+        assert active["name"].startswith(f"Movido Referência SKU1 · T1 ({machine}) → {when} ")
         assert "LOT1" not in active["name"]
         assert response["edit"]["previous_version_id"] == active["previous_snapshot_id"]
         labels.append(active["name"])
@@ -163,7 +163,7 @@ def test_undo_that_would_change_started_production_is_refused_with_causes(
     assert refused.status_code == 409, refused.text
     detail = refused.json()["detail"]
     assert detail["code"] == "historical_plan_protected"
-    assert "Não é possível desfazer «Movido Referência SKU1 (M2)" in detail["message"]
+    assert "Não é possível desfazer «Movido Referência SKU1 · T1 (M2)" in detail["message"]
     assert detail["causes"] and "Referência SKU1" in detail["causes"][0]
     assert "LOT1" not in detail["message"] + " ".join(detail["causes"])
     assert (_placement(), state.plan_revision, _active(plan_api.store)["id"]) == before

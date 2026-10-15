@@ -72,16 +72,20 @@ def _lot_text(lot_id: Any, lots_by_id: dict) -> str | None:
     if isinstance(lot, dict):
         outputs = lot.get("twin_outputs") or []
         sku, op_id, machine = lot.get("sku"), lot.get("op_id"), lot.get("machine_id")
+        tool = lot.get("tool_id")
     else:
         outputs = getattr(lot, "twin_outputs", None) or []
         sku, op_id = getattr(lot, "sku", None), getattr(lot, "op_id", None)
         machine = getattr(lot, "machine_id", None)
+        tool = getattr(lot, "tool_id", None)
     references = list(dict.fromkeys(
         str(output[1] or output[0]) for output in outputs if len(output) >= 2
     )) or [str(sku or op_id or "")]
     reference = " + ".join(item for item in references if item)
     if not reference:
         return None
+    if tool:
+        reference = f"{reference} · {tool}"
     return f"Referência {reference}" + (f" ({machine})" if machine else "")
 
 

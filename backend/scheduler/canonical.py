@@ -137,12 +137,19 @@ def contract_lots(data, config, *, quantity_material=True):
 
 
 def _lot_label(lot, machine_id=None):
-    """``Referência 8718696125 (PRM042)``: never the internal lot id."""
+    """``Referência 8718696125 · VUL115 (PRM042)``: never the internal lot id.
+
+    The tool sits next to the reference (Luís, 15/10/2026): it is how the
+    factory names the work on the press.
+    """
     reference = lot.sku or lot.op_id
     if lot.twin_outputs:
         reference = " + ".join(
             dict.fromkeys(str(sku or op_id) for op_id, sku, _qty in lot.twin_outputs)
         )
+    tool = getattr(lot, "tool_id", None)
+    if tool:
+        reference = f"{reference} · {tool}"
     machine = machine_id or lot.machine_id
     return f"Referência {reference} ({machine})" if machine else f"Referência {reference}"
 
