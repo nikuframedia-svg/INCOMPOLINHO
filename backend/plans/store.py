@@ -17,8 +17,13 @@ DEFAULT_DB_PATH = (
 )
 logger = logging.getLogger(__name__)
 METADATA_COLUMNS = (
-    "id,created_at,name,source,origin,note,is_auto,otd,otd_d,tardy_count,setups,gate_status"
+    "id,created_at,name,source,origin,note,is_auto,otd,otd_d,tardy_count,setups,gate_status,"
+    "previous_snapshot_id,kind"
 )
+# «Desfazer» walks back at least this many versions; retention never prunes
+# them (decisão de 15/10/2026).
+HISTORY_KEEP_STEPS = 30
+AUTO_KEEP = 20
 
 
 class LegacyMaterialPlanError(PlanValidationError):
@@ -60,6 +65,20 @@ class HistoricalPlanProtectedError(ValueError):
             "O plano proposto alteraria a produção anterior a hoje ou já feita hoje, "
             f"que está protegida{f' ({shown})' if shown else ''}."
         )
+
+    @property
+    def causes(self) -> list[str]:
+        """Plain causes for ``plans/refusal.py`` (decisão de 15/10/2026)."""
+        from backend.plans.refusal import MAX_CAUSES
+
+        causes = [
+            f"{label}: a produção já começou ou é anterior a agora e ficaria diferente."
+            for label in self.labels[:MAX_CAUSES]
+        ]
+        if len(self.labels) > MAX_CAUSES:
+            extra = len(self.labels) - MAX_CAUSES
+            causes.append(f"… e mais {extra} {'lote' if extra == 1 else 'lotes'}.")
+        return causes
 
 
 class RecalculationContextChanged(ValueError):
@@ -195,6 +214,18 @@ class PlansStore:
                 );
                 """
             )
+            # Version history (decisão de 15/10/2026): the snapshot active
+            # before each version, what «Desfazer» would put back and the name
+            # of the change it undoes. Older rows keep NULL (no «Desfazer»).
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(plans)")}
+            for column, ddl in (
+                ("previous_snapshot_id", "TEXT"),
+                ("undo_to", "TEXT"),
+                ("undo_label", "TEXT"),
+                ("kind", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE plans ADD COLUMN {column} {ddl}")
             self._conn.commit()
             # Adopt the legacy startup selection exactly once. A later missing
             # or corrupt active snapshot is an error, never a historical restore.
@@ -225,6 +256,8 @@ class PlansStore:
             "tardy_count": row["tardy_count"],
             "setups": row["setups"],
             "gate_status": row["gate_status"],
+            "previous_snapshot_id": row["previous_snapshot_id"],
+            "kind": row["kind"],
         }
 
     def save(
@@ -239,7 +272,11 @@ class PlansStore:
         gate_report: dict | None,
         is_auto: bool,
         activate: bool = False,
+        kind: str = "",
+        inherit_undo: bool = False,
     ) -> dict:
+        """``inherit_undo``: the same plan republished (startup recovery):
+        «Desfazer» keeps undoing the change before it, not the republish."""
         from backend.plans.serialize import assert_snapshot_integrity
 
         assert_snapshot_integrity(payload, origin=origin)
@@ -248,14 +285,17 @@ class PlansStore:
         plan_id = uuid4().hex
         gate_status = (gate_report or {}).get("status")
         with self._lock, self._conn:
+            history = (None, None, None)
             if activate:
                 self._assert_historical_unchanged_locked(payload)
+                history = self._history_locked(name, inherit=inherit_undo)
             self._conn.execute(
                 """
                 INSERT INTO plans (
                     id, name, source, origin, note, is_auto,
-                    otd, otd_d, tardy_count, setups, gate_status, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    otd, otd_d, tardy_count, setups, gate_status, payload_json,
+                    previous_snapshot_id, undo_to, undo_label, kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id,
@@ -270,6 +310,8 @@ class PlansStore:
                     score.get("setups"),
                     gate_status,
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    *history,
+                    kind,
                 ),
             )
             if activate:
@@ -323,6 +365,50 @@ class PlansStore:
                 return {**self._metadata(row), "payload": payload}
         return None
 
+    def _history_locked(
+        self, name: str, *, undo_restores: str | None = None, inherit: bool = False,
+    ) -> tuple[str | None, str | None, str | None]:
+        """``(previous_snapshot_id, undo_to, undo_label)`` of a new active version.
+
+        ``previous_snapshot_id`` is the version active before it. «Desfazer»
+        puts back ``undo_to``: normally that previous version, whose change
+        is this one (``undo_label``). An undo (``undo_restores``) or a
+        republish (``inherit``) takes the place of the version it puts back,
+        so the next «Desfazer» goes further back, never forward.
+        """
+        row = self._conn.execute(
+            "SELECT snapshot_id FROM plan_runtime WHERE singleton=1"
+        ).fetchone()
+        previous = row[0] if row else None
+        source = undo_restores or (previous if inherit else None)
+        if source:
+            restored = self._conn.execute(
+                "SELECT undo_to,undo_label FROM plans WHERE id=?", (source,)
+            ).fetchone()
+            if restored is None:
+                return previous, None, None
+            return previous, restored[0], restored[1]
+        return previous, previous, name if previous else None
+
+    def undo_target(self) -> dict | None:
+        """``{id, label}`` of the version «Desfazer» would put back, if kept.
+
+        ``label`` is the name of the change that would be undone.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT p.undo_to,p.undo_label FROM plans p "
+                "JOIN plan_runtime r ON r.snapshot_id=p.id WHERE r.singleton=1"
+            ).fetchone()
+            if row is None or not row[0]:
+                return None
+            target = self._conn.execute(
+                "SELECT source FROM plans WHERE id=?", (row[0],)
+            ).fetchone()
+        if target is None or target[0] == "scenario":
+            return None
+        return {"id": row[0], "label": row[1] or "Plano aplicado"}
+
     def _activate_locked(self, plan_id: str, revision: int) -> None:
         self._conn.execute(
             "UPDATE plan_runtime SET snapshot_id=?,plan_revision=? WHERE singleton=1",
@@ -337,6 +423,17 @@ class PlansStore:
         (``frozen.commit_instant``): a candidate calculated on an earlier date
         is refused; its own minute counts only on the same date.
         """
+        refusal = self._protected_changes_locked(payload, now=now)
+        if refusal is not None:
+            raise refusal
+
+    def protected_changes(self, payload: dict, *, now=None):
+        """The refusal that replacing the active plan by ``payload`` would
+        meet at commit, or ``None``: the same rule, without raising."""
+        with self._lock:
+            return self._protected_changes_locked(payload, now=now)
+
+    def _protected_changes_locked(self, payload: dict, *, now=None):
         from backend.plans.frozen import commit_instant, historical_schedule_changes
 
         row = self._conn.execute(
@@ -344,16 +441,15 @@ class PlansStore:
             "JOIN plan_runtime r ON r.snapshot_id=p.id WHERE r.singleton=1"
         ).fetchone()
         if row is None:
-            return
+            return None
         before = json.loads(row[0])
         today, now = commit_instant(
             now, str((before.get("config") or {}).get("timezone") or "Europe/Lisbon"),
         )
         changed = historical_schedule_changes(before, payload, today=today, now=now)
-        if changed:
-            raise HistoricalPlanProtectedError(
-                changed, _lot_labels(changed, payload, before),
-            )
+        if not changed:
+            return None
+        return HistoricalPlanProtectedError(changed, _lot_labels(changed, payload, before))
 
     def runtime_identity(self) -> dict:
         with self._lock:
@@ -419,13 +515,58 @@ class PlansStore:
             cursor = self._conn.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
         return cursor.rowcount > 0
 
-    def prune_auto(self, keep: int = 20) -> int:
+    def prune_auto(self, keep: int = AUTO_KEEP) -> int:
         with self._lock, self._conn:
             return self._prune_auto_locked(keep)
 
-    def _prune_auto_locked(self, keep: int = 20) -> int:
+    def _history_protected_locked(self) -> set[str]:
+        """Versions retention never deletes (decisão de 15/10/2026).
+
+        The last ``HISTORY_KEEP_STEPS`` versions behind the active plan, both
+        as they happened (``previous_snapshot_id``) and as «Desfazer» walks
+        them (``undo_to``); the latest snapshot of each ISOP load (by file);
+        the latest «Recalcular plano».
+        """
+        protected: set[str] = set()
+        runtime = self._conn.execute(
+            "SELECT snapshot_id FROM plan_runtime WHERE singleton=1"
+        ).fetchone()
+        frontier = [runtime[0]] if runtime and runtime[0] else []
+        for _ in range(HISTORY_KEEP_STEPS + 1):
+            frontier = [item for item in dict.fromkeys(frontier) if item not in protected]
+            if not frontier:
+                break
+            protected.update(frontier)
+            marks = ",".join("?" * len(frontier))
+            frontier = [
+                value
+                for row in self._conn.execute(
+                    f"SELECT previous_snapshot_id,undo_to FROM plans WHERE id IN ({marks})",
+                    frontier,
+                )
+                for value in row
+                if value
+            ]
+        protected.update(
+            row[0]
+            for row in self._conn.execute(
+                "SELECT id FROM plans p WHERE source='load' AND rowid=("
+                "SELECT max(rowid) FROM plans q WHERE q.source='load' AND q.origin=p.origin)"
+            )
+        )
+        latest_recalculation = self._conn.execute(
+            "SELECT id FROM plans WHERE kind='recalculate' "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        if latest_recalculation is not None:
+            protected.add(latest_recalculation[0])
+        return protected
+
+    def _prune_auto_locked(self, keep: int = AUTO_KEEP) -> int:
+        protected = sorted(self._history_protected_locked())
+        marks = ",".join("?" * len(protected)) or "''"  # NOT IN (NULL) would keep everything
         cursor = self._conn.execute(
-            """
+            f"""
                 DELETE FROM plans
                 WHERE is_auto = 1
                   AND source != 'scenario'
@@ -435,6 +576,7 @@ class PlansStore:
                     WHERE status='preparing'
                       AND json_extract(payload_json, '$.old_active_snapshot') IS NOT NULL
                   )
+                  AND id NOT IN ({marks})
                   AND id NOT IN (
                     SELECT id FROM plans
                     WHERE is_auto = 1
@@ -442,7 +584,7 @@ class PlansStore:
                     LIMIT ?
                   )
                 """,
-            (max(0, int(keep)),),
+            (*protected, max(0, int(keep))),
         )
         return cursor.rowcount
 
@@ -483,7 +625,10 @@ class PlansStore:
     def commit_mutation(
         self, operation_id: str, payload: dict | None, response, *, source: str,
         recalculate_from_start: bool = False, planning_now=None,
+        name: str | None = None, kind: str = "", undo_restores: str | None = None,
     ) -> None:
+        """``name``: what the write changed (``history.snapshot_name``);
+        ``undo_restores``: the version a «Desfazer» puts back."""
         from backend.plans.serialize import assert_snapshot_integrity
 
         if payload is not None:
@@ -506,12 +651,16 @@ class PlansStore:
                 else:
                     self._assert_historical_unchanged_locked(payload, now=planning_now)
                 plan_id = uuid4().hex
+                name = name or "Plano aplicado"
+                if recalculate_from_start and not kind:
+                    kind = "recalculate"
                 self._conn.execute(
                     "INSERT INTO plans(id,name,source,origin,note,is_auto,otd,otd_d,tardy_count,"
-                    "setups,gate_status,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "setups,gate_status,payload_json,previous_snapshot_id,undo_to,undo_label,"
+                    "kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         plan_id,
-                        "Plano aplicado",
+                        name,
                         source,
                         str((payload.get("dataset_info") or {}).get("filename", "")),
                         operation_id,
@@ -522,6 +671,8 @@ class PlansStore:
                         score.get("setups"),
                         gate.get("status"),
                         json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                        *self._history_locked(name, undo_restores=undo_restores),
+                        kind,
                     ),
                 )
                 self._activate_locked(plan_id, int(payload["plan_revision"]))
@@ -597,14 +748,18 @@ class PlansStore:
             payload = json.loads(payload_json)
             assert_snapshot_integrity(payload, origin=job["filename"])
             _assert_activatable_payload(payload)
+            from backend.plans.history import load_label
+
+            name = load_label(job["filename"])
             self._conn.execute(
                 """INSERT INTO plans (
                     id,name,source,origin,note,is_auto,otd,otd_d,tardy_count,
-                    setups,gate_status,payload_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    setups,gate_status,payload_json,previous_snapshot_id,undo_to,
+                    undo_label,kind
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     plan_id,
-                    "Plano carregado",
+                    name,
                     "load",
                     job["filename"],
                     f"{job['filename']}; carregamento {job['id']}; estado inicial: all_free",
@@ -615,6 +770,8 @@ class PlansStore:
                     score.get("setups"),
                     (job.get("gate_report") or {}).get("status"),
                     payload_json,
+                    *self._history_locked(name),
+                    "load",
                 ),
             )
             self._conn.execute(

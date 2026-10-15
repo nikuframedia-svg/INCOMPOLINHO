@@ -354,6 +354,9 @@ def restore_plan_into_state(
                 is_auto=True,
                 note="Identidade atualizada após alteração externa da configuração",
                 allow_blocked_recovery=recover_existing,
+                # The same plan republished: «Desfazer» still undoes the
+                # change before it (decisão de 15/10/2026).
+                inherit_undo=True,
             )
     elif autosave:
         from backend.config.loader import save_config

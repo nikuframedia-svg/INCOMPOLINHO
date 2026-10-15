@@ -466,6 +466,22 @@ export const revertSimulation = () =>
     {},
   );
 
+/**
+ * «Desfazer» multi-passo (decisão de 15/10/2026): puts back the version before
+ * the active one, like «Repor»; repeated calls walk back the history.
+ */
+export const undoLastChange = (
+  approval?: { reason: string; author: string },
+) => postWithRevision<{ status: string; undone: string; plan_revision: number; score: Score; gate_report: GateReport }>(
+  "/api/data/undo",
+  {
+    approve_exceptions: Boolean(approval),
+    approval_reason: approval?.reason ?? "",
+    approval_author: approval?.author ?? "",
+  },
+  COMPUTE_OPTIONS,
+);
+
 export const canRevert = () =>
   get<{ can_revert: boolean }>("/api/data/can-revert");
 

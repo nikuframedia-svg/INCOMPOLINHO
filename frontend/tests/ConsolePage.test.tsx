@@ -22,6 +22,7 @@ const endpointMocks = vi.hoisted(() => ({
   getManualEdits: vi.fn(),
   recalculate: vi.fn(),
   releaseManualEdits: vi.fn(),
+  undoLastChange: vi.fn(),
 }));
 
 vi.mock("../src/api/endpoints", async (importOriginal) => {
@@ -569,6 +570,31 @@ describe("Shell", () => {
     // Sem confirmação (o diálogo devolve «não» fora do ConfirmProvider) nada é apagado.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(endpointMocks.recalculate).not.toHaveBeenCalled();
+  });
+
+  // Decisão de 15/10/2026: «Desfazer» multi-passo, sempre que há uma versão
+  // anterior guardada (não só com alterações manuais), e diz o que desfaz.
+  it("Desfazer diz que alteração desfaz e chama o desfazer multi-passo", async () => {
+    mockShellEndpoints();
+    const planView = await endpointMocks.getPlanView();
+    const label = "Movido Referência 6800016767A.10 (PRM043) → 03/12 08:45";
+    endpointMocks.getPlanView.mockResolvedValue({ ...planView, undo: { available: true, label } });
+    endpointMocks.undoLastChange.mockResolvedValue({ status: "undone", undone: label, plan_revision: 2 });
+    render(<Shell />);
+    const button = await screen.findByRole("button", { name: `Desfazer: ${label}` });
+    expect(button.getAttribute("title")).toBe(`Desfazer: ${label}`);
+    expect(button.textContent).toBe("Desfazer");
+    expect(screen.queryByText(/lote fixado à mão/)).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(endpointMocks.undoLastChange).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(`Desfeito: ${label}`)).toBeTruthy();
+  });
+
+  it("sem versão anterior não mostra Desfazer", async () => {
+    mockShellEndpoints();
+    render(<Shell />);
+    await screen.findByRole("button", { name: /Recalcular plano/ });
+    expect(screen.queryByRole("button", { name: /^Desfazer/ })).toBeNull();
   });
 
   it("carrega automaticamente o plano persistido mesmo com outro dataset em cache", async () => {

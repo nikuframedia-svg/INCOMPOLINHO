@@ -24,7 +24,7 @@ const actionStyle: React.CSSProperties = {
 function sourceLabel(source: string) {
   return {
     load: "ISOP carregado",
-    auto: "Replaneamento",
+    auto: "Automático",
     simulation_apply: "Cenário aplicado",
     manual_edit: "Edição manual",
     restore: "Reposição",
@@ -32,10 +32,11 @@ function sourceLabel(source: string) {
   }[source] ?? source;
 }
 
+/** Factory time (Europe/Lisbon); the store keeps UTC ("2026-10-15 12:30:00"). */
 function formatCreatedAt(value: string) {
   const parsed = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString("pt-PT", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString("pt-PT", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Lisbon" });
 }
 
 export function PlansDrawer({ onClose }: Props) {
@@ -160,7 +161,7 @@ export function PlansDrawer({ onClose }: Props) {
         <div style={{ padding: "18px 20px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ color: T.primary, fontSize: 15, fontWeight: 700 }}>Planos</div>
-            <div style={{ color: T.tertiary, fontSize: 11, marginTop: 3 }}>Versões que sobrevivem ao reinício</div>
+            <div style={{ color: T.tertiary, fontSize: 11, marginTop: 3 }}>Cada versão diz o que mudou; a mais recente primeiro</div>
           </div>
           <button onClick={onClose} aria-label="Fechar planos" style={{ ...actionStyle, fontSize: 16, padding: "2px 8px" }}>×</button>
         </div>
@@ -220,7 +221,8 @@ export function PlansDrawer({ onClose }: Props) {
                   <span>{plan.setups ?? "—"} setups</span>
                 </div>
                 {plan.origin && <div title={plan.origin} style={{ color: T.tertiary, fontSize: 10, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Origem: {plan.origin}</div>}
-                {plan.note && <div style={{ color: T.secondary, fontSize: 11, marginTop: 7, lineHeight: 1.4 }}>{plan.note}</div>}
+                {/* Automatic versions keep internal operation ids in the note: only the planner's notes are shown. */}
+                {plan.source === "user" && plan.note && <div style={{ color: T.secondary, fontSize: 11, marginTop: 7, lineHeight: 1.4 }}>{plan.note}</div>}
                 <div style={{ display: "flex", gap: 6, marginTop: 11 }}>
                   <button disabled={busy !== null} onClick={() => handleRestore(plan)} style={{ ...actionStyle, color: T.blue, borderColor: `${T.blue}44`, opacity: busy !== null ? 0.5 : 1 }}>
                     {isBusy ? "A repor…" : "Repor"}

@@ -349,19 +349,23 @@ async def apply_move(body: dict):
         # The commit guard reads today's history at the instant of the check.
         set_planning_now(candidate.planning_now)
 
-        # Persist both sides of the manual change. Failure is non-blocking,
-        # matching the scheduler's snapshot policy.
-        previous_version = None
-        if state.dataset_info is not None:
-            try:
-                previous_version = state.persist_current_plan(
-                    name="Antes da edição manual",
-                    source="auto",
-                    note=f"Antes de mover {candidate.lot_id}",
-                    is_auto=True,
-                )
-            except Exception:
-                logger.exception("Failed to persist pre-edit plan snapshot")
+        # The version before the move is the active snapshot: the commit
+        # records it as this version's predecessor, so «Desfazer» and this
+        # record point to it (decisão de 15/10/2026).
+        previous_version_id = state.get_plans_store().runtime_identity()["snapshot_id"]
+        from backend.plans.context import set_change_label
+        from backend.plans.history import move_label
+
+        moved = next((lot for lot in candidate.lots if lot.id == candidate.lot_id), None)
+        change = (
+            move_label(
+                moved, candidate.target_machine,
+                state.engine_data.workdays[candidate.target_day], candidate.target_start_min,
+                state.engine_data,
+            )
+            if moved is not None else "Lote movido à mão"
+        )
+        set_change_label(change, kind="manual_move")
 
         state.save_current()
         target_date = str(state.engine_data.workdays[candidate.target_day])[:10]
@@ -391,7 +395,7 @@ async def apply_move(body: dict):
             "target_machine": candidate.target_machine,
             "reason": str(body.get("reason", "")),
             "author": str(body.get("author", "utilizador")),
-            "previous_version_id": (previous_version.get("id") if previous_version else None),
+            "previous_version_id": previous_version_id,
             "delivery_risk_confirmed": bool(candidate.requires_confirmation and confirmed),
         }
         # One record per pinned lot: a second move of the same lot replaces it.
@@ -406,10 +410,7 @@ async def apply_move(body: dict):
             {
                 "step": "manual_move",
                 "severity": "warn" if candidate.requires_confirmation else "info",
-                "message": (
-                    f"{candidate.lot_id} movido para {candidate.target_machine}, "
-                    f"dia {candidate.target_day}."
-                ),
+                "message": f"{change}.",
                 "metadata": edit,
                 "elapsed_ms": candidate.time_ms,
             }
@@ -433,7 +434,7 @@ async def apply_move(body: dict):
         state.update_schedule(
             result,
             plan_source="manual_edit",
-            plan_note=f"{candidate.lot_id} → dia {candidate.target_day}",
+            plan_note=change,
         )
         if preview_job_id:
             from backend.plans.context import after_commit

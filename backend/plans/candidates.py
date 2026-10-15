@@ -30,6 +30,8 @@ class PreparedPlanWrite:
     approval_action: str = "recompute"
     # The instant it was calculated at (ISO); the commit guard reads history at it.
     planning_now: str | None = None
+    # Its snapshot name in «Planos» (``context.change_history``).
+    history: dict | None = None
 
 
 @dataclass

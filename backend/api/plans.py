@@ -69,6 +69,10 @@ async def restore_plan(plan_id: str, body: dict):
                     "message": "Aplica este cenario pela rota de cenarios.",
                 },
             )
+        from backend.plans.context import set_change_label
+        from backend.plans.history import RESTORE_PREFIX
+
+        set_change_label(f"{RESTORE_PREFIX}{plan['name']}", kind="restore")
         try:
             restored = restore_plan_into_state(
                 plan,

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getPlanView, simulateApply, revertSimulation } from "../api/endpoints";
-import type { CandidateIdentity, Score, GateReport, Segment, Lot, FactoryConfig, LearningInfo, CapacityResponse, BlockedDaysResponse, ManualEdit, MutationInput, SimulateApplyResponse, PlacementReason } from "../api/types";
+import type { CandidateIdentity, Score, GateReport, Segment, Lot, FactoryConfig, LearningInfo, CapacityResponse, BlockedDaysResponse, ManualEdit, MutationInput, SimulateApplyResponse, PlacementReason, UndoState } from "../api/types";
 import { commitPlanRevision } from "../lib/planRevision";
 import { candidateMatchesPlan } from "../lib/previewCandidate";
 import { useSimulatorStore } from "./useSimulatorStore";
@@ -9,6 +9,7 @@ import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";
 import type { RefreshOutcome } from "../lib/refreshOutcome";
 
 let refreshGeneration = 0;
+const NO_UNDO: UndoState = { available: false, label: "" };
 let latestRefresh: { generation: number; promise: Promise<RefreshOutcome> } | null = null;
 
 interface DataState {
@@ -32,6 +33,8 @@ interface DataState {
   simulationSummary: string[];
   canRevert: boolean;
   manualEdits: ManualEdit[];
+  /** «Desfazer» multi-passo: whether a previous version is kept, and its change. */
+  undo: UndoState;
 
   refreshAll: (options?: { strict?: boolean }) => Promise<RefreshOutcome>;
   applySimulation: (mutations: MutationInput[], approval: { reason: string; author: string } | undefined, candidate: CandidateIdentity) => Promise<SimulateApplyResponse>;
@@ -59,6 +62,7 @@ export const useDataStore = create<DataState>((set, get) => ({
   simulationSummary: [],
   canRevert: false,
   manualEdits: [],
+  undo: NO_UNDO,
 
   refreshAll: (options) => {
     // A refresh overtaken by a newer one reports the newer one's outcome:
@@ -95,6 +99,7 @@ export const useDataStore = create<DataState>((set, get) => ({
           planNotices: Array.isArray(snapshot.plan_notices) ? snapshot.plan_notices : [],
           canRevert: snapshot.can_revert, isSimulated: snapshot.active_mutations.length > 0,
           activeMutations: snapshot.active_mutations, manualEdits: snapshot.manual_edits,
+          undo: snapshot.undo?.available ? { available: true, label: snapshot.undo.label ?? "" } : NO_UNDO,
           ...(changed || snapshot.active_mutations.length === 0 ? { simulationSummary: [] } : {}),
         });
         if (snapshot.dataset) {
@@ -148,6 +153,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     lots: null, config: null, learning: null, capacity: null,
     workdays: [], blockedDays: null, planNotices: [],
     isSimulated: false, activeMutations: [], simulationSummary: [], canRevert: false, manualEdits: [],
+    undo: NO_UNDO,
     });
   },
 }));

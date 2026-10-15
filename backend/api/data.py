@@ -46,6 +46,7 @@ from backend.copilot.executors_master import (
     exec_remover_twin,
 )
 from backend.copilot.state import state
+from backend.plans.context import set_change_label
 from backend.plans.refusal import refusal_http
 from backend.plans.transactions import plan_writer
 from backend.validation import ApprovalInput, IntegerInput, finite_float, strict_bool, strict_int
@@ -926,6 +927,17 @@ def _idle_capacity_notice(segments, lots, engine_data, config) -> str | None:
     return idle_capacity_notice(cases, engine_data)
 
 
+def _undo_view() -> dict:
+    """«Desfazer» (decisão de 15/10/2026): whether the version before the
+    active one is kept, and the name of the change it would undo."""
+    try:
+        target = state.get_plans_store().undo_target()
+    except Exception:  # information for the button, never breaks the plan view
+        logger.exception("Undo target unavailable")
+        target = None
+    return {"available": target is not None, "label": (target or {}).get("label", "")}
+
+
 @router.get("/plan-view")
 async def get_plan_view():
     """Return one revision-consistent snapshot for the main frontend views."""
@@ -958,6 +970,7 @@ async def get_plan_view():
             "active_mutations": copy.deepcopy(state.active_mutations),
             "manual_edits": copy.deepcopy(state.manual_edits),
             "can_revert": (await can_revert())["can_revert"],
+            "undo": _undo_view(),
             "learning": await get_learning(),
             "score": await get_score(),
             "gate_report": await get_gate_report(),
@@ -1650,6 +1663,7 @@ async def update_sku_planning(sku: str, body: dict):
         candidate.sku_planning_rules[sku] = rule
     else:
         candidate.sku_planning_rules.pop(sku, None)
+    set_change_label(f"Regra de planeamento da Referência {sku} alterada")
 
     result, old_score = _apply_config_candidate(candidate, body)
 
@@ -1687,6 +1701,7 @@ async def reset_sku_planning(sku: str, body: dict):
 
     candidate = copy.deepcopy(state.config)
     candidate.sku_planning_rules.pop(sku, None)
+    set_change_label(f"Regra de planeamento da Referência {sku} reposta")
 
     result, old_score = _apply_config_candidate(candidate, body)
 
@@ -1778,6 +1793,7 @@ async def update_subcontracts(body: dict):
     candidate.subcontract_skus = [
         sku for sku, rule in sku_subcontracts.items() if rule.get("enabled", True)
     ]
+    set_change_label("Subcontratação alterada")
 
     result, old_score = _apply_config_candidate(candidate, body)
 
@@ -1803,6 +1819,7 @@ async def update_config(updates: dict):
     """Update tunable config parameters and recalculate schedule."""
     _require_config()
     _require_expected_revision(updates)
+    set_change_label("Parâmetros de planeamento alterados")
 
     tunables = [
         "oee_default",
@@ -2014,6 +2031,7 @@ def _simulate_and_apply_locked(request: SimulateRequest):
         state.active_mutations = combined_mutations
         if approval is not None:
             state.approvals.append({**approval, "action": "simulation_apply"})
+        set_change_label("Cenário aplicado", kind="simulation")
         state.update_schedule(
             _schedule_result_from_simulation(result),
             plan_source="simulation_apply",
@@ -2085,6 +2103,7 @@ def _revert_simulation_locked(body: dict):
             state.engine_data = saved_engine_data
         if saved_config is not None:
             state.config = saved_config
+        set_change_label("Cenário revertido")
         state.update_schedule(
             saved_schedule,
             plan_source="restore",
@@ -2122,6 +2141,72 @@ async def can_revert():
             and state.saved_plan_revision is not None
             and int(state.plan_revision) == int(state.saved_plan_revision) + 1
         )
+    }
+
+
+@router.post("/undo")
+@plan_writer
+async def undo_last_change(body: dict):
+    """«Desfazer» multi-passo (decisão do Luís, 15/10/2026).
+
+    Puts back the version before the active one (``PlansStore.undo_target``)
+    exactly like «Repor» (``restore_plan_into_state``: no optimization, the
+    same approvals, started production protected). The new version takes
+    the place of the one put back, so repeated clicks walk back the chain.
+    """
+    from backend.plans.context import api_write_context
+    from backend.plans.history import UNDO_PREFIX
+    from backend.plans.refusal import refusal_detail
+    from backend.plans.restore import restore_plan_into_state
+
+    _require_data()
+    try:
+        approval = _approval_args(body)
+    except ValueError as exc:
+        raise refusal_http(400, exc) from exc
+    async with plan_mutation_lock:
+        expected_revision = _require_expected_revision(body)
+        store = state.get_plans_store()
+        target = store.undo_target()
+        plan = store.get(target["id"]) if target is not None else None
+        if plan is None:
+            raise HTTPException(409, {
+                "code": "nothing_to_undo",
+                "message": "Não há nenhuma alteração guardada para desfazer.",
+                "causes": [],
+            })
+        label = target["label"]
+        context = api_write_context()
+        refusal = store.protected_changes(
+            plan["payload"], now=context.planning_now if context is not None else None,
+        )
+        if refusal is not None:
+            raise HTTPException(409, {
+                **refusal_detail(refusal, message=(
+                    f"Não é possível desfazer «{label}»: o plano anterior mudaria "
+                    "produção que já começou, que está protegida. O plano ativo "
+                    "não foi alterado."
+                )),
+                "current_revision": state.plan_revision,
+            })
+        set_change_label(f"{UNDO_PREFIX}{label}", kind="undo", undo_restores=plan["id"])
+        try:
+            restored = restore_plan_into_state(
+                plan, state, autosave=True, expected_revision=expected_revision, **approval,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            from backend.scheduler.gates import application_refusal_detail
+
+            detail = application_refusal_detail(exc) or refusal_detail(
+                exc, message=f"Não foi possível desfazer «{label}»: {exc}",
+            )
+            raise HTTPException(409, {**detail, "current_revision": state.plan_revision}) from exc
+    return {
+        "status": "undone",
+        "undone": label,
+        "plan_revision": restored["plan_revision"],
+        "score": restored["score"],
+        "gate_report": restored["gate_report"],
     }
 
 
@@ -2351,6 +2436,7 @@ def _apply_ctp_locked(request: CTPRequest):
     state.active_mutations = combined_mutations
     if approval is not None:
         state.approvals.append({**approval, "action": "ctp_apply"})
+    set_change_label(f"Encomenda simulada aplicada: Referência {request.sku}")
     state.update_schedule(
         _schedule_result_from_simulation(result),
         plan_source="simulation_apply",
@@ -2407,6 +2493,7 @@ async def recalculate(body: dict):
 
     async with plan_mutation_lock:
         _require_expected_revision(body)
+        set_change_label("Recalcular plano", kind="recalculate")
         old_score = dict(state.score) if state.score else {}
         try:
             with response_margin(RECALCULATE_RESPONSE_MARGIN_S):
@@ -2451,6 +2538,10 @@ async def release_manual_edits(body: dict):
             raise HTTPException(400, "Não há lotes fixados à mão para soltar.")
         if raw is not None and not set(raw) <= pinned:
             raise HTTPException(400, "Um dos lotes indicados não está fixado à mão.")
+        from backend.plans.history import release_label
+
+        released_lots = [lot for lot in state.lots if raw is not None and lot.id in set(raw)]
+        set_change_label(release_label(released_lots, raw is None, state.engine_data))
         old_score = dict(state.score) if state.score else {}
         from backend.planning_control import response_margin
 
@@ -2655,6 +2746,7 @@ async def edit_machine(mid: str, body: dict):
         except ValueError as exc:
             raise refusal_http(400, exc) from exc
     body["id"] = mid
+    set_change_label(f"Máquina {mid.upper()} alterada")
     return _exec_result(exec_editar_maquina(body))
 
 
@@ -2705,6 +2797,7 @@ async def edit_tool(tid: str, body: dict):
         if not 0 <= body["setup_hours"] <= 8:
             raise HTTPException(400, "setup_hours deve estar no intervalo [0, 8].")
     body["id"] = tid
+    set_change_label(f"Ferramenta {tid} alterada")
     return _exec_result(exec_editar_ferramenta(body))
 
 
@@ -2811,6 +2904,7 @@ async def update_operators(body: dict):
     if not changed:
         return {"status": "ok", "score": state.score, "score_anterior": old_score}
 
+    set_change_label(f"Operadores alterados: {', '.join(changed)}")
     result, old_score = _apply_config_candidate(candidate, body)
 
     return {
@@ -2991,6 +3085,7 @@ async def replace_setup_overrides(body: dict):
         items.append(item)
     candidate = copy.deepcopy(state.config)
     candidate.setup_overrides = items
+    set_change_label("Exceções de setup alteradas")
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, items=items)
 
@@ -3013,6 +3108,7 @@ async def add_twin(body: dict):
     for field in ("tool_id", "sku_a", "sku_b"):
         if field not in body:
             raise HTTPException(400, f"Campo '{field}' obrigatório.")
+    set_change_label(f"Gémeas da ferramenta {body['tool_id']} adicionadas")
     return _exec_result(exec_adicionar_twin(body))
 
 
@@ -3022,6 +3118,7 @@ async def remove_twin(tool_id: str, body: dict):
     """Remove a twin pair by tool_id."""
     _require_data()
     _require_expected_revision(body)
+    set_change_label(f"Gémeas da ferramenta {tool_id} retiradas")
     return _exec_result(exec_remover_twin({**body, "tool_id": tool_id}))
 
 
@@ -3054,6 +3151,7 @@ async def apply_preset_endpoint(name: str, body: dict):
         name,
         baseline=base,
     )
+    set_change_label(f"Predefinição «{name}» aplicada")
     _result, old_score = _apply_config_candidate(new_config, body)
 
     return {

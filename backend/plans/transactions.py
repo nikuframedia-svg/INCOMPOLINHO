@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from backend import calendar as factory_calendar
 from backend.api.locks import commit_lock, plan_mutation_lock
 from backend.planning_control import planning_checkpoint, planning_scope
-from backend.plans.context import is_staging, stage_state
+from backend.plans.context import change_history, is_staging, stage_state
 from backend.plans.refusal import refusal_http
 from backend.plans.serialize import (
     planning_state_identity as input_identity,
@@ -197,6 +197,8 @@ def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException 
         detail = {
             "code": exc.code,
             "message": f"{exc} O plano ativo não foi alterado; calcule novamente a alteração.",
+            # Which started production would change, by reference (15/10/2026).
+            "causes": list(getattr(exc, "causes", None) or []),
         }
     else:
         detail = application_refusal_detail(exc)
@@ -210,7 +212,7 @@ def _commit_refusal(exc: BaseException, current_revision: int) -> HTTPException 
 def _commit(
     state, staged, origin, file_identity, operation_id, fingerprint, response,
     validators, callbacks,
-    *, recalculate_from_start=False, planning_now=None,
+    *, recalculate_from_start=False, planning_now=None, history=None,
 ):
     with commit_lock:
         store = state.get_plans_store()
@@ -293,7 +295,16 @@ def _commit(
             scope = {"recalculate_from_start": True} if recalculate_from_start else {}
             if planning_now is not None:
                 scope["planning_now"] = planning_now
-            store.commit_mutation(operation_id, payload, response_json, source="auto", **scope)
+            from backend.plans.history import snapshot_name
+
+            history = history or {}
+            store.commit_mutation(
+                operation_id, payload, response_json, source="auto",
+                name=snapshot_name(history, state.config, staged.config),
+                kind=history.get("kind") or "",
+                undo_restores=history.get("undo_restores"),
+                **scope,
+            )
         except BaseException:
             # A lost acknowledgement after COMMIT is not a failed operation.
             committed = _receipt(store, operation_id, fingerprint)
@@ -385,6 +396,7 @@ def run_sync_mutation(
         return _commit(
             state, staged, origin, file_identity, operation_id, fingerprint, response,
             context.validators, context.callbacks, planning_now=context.planning_now,
+            history=change_history(context),
         )
 
 
@@ -453,6 +465,8 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
         # One "now" for the calculation and the commit guard (AGENTS §2 rule 4);
         # a write that applies an earlier calculation keeps that one.
         calculated_at = {"now": factory_calendar.factory_now(None)}
+        # What the write changed (its snapshot name), from the endpoint.
+        history: dict = {}
 
         def calculate():
             from backend.plans.candidates import PreparedPlanWrite, previews
@@ -502,6 +516,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                     datetime.fromisoformat(prepared.planning_now)
                     if prepared.planning_now else None
                 )
+                history.update(prepared.history or {})
                 return prepared.response, [], []
             with stage_state(state, staged) as context, factory_calendar.fixed_factory_clock(
                 calculated_at["now"],
@@ -511,6 +526,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                 context.planning_now = calculated_at["now"]
                 response = asyncio.run(fn(*args, **kwargs))
             calculated_at["now"] = context.planning_now
+            history.update(change_history(context))
             if context.approval_required is not None:
                 if context.validators or context.callbacks:
                     # Do not cache executable closures over a previous request.
@@ -526,6 +542,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                         planning_now=(
                             context.planning_now.isoformat() if context.planning_now else None
                         ),
+                        history=dict(history),
                     ),
                 )
                 error = context.approval_required
@@ -546,6 +563,7 @@ def plan_writer(fn=None, *, recalculate_from_start=False):
                         fingerprint, response, validators, callbacks,
                         recalculate_from_start=recalculate_from_start,
                         planning_now=calculated_at["now"],
+                        history=history,
                     )
                 except ValueError as exc:
                     # Rolled back: a known refusal of the durable boundary

@@ -42,15 +42,19 @@ def test_active_snapshot_is_protected_and_manual_save_does_not_activate(tmp_path
     restored.close()
 
 
-def test_auto_retention_commits_keep_twenty_and_receipts(tmp_path):
+def test_auto_retention_commits_keep_the_undo_chain_and_receipts(tmp_path):
+    """Decisão de 15/10/2026: the 30 versions behind the active one are kept
+    for «Desfazer» (before: only the 20 most recent automatic versions)."""
+    from backend.plans.store import HISTORY_KEEP_STEPS
+
     store = PlansStore(tmp_path / "plans.db")
     manual = save(store)
-    for revision in range(25):
+    for revision in range(HISTORY_KEEP_STEPS + 5):
         commit(store, revision)
-    assert len([p for p in store.list() if p["is_auto"]]) == 20
+    assert len([p for p in store.list() if p["is_auto"]]) == HISTORY_KEEP_STEPS + 1
     assert store.get(manual["id"]) is not None
     assert store.mutation_receipt("op-0")["status"] == "committed"
-    assert store.active()["payload"]["plan_revision"] == 24
+    assert store.active()["payload"]["plan_revision"] == HISTORY_KEEP_STEPS + 4
 
 
 def test_scenario_filter_precedes_limit_and_list_avoids_payload(tmp_path):

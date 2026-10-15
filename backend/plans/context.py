@@ -21,6 +21,16 @@ class MutationContext:
     # guard reads today's history at it. A write that applies a candidate
     # calculated earlier (a replan job, a manual move) sets that one.
     planning_now: datetime | None = None
+    # What this write changed, in pt-PT, for the version history (decisão de
+    # 15/10/2026): the name of the committed snapshot. An endpoint sets the
+    # explicit label; ``update_schedule``/``persist_current_plan`` leave a
+    # default; ``history.snapshot_name`` picks the best at commit.
+    change_label: str | None = None
+    default_label: str | None = None
+    change_kind: str = ""
+    # «Desfazer»: the snapshot being put back; the new one takes its place in
+    # the chain (its own «Desfazer» goes further back, never forward).
+    undo_restores: str | None = None
 
 
 _context: ContextVar[MutationContext | None] = ContextVar("plan_mutation", default=None)
@@ -46,6 +56,37 @@ def set_planning_now(now: datetime | str | None) -> None:
     if context is None or not now:
         return
     context.planning_now = datetime.fromisoformat(now) if isinstance(now, str) else now
+
+
+def set_change_label(label: str, *, kind: str = "", undo_restores: str | None = None) -> None:
+    """Name the change this write makes (the snapshot name in «Planos»)."""
+    context = _context.get()
+    if context is None or not label:
+        return
+    context.change_label = str(label)
+    if kind:
+        context.change_kind = kind
+    if undo_restores:
+        context.undo_restores = undo_restores
+
+
+def set_default_change_label(label: str | None) -> None:
+    """A fallback name, used only when no endpoint named the change."""
+    context = _context.get()
+    if context is not None and label:
+        context.default_label = str(label)
+
+
+def change_history(context: MutationContext | None) -> dict:
+    """The history fields of a write, detached from the live context."""
+    if context is None:
+        return {}
+    return {
+        "label": context.change_label,
+        "default_label": context.default_label,
+        "kind": context.change_kind,
+        "undo_restores": context.undo_restores,
+    }
 
 
 def api_write_context() -> MutationContext | None:

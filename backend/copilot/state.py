@@ -256,6 +256,14 @@ class CopilotState:
         gate_blocked = bool(
             result.gate_report and result.gate_report.get("apply_decision") == "blocked"
         )
+        if plan_source and is_staging():
+            # The write's own name, unless an endpoint names the change
+            # (version history, decisão de 15/10/2026).
+            from backend.plans.context import set_default_change_label
+
+            set_default_change_label(
+                plan_name or plan_note or self._automatic_plan_name(plan_source)
+            )
         if plan_source and self.dataset_info is not None and not gate_blocked and not is_staging():
             try:
                 self.persist_current_plan(
@@ -301,12 +309,19 @@ class CopilotState:
         note: str = "",
         is_auto: bool,
         allow_blocked_recovery: bool = False,
+        inherit_undo: bool = False,
     ) -> dict:
-        """Persist the exact current engine + schedule state."""
-        from backend.plans.context import is_staging
+        """Persist the exact current engine + schedule state.
+
+        Inside a plan write nothing is saved here: the write's own commit
+        saves the snapshot, and ``name`` becomes its default name.
+        """
+        from backend.plans.context import is_staging, set_default_change_label
         from backend.plans.serialize import serialize_snapshot
 
         if is_staging():
+            if is_auto:
+                set_default_change_label(name)
             return {"id": None, "name": name, "source": source}
 
         if self.engine_data is None:
@@ -331,10 +346,11 @@ class CopilotState:
             gate_report=self.gate_report,
             is_auto=is_auto,
             activate=is_auto,
+            inherit_undo=inherit_undo,
         )
         if is_auto:
             try:
-                store.prune_auto(keep=20)
+                store.prune_auto()
             except Exception:
                 # The new snapshot is already durable. Retention cleanup is
                 # maintenance and must not turn a successful commit into a

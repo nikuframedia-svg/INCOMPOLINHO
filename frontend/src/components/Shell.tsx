@@ -4,7 +4,7 @@ import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
 import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
 import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
-import { getHealth, getToday, recalculate, releaseManualEdits } from "../api/endpoints";
+import { getHealth, getToday, recalculate, releaseManualEdits, undoLastChange } from "../api/endpoints";
 import { staleIsopWarning } from "../lib/recalcGuard";
 import { TH } from "../constants/thresholds";
 import { approvalGateFromError, approvalImpactMessage, decisionReasonLabels } from "../lib/gateApproval";
@@ -124,7 +124,7 @@ export function Shell() {
   const manualEdits = useDataStore((s) => s.manualEdits);
   const planLots = useDataStore((s) => s.lots);
   const planWorkdays = useDataStore((s) => s.workdays);
-  const canRevert = useDataStore((s) => s.canRevert);
+  const undo = useDataStore((s) => s.undo);
   const revert = useDataStore((s) => s.revert);
   const clearData = useDataStore((s) => s.clear);
   const [checkingData, setCheckingData] = useState(true);
@@ -133,6 +133,7 @@ export function Shell() {
   const [recalcing, setRecalcing] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const [copilotAvailable, setCopilotAvailable] = useState(false);
   const [copilotReason, setCopilotReason] = useState("A verificar a disponibilidade do Copilot…");
   const [operationStatus, setOperationStatus] = useState<OperationStatus>({
@@ -140,7 +141,7 @@ export function Shell() {
     message: "",
     detail: "",
   });
-  const operationPending = refreshing || recalcing || reverting || releasing;
+  const operationPending = refreshing || recalcing || reverting || releasing || undoing;
 
   useEffect(() => {
     if (operationStatus.phase !== "success") return;
@@ -396,6 +397,28 @@ export function Shell() {
     }
   };
 
+  // «Desfazer» multi-passo (decisão de 15/10/2026): each click puts back the
+  // version before the active one; the button says which change it undoes.
+  const handleUndo = async () => {
+    const label = undo.label;
+    setUndoing(true);
+    try {
+      await commitPlanWrite(
+        {
+          pending: "A desfazer a alteração…",
+          pendingDetail: label ? `A desfazer: ${label}` : "O plano anterior volta a ficar ativo.",
+          success: "Alteração desfeita",
+          successDetail: label ? `Desfeito: ${label}` : "O plano anterior voltou a estar ativo.",
+          failure: "Não foi possível desfazer",
+        },
+        (approval) => undoLastChange(approval),
+        (labels) => `Desfazer confirmado com exceções: ${labels.join(", ") || "exceções operacionais"}`,
+      );
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   const handleDeliveriesFocus = (metric: "otd" | "otd_d") => {
     sessionStorage.setItem(
       DELIVERIES_FOCUS_KEY,
@@ -557,6 +580,26 @@ export function Shell() {
                 >
                   {recalcing ? "A recalcular…" : "Recalcular plano"}
                 </button>
+                {undo.available && (
+                  <button
+                    onClick={() => void handleUndo()}
+                    disabled={operationPending}
+                    title={undo.label ? `Desfazer: ${undo.label}` : "Desfazer a última alteração"}
+                    aria-label={undo.label ? `Desfazer: ${undo.label}` : "Desfazer"}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${T.border}`,
+                      color: operationPending ? T.tertiary : T.secondary,
+                      borderRadius: 8,
+                      padding: "5px 10px",
+                      cursor: operationPending ? "default" : "pointer",
+                      fontSize: 11,
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {undoing ? "A desfazer…" : "Desfazer"}
+                  </button>
+                )}
               </>
             )}
             <button
@@ -705,15 +748,6 @@ export function Shell() {
                 style={releaseButtonStyle(operationPending)}
               >
                 {releasing ? "A soltar…" : "Soltar todos"}
-              </button>
-            )}
-            {canRevert && (
-              <button
-                onClick={handleRevert}
-                disabled={reverting}
-                style={releaseButtonStyle(reverting)}
-              >
-                {reverting ? "A desfazer…" : "Desfazer"}
               </button>
             )}
           </div>

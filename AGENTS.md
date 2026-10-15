@@ -761,6 +761,30 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   - Elegibilidade (ferramenta/máquina) mudada com um lote começado: a parte
     feita fica como histórico, mas o resto continua preso à máquina do lote
     (regra 3), por isso o plano pode não ter solução.
+- **Histórico com nomes e «Desfazer» multi-passo (decisão do Luís,
+  15/10/2026).** Caso real: depois de 8 movimentos manuais não houve forma de
+  voltar ao plano da manhã («Desfazer» só desfazia um passo, em memória; todas
+  as versões automáticas chamavam-se «Plano aplicado»; só ficavam as 20 mais
+  recentes). Agora cada versão gravada diz o que mudou, em pt-PT e sem ids
+  internos (`plans/history.py`: o endpoint dá o nome com
+  `context.set_change_label`; senão uma alteração de calendário reconhecida;
+  senão o nome da própria escrita; por fim «Plano aplicado»), por exemplo
+  «Movido Referência X (PRM043) → 03/12 08:45», «Feriado 07/12 adicionado»,
+  «Recalcular plano», «Lote solto: Referência …», «ISOP … carregado»,
+  «Versão reposta: …», «Desfeito: …». Cada versão guarda a versão ativa antes
+  dela (`plans.previous_snapshot_id`; o `previous_version_id` das alterações
+  manuais é essa versão). «Desfazer» (`POST /api/data/undo`) repõe a versão
+  anterior pelo mesmo caminho de «Repor» (`restore_plan_into_state`: sem
+  otimizar, mesmas aprovações, histórico começado protegido; recusa com
+  causas). A nova versão toma o lugar da reposta, por isso cliques seguidos
+  andam para trás, nunca para a frente; a vista do plano dá
+  `undo: {available, label}`. A retenção nunca apaga as 30 versões atrás da
+  ativa, a última de cada ISOP carregado (por ficheiro) nem o último
+  «Recalcular plano»; as outras automáticas mantêm o limite de 20. Custo
+  aceite: uma versão por ISOP carregado fica para sempre (a base cresce com o
+  número de ficheiros diferentes). O `/revert` antigo (um passo, em memória)
+  fica só para o «Reverter» dos cenários simulados. Versões gravadas antes
+  desta decisão não têm anterior: «Desfazer» começa na primeira escrita nova.
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
 - **Decisão pendente (11/10/2026, à espera do Luís):** retirar um feriado (ou
@@ -966,6 +990,11 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   JTE003 fixados à mão) e 156 (feriado 07/12: 43 940 peças em falta, porque
   os lotes fixados à mão ficam com as datas do calendário antigo); sem
   fixações (revisão 148) os dois são aceites.
+- **Versões com nome (Luís, 15/10/2026, ver §5).** Uma escrita nova do plano
+  dá o nome da sua alteração (`set_change_label`) em vez de deixar «Plano
+  aplicado»; o ecrã «Planos» mostra nome e hora de Lisboa, nunca ids nem a
+  nota interna das versões automáticas. Testes em
+  `tests/test_plan_history_undo.py`.
 
 - **Limpeza pendente (código que já não corre, 13/10/2026).** Desde a versão
   3 de material `canonical.legacy_material_plan` devolve sempre falso, por

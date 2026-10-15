@@ -32,6 +32,8 @@ export interface PlanView {
   active_mutations: MutationInput[];
   manual_edits: ManualEdit[];
   can_revert: boolean;
+  /** «Desfazer» multi-passo (decisão de 15/10/2026): the change it would undo. */
+  undo?: UndoState;
   learning: LearningInfo | null;
   score: Score;
   gate_report: GateReport;
@@ -43,6 +45,12 @@ export interface PlanView {
   capacity: CapacityResponse;
   workdays: string[];
   blocked_days: BlockedDaysResponse;
+}
+
+export interface UndoState {
+  available: boolean;
+  /** Name of the change that would be undone, e.g. «Movido Referência … → 03/12 08:45». */
+  label: string;
 }
 
 export interface PlacementReason {
@@ -1369,6 +1377,9 @@ export interface PlanSummary {
   tardy_count: number | null;
   setups: number | null;
   gate_status: string | null;
+  /** Version active before this one (never shown). */
+  previous_snapshot_id?: string | null;
+  kind?: string;
 }
 
 export interface RestorePlanResponse {

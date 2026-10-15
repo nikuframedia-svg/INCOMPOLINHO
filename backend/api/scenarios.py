@@ -154,6 +154,9 @@ async def apply_scenario(scenario_id: str, body: dict):
                 "O plano mudou e a origem completa do cenário já não corresponde; "
                 "calcula-o novamente antes de aplicar.",
             )
+        from backend.plans.context import set_change_label
+
+        set_change_label(f"Cenário aplicado: {plan['name']}", kind="scenario")
         try:
             state.persist_current_plan(
                 name="Antes de aplicar cenário",
