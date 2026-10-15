@@ -142,7 +142,7 @@ async def get_console(day_idx: int = 0):
             {
                 segment.machine_id
                 for segment in day_segments
-                if machine_group.get(segment.machine_id) == group
+                if state.config.machine_group(segment.machine_id) == group
             }
         )
         production_by_group.append(

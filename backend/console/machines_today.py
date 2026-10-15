@@ -110,7 +110,7 @@ def compute_machines_today(
         result.append(
             {
                 "id": m.id,
-                "group": config.machine_groups.get(m.id, m.group),
+                "group": config.machine_group(m.id),
                 "util": round(util, 2),
                 "capacity_min": capacity,
                 "tools": tools,

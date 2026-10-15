@@ -23,6 +23,9 @@ import logging
 import math
 import time
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
@@ -665,6 +668,32 @@ def _anchor_mount_suppliers(segments, lot_ids) -> dict[str, set[str]]:
     return result
 
 
+# Pins released during one replan job (``{lot_id: notice}``). The job may
+# discard the calculation whose warnings carried a notice while keeping the
+# staging data the pin was removed from; the ledger lets it still say so.
+_RELEASED_ANCHORS: ContextVar[dict[str, str] | None] = ContextVar(
+    "released_anchors", default=None,
+)
+
+
+@contextmanager
+def released_anchor_ledger() -> Iterator[dict[str, str]]:
+    """Record every pin ``release_anchors`` removes inside this block."""
+    ledger: dict[str, str] = {}
+    token = _RELEASED_ANCHORS.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _RELEASED_ANCHORS.reset(token)
+
+
+def released_anchor_notices_missing(engine_data) -> list[str]:
+    """Notices of recorded pins absent from ``engine_data.plan_anchors``."""
+    ledger = _RELEASED_ANCHORS.get() or {}
+    kept = {anchor.lot_id for anchor in getattr(engine_data, "plan_anchors", None) or []}
+    return [notice for lot_id, notice in ledger.items() if lot_id not in kept]
+
+
 def release_anchors(engine_data, lots, reasons: dict) -> list[str]:
     """Remove the anchors of ``reasons`` (``{lot_id: reason}``); their notices."""
     if not reasons:
@@ -679,6 +708,9 @@ def release_anchors(engine_data, lots, reasons: dict) -> list[str]:
             )
             logger.info("Fixação manual solta (%s): %s", anchor.lot_id, notice)
             notices.append(notice)
+            ledger = _RELEASED_ANCHORS.get()
+            if ledger is not None:
+                ledger[anchor.lot_id] = notice
     engine_data.plan_anchors = [anchor for anchor in anchors if anchor.lot_id not in reasons]
     return notices
 
@@ -1008,9 +1040,12 @@ def _conflict_cuts(
         ))
     view = copy.copy(engine_data)
     view.history_boundary = [int(boundary[0]), int(boundary[1])]
-    groups = {machine.id: machine.group for machine in engine_data.machines}
+    groups = {
+        machine.id: config.machine_group(machine.id) if config is not None else machine.group
+        for machine in engine_data.machines
+    }
     if config is not None:
-        groups.update(config.machine_groups)
+        groups.update({mid: config.machine_group(mid) for mid in config.machines})
     shifts = (
         {shift.id: (shift.start_min, shift.end_min) for shift in config.shifts}
         if config is not None else {"A": (420, 930), "B": (930, 1440)}
@@ -1522,9 +1557,12 @@ def _install_frozen_reservations(
             )
         for tool in tools:
             engine_data.tool_blocked_intervals.setdefault(tool, []).append(dict(elapsed_today))
-    groups = {machine.id: machine.group for machine in engine_data.machines}
+    groups = {
+        machine.id: config.machine_group(machine.id) if config is not None else machine.group
+        for machine in engine_data.machines
+    }
     if config is not None:
-        groups.update(config.machine_groups)
+        groups.update({mid: config.machine_group(mid) for mid in config.machines})
     shifts = (
         [(s.id, s.start_min, s.end_min) for s in config.shifts]
         if config is not None else [("A", 420, 930), ("B", 930, 1440)]
@@ -1580,11 +1618,19 @@ def _install_frozen_reservations(
         engine_data.tool_blocked_intervals.setdefault(segment.tool_id, []).append(
             copy.deepcopy(block)
         )
-        if segment.setup_min > 0:
+        setup_end = min(segment.end_min, segment.start_min + segment.setup_min)
+        # Today the crew is reserved only from now on: an elapsed setup blocks
+        # nothing new (every machine is blocked until now) and, after a
+        # regrouping, could only collide with another elapsed one.
+        setup_start = (
+            max(int(segment.start_min), int(math.ceil(now_min)))
+            if segment.day_idx == freeze_day else int(segment.start_min)
+        )
+        if segment.setup_min > 0 and setup_end > setup_start:
             engine_data.setup_crew_reservations.append({
                 **block, "machine_id": segment.machine_id, "tool_id": segment.tool_id,
                 "group": groups.get(segment.machine_id, "Grandes"),
-                "end_min": min(segment.end_min, segment.start_min + segment.setup_min),
+                "start_min": setup_start, "end_min": setup_end,
             })
         if segment.prod_min <= 0:
             continue

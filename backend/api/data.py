@@ -1025,6 +1025,26 @@ async def get_learning():
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _planned_machines_by_op() -> dict[str, list[str]]:
+    """``{op_id: distinct machines that produce it}``, in plan order.
+
+    The press the plan uses, not ISOP column G: a SKU moved to its
+    alternative press shows that press (same attribution as the stock days).
+    """
+    lot_to_op = {lot.id: lot.op_id for lot in state.lots or []}
+    machines: dict[str, list[str]] = {}
+    for segment in sorted(state.segments or [], key=lambda s: (s.day_idx, s.start_min)):
+        if segment.twin_outputs:
+            op_ids = [op_id for op_id, _sku, _qty in segment.twin_outputs]
+        else:
+            op_ids = [lot_to_op.get(segment.lot_id, "")]
+        for op_id in op_ids:
+            planned = machines.setdefault(op_id, []) if op_id else None
+            if planned is not None and segment.machine_id not in planned:
+                planned.append(segment.machine_id)
+    return machines
+
+
 @router.get("/stock")
 async def get_stock_summary():
     """Stock grid data — all SKUs with daily stock values."""
@@ -1032,11 +1052,12 @@ async def get_stock_summary():
     if not state.stock_projections:
         return []
 
-    # Build op_id → (machine, tool) lookup from engine_data
-    op_info: dict[str, tuple[str, str]] = {}
+    # Build op_id → (machines, tool) lookup from the plan and engine_data
+    planned = _planned_machines_by_op()
+    op_info: dict[str, tuple[list[str], str]] = {}
     if state.engine_data:
         for op in state.engine_data.ops:
-            op_info[op.id] = (op.m, op.t)
+            op_info[op.id] = (planned.get(op.id) or [op.m], op.t)
 
     # Detect non-workdays (weekends + holidays)
     holidays = set(state.engine_data.holidays) if state.engine_data else set()
@@ -1058,8 +1079,9 @@ async def get_stock_summary():
             "op_id": p.op_id,
             "sku": p.sku,
             "client": p.client,
-            "machine": op_info.get(p.op_id, ("", ""))[0],
-            "tool": op_info.get(p.op_id, ("", ""))[1],
+            "machine": " / ".join(op_info.get(p.op_id, ([], ""))[0]),
+            "machines": op_info.get(p.op_id, ([], ""))[0],
+            "tool": op_info.get(p.op_id, ([], ""))[1],
             "initial_stock": p.initial_stock,
             "stockout_day": p.stockout_day,
             "coverage_days": p.coverage_days,
@@ -1098,7 +1120,9 @@ async def get_stock_detail(sku: str):
     # Same machine/tool as the stock grid: the window header showed «ACURION |».
     op = next((item for item in state.engine_data.ops if item.id == proj.op_id), None)
     if op is not None:
-        detail["machine"] = detail.get("machine") or op.m
+        machines = _planned_machines_by_op().get(op.id) or [op.m]
+        detail["machines"] = machines
+        detail["machine"] = " / ".join(machines)
         detail["tool"] = detail.get("tool") or op.t
     return detail
 
@@ -2544,7 +2568,11 @@ async def release_manual_edits(body: dict):
     if raw is not None and not (
         isinstance(raw, list) and all(isinstance(item, str) and item for item in raw)
     ):
-        raise HTTPException(400, "lot_ids deve ser uma lista de lotes, ou vazio para todos.")
+        raise HTTPException(400, "lot_ids deve ser uma lista de lotes; omite-o para soltar todos.")
+    if raw == []:
+        raise HTTPException(
+            400, "lot_ids deve ter pelo menos um lote; omite-o para soltar todos.",
+        )
     async with plan_mutation_lock:
         _require_expected_revision(body)
         pinned = {anchor.lot_id for anchor in state.engine_data.plan_anchors or []}

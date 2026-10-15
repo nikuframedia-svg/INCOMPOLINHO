@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { T } from "../theme/tokens";
 import { getStockSummary, getStockDetail } from "../api/endpoints";
-import type { StockDayCompact } from "../api/types";
+import type { StockDayCompact, StockSummary } from "../api/types";
 import { usePlanQuery } from "../hooks/usePlanQuery";
 import { Card } from "../components/ui/Card";
 import { Label } from "../components/ui/Label";
@@ -83,6 +83,11 @@ function dayDateLabel(date: string | null | undefined): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)} ${WEEKDAYS[weekday]}`;
 }
 
+/** Every machine the plan uses for the SKU (older servers: the single `machine`). */
+function stockMachines(row: Pick<StockSummary, "machine" | "machines">): string[] {
+  return row.machines?.length ? row.machines : row.machine ? [row.machine] : [];
+}
+
 export function StockPage() {
   const { data, error } = usePlanQuery("stock", getStockSummary);
   const [clientFilter, setClientFilter] = useState<string>("");
@@ -106,7 +111,7 @@ export function StockPage() {
 
   const machines = useMemo(() => {
     if (!data) return [];
-    return [...new Set(data.map((s) => s.machine).filter(Boolean))].sort();
+    return [...new Set(data.flatMap((s) => stockMachines(s)).filter(Boolean))].sort();
   }, [data]);
   const selectedClient = clients.includes(clientFilter) ? clientFilter : "";
   const selectedMachine = machines.includes(machineFilter) ? machineFilter : "";
@@ -116,7 +121,7 @@ export function StockPage() {
     if (!data) return [];
     let list = data;
     if (selectedClient) list = list.filter((s) => s.client === selectedClient);
-    if (selectedMachine) list = list.filter((s) => s.machine === selectedMachine);
+    if (selectedMachine) list = list.filter((s) => stockMachines(s).includes(selectedMachine));
     if (riskOnly) list = list.filter((s) => s.stockout_day !== null);
     if (hideNoDemand) list = list.filter((s) => s.total_demand > 0);
     // Sort: rupturas first (by stockout_day ASC), then by SKU

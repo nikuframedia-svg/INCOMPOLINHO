@@ -100,8 +100,9 @@ class MachineTimeline:
         self.tool = lot.tool_id
         self.horizon = int(data.n_days) * DAY_MIN
         self.now = _absolute(freeze_day, now_min, up=True)
-        self.group = (getattr(config, "machine_groups", None) or {}).get(machine_id) or next(
-            (machine.group for machine in data.machines if machine.id == machine_id), None,
+        self.group = (
+            config.machine_group(machine_id) if hasattr(config, "machine_group")
+            else next((m.group for m in data.machines if m.id == machine_id), None)
         )
         self.required = max(1, int(segment_operator_demand(
             replace(template, machine_id=machine_id, twin_outputs=lot.twin_outputs), self.view,

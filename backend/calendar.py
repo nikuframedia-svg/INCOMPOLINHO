@@ -377,8 +377,9 @@ def free_shift_intervals(
         if segment.end_min > segment.start_min
         and (segment.machine_id == machine_id or segment.tool_id == tool_id)
     ]
-    group = (getattr(config, "machine_groups", None) or {}).get(machine_id) or next(
-        (machine.group for machine in data.machines if machine.id == machine_id), None,
+    group = (
+        config.machine_group(machine_id) if hasattr(config, "machine_group")
+        else next((machine.group for machine in data.machines if machine.id == machine_id), None)
     )
     intervals: list[tuple[int, int]] = []
     for shift in ordered_shifts(config):

@@ -86,7 +86,7 @@ def build_legal_interval_context(
     demands: dict[int, int] = {}
     for segment in segments:
         by_day[segment.day_idx].append(segment)
-        group = config.machine_groups.get(segment.machine_id, "Grandes")
+        group = config.machine_group(segment.machine_id)
         if segment.setup_min > 0:
             setups[(group, segment.day_idx)].append(segment)
         if segment.prod_min > 0:
@@ -678,7 +678,7 @@ def evaluate_legal_interval(
     if shift_id is None:
         return LegalIntervalEvaluation(False, None, tuple(dict.fromkeys(reasons)))
 
-    group = config.machine_groups.get(source.machine_id, "Grandes")
+    group = config.machine_group(source.machine_id)
     setup_end = min(end, start + max(0.0, setup_min))
     if setup_end > start:
         from backend.scheduler.resources import reserved_setup_segments
@@ -695,7 +695,7 @@ def evaluate_legal_interval(
             and other.lot_id not in ignored
             and other.day_idx == day_idx
             and other.setup_min > 0
-            and config.machine_groups.get(other.machine_id, "Grandes") == group
+            and config.machine_group(other.machine_id) == group
             and _overlaps(
                 start,
                 setup_end,
@@ -767,7 +767,7 @@ def evaluate_legal_interval(
             and other.lot_id not in ignored
             and other.day_idx == day_idx
             and other.prod_min > 0
-            and config.machine_groups.get(other.machine_id, "Grandes") == group
+            and config.machine_group(other.machine_id) == group
             and _overlaps(
                 production_start,
                 end,
@@ -908,8 +908,8 @@ def candidate_interval_boundaries(
         if (
             other.machine_id == source.machine_id
             or other.tool_id == source.tool_id
-            or config.machine_groups.get(other.machine_id, "Grandes")
-            == config.machine_groups.get(source.machine_id, "Grandes")
+            or config.machine_group(other.machine_id)
+            == config.machine_group(source.machine_id)
         ):
             boundaries.add(max(gap_start, min(gap_end, int(other.start_min))))
             boundaries.add(max(gap_start, min(gap_end, int(other.end_min))))
@@ -934,11 +934,11 @@ def candidate_interval_boundaries(
     # start, otherwise the lot waits for the next shift or day (BFP112, §2.1).
     from backend.scheduler.resources import reserved_setup_segments
 
-    group = config.machine_groups.get(source.machine_id, "Grandes")
+    group = config.machine_group(source.machine_id)
     for reserved in reserved_setup_segments(data):
         if (
             reserved.day_idx != day_idx
-            or config.machine_groups.get(reserved.machine_id, "Grandes") != group
+            or config.machine_group(reserved.machine_id) != group
         ):
             continue
         boundaries.add(max(gap_start, min(gap_end, int(reserved.start_min))))

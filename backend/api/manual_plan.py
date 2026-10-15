@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.api.locks import plan_mutation_lock
 from backend.copilot.state import state
+from backend.plans.frozen import without_calculation_notes
 from backend.plans.manual_move import (
     ManualMoveError,
     ManualMoveInconclusive,
@@ -422,7 +423,9 @@ async def apply_move(body: dict):
             lots=candidate.lots,
             score=candidate.score,
             time_ms=candidate.time_ms,
-            warnings=[*state.warnings, *candidate.delivery_warnings],
+            # Notes of the previous calculation (released pins, budget
+            # stops) are true of that write only, never inherited here.
+            warnings=[*without_calculation_notes(state.warnings), *candidate.delivery_warnings],
             operator_alerts=compute_operator_alerts(
                 candidate.segments,
                 state.engine_data,

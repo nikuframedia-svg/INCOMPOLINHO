@@ -7,7 +7,7 @@ lot sizing so every setting changes the real scheduler input.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from backend.config.types import (
@@ -127,7 +127,7 @@ def _ensure_machine_info(engine_data: EngineData, config: FactoryConfig, machine
     group = (
         machine_cfg.group
         if machine_cfg is not None
-        else config.machine_groups.get(machine_id, "Grandes")
+        else config.machine_group(machine_id)
     )
     day_capacity = (
         machine_cfg.day_capacity_min
@@ -403,6 +403,26 @@ def normalize_subcontract_company(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _project_machine_groups(engine_data: EngineData, config: FactoryConfig) -> None:
+    """One group per machine: the config's (FactoryConfig.machine_group).
+
+    The ISOP transform defaults machines missing from master data to Grandes
+    and a config edit can regroup a machine already in the engine list, so the
+    engine copy is projected from the config and duplicate ids are dropped
+    (first kept) — crews, operators and validation then agree.
+    """
+    seen: set[str] = set()
+    machines = []
+    for machine in engine_data.machines:
+        if machine.id in seen:
+            continue
+        seen.add(machine.id)
+        group = config.machine_group(machine.id)
+        # A new object: the list may be shared with another (shallow) copy.
+        machines.append(machine if machine.group == group else replace(machine, group=group))
+    engine_data.machines = machines
+
+
 def apply_effective_planning_config(
     engine_data: EngineData,
     config: FactoryConfig | None,
@@ -413,6 +433,7 @@ def apply_effective_planning_config(
         return engine_data
 
     enforce_machine_scope(config, engine_data)
+    _project_machine_groups(engine_data, config)
 
     companies: dict[str, dict[str, Any]] = {}
     for raw_company in config.subcontract_companies:

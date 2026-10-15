@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 
 from backend.config.types import FactoryConfig
-from backend.scheduler.constants import MACHINE_GROUP, OPERATOR_CAP
+from backend.scheduler.constants import OPERATOR_CAP
 from backend.scheduler.types import OperatorAlert, Segment
 from backend.types import EngineData
 
@@ -99,7 +99,7 @@ def operator_free_windows(
          segment_operator_demand(segment, data))
         for segment in segments
         if segment.day_idx == day and segment.prod_min > 0
-        and config.machine_groups.get(segment.machine_id, "Grandes") == group
+        and config.machine_group(segment.machine_id) == group
     ]
     intervals.extend(
         (max(start, float(block.get("start_min", 0))),
@@ -151,7 +151,7 @@ def operator_peaks(
     last_day = max([*(s.day_idx for s in segments), *(key[0] for key in include_keys or ()), 0])
     engine_data = calendar_window(engine_data, config, last_day)
 
-    machine_group = config.machine_groups if config else MACHINE_GROUP
+    machine_group = (config or FactoryConfig()).machine_group
     configured_shifts = (
         [(shift.id, int(shift.start_min), int(shift.end_min)) for shift in config.shifts]
         if config is not None
@@ -170,7 +170,7 @@ def operator_peaks(
         judged = judged_start(segment.day_idx, segment.start_min, segment.end_min, boundary)
         if judged is None:
             continue
-        group = machine_group.get(segment.machine_id, "Grandes")
+        group = machine_group(segment.machine_id)
         required = segment_operator_demand(segment, engine_data)
         production_start = max(segment.production_start_min, judged)
         for shift_id, shift_start, shift_end in configured_shifts:

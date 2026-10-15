@@ -46,7 +46,6 @@ def _operator_capacity_rows(
     granularity: str,
 ) -> list[dict]:
     groups = sorted(set(config.machine_groups.values()))
-    machine_groups = config.machine_groups
     peak_keys = {
         (day_idx, group, shift.id)
         for day_idx in range(data.n_days)
@@ -70,7 +69,7 @@ def _operator_capacity_rows(
                     * segment_operator_demand(segment, data)
                     for segment in segments
                     if segment.day_idx == day_idx
-                    and machine_groups.get(segment.machine_id, "Grandes") == group
+                    and config.machine_group(segment.machine_id) == group
                     and segment.shift == shift.id
                 )
                 peak = peaks[(day_idx, group, shift.id)]
