@@ -1645,7 +1645,10 @@ def plan_anchor_violations(
         except (ValueError, KeyError):
             violations.append({
                 "kind": "plan_anchor", "lot_id": anchor.lot_id,
-                "message": f"Posição manual inválida para o lote {anchor.lot_id}.",
+                # Never the internal lot id (plans.refusal adds the reference).
+                "message": (
+                    "Posição manual fixada num dia que já não é dia de trabalho do plano."
+                ),
             })
             continue
         actual = first_by_lot.get(anchor.lot_id)
@@ -1660,8 +1663,8 @@ def plan_anchor_violations(
                 "kind": "plan_anchor", "lot_id": anchor.lot_id,
                 "machine_id": anchor.machine_id, "day_idx": expected_day,
                 "message": (
-                    f"A posição manual do lote {anchor.lot_id} em {anchor.machine_id} "
-                    f"no dia {expected_day} às {expected_min // 60:02d}:"
+                    f"A posição manual em {anchor.machine_id} no "
+                    f"{day_label(expected_day, data)} às {expected_min // 60:02d}:"
                     f"{expected_min % 60:02d} não foi respeitada."
                 ),
             })

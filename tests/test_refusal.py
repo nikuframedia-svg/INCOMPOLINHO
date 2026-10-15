@@ -233,3 +233,62 @@ def test_incompol_refused_holiday_says_which_rule_failed():
         assert causes and all(cause.endswith(".") for cause in causes)
         assert "Plano inválido" not in " ".join(causes)
     # Accepted is fine too: the holiday then no longer clashes (later steps).
+
+
+def test_broken_pin_is_named_by_reference_and_never_clashes_with_itself():
+    """Review of 15/10: a pin that no longer holds said «LOT_…» and «choca com»
+    its own manual change."""
+    from backend.scheduler.types import Segment
+    from backend.scheduler.validation import plan_anchor_violations
+
+    data = _data([PlanAnchor("LOT_A", "PRM043", "2026-12-03T17:30")])
+    moved = Segment(
+        lot_id="LOT_A", run_id="R", machine_id="PRM043", tool_id="T", day_idx=2,
+        start_min=420, end_min=600, shift="A", qty=10, prod_min=180.0, setup_min=0.0,
+    )
+    violations = plan_anchor_violations([moved], data, None)
+    assert violations and "LOT_" not in violations[0]["message"]
+    [cause] = refusal_causes(violations, data, lots=[_lot("LOT_A", "6800017267C.30")])
+    assert "LOT_" not in cause
+    assert "Referência 6800017267C.30 (PRM043)" in cause
+    assert "choca com" not in cause
+
+
+def test_a_pinned_conflicting_lot_is_said_once_to_be_a_manual_change():
+    anchors = [PlanAnchor("LOT_A", "PRM043", "2026-12-03T08:45")]
+    [cause] = refusal_causes([_overlap()], _data(anchors), lots=[_lot("LOT_A", "X")])
+    assert "este lote é uma alteração manual (fixado para 03/12 08:45)" in cause
+    assert "choca com a alteração manual da Referência X" not in cause
+
+
+def test_remainder_counts_only_distinct_causes():
+    same = [_overlap(day=1)] * 4
+    distinct = [_overlap(day=day) for day in range(2, MAX_CAUSES + 3)]
+    causes = refusal_causes([*distinct, *same], _data())
+    assert causes[-1] == "… e mais 2 conflitos."
+
+
+def test_move_refusal_headline_names_the_reference_and_the_date():
+    from backend.plans.manual_move import _inconclusive_move, _refused_move
+
+    data = _data()
+    lot = _lot("LOT_JTE001_PRM043_6800016767A.10_57", "6800016767A.10")
+    refused = _refused_move(lot.id, 2, 525, "PRM043", data, "motivo.", lot=lot)
+    assert str(refused).startswith(
+        "Não é possível iniciar a Referência 6800016767A.10 (PRM043) no dia 2 (03/12), às 08:45"
+    )
+    inconclusive = _inconclusive_move(lot.id, 2, 525, "PRM043", lot=lot, data=data)
+    assert "LOT_" not in str(refused) and "LOT_" not in str(inconclusive)
+
+
+def test_blocked_application_carries_causes(monkeypatch):
+    from backend.copilot.state import state
+    from backend.scheduler.gates import ApplicationBlocked, application_refusal_detail
+
+    monkeypatch.setattr(state, "engine_data", _data(), raising=False)
+    monkeypatch.setattr(state, "lots", [], raising=False)
+    blocked = ApplicationBlocked(
+        "O candidato tem conflitos físicos.", {"violations": [_overlap()]},
+    )
+    detail = application_refusal_detail(blocked)
+    assert detail["causes"] and detail["causes"][0].startswith("Máquina PRM043")

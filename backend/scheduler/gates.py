@@ -520,6 +520,13 @@ def application_refusal_detail(
         return None
     if gate_report:
         detail["gate_report"] = report
+    # Concrete causes of a blocked candidate (decisão de 15/10/2026).
+    violations = [item for item in (report or {}).get("violations") or [] if isinstance(item, dict)]
+    if violations and isinstance(exc, ApplicationBlocked):
+        from backend.copilot.state import state
+        from backend.plans.refusal import refusal_causes
+
+        detail["causes"] = refusal_causes(violations, state.engine_data, lots=state.lots)
     return detail
 
 

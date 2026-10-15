@@ -109,6 +109,10 @@ FAILURE_TEXTS = {
 class _BlockedCandidate(ValueError):
     """The candidate failed the physical/coverage gate; its text is Portuguese."""
 
+    def __init__(self, message: str, violations: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.violations = list(violations or [])
+
 
 class _ProtectedHistoryChanged(ValueError):
     """A candidate would change started production (AGENTS §2 rule 4, §5).
@@ -1598,7 +1602,10 @@ class ReplanJobManager:
                 and result.gate_report.get("coverage_gate_passed")
             )
             if physical_or_coverage_invalid:
-                raise _BlockedCandidate(blocked_application_message(result.gate_report))
+                raise _BlockedCandidate(
+                    blocked_application_message(result.gate_report),
+                    (result.gate_report or {}).get("violations"),
+                )
             if self._is_cancelled(job_id):
                 return
             candidate = _result_snapshot(
@@ -1645,7 +1652,12 @@ class ReplanJobManager:
             self._fail(job_id, "history_protected")
         except _BlockedCandidate as exc:
             logger.exception("Replan job %s produced a blocked candidate", job_id)
-            self._fail(job_id, "blocked", str(exc) or None)
+            self._fail(
+                job_id, "blocked", str(exc) or None,
+                causes=_violation_causes(
+                    exc, engine_data, (baseline_snapshot or {}).get("lots"),
+                ),
+            )
         except PlanValidationError as exc:
             from backend.plans.refusal import causes_for_log
 

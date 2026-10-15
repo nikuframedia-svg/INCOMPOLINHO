@@ -25,6 +25,7 @@ LOG_CAUSES = 3
 # does not fit. Stable sort: otherwise the validator's order is kept.
 _BOOKKEEPING_KINDS = frozenset({
     "source_contract", "source_missing_quantity", "source_overproduced_quantity",
+    "source_overproduced_qty",
     "missing_lots", "missing_quantity", "unexpected_lots", "duplicate_production",
     "duplicate_twin_output", "twin_output_mismatch",
 })
@@ -132,19 +133,29 @@ def violation_cause(
         violation.get("unavailability")
         if isinstance(violation.get("unavailability"), dict) else {}
     )
+    own = str(violation.get("lot_id") or "")
     for lot_id in dict.fromkeys(
         str(item)
-        for item in (violation.get("lot_id"), other.get("lot_id"), holder.get("lot_id"))
+        for item in (own, other.get("lot_id"), holder.get("lot_id"))
         if item
     ):
-        if lot_id in pinned and lot_id != subject:
-            when = pinned[lot_id]
-            label = _lot_text(lot_id, lots_by_id)
-            sentence += (
-                "; choca com a alteração manual "
-                + (f"da {label}" if label else "de um lote")
-                + (f" (fixada para {when})" if when else "")
-            )
+        if lot_id not in pinned or lot_id == subject:
+            continue
+        when = pinned[lot_id]
+        if lot_id == own:
+            # The conflicting lot is itself a manual change: say so once, never
+            # that it "clashes" with itself; a broken pin already says it.
+            if violation.get("kind") != "plan_anchor":
+                sentence += "; este lote é uma alteração manual" + (
+                    f" (fixado para {when})" if when else ""
+                )
+            continue
+        label = _lot_text(lot_id, lots_by_id)
+        sentence += (
+            "; choca com a alteração manual "
+            + (f"da {label}" if label else "de um lote")
+            + (f" (fixada para {when})" if when else "")
+        )
     return sentence + "."
 
 
@@ -173,10 +184,12 @@ def refusal_causes(
         (item for item in violations or [] if isinstance(item, dict)),
         key=lambda item: item.get("kind") in _BOOKKEEPING_KINDS,
     )
+    distinct: set[str] = set()
     for violation in ordered:
         cause = violation_cause(violation, data, pinned, lots_by_id, subject)
-        if cause in causes:
+        if cause in distinct:
             continue
+        distinct.add(cause)
         total += 1
         if len(causes) < limit:
             causes.append(cause)

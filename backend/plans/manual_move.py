@@ -481,9 +481,23 @@ def _elapsed_text(day, minute, data, now_min, *, setup=False) -> str:
     )
 
 
-def _inconclusive_move(lot_id, day, minute, machine_id):
+def _move_subject(lot, lot_id) -> str:
+    """``a Referência 6800016767A.10 (PRM043)``: never the internal lot id."""
+    from backend.scheduler.canonical import _lot_label
+
+    return f"a {_lot_label(lot)}" if lot is not None else "o lote"
+
+
+def _move_when(day, data) -> str:
+    from backend.scheduler.validation import day_label
+
+    return f"no {day_label(day, data)}" if data is not None else f"no dia {day}"
+
+
+def _inconclusive_move(lot_id, day, minute, machine_id, *, lot=None, data=None):
     return ManualMoveInconclusive(
-        f"Verificação inconclusiva para iniciar {lot_id} exatamente no dia {day}, "
+        f"Verificação inconclusiva para iniciar {_move_subject(lot, lot_id)} exatamente "
+        f"{_move_when(day, data)}, "
         f"às {minute // 60:02d}:{minute % 60:02d}, em {machine_id}. "
         "A pesquisa de reorganização e a tentativa mantendo os restantes lotes fixos "
         "não produziram um candidato completo válido. Não foi demonstrada a "
@@ -1141,13 +1155,12 @@ def _reallocation_ignores_target(source_lots: list[Lot], protection) -> bool:
 
 
 def _refused_move(
-    lot_id, day, minute, machine_id, data, detail, *, gate_report=None, causes=None,
+    lot_id, day, minute, machine_id, data, detail, *, gate_report=None, causes=None, lot=None,
 ):
     """A move that was checked and cannot be applied, with its reason and causes."""
-    date = str(data.workdays[day])[:10] if 0 <= day < len(data.workdays) else ""
-    when = f"no dia {day}" + (f" ({date})" if date else "")
     return ManualMoveError(
-        f"Não é possível iniciar {lot_id} {when}, às {minute // 60:02d}:{minute % 60:02d}, "
+        f"Não é possível iniciar {_move_subject(lot, lot_id)} {_move_when(day, data)}, "
+        f"às {minute // 60:02d}:{minute % 60:02d}, "
         f"em {machine_id}: {detail} O plano não foi alterado.",
         gate_report=gate_report,
         causes=causes or _gate_causes(gate_report, data, subject=lot_id),
@@ -1227,7 +1240,7 @@ def _replan_around_fixed_lot(
         )
         return _refused_move(
             lot.id, target_day, target_start_min, target_machine, candidate_data, detail,
-            gate_report=gate_report, causes=causes,
+            gate_report=gate_report, causes=causes, lot=lot,
         )
 
     now = calculation_now(config, now)
@@ -1875,7 +1888,9 @@ def _move_lot(
             if not refusal.causes:
                 refusal.causes = list(fixed_causes)
             raise refusal
-        inconclusive = _inconclusive_move(lot_id, target_day, start_min, machine_id)
+        inconclusive = _inconclusive_move(
+            lot_id, target_day, start_min, machine_id, lot=lot, data=candidate_data,
+        )
         inconclusive.causes = list(fixed_causes)
         raise inconclusive
     complete = ScheduleResult(

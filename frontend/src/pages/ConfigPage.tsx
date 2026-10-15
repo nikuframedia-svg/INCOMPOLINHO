@@ -1540,6 +1540,8 @@ export function ConfigPage() {
   ) => {
     if (readOnly) return false;
     setSaving(true);
+    // A new save starts clean: an earlier refusal and its causes do not linger.
+    setReplanMessage(null);
     try {
       const res = await sendWithGateApproval(fn, justificationAsker(prompt));
       if (res === null) {

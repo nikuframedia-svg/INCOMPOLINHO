@@ -435,7 +435,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       setScenarioName((current) => current === submittedName ? "" : current);
       setScenarioMessage("Cenário guardado. O plano verdadeiro não foi alterado.");
     } catch (exception) {
-      if (mounted.current) setScenarioMessage(refusalText(exception));
+      if (mounted.current) setScenarioMessage(`Erro: ${refusalText(exception)}`);
     } finally {
       if (mounted.current) setSavedScenarioBusy(null);
     }
@@ -466,7 +466,7 @@ export function SimulatorPanel({ onApplied }: { onApplied?: () => void }) {
       setScenarioMessage(`Cenário “${scenario.name}” aplicado como realidade.`);
       onApplied?.();
     } catch (exception) {
-      if (mounted.current) setScenarioMessage(refusalText(exception));
+      if (mounted.current) setScenarioMessage(`Erro: ${refusalText(exception)}`);
     } finally {
       if (mounted.current) setSavedScenarioBusy(null);
     }
