@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { T } from "../theme/tokens";
 import {
-  getCatalog, getConfig, getOps, updateConfig,
-  updateOperators,
-  addExtraWorkday, addHoliday, addHolidayRange, addTwin,
-  removeExtraWorkday, removeHoliday, removeHolidayRange, removeTwin,
-  replaceSetupOverrides, applyPreset,
+  getCatalog, getConfig, getOps,
   applyReplan, cancelReplan, getReplan, getReplans, startReplan,
-  previewSkuPlanning, previewSubcontracts, resetSkuPlanning, updateSkuPlanning, updateSubcontracts,
+  previewSkuPlanning, previewSubcontracts,
   getTrust,
 } from "../api/endpoints";
 import type {
   EOp,
   FactoryConfig,
-  GateReport,
   MasterCatalog,
   PlanningDelta,
   ReplanJob,
@@ -28,46 +23,45 @@ import { Label } from "../components/ui/Label";
 import { Divider } from "../components/ui/Divider";
 import { Modal } from "../components/ui/Modal";
 import { ProgressBar } from "../components/ui/ProgressBar";
-import { useConfirm, type ConfirmContextValue } from "../components/ui/confirmContext";
+import { useConfirm } from "../components/ui/confirmContext";
 import { useDataStore } from "../stores/useDataStore";
 import { useAppStore } from "../stores/useAppStore";
-import { ApiError } from "../api/client";
-import { remainingDraft, remainingToolDraft } from "../lib/configDraft";
 import {
-  approvalImpactMessage,
-  gateReasonLabel,
-  sendWithGateApproval,
-  type GateApproval,
-  gateStatusLabel,
-} from "../lib/gateApproval";
+  buildConfigUpdates,
+  useConfigDraftStore,
+  type DraftChange,
+  type DraftItem,
+  type SubcontractsBody,
+  type ToolDraft,
+  type UnavailabilityCategory,
+  type UnavailabilityForm,
+  type UnavailabilityKind,
+} from "../stores/useConfigDraftStore";
+import { ApiError } from "../api/client";
+import { gateReasonLabel, gateStatusLabel } from "../lib/gateApproval";
 import { getReadIdentity } from "../lib/planRevision";
 import { jobFailureText } from "../lib/jobFailure";
 import { refusalCauses } from "../lib/refusal";
 import { RefusalDetails } from "../components/RefusalDetails";
+import { ConfigPendingBar } from "../components/ConfigPendingBar";
+import { assertRefreshed, isAppliedRefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
 
 type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "setup_overrides" | "operadores" | "feriados" | "indisponibilidades" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes" | "qualidade_dados";
 type ConfigGroup = "factory" | "articles" | "calendar" | "availability" | "engine";
 type SortDirection = "asc" | "desc";
-type UnavailabilityKind = "machine" | "tool" | "operator";
-type UnavailabilityCategory = "Avaria" | "Manutenção" | "Ensaio" | "Outra";
-type UnavailabilityForm = {
-  kind: UnavailabilityKind;
-  resource: string;
-  operatorKey: string;
-  start_at: string;
-  end_at: string;
-  category: UnavailabilityCategory;
-  count: number;
-  reason: string;
-};
 type UnavailabilityEditTarget = { source: "existing" | "addition"; id: string };
 type UnavailabilityRow = UnavailabilityForm & {
   id: string;
+  /** The pending list line behind this row, when there is one. */
+  draftItemId?: string;
   kindLabel: string;
   resourceLabel: string;
   status: { label: string; color: string };
   draftState: "unchanged" | "edited" | "added" | "removed";
 };
+
+/** Stages one change in the page-wide list; returns nothing, never saves. */
+type Stage = (change: DraftChange, label?: string) => void;
 
 const CONFIG_GROUPS: { id: ConfigGroup; label: string; sections: { id: Section; label: string }[] }[] = [
   { id: "factory", label: "Fábrica", sections: [
@@ -96,7 +90,7 @@ const CONFIG_GROUPS: { id: ConfigGroup; label: string; sections: { id: Section; 
 ];
 
 const GROUP_HELP: Record<ConfigGroup, string> = {
-  factory: "Define os recursos que existem na fábrica, os turnos e as pessoas disponíveis. As alterações só entram no plano depois de Guardar.",
+  factory: "Define os recursos que existem na fábrica, os turnos e as pessoas disponíveis. Cada alteração entra na lista no topo da página e só muda o plano depois de Aplicar.",
   articles: "Consulta ferramentas e referências vindas do ISOP e guarda apenas as exceções necessárias entre carregamentos.",
   calendar: "Regista dias fechados e dias de trabalho extra que alteram o calendário fabril.",
   availability: "Regista indisponibilidades com início e fim exatos para o planeador não usar recursos indisponíveis.",
@@ -158,31 +152,14 @@ const emptyUnavailability = (
 
 const datetimeLocalValue = (value?: string) => value ? value.slice(0, 16) : "";
 
-const unavailabilityPayload = (form: UnavailabilityForm, id?: string) => {
-  const payload: Record<string, unknown> = {
-    ...(id ? { id } : {}),
-    kind: form.kind,
-    start_at: form.start_at,
-    end_at: form.end_at,
-    category: form.category,
-    reason: form.reason,
-  };
-  if (form.kind === "operator") {
-    const parts = form.operatorKey.trim().split(/\s+/);
-    payload.shift = parts.pop() ?? "";
-    payload.group = parts.join(" ");
-    payload.count = form.count;
-  } else {
-    payload.resource = form.resource;
-  }
-  return payload;
-};
-
 type ReplanFollowup = {
   reason: string;
   changes: string[];
   successMessage: string;
-  onSuccess: () => void;
+  /** Started by «Aplicar» on the pending list: apply as soon as it is ready. */
+  auto: boolean;
+  /** Score before the change, for the delta shown after applying. */
+  previousScore?: Score | null;
 };
 
 function formatElapsedTime(totalSeconds: number) {
@@ -432,101 +409,47 @@ const TUNABLES: { key: string; label: string; type: "number" | "boolean" | "sele
 
 // ── ParametrosEditor ─────────────────────────────────────────────
 
-function ParametrosEditor({ config, onSaved, onDelta }: {
+function ParametrosEditor({ config, items, stage, unstage, locked }: {
   config: FactoryConfig;
-  onSaved: (c: FactoryConfig) => void;
-  onDelta: (prev: Score, curr: Score) => void;
+  items: DraftItem[];
+  stage: Stage;
+  unstage: (id: string) => void;
+  locked: boolean;
 }) {
-  const { confirm, prompt } = useConfirm();
-  const ask = justificationAsker(prompt);
   const isSimulated = useDataStore((s) => s.isSimulated);
-  const refreshAll = useDataStore((s) => s.refreshAll);
-  const [edits, setEdits] = useState<Record<string, unknown>>({});
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [activePreset, setActivePreset] = useState<string | null>(null);
-
-  const hasChanges = Object.keys(edits).length > 0;
+  const edits = useMemo(() => Object.fromEntries(items.flatMap((item) => (
+    item.kind === "config_param" ? [[item.key, item.value]] : []
+  ))), [items]);
+  const pendingPreset = items.find((item) => item.kind === "preset");
+  const activePreset = pendingPreset?.kind === "preset" ? pendingPreset.name : null;
 
   const getValue = (key: string) => {
     if (key in edits) return edits[key];
     return (config as unknown as Record<string, unknown>)[key];
   };
 
-  const handleChange = (key: string, value: unknown, type: "number" | "boolean" | "select") => {
+  const handleChange = (key: string, label: string, value: unknown, type: "number" | "boolean" | "select") => {
     const original = (config as unknown as Record<string, unknown>)[key];
-    const parsed = type === "boolean" ? value : type === "select" ? value : Number(value);
+    const parsed = type === "number" ? Number(value) : value;
+    if (type === "number" && !Number.isFinite(parsed)) return;
     if (parsed === original) {
-      const next = { ...edits };
-      delete next[key];
-      setEdits(next);
-    } else {
-      setEdits({ ...edits, [key]: parsed });
+      unstage(`config_param:${key}`);
+      return;
     }
+    const shown = typeof parsed === "boolean"
+      ? (parsed ? "Sim" : "Não")
+      : TUNABLES.find((t) => t.key === key)?.options?.find((o) => o.value === parsed)?.label
+        ?? (typeof parsed === "number" ? parsed.toLocaleString("pt-PT") : String(parsed));
+    stage({ kind: "config_param", key, value: parsed }, `Parâmetro «${label}»: ${shown}`);
   };
 
-  const handleSave = async () => {
-    if (!hasChanges) return;
-    const submitted = { ...edits };
-    setSaving(true);
-    setMsg(null);
-    try {
-      const res = await sendWithGateApproval((approval) => updateConfig(submitted, approval), ask);
-      if (res === null) {
-        setMsg(NOT_APPLIED);
-        return;
-      }
-      setEdits((current) => Object.fromEntries(Object.entries(current).filter(
-        ([key, value]) => !(key in submitted) || value !== submitted[key],
-      )));
-      setActivePreset(null);
-      const fresh = await getConfig();
-      onSaved(fresh);
-      onDelta(res.score_previous, res.score);
-      assertRefreshed(await refreshAfterCommit(refreshAll), true);
-    } catch (e) {
-      setMsg(failureWithCauses(e));
-    } finally {
-      setSaving(false);
+  const handlePreset = (name: string) => {
+    if (activePreset === name) {
+      unstage("preset");
+      return;
     }
-  };
-
-  const handlePreset = async (name: string) => {
-    const submitted = { ...edits };
     const presetLabel = PRESETS.find((p) => p.id === name)?.label ?? name;
-    const approved = await confirm({
-      title: "Aplicar predefinição",
-      message: `Aplicar a predefinição «${presetLabel}»? Os parâmetros serão substituídos.`,
-      confirmLabel: "Aplicar predefinição",
-    });
-    if (!approved) return;
-    setSaving(true);
-    setMsg(null);
-    try {
-      const res = await sendWithGateApproval((approval) => applyPreset(name, approval), ask);
-      if (res === null) {
-        setMsg(NOT_APPLIED);
-        return;
-      }
-      setEdits((current) => Object.fromEntries(Object.entries(current).filter(
-        ([key, value]) => !(key in submitted) || value !== submitted[key],
-      )));
-      const fresh = await getConfig();
-      onSaved(fresh);
-      // Show the score delta so the planner sees the impact immediately
-      if (res.score && res.score_previous) {
-        onDelta(res.score_previous, res.score);
-      }
-      const simNote = res.simulation_active ? " — simulação mantida" : "";
-      const changedCount = res.changed.length;
-      setMsg(`Predefinição «${presetLabel}» aplicada (${changedCount} ${changedCount === 1 ? "parâmetro alterado" : "parâmetros alterados"})${simNote}`);
-      setActivePreset(name);
-      assertRefreshed(await refreshAfterCommit(refreshAll), true);
-    } catch (e) {
-      setMsg(failureWithCauses(e));
-    } finally {
-      setSaving(false);
-    }
+    stage({ kind: "preset", name }, `Predefinição «${presetLabel}» (substitui os parâmetros)`);
   };
 
   return (
@@ -546,15 +469,16 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
               <button
                 key={p.id}
                 onClick={() => handlePreset(p.id)}
-                disabled={saving}
+                disabled={locked}
+                aria-pressed={isActive}
                 style={{
                   background: isActive ? p.color + "30" : p.color + "18",
                   border: isActive ? `2px solid ${p.color}` : `1px solid ${p.color}50`,
                   borderRadius: 8, padding: isActive ? "4px 13px" : "5px 14px",
-                  cursor: "pointer",
+                  cursor: locked ? "default" : "pointer",
                   fontSize: 12, fontWeight: isActive ? 700 : 500,
                   color: p.color, fontFamily: "inherit",
-                  opacity: saving ? 0.5 : 1,
+                  opacity: locked ? 0.5 : 1,
                   boxShadow: isActive ? `0 0 10px ${p.color}25` : "none",
                   transition: "all 0.15s ease",
                 }}
@@ -582,7 +506,8 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
             <span style={{ fontSize: 12, color: T.secondary }}>{t.label}</span>
             {t.type === "boolean" ? (
               <button
-                onClick={() => handleChange(t.key, !getValue(t.key), "boolean")}
+                disabled={locked}
+                onClick={() => handleChange(t.key, t.label, !getValue(t.key), "boolean")}
                 style={{
                   background: getValue(t.key) ? T.green + "22" : T.red + "22",
                   border: `1px solid ${getValue(t.key) ? T.green : T.red}`,
@@ -594,8 +519,9 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
               </button>
             ) : t.type === "select" ? (
               <select
+                disabled={locked}
                 value={String(getValue(t.key) ?? "")}
-                onChange={(e) => handleChange(t.key, e.target.value, "select")}
+                onChange={(e) => handleChange(t.key, t.label, e.target.value, "select")}
                 style={{ ...inputStyle, width: 120, cursor: "pointer", textAlign: "left", borderColor: t.key in edits ? T.blue : T.border }}
               >
                 {t.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -603,27 +529,17 @@ function ParametrosEditor({ config, onSaved, onDelta }: {
             ) : (
               <input
                 type="number" step="any"
+                disabled={locked}
+                aria-label={t.label}
                 value={String(getValue(t.key) ?? "")}
-                onChange={(e) => handleChange(t.key, e.target.value, "number")}
+                onChange={(e) => handleChange(t.key, t.label, e.target.value, "number")}
                 style={{ ...inputStyle, borderColor: t.key in edits ? T.blue : T.border }}
               />
             )}
           </div>
           ))}
         </div>
-
-        <Divider />
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-          <button onClick={handleSave} disabled={!hasChanges || saving} style={saveBtnStyle(hasChanges, saving)}>
-            {saving ? "A guardar..." : "Guardar"}
-          </button>
-          {hasChanges && (
-            <button onClick={() => setEdits({})} style={btnStyle}>Cancelar</button>
-          )}
-        </div>
       </details>
-      {msg && <div style={{ marginTop: 10, fontSize: 11, color: msg.startsWith("Erro") ? T.red : T.green }}>{msg}</div>}
     </Card>
   );
 }
@@ -644,19 +560,9 @@ function metricDelta(res: { delta?: PlanningDelta } | null) {
   return `Lotes no prazo ${d.otd >= 0 ? "+" : ""}${d.otd.toFixed(1)} · Setups ${d.setups >= 0 ? "+" : ""}${d.setups}`;
 }
 
-const NOT_APPLIED = "Alteração não aplicada. O plano não mudou.";
-
-/** Ask the planner to justify a candidate that needs explicit approval. */
-function justificationAsker(prompt: ConfirmContextValue["prompt"]) {
-  return (gate: GateReport) => prompt({
-    title: "Aplicar alteração com exceções?",
-    message: approvalImpactMessage(gate),
-    inputLabel: "Justificação obrigatória",
-    placeholder: "Explica por que motivo este impacto é aceite…",
-    confirmLabel: "Confirmar e aplicar",
-    variant: "danger",
-    required: true,
-  });
+function sameRule(left: SkuPlanningRule, right: SkuPlanningRule) {
+  const normalized = (rule: SkuPlanningRule) => JSON.stringify(Object.entries(cleanRule(rule)).sort(([a], [b]) => a.localeCompare(b)));
+  return normalized(left) === normalized(right);
 }
 
 /** `failureMessage` followed by the refusal's concrete causes, for one-line messages. */
@@ -691,17 +597,22 @@ function apiErrorMessage(error: unknown) {
 function SkuPlanningEditor({
   config,
   ops,
-  onReload,
-  onDelta,
+  items,
+  stage,
+  unstage,
+  locked,
 }: {
   config: FactoryConfig;
   ops: EOp[];
-  onReload: () => Promise<void>;
-  onDelta: (prev: Score, curr: Score) => void;
+  items: DraftItem[];
+  stage: Stage;
+  unstage: (id: string) => void;
+  locked: boolean;
 }) {
-  const ask = justificationAsker(useConfirm().prompt);
   const [search, setSearch] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, SkuPlanningRule>>({});
+  const drafts = useMemo(() => Object.fromEntries(items.flatMap((item) => (
+    item.kind === "sku_planning" ? [[item.sku, item.rule]] : []
+  ))) as Record<string, SkuPlanningRule | null>, [items]);
   const [preview, setPreview] = useState<Record<string, SkuPlanningResponse>>({});
   const [busySku, setBusySku] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -724,15 +635,28 @@ function SkuPlanningEditor({
     });
   }, [ops, search, sort]);
 
-  const ruleFor = (sku: string) => drafts[sku] ?? config.sku_planning_rules?.[sku] ?? {};
+  const savedRule = (sku: string) => config.sku_planning_rules?.[sku] ?? {};
+  const ruleFor = (sku: string) => sku in drafts ? drafts[sku] ?? {} : savedRule(sku);
+  /** Stage the rule in the list, or drop the line when it equals what is saved. */
+  const stageRule = (sku: string, rule: SkuPlanningRule) => {
+    const cleaned = cleanRule(rule);
+    const hasSaved = Boolean(config.sku_planning_rules?.[sku]);
+    if (sameRule(cleaned, savedRule(sku))) unstage(`sku_planning:${sku}`);
+    else if (Object.keys(cleaned).length === 0) {
+      if (hasSaved) stage({ kind: "sku_planning", sku, rule: null });
+      else unstage(`sku_planning:${sku}`);
+    } else stage({ kind: "sku_planning", sku, rule: cleaned });
+  };
   const setField = (sku: string, field: keyof SkuPlanningRule, raw: string) => {
-    const base = { ...(drafts[sku] ?? config.sku_planning_rules?.[sku] ?? {}) };
+    const base = { ...ruleFor(sku) };
     if (raw === "") {
       delete base[field];
     } else {
-      base[field] = Number(raw);
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return;
+      base[field] = value;
     }
-    setDrafts({ ...drafts, [sku]: base });
+    stageRule(sku, base);
   };
 
   const runPreview = async (sku: string) => {
@@ -748,50 +672,9 @@ function SkuPlanningEditor({
     }
   };
 
-  const apply = async (sku: string) => {
-    setBusySku(sku);
-    setMsg(null);
-    try {
-      const res = await sendWithGateApproval(
-        (approval) => updateSkuPlanning(sku, cleanRule(ruleFor(sku)), approval), ask,
-      );
-      if (res === null) {
-        setMsg(NOT_APPLIED);
-        return;
-      }
-      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
-      const nextDrafts = { ...drafts };
-      delete nextDrafts[sku];
-      setDrafts(nextDrafts);
-      setMsg(`Aplicado ${sku}: ${metricDelta(res) ?? "plano recalculado"}`);
-      await onReload();
-    } catch (e) {
-      setMsg(failureWithCauses(e));
-    } finally {
-      setBusySku(null);
-    }
-  };
-
-  const reset = async (sku: string) => {
-    setBusySku(sku);
-    setMsg(null);
-    try {
-      const res = await sendWithGateApproval((approval) => resetSkuPlanning(sku, approval), ask);
-      if (res === null) {
-        setMsg(NOT_APPLIED);
-        return;
-      }
-      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
-      const nextDrafts = { ...drafts };
-      delete nextDrafts[sku];
-      setDrafts(nextDrafts);
-      setMsg(`Reposto para ISOP: ${sku}`);
-      await onReload();
-    } catch (e) {
-      setMsg(failureWithCauses(e));
-    } finally {
-      setBusySku(null);
-    }
+  const reset = (sku: string) => {
+    if (config.sku_planning_rules?.[sku]) stage({ kind: "sku_planning", sku, rule: null });
+    else unstage(`sku_planning:${sku}`);
   };
 
   const numberInput = (op: EOp, field: keyof SkuPlanningRule, width = 88) => {
@@ -800,6 +683,7 @@ function SkuPlanningEditor({
       <input
         type="number"
         min="0"
+        disabled={locked || op.active === false}
         step={field === "min_campaign_prod_min" ? "0.1" : "1"}
         value={rule[field] ?? ""}
         onChange={(e) => setField(op.sku, field, e.target.value)}
@@ -902,8 +786,14 @@ function SkuPlanningEditor({
                   <td style={tdStyle}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button disabled={isBusy || op.active === false} onClick={() => runPreview(op.sku)} style={btnStyle}>Rever impacto</button>
-                      <button disabled={isBusy || op.active === false} onClick={() => apply(op.sku)} style={{ ...btnStyle, color: T.blue }}>Aplicar</button>
-                      <button disabled={isBusy || (!config.sku_planning_rules?.[op.sku] && !(op.sku in drafts))} onClick={() => reset(op.sku)} style={{ ...btnStyle, color: T.red }}>ISOP</button>
+                      <button
+                        disabled={locked || isBusy || (!config.sku_planning_rules?.[op.sku] && !(op.sku in drafts)) || drafts[op.sku] === null}
+                        onClick={() => reset(op.sku)}
+                        title="Repor os valores do ISOP"
+                        style={{ ...btnStyle, color: T.red }}
+                      >
+                        ISOP
+                      </button>
                     </div>
                     {Object.keys(rule).length > 0 && (
                       <div style={{ fontSize: 10, color: T.tertiary, marginTop: 4 }}>regra ativa</div>
@@ -950,31 +840,75 @@ function subcontractInitialLeadTimes(config: FactoryConfig) {
   );
 }
 
+function subcontractsBody(config: FactoryConfig, selected: Set<string>, leadTimes: Record<string, number>): SubcontractsBody {
+  const companies = [
+    ...(config.subcontract_companies ?? []).filter((c) => c.id !== SUBCONTRACT_COMPANY.id),
+    SUBCONTRACT_COMPANY,
+  ];
+  const sku_subcontracts = Object.fromEntries(
+    [...selected].sort().map((sku) => [
+      sku,
+      {
+        enabled: true,
+        company_id: SUBCONTRACT_COMPANY.id,
+        lead_time_days: workdaysToCalendarDays(leadTimes[sku] ?? DEFAULT_SUBCONTRACT_WORKDAYS),
+        lead_time_workdays: leadTimes[sku] ?? DEFAULT_SUBCONTRACT_WORKDAYS,
+        buffer_days: 0,
+      },
+    ]),
+  );
+  return { companies, sku_subcontracts };
+}
+
+/** Selection and lead times shown: the pending list's version, else the saved one. */
+function subcontractDraftState(config: FactoryConfig, pending: SubcontractsBody | null) {
+  if (!pending) {
+    return { selected: subcontractInitialSelection(config), leadTimes: subcontractInitialLeadTimes(config) };
+  }
+  return {
+    selected: new Set(Object.keys(pending.sku_subcontracts)),
+    leadTimes: {
+      ...subcontractInitialLeadTimes(config),
+      ...Object.fromEntries(Object.entries(pending.sku_subcontracts).map(([sku, rule]) => [
+        sku, Number(rule.lead_time_workdays ?? DEFAULT_SUBCONTRACT_WORKDAYS),
+      ])),
+    },
+  };
+}
+
 function SubcontractEditor({
   config,
   ops,
-  onReload,
-  onDelta,
+  items,
+  stage,
+  unstage,
+  locked,
 }: {
   config: FactoryConfig;
   ops: EOp[];
-  onReload: () => Promise<void>;
-  onDelta: (prev: Score, curr: Score) => void;
+  items: DraftItem[];
+  stage: Stage;
+  unstage: (id: string) => void;
+  locked: boolean;
 }) {
-  const ask = justificationAsker(useConfirm().prompt);
+  const pendingItem = items.find((item) => item.kind === "subcontracts");
+  const pending = pendingItem?.kind === "subcontracts" ? pendingItem.body : null;
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(() => subcontractInitialSelection(config));
-  const [leadTimes, setLeadTimes] = useState<Record<string, number>>(() => subcontractInitialLeadTimes(config));
-  const [busy, setBusy] = useState<"preview" | "save" | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => subcontractDraftState(config, pending).selected);
+  const [leadTimes, setLeadTimes] = useState<Record<string, number>>(() => subcontractDraftState(config, pending).leadTimes);
+  const [busy, setBusy] = useState<"preview" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [previewDelta, setPreviewDelta] = useState<PlanningDelta | null>(null);
   const [sort, setSort] = useState<"selected" | "sku" | "client" | "demand" | "lead" | "source">("selected");
 
   useEffect(() => {
-    setSelected(subcontractInitialSelection(config));
-    setLeadTimes(subcontractInitialLeadTimes(config));
+    // A new saved configuration (after Aplicar) or a line removed from the
+    // pending list resets the editor to what is now pending or saved.
+    const next = subcontractDraftState(config, pending);
+    setSelected(next.selected);
+    setLeadTimes(next.leadTimes);
     setPreviewDelta(null);
-  }, [config]);
+  }, [config, pending]);
 
   const visible = useMemo(() => {
     const q = search.toLowerCase();
@@ -994,64 +928,47 @@ function SubcontractEditor({
       });
   }, [leadTimes, ops, search, selected, sort]);
 
+  /** Stage the whole subcontract selection, or drop the line when it equals what is saved. */
+  const stageSelection = (nextSelected: Set<string>, nextLeadTimes: Record<string, number>) => {
+    if (locked) return;
+    setSelected(nextSelected);
+    setLeadTimes(nextLeadTimes);
+    setPreviewDelta(null);
+    const savedSelected = subcontractInitialSelection(config);
+    const saved = subcontractsBody(config, savedSelected, subcontractInitialLeadTimes(config));
+    const body = subcontractsBody(config, nextSelected, nextLeadTimes);
+    if (JSON.stringify(body) === JSON.stringify(saved)) {
+      unstage("subcontracts");
+      return;
+    }
+    const added = [...nextSelected].filter((sku) => !savedSelected.has(sku)).sort();
+    const removed = [...savedSelected].filter((sku) => !nextSelected.has(sku)).sort();
+    const changedLead = [...nextSelected]
+      .filter((sku) => savedSelected.has(sku)
+        && body.sku_subcontracts[sku]?.lead_time_workdays !== saved.sku_subcontracts[sku]?.lead_time_workdays)
+      .sort();
+    const parts = [
+      added.length ? `subcontratar ${added.join(", ")}` : "",
+      removed.length ? `deixar de subcontratar ${removed.join(", ")}` : "",
+      ...changedLead.map((sku) => `${sku} com ${body.sku_subcontracts[sku].lead_time_workdays} dias úteis`),
+    ].filter(Boolean);
+    stage({ kind: "subcontracts", body }, `Subcontratações: ${parts.join(" · ") || "antecedências alteradas"}`);
+  };
+
   const toggle = (sku: string) => {
     const next = new Set(selected);
     if (next.has(sku)) next.delete(sku);
     else next.add(sku);
-    setSelected(next);
-    setPreviewDelta(null);
-  };
-
-  const bodyFor = () => {
-    const companies = [
-      ...(config.subcontract_companies ?? []).filter((c) => c.id !== SUBCONTRACT_COMPANY.id),
-      SUBCONTRACT_COMPANY,
-    ];
-    const sku_subcontracts = Object.fromEntries(
-      [...selected].sort().map((sku) => [
-        sku,
-        {
-          enabled: true,
-          company_id: SUBCONTRACT_COMPANY.id,
-          lead_time_days: workdaysToCalendarDays(leadTimes[sku] ?? DEFAULT_SUBCONTRACT_WORKDAYS),
-          lead_time_workdays: leadTimes[sku] ?? DEFAULT_SUBCONTRACT_WORKDAYS,
-          buffer_days: 0,
-        },
-      ]),
-    );
-    return {
-      companies,
-      sku_subcontracts,
-    };
+    stageSelection(next, leadTimes);
   };
 
   const runPreview = async () => {
     setBusy("preview");
     setMsg(null);
     try {
-      const res = await previewSubcontracts(bodyFor());
+      const res = await previewSubcontracts(subcontractsBody(config, selected, leadTimes));
       setPreviewDelta(res.delta ?? null);
       setMsg(`Impacto revisto: ${metricDelta(res) ?? "plano recalculado"}`);
-    } catch (e) {
-      setMsg(failureWithCauses(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const save = async () => {
-    setBusy("save");
-    setMsg(null);
-    try {
-      const res = await sendWithGateApproval((approval) => updateSubcontracts(bodyFor(), approval), ask);
-      if (res === null) {
-        setMsg(NOT_APPLIED);
-        return;
-      }
-      if (res.score_previous && res.score) onDelta(res.score_previous, res.score);
-      setPreviewDelta(res.delta ?? null);
-      setMsg(`${selected.size} referência${selected.size === 1 ? "" : "s"} guardada${selected.size === 1 ? "" : "s"} para subcontrato.`);
-      await onReload();
     } catch (e) {
       setMsg(failureWithCauses(e));
     } finally {
@@ -1092,22 +1009,6 @@ function SubcontractEditor({
         <button type="button" disabled={busy !== null} onClick={runPreview} style={btnStyle}>
           {busy === "preview" ? "A calcular..." : "Rever impacto"}
         </button>
-        <button type="button" disabled={busy !== null} onClick={save} style={{ ...btnStyle, color: T.blue }}>
-          {busy === "save" ? "A guardar..." : "Guardar alterações"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => {
-            setSelected(subcontractInitialSelection(config));
-            setLeadTimes(subcontractInitialLeadTimes(config));
-            setPreviewDelta(null);
-            setMsg(null);
-          }}
-          style={btnStyle}
-        >
-          Cancelar
-        </button>
         {previewDelta && <span style={{ fontSize: 12, color: T.secondary }}>{metricDelta({ delta: previewDelta })}</span>}
       </div>
       {msg && <div style={{ fontSize: 12, color: msg.startsWith("Erro") ? T.red : T.green }}>{msg}</div>}
@@ -1132,6 +1033,8 @@ function SubcontractEditor({
                     <input
                       type="checkbox"
                       checked={active}
+                      disabled={locked}
+                      aria-label={`Subcontratar ${op.sku}`}
                       onChange={() => toggle(op.sku)}
                       style={{ width: 16, height: 16, cursor: "pointer" }}
                     />
@@ -1152,11 +1055,13 @@ function SubcontractEditor({
                       type="number"
                       min="0"
                       step="1"
+                      disabled={locked}
                       value={leadTimes[op.sku] ?? DEFAULT_SUBCONTRACT_WORKDAYS}
-                      onChange={(event) => setLeadTimes({
-                        ...leadTimes,
-                        [op.sku]: Math.max(0, Number(event.target.value)),
-                      })}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (!Number.isFinite(value)) return;
+                        stageSelection(selected, { ...leadTimes, [op.sku]: Math.max(0, Math.trunc(value)) });
+                      }}
                       aria-label={`Antecedência em dias úteis para ${op.sku}`}
                       style={{ ...inputStyle, width: 90 }}
                     />
@@ -1174,7 +1079,7 @@ function SubcontractEditor({
 // ── Main ConfigPage ──────────────────────────────────────────────
 
 export function ConfigPage() {
-  const { confirm, prompt } = useConfirm();
+  const { prompt } = useConfirm();
   const refreshAll = useDataStore((s) => s.refreshAll);
   const setPage = useAppStore((s) => s.setPage);
   const [config, setConfig] = useState<FactoryConfig | null>(null);
@@ -1192,17 +1097,33 @@ export function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [delta, setDelta] = useState<{ prev: Score; curr: Score } | null>(null);
 
-  // Operators inline edit state
-  const [opEdits, setOpEdits] = useState<Record<string, number>>({});
-  const opHasChanges = Object.keys(opEdits).length > 0;
+  // Page-wide pending list (decisão de 16/10/2026): every plan-input edit is
+  // staged here and applied together by one replan job.
+  const draftItems = useConfigDraftStore((s) => s.items);
+  const draftApplying = useConfigDraftStore((s) => s.applying);
+  const draftLines = useMemo(() => draftItems.map((item) => ({ id: item.id, text: item.label })), [draftItems]);
+  const draftById = useMemo(() => new Map(draftItems.map((item) => [item.id, item])), [draftItems]);
+  const draftValues = useMemo(() => {
+    const oee: Record<string, number | null> = {};
+    const groups: Record<string, string> = {};
+    const active: Record<string, boolean> = {};
+    const tools: Record<string, ToolDraft> = {};
+    const operators: Record<string, number> = {};
+    const crews: Record<string, number> = {};
+    let shifts: FactoryConfig["shifts"] | null = null;
+    for (const item of draftItems) {
+      if (item.kind === "machine_oee") oee[item.machine] = item.value;
+      else if (item.kind === "machine_group") groups[item.machine] = item.value;
+      else if (item.kind === "machine_active") active[item.machine] = item.value;
+      else if (item.kind === "tool_update") tools[item.tool] = item.value;
+      else if (item.kind === "operators") operators[item.key] = item.value;
+      else if (item.kind === "setup_crews") crews[item.group] = item.value;
+      else if (item.kind === "shifts") shifts = item.value;
+    }
+    return { oee, groups, active, tools, operators, crews, shifts };
+  }, [draftItems]);
+  const { oee: oeeEdits, groups: machineGroupEdits, active: machineActiveEdits, tools: toolEdits, operators: opEdits, crews: crewEdits, shifts: shiftEdits } = draftValues;
 
-  // Tools inline edit state
-  const [toolEdits, setToolEdits] = useState<Record<string, { setup_hours?: number; alt?: string | null }>>({});
-  const [oeeEdits, setOeeEdits] = useState<Record<string, number | null>>({});
-  const [machineGroupEdits, setMachineGroupEdits] = useState<Record<string, string>>({});
-  const [machineActiveEdits, setMachineActiveEdits] = useState<Record<string, boolean>>({});
-  const [shiftEdits, setShiftEdits] = useState<FactoryConfig["shifts"] | null>(null);
-  const [crewEdits, setCrewEdits] = useState<Record<string, number>>({});
   const [replanMessage, setReplanMessageText] = useState<string | null>(null);
   // Concrete causes of a refused change, shown under the message (15/10/2026).
   const [replanCauses, setReplanCauses] = useState<string[]>([]);
@@ -1220,14 +1141,12 @@ export function ConfigPage() {
   const followedJob = useRef<{ job: ReplanJob; followup: ReplanFollowup } | null>(null);
   const cancelling = useRef(false);
   const readOnly = useAppStore((s) => s.accessMode === "view");
-  const [pendingReplan, setPendingReplan] = useState<{
-    job: ReplanJob;
-    reason: string;
-    changes: string[];
-    successMessage: string;
-    onSuccess: () => void;
-  } | null>(null);
+  // A candidate this page did not start (e.g. resumed from another screen):
+  // it keeps its own review card. Candidates from the pending list apply alone.
+  const [pendingReplan, setPendingReplan] = useState<({ job: ReplanJob } & ReplanFollowup) | null>(null);
   const pendingReplanBlocked = pendingReplan?.job.result?.gate_report.apply_decision === "blocked";
+  /** No staging while read-only or while the list is being applied. */
+  const locked = readOnly || saving || draftApplying;
   const [machineSearch, setMachineSearch] = useState("");
   const [toolSearch, setToolSearch] = useState("");
   const [unavailabilitySearch, setUnavailabilitySearch] = useState("");
@@ -1249,15 +1168,20 @@ export function ConfigPage() {
   // Persistent setup and calendar exceptions
   const [setupOverride, setSetupOverride] = useState<SetupOverride>({ sku: "", machine: "", hours: 0.5 });
   const [unavailability, setUnavailability] = useState<UnavailabilityForm>(emptyUnavailability());
-  const [unavailabilityEdits, setUnavailabilityEdits] = useState<Record<string, UnavailabilityForm>>({});
-  const [unavailabilityAdditions, setUnavailabilityAdditions] = useState<Record<string, UnavailabilityForm>>({});
-  const [unavailabilityRemovals, setUnavailabilityRemovals] = useState<string[]>([]);
   const [unavailabilityEditTarget, setUnavailabilityEditTarget] = useState<UnavailabilityEditTarget | null>(null);
-  const unavailabilityDraftCounter = useRef(0);
 
   // Gemeas modal state
   const [twinModal, setTwinModal] = useState(false);
   const [twinForm, setTwinForm] = useState({ tool_id: "", sku_a: "", sku_b: "" });
+
+  const stage: Stage = useCallback((change, label) => {
+    if (locked) return;
+    useConfigDraftStore.getState().upsert(change, label);
+  }, [locked]);
+  const unstage = useCallback((id: string) => {
+    if (locked) return;
+    useConfigDraftStore.getState().remove(id);
+  }, [locked]);
 
   const loadConfiguration = useCallback(async () => {
     const generation = ++configurationGeneration.current;
@@ -1358,61 +1282,99 @@ export function ConfigPage() {
       });
   }, [ops, opsSearch, opsSort, opsSortDir]);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const outcome = await refreshAfterCommit(refreshAll);
     assertRefreshed(outcome, true);
     await loadConfiguration();
-  };
+  }, [loadConfiguration, refreshAll]);
 
-  const showDelta = (prev: Score, curr: Score) => setDelta({ prev, curr });
+  /** After a successful apply: drop the applied lines, show the delta, reload. */
+  const finishAppliedDraft = useCallback(async (
+    job: ReplanJob,
+    followup: ReplanFollowup,
+    stillFollowing: () => boolean,
+  ) => {
+    useConfigDraftStore.getState().finishApply(true);
+    if (!stillFollowing()) return;
+    setReplanMessage(job.warnings.length
+      ? `Alterações aplicadas com ${job.warnings.length} aviso(s).`
+      : followup.successMessage);
+    const score = job.result?.score;
+    if (followup.previousScore && score) setDelta({ prev: followup.previousScore, curr: score });
+    try {
+      await reload();
+    } catch (failure) {
+      if (stillFollowing()) setReplanMessage(failureMessage(failure), refusalCauses(failure));
+    }
+  }, [reload, setReplanMessage]);
 
-  const describeConfigUpdates = (updates: Record<string, unknown>): string[] => {
-    const changes: string[] = [];
-    const machineOee = updates.machine_oee as Record<string, number | null> | undefined;
-    if (machineOee) {
-      for (const [machineId, value] of Object.entries(machineOee)) {
-        changes.push(`${machineId}: OEE ${value === null ? "base" : value}`);
+  /**
+   * A candidate from the pending list is applied as soon as it is ready
+   * (decisão de 16/10/2026). Only a candidate that needs approval asks once
+   * for the justification; a blocked or declined candidate applies nothing
+   * and the list stays for the planner to correct.
+   */
+  const applyReadyDraftJob = useCallback(async (
+    job: ReplanJob,
+    followup: ReplanFollowup,
+    stillFollowing: () => boolean,
+  ) => {
+    const gate = job.result?.gate_report;
+    const keepList = (message: string, causes: readonly string[] = []) => {
+      useConfigDraftStore.getState().finishApply(false);
+      // The candidate is of no further use; drop it so it is not resumed later.
+      void cancelReplan(job.id).catch(() => undefined);
+      if (stillFollowing()) setReplanMessage(message, causes);
+    };
+    if (gate?.apply_decision === "blocked") {
+      keepList(`Erro: ${job.message || "o plano calculado não pode ser aplicado."}`, job.causes ?? []);
+      return;
+    }
+    let approval: { reason: string; author: string } | undefined;
+    if (gate?.requires_approval) {
+      const reasons = gate.approval_reasons?.length
+        ? gate.approval_reasons.map((reason) => `• ${gateReasonLabel(reason, gate)}`).join("\n")
+        : "• O plano proposto tem exceções que precisam da aprovação do planeador.";
+      const score = job.result?.score;
+      const impact = [
+        `Lotes no prazo: ${score?.otd?.toFixed?.(1) ?? score?.otd ?? "-"}%`,
+        `Lotes atrasados: ${score?.tardy_count ?? 0}`,
+        `Avisos: ${job.warnings.length}`,
+      ].join(" · ");
+      const justification = await prompt({
+        title: "Aplicar plano com exceções?",
+        message: `Motivos para aprovação:\n${reasons}\n\nImpacto previsto:\n${impact}\n\nIndica a justificação para aplicar este plano.`,
+        inputLabel: "Justificação obrigatória",
+        placeholder: "Explica por que motivo este impacto é aceite…",
+        confirmLabel: "Confirmar e aplicar",
+        variant: "danger",
+      });
+      // Left the page with the question open: the candidate is resumed on return.
+      if (!stillFollowing()) return;
+      if (justification === null) {
+        keepList("Alterações não aplicadas. O plano não mudou e a lista mantém-se.");
+        return;
       }
+      approval = { reason: justification, author: "planeador" };
     }
-    const machineGroups = updates.machine_groups as Record<string, string> | undefined;
-    if (machineGroups) {
-      for (const [machineId, value] of Object.entries(machineGroups)) {
-        changes.push(`${machineId}: grupo ${value}`);
+    setSaving(true);
+    setReplanMessage("A aplicar as alterações…");
+    try {
+      const applied = await applyReplan(job.id, approval, job.base_revision);
+      await finishAppliedDraft({ ...applied.job, result: applied.job.result ?? job.result }, followup, stillFollowing);
+    } catch (failure) {
+      // A lost answer is ambiguous: the job itself says whether it was applied.
+      let current: ReplanJob | null = null;
+      try { current = (await getReplan(job.id)).job; } catch { /* Treated as not applied. */ }
+      if (current?.status === "completed") {
+        await finishAppliedDraft({ ...current, result: current.result ?? job.result }, followup, stillFollowing);
+      } else {
+        keepList(failureMessage(failure), refusalCauses(failure));
       }
+    } finally {
+      if (stillFollowing()) setSaving(false);
     }
-    const machineActive = updates.machine_active as Record<string, boolean> | undefined;
-    if (machineActive) {
-      for (const [machineId, value] of Object.entries(machineActive)) {
-        changes.push(`${machineId}: ${value ? "ativa" : "inativa"}`);
-      }
-    }
-    if (updates.tool_updates) changes.push("Ferramentas alteradas");
-    if (updates.shifts) changes.push("Turnos alterados");
-    if (updates.setup_crews_by_group) changes.push("Equipas de setup alteradas");
-    const addedUnavailability = updates.unavailability_additions as Array<Record<string, unknown>> | undefined;
-    if (addedUnavailability) {
-      for (const entry of addedUnavailability) {
-        const resource = String(entry.resource ?? `${entry.group ?? ""} ${entry.shift ?? ""}`).trim();
-        const period = `${String(entry.start_at ?? "-")} -> ${String(entry.end_at ?? "sem previsão")}`;
-        const category = String(entry.category ?? "Sem categoria");
-        const reason = String(entry.reason ?? "").trim() || "Sem motivo indicado";
-        changes.push(`Nova indisponibilidade: ${resource} · ${period} · Categoria: ${category} · Motivo: ${reason}`);
-      }
-    }
-    const removedUnavailability = updates.unavailability_removals as string[] | undefined;
-    if (removedUnavailability?.length) {
-      changes.push(`${removedUnavailability.length} indisponibilidade(s) a remover`);
-    }
-    const updatedUnavailability = updates.unavailability_updates as Array<Record<string, unknown>> | undefined;
-    if (updatedUnavailability) {
-      for (const entry of updatedUnavailability) {
-        const resource = String(entry.resource ?? `${entry.group ?? ""} ${entry.shift ?? ""}`).trim();
-        const period = `${String(entry.start_at ?? "-")} -> ${String(entry.end_at ?? "sem previsão")}`;
-        changes.push(`Indisponibilidade editada: ${resource} · ${period}`);
-      }
-    }
-    return changes.length ? changes : ["Alterações de configuração"];
-  };
+  }, [finishAppliedDraft, prompt, setReplanMessage]);
 
   const followReplanJob = useCallback(async (
     initialJob: ReplanJob,
@@ -1424,6 +1386,7 @@ export function ConfigPage() {
     const stillFollowing = () => mounted.current && replanPollGeneration.current === generation;
     if (!stillFollowing()) return;
     followedJob.current = { job, followup };
+    const keepDraft = () => { if (followup.auto) useConfigDraftStore.getState().finishApply(false); };
 
     if (job.status === "queued" || job.status === "running") {
       setPendingReplan((current) => current?.job.id === job.id ? null : current);
@@ -1448,6 +1411,7 @@ export function ConfigPage() {
       } catch (failure) {
         if (!stillFollowing()) return;
         if (failure instanceof ApiError && [403, 404, 410].includes(failure.status)) {
+          keepDraft();
           setActiveReplanJobId(null);
           setSaving(false);
           setReplanConnectionMessage(null);
@@ -1474,10 +1438,14 @@ export function ConfigPage() {
     setSaving(false);
     if (job.status !== "ready") setPendingReplan((current) => current?.job.id === job.id ? null : current);
     if (job.status === "cancelled") {
-      setReplanMessage("Pedido cancelado. O plano não foi alterado.");
+      keepDraft();
+      setReplanMessage(followup.auto
+        ? "Pedido cancelado. O plano não foi alterado e a lista mantém-se."
+        : "Pedido cancelado. O plano não foi alterado.");
       return;
     }
     if (job.status === "failed") {
+      keepDraft();
       setReplanMessage(
         `Erro: ${jobFailureText(job, "O replaneamento falhou. O plano não foi alterado.")}`,
         job.causes ?? [],
@@ -1486,42 +1454,69 @@ export function ConfigPage() {
     }
     if (job.status === "completed") {
       setPendingReplan(null);
+      if (followup.auto) {
+        await finishAppliedDraft(job, followup, stillFollowing);
+        return;
+      }
       setReplanMessage("Alteração já aplicada. A atualizar o plano.");
       try {
-        await loadConfiguration();
-        assertRefreshed(await refreshAfterCommit(refreshAll), true);
+        await reload();
       } catch (failure) {
         if (stillFollowing()) setReplanMessage(failureMessage(failure), refusalCauses(failure));
       }
       return;
     }
     if (job.status !== "ready") {
+      keepDraft();
       setReplanMessage("Erro: o plano proposto não ficou pronto para aplicar.");
+      return;
+    }
+    if (followup.auto) {
+      await applyReadyDraftJob(job, followup, stillFollowing);
       return;
     }
     setPendingReplan({ job, ...followup });
     setReplanMessage(job.result?.gate_report.apply_decision === "blocked"
       ? job.message
       : "Candidato pronto. Revê as alterações antes de aplicar.");
-  }, [loadConfiguration, refreshAll, setReplanMessage]);
+  }, [applyReadyDraftJob, finishAppliedDraft, reload, setReplanMessage]);
 
   useEffect(() => {
     let disposed = false;
     const generation = replanPollGeneration.current;
+    const drafts = useConfigDraftStore.getState();
+    // «Aplicar» was pressed but the job never got an id: nothing is running.
+    if (drafts.applying && !drafts.applyingJobId) drafts.finishApply(false);
+    const ownJobId = drafts.applying ? drafts.applyingJobId : null;
+    const ownFollowup = (reason: string): ReplanFollowup => ({
+      reason,
+      changes: useConfigDraftStore.getState().items.map((item) => item.label),
+      successMessage: "Alterações aplicadas e plano atualizado.",
+      auto: true,
+      previousScore: useDataStore.getState().score,
+    });
+    const current = () => !disposed && replanPollGeneration.current === generation;
     void getReplans(true)
       .then((response) => {
-        if (disposed || replanPollGeneration.current !== generation) return;
+        if (!current()) return;
         const job = response.jobs.find((candidate) => (
           candidate.status === "queued"
           || candidate.status === "running"
           || candidate.status === "ready"
         ));
+        if (ownJobId && job?.id !== ownJobId) {
+          // The list's job is no longer pending: its own state says how it ended.
+          void getReplan(ownJobId)
+            .then(({ job: own }) => { if (current()) void followReplanJob(own, ownFollowup(own.reason)); })
+            .catch(() => useConfigDraftStore.getState().finishApply(false));
+          return;
+        }
         if (!job) return;
-        void followReplanJob(job, {
+        void followReplanJob(job, job.id === ownJobId ? ownFollowup(job.reason) : {
           reason: job.reason,
           changes: [`Alteração pendente: ${job.reason}`],
           successMessage: "Alteração guardada e plano atualizado.",
-          onSuccess: () => undefined,
+          auto: false,
         });
       })
       .catch(() => {
@@ -1532,50 +1527,26 @@ export function ConfigPage() {
     };
   }, [followReplanJob]);
 
-  // Generic save wrapper for synchronous plan writes. A candidate that needs
-  // explicit approval is shown with its impact; the planner's justification
-  // applies exactly that candidate, cancelling applies nothing.
-  const withSave = async (
-    fn: (approval?: GateApproval) => Promise<{ score?: Score; score_anterior?: Score; score_previous?: Score; [k: string]: unknown }>,
-  ) => {
-    if (readOnly) return false;
-    setSaving(true);
-    // A new save starts clean: an earlier refusal and its causes do not linger.
-    setReplanMessage(null);
-    try {
-      const res = await sendWithGateApproval(fn, justificationAsker(prompt));
-      if (res === null) {
-        setReplanMessage(NOT_APPLIED);
-        return false;
-      }
-      await reload();
-      const previous = res.score_anterior ?? res.score_previous;
-      if (res.score && previous) {
-        showDelta(previous as Score, res.score as Score);
-      }
-      return true;
-    } catch (e) {
-      if (isAppliedRefreshError(e)) {
-        setReplanMessage(e.message);
-        return true;
-      }
-      setReplanMessage(failureMessage(e), refusalCauses(e));
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const runBackgroundConfigSave = async (
-    reason: string,
-    configUpdates: Record<string, unknown>,
-    successMessage: string,
-    onSuccess: () => void,
-  ) => {
-    if (readOnly || saving || cancelling.current) return;
+  /** «Aplicar»: one replan job with every pending change; applied when ready. */
+  const applyDraft = async () => {
+    if (readOnly || saving || cancelling.current || pendingReplan || !config) return;
+    const drafts = useConfigDraftStore.getState();
+    if (drafts.applying || drafts.count === 0) return;
+    const items = drafts.beginApply();
+    const configUpdates = buildConfigUpdates(items, config);
+    const reason = items.length === 1 ? items[0].label : `${items.length} alterações de configuração`;
+    const followup: ReplanFollowup = {
+      reason,
+      changes: items.map((item) => item.label),
+      successMessage: items.length === 1
+        ? "Alteração aplicada e plano atualizado."
+        : `${items.length} alterações aplicadas e plano atualizado.`,
+      auto: true,
+      previousScore: useDataStore.getState().score,
+    };
     const generation = ++replanPollGeneration.current;
     setSaving(true);
-    setPendingReplan(null);
+    setDelta(null);
     setReplanMessage("A colocar o replaneamento em fila…");
     setReplanConnectionMessage(null);
     setReplanStartedAt(Date.now());
@@ -1584,22 +1555,28 @@ export function ConfigPage() {
       const started = await startReplan({
         reason,
         config_updates: configUpdates,
-        expected_revision: config?.plan_revision,
+        expected_revision: config.plan_revision,
       });
+      // Recorded even if the page was left: the job is resumed on return.
+      useConfigDraftStore.getState().setApplyingJob(started.job.id);
       if (!mounted.current || generation !== replanPollGeneration.current) return;
-      await followReplanJob(started.job, {
-        reason,
-        changes: describeConfigUpdates(configUpdates),
-        successMessage,
-        onSuccess,
-      }, generation);
+      await followReplanJob(started.job, followup, generation);
     } catch (failure) {
+      useConfigDraftStore.getState().finishApply(false);
       if (!mounted.current || generation !== replanPollGeneration.current) return;
       setReplanMessage(failureMessage(failure), refusalCauses(failure));
       setActiveReplanJobId(null);
       setReplanConnectionMessage(null);
       setSaving(false);
     }
+  };
+
+  const discardDraft = () => {
+    if (locked) return;
+    useConfigDraftStore.getState().discard();
+    setUnavailabilityEditTarget(null);
+    setUnavailability((current) => emptyUnavailability(current.kind, current.category));
+    setReplanMessage(null);
   };
 
   const cancelTrackedReplan = async (jobId: string, fallback: { job: ReplanJob; followup: ReplanFollowup }) => {
@@ -1638,6 +1615,7 @@ export function ConfigPage() {
     await cancelTrackedReplan(pendingReplan.job.id, { job: pendingReplan.job, followup: pendingReplan });
   };
 
+  /** Applies a candidate this page did not start (resumed from elsewhere). */
   const applyPendingReplan = async () => {
     if (readOnly || saving || cancelling.current || !pendingReplan || pendingReplanBlocked) return;
     const generation = replanPollGeneration.current;
@@ -1675,7 +1653,6 @@ export function ConfigPage() {
       if (!mounted.current || generation !== replanPollGeneration.current) return;
       const job = applied.job;
       setReplanMessage(job.warnings.length ? `Guardado com ${job.warnings.length} aviso(s).` : pendingReplan.successMessage);
-      pendingReplan.onSuccess();
       setPendingReplan(null);
       await reload();
     } catch (failure) {
@@ -1683,50 +1660,6 @@ export function ConfigPage() {
     } finally {
       if (mounted.current && generation === replanPollGeneration.current) setSaving(false);
     }
-  };
-
-  const saveMachineDraft = async () => {
-    if (
-      Object.keys(oeeEdits).length === 0
-      && Object.keys(machineGroupEdits).length === 0
-      && Object.keys(machineActiveEdits).length === 0
-    ) return;
-    const deactivated = Object.entries(machineActiveEdits)
-      .filter(([, active]) => !active)
-      .map(([machineId]) => machineId);
-    if (deactivated.length > 0) {
-      const approved = await confirm({
-        title: "Desativar máquina",
-        message: `Desativar ${deactivated.join(", ")}? A máquina deixa de receber produção, o histórico é mantido e o plano será recalculado.`,
-        confirmLabel: "Desativar e recalcular",
-        variant: "danger",
-      });
-      if (!approved) return;
-    }
-    await runBackgroundConfigSave(
-      "Máquinas, grupos ou OEE alterados",
-      {
-        machine_oee: oeeEdits,
-        machine_groups: machineGroupEdits,
-        machine_active: machineActiveEdits,
-      },
-      "Máquinas guardadas e plano atualizado.",
-      () => {
-        setOeeEdits((current) => remainingDraft(current, oeeEdits));
-        setMachineGroupEdits((current) => remainingDraft(current, machineGroupEdits));
-        setMachineActiveEdits((current) => remainingDraft(current, machineActiveEdits));
-      },
-    );
-  };
-
-  const saveToolDraft = async () => {
-    if (Object.keys(toolEdits).length === 0) return;
-    await runBackgroundConfigSave(
-      "Ferramentas alteradas",
-      { tool_updates: toolEdits },
-      "Ferramentas guardadas e plano atualizado.",
-      () => setToolEdits((current) => remainingToolDraft(current, toolEdits)),
-    );
   };
 
   if (error) {
@@ -1819,22 +1752,24 @@ export function ConfigPage() {
       reason: entry.reason,
     }]),
   ];
+  const unavailabilityEdit = (id: string) => {
+    const item = draftById.get(`unavailability_update:${id}`);
+    return item?.kind === "unavailability_update" ? item.form : undefined;
+  };
   const unavailabilityRows: UnavailabilityRow[] = [
-    ...existingUnavailabilityForms.map(([id, original]) => rowFromForm(
-      id,
-      unavailabilityEdits[id] ?? original,
-      unavailabilityRemovals.includes(id)
-        ? "removed"
-        : unavailabilityEdits[id] ? "edited" : "unchanged",
-    )),
-    ...Object.entries(unavailabilityAdditions).map(([id, form]) => rowFromForm(id, form, "added")),
+    ...existingUnavailabilityForms.map(([id, original]) => {
+      const removed = draftById.has(`unavailability_remove:${id}`);
+      const edited = unavailabilityEdit(id);
+      return {
+        ...rowFromForm(id, edited ?? original, removed ? "removed" : edited ? "edited" : "unchanged"),
+        draftItemId: removed ? `unavailability_remove:${id}` : edited ? `unavailability_update:${id}` : undefined,
+      };
+    }),
+    ...draftItems.flatMap((item) => item.kind === "unavailability_add"
+      ? [{ ...rowFromForm(item.id, item.form, "added"), draftItemId: item.id }]
+      : []),
   ];
-  const unavailabilityHasChanges = (
-    Object.keys(unavailabilityEdits).length > 0
-    || Object.keys(unavailabilityAdditions).length > 0
-    || unavailabilityRemovals.length > 0
-  );
-  const unavailabilityDraftLocked = saving || pendingReplan !== null;
+  const unavailabilityDraftLocked = locked;
   const machineSource = new Map((catalog?.machines ?? []).map((item) => [item.id, item.source]));
   const toolSource = new Map((catalog?.tools ?? []).map((item) => [item.id, item.source]));
   const catalogTools = new Map((catalog?.tools ?? []).map((item) => [item.id, item]));
@@ -1884,6 +1819,7 @@ export function ConfigPage() {
     setUnavailability((current) => emptyUnavailability(current.kind, current.category));
   };
   const stageUnavailabilityForm = () => {
+    if (unavailabilityDraftLocked) return;
     const resourceSelected = unavailability.kind === "operator"
       ? unavailability.operatorKey
       : unavailability.resource;
@@ -1900,22 +1836,16 @@ export function ConfigPage() {
         return;
       }
     }
+    const form = { ...unavailability };
     if (unavailabilityEditTarget?.source === "existing") {
-      setUnavailabilityEdits((current) => ({
-        ...current,
-        [unavailabilityEditTarget.id]: { ...unavailability },
-      }));
+      stage({ kind: "unavailability_update", entryId: unavailabilityEditTarget.id, form });
     } else if (unavailabilityEditTarget?.source === "addition") {
-      setUnavailabilityAdditions((current) => ({
-        ...current,
-        [unavailabilityEditTarget.id]: { ...unavailability },
-      }));
+      const item = draftById.get(unavailabilityEditTarget.id);
+      if (item?.kind === "unavailability_add") stage({ kind: "unavailability_add", key: item.key, form });
     } else {
-      unavailabilityDraftCounter.current += 1;
-      const draftId = `draft-${unavailabilityDraftCounter.current}`;
-      setUnavailabilityAdditions((current) => ({ ...current, [draftId]: { ...unavailability } }));
+      stage({ kind: "unavailability_add", key: useConfigDraftStore.getState().nextKey(), form });
     }
-    setReplanMessage("Alterações por guardar. O plano ainda não foi recalculado.");
+    setReplanMessage(null);
     resetUnavailabilityEditor();
   };
   const editUnavailabilityRow = (entry: UnavailabilityRow) => {
@@ -1938,49 +1868,145 @@ export function ConfigPage() {
   const toggleUnavailabilityRemoval = (entry: UnavailabilityRow) => {
     if (unavailabilityDraftLocked) return;
     if (entry.draftState === "added") {
-      setUnavailabilityAdditions((current) => {
-        const next = { ...current };
-        delete next[entry.id];
-        return next;
-      });
-      if (unavailabilityEditTarget?.id === entry.id) resetUnavailabilityEditor();
+      unstage(entry.id);
+    } else if (entry.draftState === "removed") {
+      unstage(`unavailability_remove:${entry.id}`);
+    } else {
+      unstage(`unavailability_update:${entry.id}`);
+      stage(
+        { kind: "unavailability_remove", entryId: entry.id },
+        `Remover indisponibilidade: ${entry.kindLabel.toLowerCase()} ${entry.resourceLabel} · ${entry.start_at.replace("T", " ") || "—"}`,
+      );
+    }
+    if (unavailabilityEditTarget?.id === entry.id) resetUnavailabilityEditor();
+  };
+
+  // ── Staging helpers: each edit becomes (or replaces) one line in the list ──
+  const machineIdsPending = draftItems.flatMap((item) => item.kind === "machine_add" ? [item.machine.id] : []);
+  const stageMachineAddition = () => {
+    const machineId = newMachine.id.trim().toUpperCase();
+    if (!machineId) return;
+    if (machineId in config.machines || machineIdsPending.includes(machineId)) {
+      setReplanMessage(`Erro: a máquina ${machineId} já existe.`);
       return;
     }
-    setUnavailabilityRemovals((current) => current.includes(entry.id)
-      ? current.filter((id) => id !== entry.id)
-      : [...current, entry.id]);
-    if (unavailabilityEditTarget?.id === entry.id) resetUnavailabilityEditor();
-    setReplanMessage("Alterações por guardar. O plano ainda não foi recalculado.");
-  };
-  const cancelUnavailabilityDraft = () => {
-    setUnavailabilityEdits({});
-    setUnavailabilityAdditions({});
-    setUnavailabilityRemovals([]);
-    resetUnavailabilityEditor();
+    stage({ kind: "machine_add", machine: { id: machineId, group: newMachine.group, active: true } });
     setReplanMessage(null);
+    setNewMachine({ id: "", group: newMachine.group });
   };
-  const saveUnavailabilityDraft = () => {
-    if (!unavailabilityHasChanges || unavailabilityDraftLocked) return;
-    const updates = Object.entries(unavailabilityEdits)
-      .filter(([id]) => !unavailabilityRemovals.includes(id))
-      .map(([id, form]) => unavailabilityPayload(form, id));
-    const additions = Object.values(unavailabilityAdditions).map((form) => unavailabilityPayload(form));
-    const configUpdates: Record<string, unknown> = {};
-    if (unavailabilityRemovals.length) configUpdates.unavailability_removals = unavailabilityRemovals;
-    if (updates.length) configUpdates.unavailability_updates = updates;
-    if (additions.length) configUpdates.unavailability_additions = additions;
-    void runBackgroundConfigSave(
-      "Indisponibilidades alteradas",
-      configUpdates,
-      "Indisponibilidades guardadas e plano atualizado.",
-      () => {
-        setUnavailabilityEdits({});
-        setUnavailabilityAdditions({});
-        setUnavailabilityRemovals([]);
-        resetUnavailabilityEditor();
-      },
+  const stageToolField = (id: string, field: keyof ToolDraft, value: ToolDraft[keyof ToolDraft], original: ToolDraft[keyof ToolDraft]) => {
+    const next: ToolDraft = { ...toolEdits[id] };
+    if (value === original) delete next[field];
+    else (next as Record<string, unknown>)[field] = value;
+    if (Object.keys(next).length === 0) unstage(`tool:${id}`);
+    else stage({ kind: "tool_update", tool: id, value: next });
+  };
+  const shiftTime = (minutes: number) => `${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const stageShifts = (next: FactoryConfig["shifts"]) => {
+    const changed = next.filter((shift, index) => {
+      const saved = config.shifts[index];
+      return !saved || saved.label !== shift.label || saved.start_min !== shift.start_min || saved.end_min !== shift.end_min;
+    });
+    if (changed.length === 0) {
+      unstage("shifts");
+      return;
+    }
+    stage(
+      { kind: "shifts", value: next },
+      `Turnos: ${changed.map((shift) => `${shift.label} ${shiftTime(shift.start_min)}–${shiftTime(shift.end_min)}`).join(" · ")}`,
     );
   };
+  /** The latest pending change that touches this date, if any. */
+  const holidayChange = (date: string) => [...draftItems].reverse().find((item) => (
+    (item.kind === "holiday_add" || item.kind === "holiday_remove") && item.dates.includes(date)
+  ));
+  const holidayRangeDates = (from: string, to: string) => {
+    const start = new Date(`${from}T12:00:00Z`);
+    const end = new Date(`${to}T12:00:00Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return null;
+    const dates: string[] = [];
+    for (let day = start; day <= end && dates.length <= 366; day = new Date(day.getTime() + 86_400_000)) {
+      dates.push(day.toISOString().slice(0, 10));
+    }
+    return dates.length > 366 ? null : dates;
+  };
+  const stageHolidays = (kind: "holiday_add" | "holiday_remove", from: string, to = from) => {
+    const dates = holidayRangeDates(from, to);
+    if (!dates) {
+      setReplanMessage("Erro: a data inicial não pode ser posterior à data final (máximo 366 dias).");
+      return false;
+    }
+    // Undoing a pending single day removes its line instead of adding another.
+    if (dates.length === 1) {
+      const pending = draftById.get(`holiday:${dates[0]}..${dates[0]}`);
+      if (pending && pending.kind !== kind) {
+        unstage(pending.id);
+        return true;
+      }
+    }
+    stage({ kind, dates });
+    setReplanMessage(null);
+    return true;
+  };
+  const removeHolidayChip = (date: string) => {
+    const pending = holidayChange(date);
+    if (pending?.kind === "holiday_add" && pending.dates.length === 1) unstage(pending.id);
+    else stageHolidays("holiday_remove", date);
+  };
+  const pendingHolidayAdds = draftItems.flatMap((item) => item.kind === "holiday_add" ? item.dates : []);
+  const holidayChips = Array.from(new Set([...config.holidays, ...pendingHolidayAdds])).sort().map((date) => {
+    const lastChange = holidayChange(date);
+    const state = lastChange?.kind === "holiday_remove"
+      ? "removed"
+      : !config.holidays.includes(date) && lastChange ? "added" : "saved";
+    return { date, state } as const;
+  });
+  const extraDayChips = Array.from(new Set([
+    ...config.extra_workdays,
+    ...draftItems.flatMap((item) => item.kind === "extra_day_add" ? [item.date] : []),
+  ])).sort().map((date) => {
+    const pending = draftById.get(`extra_day:${date}`);
+    return {
+      date,
+      state: pending?.kind === "extra_day_remove" ? "removed" : pending?.kind === "extra_day_add" ? "added" : "saved",
+    } as const;
+  });
+  const toggleExtraDay = (date: string, add: boolean) => {
+    const saved = config.extra_workdays.includes(date);
+    if (add === saved) unstage(`extra_day:${date}`);
+    else stage(add ? { kind: "extra_day_add", date } : { kind: "extra_day_remove", date });
+  };
+  const setupOverrideRows = [
+    ...config.setup_overrides.map((item) => {
+      const pending = draftById.get(`setup_override:${item.sku}|${item.machine}`);
+      if (pending?.kind === "setup_override_set") return { item: pending.value, state: "edited" as const };
+      if (pending?.kind === "setup_override_remove") return { item, state: "removed" as const };
+      return { item, state: "saved" as const };
+    }),
+    ...draftItems.flatMap((pending) => pending.kind === "setup_override_set"
+      && !config.setup_overrides.some((item) => item.sku === pending.value.sku && item.machine === pending.value.machine)
+      ? [{ item: pending.value, state: "added" as const }]
+      : []),
+  ];
+  const toggleSetupOverride = (item: SetupOverride, state: "saved" | "edited" | "added" | "removed") => {
+    const id = `setup_override:${item.sku}|${item.machine}`;
+    if (state === "saved") stage({ kind: "setup_override_remove", sku: item.sku, machine: item.machine });
+    else unstage(id);
+  };
+  const twinRows = [
+    ...config.twins.map((twin) => ({
+      twin,
+      state: draftById.get(`twin:${twin.tool_id}`)?.kind === "twin_remove" ? "removed" as const : "saved" as const,
+    })),
+    ...draftItems.flatMap((item) => item.kind === "twin_add" && !config.twins.some((twin) => twin.tool_id === item.value.tool_id)
+      ? [{ twin: item.value, state: "added" as const }]
+      : []),
+  ];
+  const draftStateBadge = (state: "saved" | "edited" | "added" | "removed") => state === "saved" ? null : (
+    <span style={{ color: state === "removed" ? T.red : T.blue, fontSize: 10, fontWeight: 700, marginLeft: 6, fontFamily: T.sans }}>
+      {state === "removed" ? "A remover" : state === "added" ? "Nova" : "Editada"}
+    </span>
+  );
   const handleOpsSort = (next: typeof opsSort) => {
     setOpsSortDir((current) => opsSort === next ? (current === "asc" ? "desc" : "asc") : "asc");
     setOpsSort(next);
@@ -2085,6 +2111,101 @@ export function ConfigPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <ConfigPendingBar
+        lines={draftLines}
+        busy={draftApplying || saving}
+        disabled={readOnly || pendingReplan !== null}
+        onRemove={unstage}
+        onApply={() => void applyDraft()}
+        onDiscard={discardDraft}
+      />
+
+      {/* Score delta banner */}
+      {delta && <ScoreDelta prev={delta.prev} curr={delta.curr} onClear={() => setDelta(null)} />}
+
+      {(replanMessage || activeReplanJobId || pendingReplan) && (
+        <Card style={{ borderColor: pendingReplanBlocked ? T.red : pendingReplan ? T.blue : T.border, background: "#FFFFFF" }}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {replanMessage && (
+              <div
+                role={activeReplanJobId ? "status" : undefined}
+                aria-live={activeReplanJobId ? "polite" : undefined}
+                aria-atomic={activeReplanJobId ? "true" : undefined}
+                style={{ display: "flex", alignItems: "center", gap: 10, color: pendingReplanBlocked || replanMessage.startsWith("Erro") ? T.red : T.secondary, fontSize: 12 }}
+              >
+                {activeReplanJobId && (
+                  <span style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: "50%",
+                    border: `2px solid ${T.border}`,
+                    borderTopColor: T.blue,
+                    animation: "config-replan-spin 0.8s linear infinite",
+                  }} />
+                )}
+                <span>
+                  {activeReplanJobId ? `Fase atual: ${replanMessage}` : replanMessage}
+                  {!activeReplanJobId && <RefusalDetails causes={replanCauses} />}
+                  {activeReplanJobId && (
+                    <span style={{ display: "block", marginTop: 2, color: T.tertiary }}>
+                      Tempo decorrido: {formatElapsedTime(replanElapsedSeconds)}
+                      {replanConnectionMessage ? ` · ${replanConnectionMessage}` : " · Esta fase pode demorar vários minutos."}
+                    </span>
+                  )}
+                </span>
+                {activeReplanJobId && (
+                  <button
+                    type="button"
+                    disabled={readOnly || cancelling.current}
+                    onClick={() => void cancelActiveReplan()}
+                    style={{ ...btnStyle, color: T.red, marginLeft: "auto" }}
+                  >
+                    Cancelar pedido
+                  </button>
+                )}
+              </div>
+            )}
+            {pendingReplan && (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div>
+                  <div style={{ color: T.primary, fontWeight: 800, fontSize: 14 }}>
+                    {pendingReplanBlocked ? "Resultado do cenário calculado" : "Alterações prontas para aplicar"}
+                  </div>
+                  <div style={{ color: T.secondary, fontSize: 12, marginTop: 4 }}>
+                    {pendingReplanBlocked
+                      ? "O resultado está disponível para análise. A configuração e o plano não foram alterados porque o resultado não é aplicável ao plano ativo."
+                      : "A configuração e o plano ainda não foram alterados. Aplica para guardar definitivamente."}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap", color: T.secondary, fontSize: 12 }}>
+                  <span>Lotes no prazo: {pendingReplan.job.result?.score.otd?.toFixed?.(1) ?? pendingReplan.job.result?.score.otd}%</span>
+                  <span>Lotes atrasados: {pendingReplan.job.result?.score.tardy_count ?? 0}</span>
+                  <span>
+                    Estado: {gateStatusLabel(pendingReplan.job.result?.gate_report.status)}
+                    {pendingReplan.job.result?.gate_report.improvement?.status === "partial"
+                      ? " · a melhoria automática parou antes de rever todas as hipóteses" : ""}
+                  </span>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, color: T.primary, fontSize: 12 }}>
+                  {pendingReplan.changes.map((change) => <li key={change}>{change}</li>)}
+                </ul>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" disabled={readOnly || saving || pendingReplanBlocked} onClick={() => void applyPendingReplan()} style={{ ...btnStyle, color: pendingReplanBlocked ? T.tertiary : T.blue, cursor: pendingReplanBlocked ? "not-allowed" : "pointer" }}>
+                    {saving ? "A aplicar…" : pendingReplanBlocked ? "Não aplicável ao plano" : "Aplicar e guardar"}
+                  </button>
+                  <button type="button" disabled={readOnly || saving} onClick={() => void cancelPendingReplan()} style={{ ...btnStyle, color: T.red }}>
+                    Cancelar mudança
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+      {activeReplanJobId && (
+        <style>{"@keyframes config-replan-spin { to { transform: rotate(360deg); } }"}</style>
+      )}
+
       <Card style={{ padding: "12px 16px" }}>
         <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ minWidth: 180 }}>
@@ -2191,91 +2312,6 @@ export function ConfigPage() {
           : ""}
       </HelpPanel>
 
-      {/* Score delta banner */}
-      {delta && <ScoreDelta prev={delta.prev} curr={delta.curr} onClear={() => setDelta(null)} />}
-
-      {(replanMessage || activeReplanJobId || pendingReplan) && (
-        <Card style={{ borderColor: pendingReplanBlocked ? T.red : pendingReplan ? T.blue : T.border, background: "#FFFFFF" }}>
-          <div style={{ display: "grid", gap: 10 }}>
-            {replanMessage && (
-              <div
-                role={activeReplanJobId ? "status" : undefined}
-                aria-live={activeReplanJobId ? "polite" : undefined}
-                aria-atomic={activeReplanJobId ? "true" : undefined}
-                style={{ display: "flex", alignItems: "center", gap: 10, color: pendingReplanBlocked || replanMessage.startsWith("Erro") ? T.red : T.secondary, fontSize: 12 }}
-              >
-                {activeReplanJobId && (
-                  <span style={{
-                    width: 14,
-                    height: 14,
-                    borderRadius: "50%",
-                    border: `2px solid ${T.border}`,
-                    borderTopColor: T.blue,
-                    animation: "config-replan-spin 0.8s linear infinite",
-                  }} />
-                )}
-                <span>
-                  {activeReplanJobId ? `Fase atual: ${replanMessage}` : replanMessage}
-                  {!activeReplanJobId && <RefusalDetails causes={replanCauses} />}
-                  {activeReplanJobId && (
-                    <span style={{ display: "block", marginTop: 2, color: T.tertiary }}>
-                      Tempo decorrido: {formatElapsedTime(replanElapsedSeconds)}
-                      {replanConnectionMessage ? ` · ${replanConnectionMessage}` : " · Esta fase pode demorar vários minutos."}
-                    </span>
-                  )}
-                </span>
-                {activeReplanJobId && (
-                  <button
-                    type="button"
-                    disabled={readOnly || cancelling.current}
-                    onClick={() => void cancelActiveReplan()}
-                    style={{ ...btnStyle, color: T.red, marginLeft: "auto" }}
-                  >
-                    Cancelar pedido
-                  </button>
-                )}
-              </div>
-            )}
-            {pendingReplan && (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div>
-                  <div style={{ color: T.primary, fontWeight: 800, fontSize: 14 }}>
-                    {pendingReplanBlocked ? "Resultado do cenário calculado" : "Alterações prontas para aplicar"}
-                  </div>
-                  <div style={{ color: T.secondary, fontSize: 12, marginTop: 4 }}>
-                    {pendingReplanBlocked
-                      ? "O resultado está disponível para análise. A configuração e o plano não foram alterados porque o resultado não é aplicável ao plano ativo."
-                      : "A configuração e o plano ainda não foram alterados. Aplica para guardar definitivamente."}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 20, flexWrap: "wrap", color: T.secondary, fontSize: 12 }}>
-                  <span>Lotes no prazo: {pendingReplan.job.result?.score.otd?.toFixed?.(1) ?? pendingReplan.job.result?.score.otd}%</span>
-                  <span>Lotes atrasados: {pendingReplan.job.result?.score.tardy_count ?? 0}</span>
-                  <span>
-                    Estado: {gateStatusLabel(pendingReplan.job.result?.gate_report.status)}
-                    {pendingReplan.job.result?.gate_report.improvement?.status === "partial"
-                      ? " · a melhoria automática parou antes de rever todas as hipóteses" : ""}
-                  </span>
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18, color: T.primary, fontSize: 12 }}>
-                  {pendingReplan.changes.map((change) => <li key={change}>{change}</li>)}
-                </ul>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" disabled={readOnly || saving || pendingReplanBlocked} onClick={() => void applyPendingReplan()} style={{ ...btnStyle, color: pendingReplanBlocked ? T.tertiary : T.blue, cursor: pendingReplanBlocked ? "not-allowed" : "pointer" }}>
-                    {saving ? "A aplicar…" : pendingReplanBlocked ? "Não aplicável ao plano" : "Aplicar e guardar"}
-                  </button>
-                  <button type="button" disabled={readOnly || saving} onClick={() => void cancelPendingReplan()} style={{ ...btnStyle, color: T.red }}>
-                    Cancelar mudança
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-      {activeReplanJobId && (
-        <style>{"@keyframes config-replan-spin { to { transform: rotate(360deg); } }"}</style>
-      )}
 
       {/* ── GERAL ──────────────────────────────────────────────── */}
       {section === "geral" && (
@@ -2289,7 +2325,7 @@ export function ConfigPage() {
         </Card>
       )}
 
-      {/* ── TURNOS (staged edit + background replan) ───────────── */}
+      {/* ── TURNOS (each edit goes to the pending list) ───────── */}
       {section === "turnos" && (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2303,29 +2339,33 @@ export function ConfigPage() {
               </tr>
             </thead>
             <tbody>
-              {(shiftEdits ?? config.shifts).map((s, index) => (
+              {(shiftEdits ?? config.shifts).map((s, index) => {
+                const edit = (update: (shift: FactoryConfig["shifts"][number]) => void) => {
+                  const next = [...(shiftEdits ?? config.shifts)].map((item) => ({ ...item }));
+                  update(next[index]);
+                  next[index].duration_min = Math.max(0, next[index].end_min - next[index].start_min);
+                  stageShifts(next);
+                };
+                return (
                 <tr key={s.id}>
                   <td style={tdStyle}>{s.id}</td>
                   <td style={{ ...tdStyle, fontFamily: T.sans }}>
                     <input
                       value={s.label}
-                      onChange={(event) => {
-                        const next = [...(shiftEdits ?? config.shifts)].map((item) => ({ ...item }));
-                        next[index].label = event.target.value;
-                        setShiftEdits(next);
-                      }}
+                      disabled={locked}
+                      onChange={(event) => edit((shift) => { shift.label = event.target.value; })}
                       style={{ ...inputStyle, width: 130 }}
                     />
                   </td>
                   <td style={tdStyle}>
                     <input
                       type="time"
-                      value={`${String(Math.floor((s.start_min % 1440) / 60)).padStart(2, "0")}:${String(s.start_min % 60).padStart(2, "0")}`}
+                      disabled={locked}
+                      value={shiftTime(s.start_min)}
                       onChange={(event) => {
                         const [hours, minutes] = event.target.value.split(":").map(Number);
-                        const next = [...(shiftEdits ?? config.shifts)].map((item) => ({ ...item }));
-                        next[index].start_min = hours * 60 + minutes;
-                        setShiftEdits(next);
+                        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return;
+                        edit((shift) => { shift.start_min = hours * 60 + minutes; });
                       }}
                       style={{ ...inputStyle, width: 105 }}
                     />
@@ -2333,46 +2373,24 @@ export function ConfigPage() {
                   <td style={tdStyle}>
                     <input
                       type="time"
-                      value={`${String(Math.floor((s.end_min % 1440) / 60)).padStart(2, "0")}:${String(s.end_min % 60).padStart(2, "0")}`}
+                      disabled={locked}
+                      value={shiftTime(s.end_min)}
                       onChange={(event) => {
                         const [hours, minutes] = event.target.value.split(":").map(Number);
-                        const next = [...(shiftEdits ?? config.shifts)].map((item) => ({ ...item }));
+                        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return;
                         let value = hours * 60 + minutes;
                         if (value === 0) value = 1440;
-                        next[index].end_min = value;
-                        setShiftEdits(next);
+                        edit((shift) => { shift.end_min = value; });
                       }}
                       style={{ ...inputStyle, width: 105 }}
                     />
                   </td>
                   <td style={tdStyle}>{Math.max(0, s.end_min - s.start_min)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              disabled={saving || shiftEdits === null}
-              onClick={() => {
-                if (!shiftEdits) return;
-                void runBackgroundConfigSave(
-                  "Turnos alterados",
-                  { shifts: shiftEdits },
-                  "Turnos guardados e plano atualizado.",
-                  () => setShiftEdits((current) => current === shiftEdits ? null : current),
-                );
-              }}
-              style={saveBtnStyle(shiftEdits !== null, saving)}
-            >
-              Recalcular e rever
-            </button>
-            <button disabled={saving || shiftEdits === null} onClick={() => setShiftEdits(null)} style={btnStyle}>
-              Cancelar
-            </button>
-            <span style={{ color: T.tertiary, fontSize: 11 }}>
-              O plano só muda depois de Aplicar e guardar.
-            </span>
-          </div>
         </Card>
       )}
 
@@ -2382,13 +2400,15 @@ export function ConfigPage() {
         <Card>
           <Label>Adicionar máquina</Label>
           <div style={{ color: T.secondary, fontSize: 11, margin: "4px 0 10px" }}>
-            Máquinas existentes não são apagadas: podem ser desativadas para manter o histórico.
+            Podes adicionar várias. Máquinas existentes não são apagadas: podem ser desativadas para manter o histórico.
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
             <label style={{ display: "grid", gap: 4 }}>
               <span style={{ color: T.tertiary, fontSize: 10 }}>Identificador</span>
               <input
                 value={newMachine.id}
+                disabled={locked}
+                onKeyDown={(event) => { if (event.key === "Enter") stageMachineAddition(); }}
                 onChange={(event) => setNewMachine({ ...newMachine, id: event.target.value.toUpperCase() })}
                 placeholder="Ex.: PRM044"
                 style={{ ...inputStyle, width: 130, textAlign: "left" }}
@@ -2398,6 +2418,7 @@ export function ConfigPage() {
               <span style={{ color: T.tertiary, fontSize: 10 }}>Grupo</span>
               <select
                 value={newMachine.group}
+                disabled={locked}
                 onChange={(event) => setNewMachine({ ...newMachine, group: event.target.value })}
                 style={{ ...inputStyle, width: 130, textAlign: "left" }}
               >
@@ -2406,31 +2427,11 @@ export function ConfigPage() {
               </select>
             </label>
             <button
-              disabled={saving || !newMachine.id.trim()}
-              onClick={async () => {
-                const machineId = newMachine.id.trim().toUpperCase();
-                const approved = await confirm({
-                  title: "Adicionar máquina",
-                  message: `Adicionar a máquina ${machineId} e rever o plano?`,
-                  confirmLabel: "Adicionar e recalcular",
-                });
-                if (!approved) return;
-                void runBackgroundConfigSave(
-                  `Adicionar máquina ${machineId}`,
-                  {
-                    machine_additions: [{
-                      id: machineId,
-                      group: newMachine.group,
-                      active: true,
-                    }],
-                  },
-                  `Máquina ${machineId} adicionada e plano atualizado.`,
-                  () => setNewMachine((current) => current === newMachine ? { id: "", group: newMachine.group } : current),
-                );
-              }}
-              style={{ ...btnStyle, color: T.blue, opacity: saving || !newMachine.id.trim() ? 0.5 : 1 }}
+              disabled={locked || !newMachine.id.trim()}
+              onClick={stageMachineAddition}
+              style={{ ...btnStyle, color: T.blue, opacity: locked || !newMachine.id.trim() ? 0.5 : 1 }}
             >
-              Adicionar e recalcular
+              Adicionar à lista
             </button>
           </div>
         </Card>
@@ -2454,32 +2455,6 @@ export function ConfigPage() {
             <option value="oee">Ordenar: OEE</option>
             <option value="active">Ordenar: estado</option>
           </select>
-          <button
-            disabled={saving || (
-              Object.keys(oeeEdits).length === 0
-              && Object.keys(machineGroupEdits).length === 0
-              && Object.keys(machineActiveEdits).length === 0
-            )}
-            onClick={() => void saveMachineDraft()}
-            style={{ ...btnStyle, color: T.blue }}
-          >
-            {saving ? "A recalcular…" : "Guardar alterações"}
-          </button>
-          <button
-            disabled={saving || (
-              Object.keys(oeeEdits).length === 0
-              && Object.keys(machineGroupEdits).length === 0
-              && Object.keys(machineActiveEdits).length === 0
-            )}
-            onClick={() => {
-              setOeeEdits({});
-              setMachineGroupEdits({});
-              setMachineActiveEdits({});
-            }}
-            style={btnStyle}
-          >
-            Cancelar
-          </button>
           <span style={{ marginLeft: "auto", color: T.tertiary, fontSize: 10, fontFamily: T.mono }}>
             {visibleMachines.length} de {Object.keys(config.machines).length}
           </span>
@@ -2508,14 +2483,12 @@ export function ConfigPage() {
                   <td style={{ ...tdStyle, fontFamily: T.sans }}>
                     <select
                       value={machineGroupEdits[id] ?? m.group}
+                      disabled={locked}
+                      aria-label={`Grupo da máquina ${id}`}
                       onChange={(event) => {
                         const value = event.target.value;
-                        setMachineGroupEdits((current) => {
-                          const next = { ...current };
-                          if (value === m.group) delete next[id];
-                          else next[id] = value;
-                          return next;
-                        });
+                        if (value === m.group) unstage(`machine_group:${id}`);
+                        else stage({ kind: "machine_group", machine: id, value });
                       }}
                       style={{ ...inputStyle, width: 110 }}
                     >
@@ -2529,19 +2502,16 @@ export function ConfigPage() {
                       min="0.1"
                       max="1"
                       step="0.01"
-                      disabled={saving}
+                      disabled={locked}
                       value={id in oeeEdits ? oeeEdits[id] ?? "" : m.oee ?? ""}
                       placeholder={String(config.oee_default)}
                       aria-label={`OEE da máquina ${id}`}
                       onChange={(e) => {
                         const raw = e.target.value.trim();
                         const value = raw === "" ? null : Number(raw);
-                        setOeeEdits((current) => {
-                          const next = { ...current };
-                          if (value === m.oee) delete next[id];
-                          else next[id] = value;
-                          return next;
-                        });
+                        if (value !== null && !Number.isFinite(value)) return;
+                        if (value === m.oee) unstage(`machine_oee:${id}`);
+                        else stage({ kind: "machine_oee", machine: id, value });
                       }}
                       style={{ ...inputStyle, width: 78 }}
                     />
@@ -2551,23 +2521,20 @@ export function ConfigPage() {
                   </td>
                   <td style={tdStyle}>
                     <button
-                      disabled={saving}
+                      disabled={locked}
                       aria-pressed={effectiveActive}
+                      aria-label={`Máquina ${id} ativa`}
                       onClick={() => {
                         const next = !effectiveActive;
-                        setMachineActiveEdits((current) => {
-                          const updated = { ...current };
-                          if (next === m.active) delete updated[id];
-                          else updated[id] = next;
-                          return updated;
-                        });
+                        if (next === m.active) unstage(`machine_active:${id}`);
+                        else stage({ kind: "machine_active", machine: id, value: next });
                       }}
                       style={{
                         background: effectiveActive ? T.green + "22" : T.red + "22",
                         border: `1px solid ${effectiveActive ? T.green : T.red}`,
                         borderRadius: 6, padding: "2px 10px", cursor: "pointer",
                         fontSize: 11, color: effectiveActive ? T.green : T.red, fontFamily: "inherit",
-                        opacity: saving ? 0.5 : 1,
+                        opacity: locked ? 0.5 : 1,
                       }}
                     >
                       {effectiveActive ? "Sim" : "Não"}
@@ -2609,21 +2576,6 @@ export function ConfigPage() {
               <option value="alt">Ordenar: alternativa</option>
               <option value="setup">Ordenar: setup</option>
             </select>
-            <button
-              disabled={saving || Object.keys(toolEdits).length === 0}
-              onClick={() => void saveToolDraft()}
-              style={saveBtnStyle(Object.keys(toolEdits).length > 0, saving)}
-            >
-              {saving ? "A recalcular…" : "Guardar alterações"}
-            </button>
-            <button
-              disabled={saving || Object.keys(toolEdits).length === 0}
-              onClick={() => setToolEdits({})}
-              style={btnStyle}
-            >
-              Cancelar
-            </button>
-            <span style={{ color: T.tertiary, fontSize: 11 }}>O plano só muda depois de Guardar.</span>
             <span style={{ marginLeft: "auto", color: T.tertiary, fontSize: 10, fontFamily: T.mono }}>
               {visibleTools.length} de {allToolEntries.length}
             </span>
@@ -2705,17 +2657,9 @@ export function ConfigPage() {
                     <td style={tdStyle}>
                       <select
                         value={editState?.alt !== undefined ? (editState.alt ?? "") : (t.alt ?? "")}
-                        disabled={saving}
-                        onChange={(e) => {
-                          const val = e.target.value || null;
-                          if (val === t.alt) {
-                            const next = { ...toolEdits };
-                            if (next[id]) { delete next[id].alt; if (!Object.keys(next[id]).length) delete next[id]; }
-                            setToolEdits(next);
-                          } else {
-                            setToolEdits({ ...toolEdits, [id]: { ...toolEdits[id], alt: val } });
-                          }
-                        }}
+                        disabled={locked}
+                        aria-label={`Máquina alternativa de ${id}`}
+                        onChange={(e) => stageToolField(id, "alt", e.target.value || null, t.alt ?? null)}
                         style={{ ...inputStyle, width: 110, textAlign: "left", cursor: "pointer" }}
                       >
                         <option value="">—</option>
@@ -2727,24 +2671,13 @@ export function ConfigPage() {
                     <td style={tdStyle}>
                       <input
                         type="number" step="0.25" min="0"
-                        disabled={saving}
+                        disabled={locked}
+                        aria-label={`Setup de ${id} em horas`}
                         value={editState?.setup_hours ?? t.setup_hours}
                         onChange={(event) => {
                           const value = Number(event.target.value);
                           if (!Number.isFinite(value)) return;
-                          if (value === t.setup_hours) {
-                            const next = { ...toolEdits };
-                            if (next[id]) {
-                              delete next[id].setup_hours;
-                              if (!Object.keys(next[id]).length) delete next[id];
-                            }
-                            setToolEdits(next);
-                          } else {
-                            setToolEdits({
-                              ...toolEdits,
-                              [id]: { ...toolEdits[id], setup_hours: value },
-                            });
-                          }
+                          stageToolField(id, "setup_hours", value, t.setup_hours);
                         }}
                         style={{ ...inputStyle, width: 70, borderColor: editState?.setup_hours !== undefined ? T.blue : T.border }}
                       />
@@ -2776,6 +2709,7 @@ export function ConfigPage() {
                 <span style={{ color: T.tertiary, fontSize: 10 }}>Artigo</span>
                 <select
                   value={setupOverride.sku}
+                  disabled={locked}
                   onChange={(e) => setSetupOverride({ ...setupOverride, sku: e.target.value })}
                   style={{ ...inputStyle, width: 190, textAlign: "left" }}
                 >
@@ -2787,6 +2721,7 @@ export function ConfigPage() {
                 <span style={{ color: T.tertiary, fontSize: 10 }}>Máquina</span>
                 <select
                   value={setupOverride.machine}
+                  disabled={locked}
                   onChange={(e) => setSetupOverride({ ...setupOverride, machine: e.target.value })}
                   style={{ ...inputStyle, width: 130, textAlign: "left" }}
                 >
@@ -2801,36 +2736,32 @@ export function ConfigPage() {
                   min="0.01"
                   max="8"
                   step="0.25"
+                  disabled={locked}
                   value={setupOverride.hours}
                   onChange={(e) => setSetupOverride({ ...setupOverride, hours: Number(e.target.value) })}
                   style={{ ...inputStyle, width: 100 }}
                 />
               </label>
               <button
-                disabled={saving || !setupOverride.sku || !setupOverride.machine || setupOverride.hours <= 0 || setupOverride.hours > 8}
-                onClick={async () => {
-                  const next = config.setup_overrides.filter((item) => (
-                    item.sku !== setupOverride.sku || item.machine !== setupOverride.machine
-                  ));
-                  next.push(setupOverride);
-                  if (await withSave((approval) => replaceSetupOverrides(next, approval))) {
-                    setSetupOverride({ sku: "", machine: "", hours: 0.5 });
-                  }
+                disabled={locked || !setupOverride.sku || !setupOverride.machine || !(setupOverride.hours > 0) || setupOverride.hours > 8}
+                onClick={() => {
+                  stage({ kind: "setup_override_set", value: { ...setupOverride } });
+                  setSetupOverride({ sku: "", machine: "", hours: 0.5 });
                 }}
                 style={{
                   ...btnStyle,
                   color: T.blue,
                   borderColor: T.blue + "50",
-                  opacity: saving || !setupOverride.sku || !setupOverride.machine ? 0.5 : 1,
+                  opacity: locked || !setupOverride.sku || !setupOverride.machine ? 0.5 : 1,
                 }}
               >
-                Guardar exceção
+                Adicionar à lista
               </button>
             </div>
           </Card>
 
           <Card style={{ padding: 0, overflow: "hidden" }}>
-            {config.setup_overrides.length === 0 ? (
+            {setupOverrideRows.length === 0 ? (
               <div style={{ color: T.secondary, fontSize: 13, padding: 16 }}>
                 Sem exceções: aplica-se o setup da ferramenta.
               </div>
@@ -2845,22 +2776,20 @@ export function ConfigPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {config.setup_overrides.map((item) => (
-                    <tr key={`${item.sku}-${item.machine}`}>
-                      <td style={tdStyle}>{item.sku}</td>
+                  {setupOverrideRows.map(({ item, state }) => (
+                    <tr key={`${item.sku}-${item.machine}`} style={{ opacity: state === "removed" ? 0.55 : 1 }}>
+                      <td style={tdStyle}>{item.sku}{draftStateBadge(state)}</td>
                       <td style={tdStyle}>{item.machine}</td>
                       <td style={tdStyle}>{item.hours} h</td>
                       <td style={tdStyle}>
                         <button
-                          disabled={saving}
-                          aria-label={`Remover exceção ${item.sku} ${item.machine}`}
-                          onClick={() => withSave((approval) => replaceSetupOverrides(
-                            config.setup_overrides.filter((candidate) => candidate !== item),
-                            approval,
-                          ))}
-                          style={{ background: "none", border: "none", color: T.red, cursor: "pointer" }}
+                          disabled={locked}
+                          aria-label={`${state === "saved" ? "Remover" : "Desfazer"} exceção ${item.sku} ${item.machine}`}
+                          title={state === "saved" ? "Remover" : "Desfazer"}
+                          onClick={() => toggleSetupOverride(item, state)}
+                          style={{ background: "none", border: "none", color: state === "saved" ? T.red : T.blue, cursor: "pointer" }}
                         >
-                          ×
+                          {state === "saved" ? "×" : "↶"}
                         </button>
                       </td>
                     </tr>
@@ -2872,17 +2801,17 @@ export function ConfigPage() {
         </div>
       )}
 
-      {/* ── GEMEAS (add/remove) ────────────────────────────────── */}
+      {/* ── GEMEAS (add/remove go to the pending list) ─────────── */}
       {section === "gemeas" && (
         <>
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <Label>Pecas Gemeas ({config.twins.length})</Label>
-              <button onClick={() => setTwinModal(true)} style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50" }}>
+              <button disabled={locked} onClick={() => setTwinModal(true)} style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50" }}>
                 + Adicionar
               </button>
             </div>
-            {config.twins.length === 0 ? (
+            {twinRows.length === 0 ? (
               <div style={{ padding: "12px 20px", color: T.secondary, fontSize: 13 }}>Sem pecas gemeas configuradas.</div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2895,27 +2824,23 @@ export function ConfigPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {config.twins.map((tw) => (
-                    <tr key={tw.tool_id}>
-                      <td style={tdStyle}>{tw.tool_id}</td>
+                  {twinRows.map(({ twin: tw, state }) => (
+                    <tr key={tw.tool_id} style={{ opacity: state === "removed" ? 0.55 : 1 }}>
+                      <td style={tdStyle}>{tw.tool_id}{draftStateBadge(state)}</td>
                       <td style={tdStyle}>{tw.sku_a}</td>
                       <td style={tdStyle}>{tw.sku_b}</td>
                       <td style={tdStyle}>
                         <button
-                          disabled={saving}
-                          onClick={async () => {
-                            const approved = await confirm({
-                              title: "Remover gémea",
-                              message: `Remover a configuração gémea da ferramenta ${tw.tool_id}?`,
-                              confirmLabel: "Remover",
-                              variant: "danger",
-                            });
-                            if (!approved) return;
-                            void withSave((approval) => removeTwin(tw.tool_id, approval));
+                          disabled={locked}
+                          aria-label={`${state === "saved" ? "Remover" : "Desfazer"} gémeas ${tw.tool_id}`}
+                          title={state === "saved" ? "Remover" : "Desfazer"}
+                          onClick={() => {
+                            if (state === "saved") stage({ kind: "twin_remove", tool_id: tw.tool_id });
+                            else unstage(`twin:${tw.tool_id}`);
                           }}
-                          style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 14, fontFamily: "inherit", opacity: saving ? 0.5 : 1 }}
+                          style={{ background: "none", border: "none", color: state === "saved" ? T.red : T.blue, cursor: "pointer", fontSize: 14, fontFamily: "inherit", opacity: locked ? 0.5 : 1 }}
                         >
-                          ×
+                          {state === "saved" ? "×" : "↶"}
                         </button>
                       </td>
                     </tr>
@@ -2933,6 +2858,7 @@ export function ConfigPage() {
                     <Label style={{ marginBottom: 4 }}>{field === "tool_id" ? "Ferramenta" : field === "sku_a" ? "Referência A" : "Referência B"}</Label>
                     <input
                       type="text"
+                      aria-label={field === "tool_id" ? "Ferramenta" : field === "sku_a" ? "Referência A" : "Referência B"}
                       value={twinForm[field]}
                       onChange={(e) => setTwinForm({ ...twinForm, [field]: e.target.value })}
                       style={{ ...inputStyle, width: "100%", textAlign: "left" }}
@@ -2941,16 +2867,20 @@ export function ConfigPage() {
                   </div>
                 ))}
                 <button
-                  disabled={!twinForm.tool_id || !twinForm.sku_a || !twinForm.sku_b || saving}
-                  onClick={async () => {
-                    if (await withSave((approval) => addTwin(twinForm.tool_id, twinForm.sku_a, twinForm.sku_b, approval))) {
-                      setTwinForm({ tool_id: "", sku_a: "", sku_b: "" });
-                      setTwinModal(false);
-                    }
+                  disabled={!twinForm.tool_id || !twinForm.sku_a || !twinForm.sku_b || locked}
+                  onClick={() => {
+                    const value = {
+                      tool_id: twinForm.tool_id.trim(),
+                      sku_a: twinForm.sku_a.trim(),
+                      sku_b: twinForm.sku_b.trim(),
+                    };
+                    stage({ kind: "twin_add", value });
+                    setTwinForm({ tool_id: "", sku_a: "", sku_b: "" });
+                    setTwinModal(false);
                   }}
-                  style={saveBtnStyle(!!twinForm.tool_id && !!twinForm.sku_a && !!twinForm.sku_b, saving)}
+                  style={saveBtnStyle(!!twinForm.tool_id && !!twinForm.sku_a && !!twinForm.sku_b, locked)}
                 >
-                  {saving ? "A guardar..." : "Adicionar"}
+                  Adicionar à lista
                 </button>
               </div>
             </Modal>
@@ -2958,7 +2888,7 @@ export function ConfigPage() {
         </>
       )}
 
-      {/* ── OPERADORES (inline edit + batch save) ──────────────── */}
+      {/* ── OPERADORES (each edit goes to the pending list) ───── */}
       {section === "operadores" && (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2975,16 +2905,14 @@ export function ConfigPage() {
                   <td style={tdStyle}>
                     <input
                       type="number" min="0"
-                      disabled={saving}
+                      disabled={locked}
+                      aria-label={`Operadores ${key}`}
                       value={key in opEdits ? opEdits[key] : count}
                       onChange={(e) => {
                         const val = parseInt(e.target.value, 10);
-                        if (isNaN(val)) return;
-                        if (val === count) {
-                          const next = { ...opEdits }; delete next[key]; setOpEdits(next);
-                        } else {
-                          setOpEdits({ ...opEdits, [key]: val });
-                        }
+                        if (isNaN(val) || val < 0) return;
+                        if (val === count) unstage(`operators:${key}`);
+                        else stage({ kind: "operators", key, value: val });
                       }}
                       style={{ ...inputStyle, width: 70, borderColor: key in opEdits ? T.blue : T.border }}
                     />
@@ -2993,22 +2921,6 @@ export function ConfigPage() {
               ))}
             </tbody>
           </table>
-          {opHasChanges && (
-            <div style={{ padding: "12px 16px", display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                disabled={saving}
-                onClick={async () => {
-                  if (await withSave((approval) => updateOperators(opEdits, approval))) {
-                    setOpEdits({});
-                  }
-                }}
-                style={saveBtnStyle(true, saving)}
-              >
-                {saving ? "A guardar..." : "Guardar"}
-              </button>
-              <button onClick={() => setOpEdits({})} style={btnStyle}>Cancelar</button>
-            </div>
-          )}
           <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}` }}>
             <Label>Equipas de setup por grupo</Label>
             <div style={{ color: T.tertiary, fontSize: 11, margin: "4px 0 10px" }}>
@@ -3021,41 +2933,19 @@ export function ConfigPage() {
                   <input
                     type="number"
                     min="1"
+                    disabled={locked}
                     value={crewEdits[setupGroup] ?? count}
                     onChange={(event) => {
-                      const value = Math.max(1, Number(event.target.value));
-                      setCrewEdits((current) => {
-                        const next = { ...current };
-                        if (value === count) delete next[setupGroup];
-                        else next[setupGroup] = value;
-                        return next;
-                      });
+                      const raw = Number(event.target.value);
+                      if (!Number.isFinite(raw)) return;
+                      const value = Math.max(1, Math.trunc(raw));
+                      if (value === count) unstage(`setup_crews:${setupGroup}`);
+                      else stage({ kind: "setup_crews", group: setupGroup, value });
                     }}
-                    style={{ ...inputStyle, width: 70 }}
+                    style={{ ...inputStyle, width: 70, borderColor: setupGroup in crewEdits ? T.blue : T.border }}
                   />
                 </label>
               ))}
-              <button
-                disabled={saving || Object.keys(crewEdits).length === 0}
-                onClick={() => {
-                  const effective = {
-                    ...config.setup_crews_by_group,
-                    ...crewEdits,
-                  };
-                  void runBackgroundConfigSave(
-                    "Equipas de setup alteradas",
-                    { setup_crews_by_group: effective },
-                    "Equipas de setup guardadas e plano atualizado.",
-                    () => setCrewEdits((current) => remainingDraft(current, crewEdits)),
-                  );
-                }}
-                style={saveBtnStyle(Object.keys(crewEdits).length > 0, saving)}
-              >
-                Guardar equipas
-              </button>
-              <button disabled={saving || Object.keys(crewEdits).length === 0} onClick={() => setCrewEdits({})} style={btnStyle}>
-                Cancelar
-              </button>
             </div>
           </div>
         </Card>
@@ -3074,19 +2964,18 @@ export function ConfigPage() {
                 <span style={{ color: T.tertiary, fontSize: 10 }}>Um dia</span>
                 <input
                   type="date"
+                  disabled={locked}
                   value={newHoliday}
                   onChange={(e) => setNewHoliday(e.target.value)}
                   style={{ ...inputStyle, width: 160, textAlign: "left" }}
                 />
               </label>
               <button
-                disabled={!newHoliday || saving}
-                onClick={async () => {
-                  if (await withSave((approval) => addHoliday(newHoliday, approval))) {
-                    setNewHoliday("");
-                  }
+                disabled={!newHoliday || locked}
+                onClick={() => {
+                  if (stageHolidays("holiday_add", newHoliday)) setNewHoliday("");
                 }}
-                style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50", opacity: !newHoliday || saving ? 0.5 : 1 }}
+                style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50", opacity: !newHoliday || locked ? 0.5 : 1 }}
               >
                 Adicionar dia
               </button>
@@ -3095,6 +2984,7 @@ export function ConfigPage() {
                 <span style={{ color: T.tertiary, fontSize: 10 }}>De</span>
                 <input
                   type="date"
+                  disabled={locked}
                   value={holidayRange.from}
                   onChange={(e) => setHolidayRange({ ...holidayRange, from: e.target.value })}
                   style={{ ...inputStyle, width: 150, textAlign: "left" }}
@@ -3104,69 +2994,56 @@ export function ConfigPage() {
                 <span style={{ color: T.tertiary, fontSize: 10 }}>Até</span>
                 <input
                   type="date"
+                  disabled={locked}
                   value={holidayRange.to}
                   onChange={(e) => setHolidayRange({ ...holidayRange, to: e.target.value })}
                   style={{ ...inputStyle, width: 150, textAlign: "left" }}
                 />
               </label>
               <button
-                disabled={!holidayRange.from || !holidayRange.to || saving}
-                onClick={async () => {
-                  if (await withSave((approval) => addHolidayRange(holidayRange.from, holidayRange.to, approval))) {
-                    setHolidayRange({ from: "", to: "" });
-                  }
+                disabled={!holidayRange.from || !holidayRange.to || locked}
+                onClick={() => {
+                  if (stageHolidays("holiday_add", holidayRange.from, holidayRange.to)) setHolidayRange({ from: "", to: "" });
                 }}
                 style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50" }}
               >
                 Adicionar intervalo
               </button>
               <button
-                disabled={!holidayRange.from || !holidayRange.to || saving}
-                onClick={async () => {
-                  const approved = await confirm({
-                    title: "Reabrir intervalo",
-                    message: `Reabrir os dias entre ${holidayRange.from} e ${holidayRange.to}?`,
-                    confirmLabel: "Reabrir dias",
-                    variant: "danger",
-                  });
-                  if (!approved) return;
-                  if (await withSave((approval) => removeHolidayRange(holidayRange.from, holidayRange.to, approval))) {
-                    setHolidayRange({ from: "", to: "" });
-                  }
+                disabled={!holidayRange.from || !holidayRange.to || locked}
+                onClick={() => {
+                  if (stageHolidays("holiday_remove", holidayRange.from, holidayRange.to)) setHolidayRange({ from: "", to: "" });
                 }}
                 style={{ ...btnStyle, color: T.red, borderColor: T.red + "50" }}
               >
-                Remover intervalo
+                Reabrir intervalo
               </button>
             </div>
             <Divider />
-            {config.holidays.length === 0 ? (
+            {holidayChips.length === 0 ? (
               <div style={{ color: T.secondary, fontSize: 13 }}>Sem feriados ou férias configurados.</div>
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {config.holidays.map((h) => (
+                {holidayChips.map(({ date: h, state }) => (
                   <span key={h} style={{
                     fontSize: 12, fontFamily: T.mono, color: T.primary,
                     background: T.elevated, padding: "4px 10px", borderRadius: 6,
                     display: "flex", alignItems: "center", gap: 6,
+                    border: `1px solid ${state === "saved" ? "transparent" : state === "removed" ? T.red : T.blue}`,
+                    textDecoration: state === "removed" ? "line-through" : "none",
                   }}>
                     {h}
                     <button
-                      disabled={saving}
-                      aria-label={`Remover dia sem produção ${h}`}
-                      onClick={async () => {
-                        const approved = await confirm({
-                          title: "Remover dia fechado",
-                          message: `Remover feriado/férias em ${h}?`,
-                          confirmLabel: "Remover",
-                          variant: "danger",
-                        });
-                        if (!approved) return;
-                        void withSave((approval) => removeHoliday(h, approval));
+                      disabled={locked}
+                      aria-label={state === "saved" ? `Remover dia sem produção ${h}` : `Desfazer ${h}`}
+                      title={state === "saved" ? "Remover" : "Desfazer"}
+                      onClick={() => {
+                        if (state === "removed") stageHolidays("holiday_add", h);
+                        else removeHolidayChip(h);
                       }}
-                      style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 13, fontFamily: "inherit", padding: 0, opacity: saving ? 0.5 : 1 }}
+                      style={{ background: "none", border: "none", color: state === "saved" ? T.red : T.blue, cursor: "pointer", fontSize: 13, fontFamily: "inherit", padding: 0, opacity: locked ? 0.5 : 1 }}
                     >
-                      ×
+                      {state === "saved" ? "×" : "↶"}
                     </button>
                   </span>
                 ))}
@@ -3182,31 +3059,39 @@ export function ConfigPage() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input
                 type="date"
+                disabled={locked}
+                aria-label="Dia extra de produção"
                 value={extraWorkday}
                 onChange={(e) => setExtraWorkday(e.target.value)}
                 style={{ ...inputStyle, width: 160, textAlign: "left" }}
               />
               <button
-                disabled={!extraWorkday || saving}
-                onClick={async () => {
-                  if (await withSave((approval) => addExtraWorkday(extraWorkday, approval))) {
-                    setExtraWorkday("");
-                  }
+                disabled={!extraWorkday || locked}
+                onClick={() => {
+                  toggleExtraDay(extraWorkday, true);
+                  setExtraWorkday("");
                 }}
                 style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50" }}
               >
                 Abrir dia
               </button>
-              {config.extra_workdays.map((date) => (
-                <span key={date} style={{ ...btnStyle, cursor: "default", fontFamily: T.mono }}>
+              {extraDayChips.map(({ date, state }) => (
+                <span key={date} style={{
+                  ...btnStyle, cursor: "default", fontFamily: T.mono,
+                  borderColor: state === "saved" ? T.border : state === "removed" ? T.red : T.blue,
+                  textDecoration: state === "removed" ? "line-through" : "none",
+                }}>
                   {date}
                   <button
-                    disabled={saving}
-                    aria-label={`Remover dia de trabalho extra ${date}`}
-                    onClick={() => withSave((approval) => removeExtraWorkday(date, approval))}
-                    style={{ background: "none", border: "none", color: T.red, cursor: "pointer", marginLeft: 8 }}
+                    disabled={locked}
+                    aria-label={state === "saved" ? `Remover dia de trabalho extra ${date}` : `Desfazer ${date}`}
+                    onClick={() => {
+                      if (state === "saved") toggleExtraDay(date, false);
+                      else unstage(`extra_day:${date}`);
+                    }}
+                    style={{ background: "none", border: "none", color: state === "saved" ? T.red : T.blue, cursor: "pointer", marginLeft: 8 }}
                   >
-                    ×
+                    {state === "saved" ? "×" : "↶"}
                   </button>
                 </span>
               ))}
@@ -3221,7 +3106,7 @@ export function ConfigPage() {
           <Card>
             <Label>{unavailabilityEditTarget ? "Editar indisponibilidade" : "Adicionar indisponibilidade"}</Label>
             <div style={{ color: T.secondary, fontSize: 11, margin: "4px 0 12px" }}>
-              Prepara todas as alterações nesta página. O plano só é recalculado depois de Guardar alterações.
+              Cada indisponibilidade entra na lista de alterações no topo da página. O plano só muda depois de Aplicar.
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
               <label style={{ display: "grid", gap: 4 }}>
@@ -3334,7 +3219,7 @@ export function ConfigPage() {
                 onClick={stageUnavailabilityForm}
                 style={{ ...btnStyle, color: T.blue, borderColor: T.blue + "50" }}
               >
-                {unavailabilityEditTarget ? "Atualizar rascunho" : "Adicionar ao rascunho"}
+                {unavailabilityEditTarget ? "Atualizar na lista" : "Adicionar à lista"}
               </button>
               {unavailabilityEditTarget && (
                 <button disabled={unavailabilityDraftLocked} onClick={resetUnavailabilityEditor} style={btnStyle}>
@@ -3414,7 +3299,7 @@ export function ConfigPage() {
                         <button
                           disabled={unavailabilityDraftLocked}
                           aria-label={`${entry.draftState === "removed" ? "Desfazer remoção" : "Remover indisponibilidade"} ${entry.resourceLabel}`}
-                          title={entry.draftState === "removed" ? "Desfazer remoção" : "Remover do rascunho"}
+                          title={entry.draftState === "removed" ? "Desfazer remoção" : entry.draftState === "added" ? "Retirar da lista" : "Remover"}
                           onClick={() => toggleUnavailabilityRemoval(entry)}
                           style={{
                             background: "none",
@@ -3438,34 +3323,13 @@ export function ConfigPage() {
               </table>
               </div>
             )}
-            <div style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, borderTop: `1px solid ${T.border}` }}>
-              <button
-                disabled={!unavailabilityHasChanges || unavailabilityDraftLocked}
-                onClick={saveUnavailabilityDraft}
-                style={saveBtnStyle(unavailabilityHasChanges, unavailabilityDraftLocked)}
-              >
-                Guardar alterações
-              </button>
-              <button
-                disabled={!unavailabilityHasChanges || unavailabilityDraftLocked}
-                onClick={cancelUnavailabilityDraft}
-                style={btnStyle}
-              >
-                Cancelar
-              </button>
-              <span style={{ color: T.tertiary, fontSize: 11 }}>
-                {unavailabilityHasChanges
-                  ? `${Object.keys(unavailabilityAdditions).length} nova(s) · ${Object.keys(unavailabilityEdits).length} editada(s) · ${unavailabilityRemovals.length} a remover`
-                  : "Sem alterações por guardar."}
-              </span>
-            </div>
           </Card>
         </div>
       )}
 
       {/* ── PARAMETROS ─────────────────────────────────────────── */}
       {section === "parametros" && (
-        <ParametrosEditor config={config} onSaved={(c) => setConfig(c)} onDelta={showDelta} />
+        <ParametrosEditor config={config} items={draftItems} stage={stage} unstage={unstage} locked={locked} />
       )}
 
       {/* ── PLANEAMENTO SKU ───────────────────────────────────── */}
@@ -3478,8 +3342,10 @@ export function ConfigPage() {
             <SkuPlanningEditor
               config={config}
               ops={ops}
-              onReload={reload}
-              onDelta={showDelta}
+              items={draftItems}
+              stage={stage}
+              unstage={unstage}
+              locked={locked}
             />
           </div>
         ) : (
@@ -3493,8 +3359,10 @@ export function ConfigPage() {
           <SubcontractEditor
             config={config}
             ops={ops}
-            onReload={reload}
-            onDelta={showDelta}
+            items={draftItems}
+            stage={stage}
+            unstage={unstage}
+            locked={locked}
           />
         ) : (
           <div style={{ color: T.secondary, padding: 24 }}>A carregar referências…</div>
@@ -3695,4 +3563,3 @@ export function ConfigPage() {
     </div>
   );
 }
-import { assertRefreshed, isAppliedRefreshError, refreshAfterCommit } from "../lib/refreshOutcome";

@@ -4,6 +4,7 @@ import type { CandidateIdentity, Score, GateReport, Segment, Lot, FactoryConfig,
 import { commitPlanRevision } from "../lib/planRevision";
 import { candidateMatchesPlan } from "../lib/previewCandidate";
 import { useSimulatorStore } from "./useSimulatorStore";
+import { useConfigDraftStore } from "./useConfigDraftStore";
 import { ACTIVE_DATASET_KEY, useAppStore } from "./useAppStore";
 import { assertRefreshed, refreshAfterCommit } from "../lib/refreshOutcome";
 import type { RefreshOutcome } from "../lib/refreshOutcome";
@@ -88,6 +89,8 @@ export const useDataStore = create<DataState>((set, get) => ({
           && snapshot.plan_revision < current.planRevision) return "superseded";
         const changed = current.datasetId !== snapshot.dataset_id || current.planRevision !== snapshot.plan_revision;
         if (changed) useSimulatorStore.getState().invalidatePreviews();
+        // Pending Configuração changes belong to one ISOP; a new one drops them.
+        useConfigDraftStore.getState().syncDataset(snapshot.dataset_id);
         commitPlanRevision(snapshot.plan_revision, snapshot.dataset_id);
         set({
           datasetId: snapshot.dataset_id, planRevision: snapshot.plan_revision,
@@ -147,6 +150,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     ++refreshGeneration;
     commitPlanRevision(0);
     useSimulatorStore.getState().clear();
+    useConfigDraftStore.getState().discard();
     set({
     datasetId: null, planRevision: null,
     score: null, gateReport: null, segments: null, placementReasons: {},

@@ -3,6 +3,7 @@ import { T } from "../theme/tokens";
 import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
 import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
+import { useConfigDraftStore } from "../stores/useConfigDraftStore";
 import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
 import { getHealth, getToday, recalculate, releaseManualEdits, undoLastChange } from "../api/endpoints";
 import { staleIsopWarning } from "../lib/recalcGuard";
@@ -105,6 +106,17 @@ export function Shell() {
   useEffect(() => {
     useLoadStore.getState().resume();
     return stopLoadPolling;
+  }, []);
+
+  // Closing the tab with Configuração changes still in the list asks first.
+  useEffect(() => {
+    const warnPendingConfig = (event: BeforeUnloadEvent) => {
+      if (useConfigDraftStore.getState().count === 0) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnPendingConfig);
+    return () => window.removeEventListener("beforeunload", warnPendingConfig);
   }, []);
   const setHasData = useAppStore((s) => s.setHasData);
   const clearTrust = useAppStore((s) => s.clearTrust);
