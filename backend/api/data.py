@@ -1661,7 +1661,7 @@ async def update_sku_planning(sku: str, body: dict):
     except ValueError as exc:
         raise refusal_http(400, exc) from exc
     except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise refusal_http(404, exc) from exc
     set_change_label(f"Regra de planeamento da Referência {sku} alterada")
 
     result, old_score = _apply_config_candidate(candidate, body)
@@ -2834,7 +2834,7 @@ async def update_operators(body: dict):
     try:
         changed = apply_operator_counts(candidate, counts)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
 
     if not changed:
         return {"status": "ok", "score": state.score, "score_anterior": old_score}
@@ -2919,7 +2919,7 @@ async def add_extra_workday(body: dict):
     try:
         config_changes.add_extra_workday(candidate, date_str)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, extra_workday=date_str)
 
@@ -2934,7 +2934,7 @@ async def remove_extra_workday(date: str, body: dict):
     try:
         config_changes.remove_extra_workday(candidate, date)
     except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise refusal_http(404, exc) from exc
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, extra_workday=date)
 
@@ -3002,7 +3002,7 @@ async def replace_setup_overrides(body: dict):
     try:
         items = normalize_setup_overrides(raw_items)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise refusal_http(400, exc) from exc
     candidate = copy.deepcopy(state.config)
     candidate.setup_overrides = items
     set_change_label("Exceções de setup alteradas")

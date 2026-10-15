@@ -465,7 +465,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
                     _check_iso_date(date)
                 _DATE_CHANGES[key](candidate, date)
             except (LookupError, ValueError) as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
         return
     if key == "config_params":
         if not isinstance(value, dict):
@@ -492,7 +492,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
         try:
             apply_operator_counts(candidate, value)
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
         return
     if key == "setup_overrides":
         if not isinstance(value, list):
@@ -500,7 +500,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
         try:
             candidate.setup_overrides = normalize_setup_overrides(value)
         except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise refusal_http(400, exc) from exc
         return
     if key == "twin_removals":
         if not isinstance(value, list):
@@ -509,7 +509,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
             try:
                 remove_twin(candidate, str(tool_id).strip())
             except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
         return
     if key == "twin_additions":
         # Only the configuration changes: the job rebuilds the twin groups.
@@ -525,7 +525,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
             try:
                 add_twin(candidate, candidate_data, tool_id, sku_a, sku_b)
             except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
         return
     if key == "sku_planning":
         if not isinstance(value, dict):
@@ -539,7 +539,7 @@ def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) 
             try:
                 set_sku_planning(candidate, candidate_data, sku, raw_rule)
             except LookupError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise refusal_http(400, exc) from exc
             except ValueError as exc:
                 raise refusal_http(400, exc) from exc
         return
@@ -639,7 +639,7 @@ async def start_replan(body: dict):
             try:
                 candidate = apply_preset(candidate, str(updates[key]), baseline=preset_baseline)
             except KeyError as exc:
-                raise HTTPException(400, str(exc.args[0])) from exc
+                raise refusal_http(400, ValueError(exc.args[0])) from exc
         elif key == "unavailability_updates":
             for raw_entry in replacements:
                 if not isinstance(raw_entry, dict):
