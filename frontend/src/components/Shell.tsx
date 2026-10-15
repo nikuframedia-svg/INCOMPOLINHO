@@ -4,7 +4,7 @@ import { ACTIVE_DATASET_KEY, useAppStore } from "../stores/useAppStore";
 import { loadWarnings, stopLoadPolling, useLoadStore } from "../stores/useLoadStore";
 import { useDataStore } from "../stores/useDataStore";
 import { assertRefreshed, RefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
-import { getHealth, getToday, recalculate } from "../api/endpoints";
+import { getHealth, getToday, recalculate, releaseManualEdits } from "../api/endpoints";
 import { staleIsopWarning } from "../lib/recalcGuard";
 import { TH } from "../constants/thresholds";
 import { approvalGateFromError, approvalImpactMessage, decisionReasonLabels } from "../lib/gateApproval";
@@ -25,6 +25,7 @@ import { useConfirm } from "./ui/confirmContext";
 import type { MutationInput } from "../api/types";
 import { refusalCauses } from "../lib/refusal";
 import { RefusalDetails } from "./RefusalDetails";
+import { manualEditLabel } from "../lib/manualEditLabel";
 
 type OperationStatus = {
   phase: "idle" | "pending" | "success" | "error";
@@ -33,6 +34,21 @@ type OperationStatus = {
   /** Concrete causes of a refusal (decisão de 15/10/2026). */
   causes?: string[];
 };
+
+function releaseButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    background: "transparent",
+    border: `1px solid ${T.blue}`,
+    color: T.blue,
+    borderRadius: 6,
+    padding: "2px 10px",
+    cursor: disabled ? "default" : "pointer",
+    fontSize: 11,
+    fontWeight: 600,
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+  };
+}
 
 const NAV_LABELS: Record<string, string> = {
   console: "Hoje",
@@ -106,6 +122,8 @@ export function Shell() {
   const activeMutations = useDataStore((s) => s.activeMutations);
   const simulationSummary = useDataStore((s) => s.simulationSummary);
   const manualEdits = useDataStore((s) => s.manualEdits);
+  const planLots = useDataStore((s) => s.lots);
+  const planWorkdays = useDataStore((s) => s.workdays);
   const canRevert = useDataStore((s) => s.canRevert);
   const revert = useDataStore((s) => s.revert);
   const clearData = useDataStore((s) => s.clear);
@@ -113,6 +131,7 @@ export function Shell() {
   const [backendUnavailable, setBackendUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [recalcing, setRecalcing] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [copilotAvailable, setCopilotAvailable] = useState(false);
   const [copilotReason, setCopilotReason] = useState("A verificar a disponibilidade do Copilot…");
@@ -121,7 +140,7 @@ export function Shell() {
     message: "",
     detail: "",
   });
-  const operationPending = refreshing || recalcing || reverting;
+  const operationPending = refreshing || recalcing || reverting || releasing;
 
   useEffect(() => {
     if (operationStatus.phase !== "success") return;
@@ -269,29 +288,19 @@ export function Shell() {
     }
   };
 
-  const handleRecalc = async () => {
-    const today = await getToday().catch(() => null);
-    const warning = staleIsopWarning(today, useDataStore.getState().workdays[0]);
-    if (warning && !(await confirm({
-      title: "ISOP anterior a hoje",
-      message: warning,
-      confirmLabel: "Recalcular mesmo assim",
-      variant: "danger",
-    }))) return;
-    setRecalcing(true);
-    setOperationStatus({
-      phase: "pending",
-      message: "A recalcular o plano…",
-      detail: "A reorganizar produções, setups e recursos.",
-    });
+  // One path for the plan writes started from the top bar («Recalcular»,
+  // «Soltar»): progress, the planner's approval when the gate asks for it,
+  // and refusals with their causes.
+  const commitPlanWrite = async (
+    texts: { pending: string; pendingDetail: string; success: string; successDetail: string; failure: string },
+    run: (approval?: { reason: string; author: string }) => Promise<unknown>,
+    approvalReason: (labels: string[]) => string,
+  ) => {
+    setOperationStatus({ phase: "pending", message: texts.pending, detail: texts.pendingDetail });
     try {
-      await recalculate();
+      await run();
       assertRefreshed(await refreshAfterCommit(refreshAll), true);
-      setOperationStatus({
-        phase: "success",
-        message: "Plano recalculado",
-        detail: "Os novos resultados já estão visíveis.",
-      });
+      setOperationStatus({ phase: "success", message: texts.success, detail: texts.successDetail });
     } catch (err) {
       const gate = approvalGateFromError(err);
       if (gate) {
@@ -303,22 +312,15 @@ export function Shell() {
           variant: "danger",
         });
         if (!approved) {
-          setOperationStatus({
-            phase: "idle",
-            message: "",
-            detail: "",
-          });
+          setOperationStatus({ phase: "idle", message: "", detail: "" });
           return;
         }
         try {
-          await recalculate({
-            reason: `Recálculo confirmado com exceções: ${decisionReasonLabels(gate).join(", ") || "exceções operacionais"}`,
-            author: "planeador",
-          });
+          await run({ reason: approvalReason(decisionReasonLabels(gate)), author: "planeador" });
           assertRefreshed(await refreshAfterCommit(refreshAll), true);
           setOperationStatus({
             phase: "success",
-            message: "Plano recalculado com exceções",
+            message: `${texts.success} com exceções`,
             detail: "O plano foi aplicado após confirmação do planeador.",
           });
         } catch (approvalError) {
@@ -333,12 +335,64 @@ export function Shell() {
       }
       setOperationStatus({
         phase: "error",
-        message: err instanceof RefreshError && err.applied ? "Plano recalculado; ecrã por atualizar" : "Não foi possível recalcular",
+        message: err instanceof RefreshError && err.applied ? `${texts.success}; ecrã por atualizar` : texts.failure,
         detail: err instanceof Error ? err.message : String(err),
         causes: refusalCauses(err),
       });
+    }
+  };
+
+  const handleRecalc = async () => {
+    const today = await getToday().catch(() => null);
+    const warning = staleIsopWarning(today, useDataStore.getState().workdays[0]);
+    if (warning && !(await confirm({
+      title: "ISOP anterior a hoje",
+      message: warning,
+      confirmLabel: "Recalcular mesmo assim",
+      variant: "danger",
+    }))) return;
+    // Decisão de 15/10/2026: «Recalcular» apaga todas as alterações manuais.
+    const edits = useDataStore.getState().manualEdits.length;
+    if (edits > 0 && !(await confirm({
+      title: "Apagar as alterações manuais?",
+      message: `Recalcular apaga ${edits === 1 ? "a alteração manual" : `as ${edits} alterações manuais`} (lotes fixados à mão) e calcula o plano de raiz. Demora cerca de 1 minuto.`,
+      confirmLabel: "Recalcular e apagar",
+      variant: "danger",
+    }))) return;
+    setRecalcing(true);
+    try {
+      await commitPlanWrite(
+        {
+          pending: "A recalcular o plano…",
+          pendingDetail: "A calcular o plano de raiz: produções, setups e recursos.",
+          success: "Plano recalculado",
+          successDetail: "Os novos resultados já estão visíveis.",
+          failure: "Não foi possível recalcular",
+        },
+        (approval) => recalculate(approval),
+        (labels) => `Recálculo confirmado com exceções: ${labels.join(", ") || "exceções operacionais"}`,
+      );
     } finally {
       setRecalcing(false);
+    }
+  };
+
+  const handleRelease = async (lotIds: string[] | null) => {
+    setReleasing(true);
+    try {
+      await commitPlanWrite(
+        {
+          pending: lotIds === null ? "A soltar todos os lotes fixados…" : "A soltar o lote…",
+          pendingDetail: "O motor volta a colocar os lotes soltos com o resto do plano.",
+          success: lotIds === null ? "Lotes soltos" : "Lote solto",
+          successDetail: "O plano foi recalculado sem essas posições fixas.",
+          failure: "Não foi possível soltar",
+        },
+        (approval) => releaseManualEdits(lotIds, approval),
+        (labels) => `Soltar lotes fixados com exceções: ${labels.join(", ") || "exceções operacionais"}`,
+      );
+    } finally {
+      setReleasing(false);
     }
   };
 
@@ -489,7 +543,7 @@ export function Shell() {
                 <button
                   onClick={handleRecalc}
                   disabled={operationPending || isSimulated}
-                  title={isSimulated ? "Desfaz primeiro o cenário simulado" : "Volta a organizar todas as produções e setups"}
+                  title={isSimulated ? "Desfaz primeiro o cenário simulado" : "Calcula o plano de raiz e apaga as alterações manuais"}
                   style={{
                     background: "transparent",
                     border: `1px solid ${T.border}`,
@@ -623,34 +677,44 @@ export function Shell() {
             background: `${T.blue}12`,
             borderBottom: `1px solid ${T.blue}35`,
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 12,
             flexShrink: 0,
           }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: T.blue }}>Edição manual ativa</span>
-            <span style={{ fontSize: 11, color: T.secondary, flex: 1 }}>
-              {manualEdits.map((edit) => `${edit.lot_id} → dia ${edit.target_day} (${edit.target_machine})`).join(" · ")}
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.blue, whiteSpace: "nowrap" }}>
+              {manualEdits.length === 1 ? "1 lote fixado à mão" : `${manualEdits.length} lotes fixados à mão`}
             </span>
-            {canRevert ? (
+            <ul aria-label="Lotes fixados à mão" style={{ margin: 0, padding: 0, listStyle: "none", flex: 1, display: "grid", gap: 4 }}>
+              {manualEdits.map((edit) => (
+                <li key={edit.lot_id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: T.secondary }}>
+                  <span>{manualEditLabel(edit, planLots ?? [], planWorkdays)}</span>
+                  <button
+                    onClick={() => void handleRelease([edit.lot_id])}
+                    disabled={operationPending}
+                    style={releaseButtonStyle(operationPending)}
+                  >
+                    Soltar
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {manualEdits.length > 1 && (
+              <button
+                onClick={() => void handleRelease(null)}
+                disabled={operationPending}
+                style={releaseButtonStyle(operationPending)}
+              >
+                {releasing ? "A soltar…" : "Soltar todos"}
+              </button>
+            )}
+            {canRevert && (
               <button
                 onClick={handleRevert}
                 disabled={reverting}
-                style={{
-                  background: "transparent",
-                  border: `1px solid ${T.blue}`,
-                  color: T.blue,
-                  borderRadius: 6,
-                  padding: "4px 12px",
-                  cursor: reverting ? "default" : "pointer",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  fontFamily: "inherit",
-                }}
+                style={releaseButtonStyle(reverting)}
               >
                 {reverting ? "A desfazer…" : "Desfazer"}
               </button>
-            ) : (
-              <span style={{ color: T.tertiary, fontSize: 10 }}>Versão anterior disponível em Planos</span>
             )}
           </div>
         )}

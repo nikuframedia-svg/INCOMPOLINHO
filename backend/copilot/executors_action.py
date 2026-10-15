@@ -122,7 +122,9 @@ def exec_recalcular_plano(args: dict) -> str:
         )
     if approval is not None:
         state.approvals.append(approval)
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(result, plan_source="auto", plan_note=f"Recalcular ({modo})")
 
     # Compute lot-level diff
@@ -238,7 +240,9 @@ def exec_mover_referencia(args: dict) -> str:
         state.approvals.append(approval)
     state.engine_data = mutated
     state.config = candidate_config
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(result, plan_source="auto", plan_note=f"Mover {sku} para {dest}")
 
     return _dumps(
@@ -413,7 +417,9 @@ def exec_alterar_config(args: dict) -> str:
         state.approvals.append(approval)
     state.config = candidate_config
     state.engine_data = candidate_data
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(
         result,
         plan_source="auto",

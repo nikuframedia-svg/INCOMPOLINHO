@@ -21,6 +21,7 @@ const endpointMocks = vi.hoisted(() => ({
   getActiveMutations: vi.fn(),
   getManualEdits: vi.fn(),
   recalculate: vi.fn(),
+  releaseManualEdits: vi.fn(),
 }));
 
 vi.mock("../src/api/endpoints", async (importOriginal) => {
@@ -528,6 +529,48 @@ describe("ConsolePage — dia de abertura", () => {
 });
 
 describe("Shell", () => {
+  // Decisão de 15/10/2026: lotes fixados à mão visíveis, cada um com «Soltar»;
+  // «Recalcular» só apaga as alterações manuais depois de confirmar.
+  function mockPinnedPlan() {
+    mockShellEndpoints();
+    endpointMocks.getPlanView.mockResolvedValue({
+      plan_revision: 1,
+      dataset: { id: "dataset-1", filename: "plano.xlsx", trust_score: 100, trust_gate: "full_auto" },
+      dataset_id: "dataset-1", active_mutations: [], can_revert: false, learning: null,
+      score, gate_report: null, segments: [], config: {}, capacity: {},
+      lots: [{ id: "LOT_JTE001_PRM043_6800016767A.10_57", sku: "6800016767A.10", op_id: "OP1",
+        machine_id: "PRM043", twin_outputs: null }],
+      manual_edits: [{ id: "e1", created_at: "2026-10-15T12:30:00Z", lot_id: "LOT_JTE001_PRM043_6800016767A.10_57",
+        source_days: [0], target_day: 1, target_start_min: 525, target_machine: "PRM043", delivery_risk_confirmed: false }],
+      workdays: ["2026-03-05", "2026-03-06", "2026-03-07"],
+      blocked_days: { workdays: ["2026-03-05", "2026-03-06", "2026-03-07"], holidays: [], machine_blocks: [],
+        tool_blocks: [], machine_intervals: [], tool_intervals: [], inactive_machines: [] },
+    });
+  }
+
+  it("mostra cada lote fixado à mão pela referência e solta-o", async () => {
+    mockPinnedPlan();
+    endpointMocks.releaseManualEdits.mockResolvedValue({ status: "ok", released: ["LOT_JTE001_PRM043_6800016767A.10_57"] });
+    render(<Shell />);
+    expect(await screen.findByText("1 lote fixado à mão")).toBeTruthy();
+    expect(screen.getByText("Referência 6800016767A.10 (PRM043) → 06/03 08:45")).toBeTruthy();
+    expect(screen.queryByText(/LOT_JTE001/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Soltar" }));
+    await waitFor(() => expect(endpointMocks.releaseManualEdits).toHaveBeenCalled());
+    expect(endpointMocks.releaseManualEdits.mock.calls[0][0]).toEqual(["LOT_JTE001_PRM043_6800016767A.10_57"]);
+  });
+
+  it("Recalcular com alterações manuais pede confirmação antes de as apagar", async () => {
+    mockPinnedPlan();
+    render(<Shell />);
+    await screen.findByText("1 lote fixado à mão");
+    fireEvent.click(screen.getByRole("button", { name: /Recalcular plano/ }));
+    await waitFor(() => expect(endpointMocks.getToday).toHaveBeenCalled());
+    // Sem confirmação (o diálogo devolve «não» fora do ConfirmProvider) nada é apagado.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(endpointMocks.recalculate).not.toHaveBeenCalled();
+  });
+
   it("carrega automaticamente o plano persistido mesmo com outro dataset em cache", async () => {
     sessionStorage.setItem("pp1ActiveDatasetId", "dataset-antigo");
     mockShellEndpoints();

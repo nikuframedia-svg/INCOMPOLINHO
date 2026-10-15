@@ -458,7 +458,9 @@ def _compact_active_schedule_bounded(config):
         result.improvement_report, result.segments, result.lots, validation_data, config,
     )
     state.config = config
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(result)
     return result
 
@@ -472,7 +474,9 @@ def _recompute(config):
 
     result, baseline = _compute_schedule(config)
     state.config = config
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(result)
     if baseline is not None:
         state.saved_schedule = baseline
@@ -538,13 +542,21 @@ def stored_plan_needs_rebuild(engine_data, segments, lots, config) -> bool:
     ))
 
 
+_KEEP_ANCHORS = object()
+
+
 def _recompute_transactional(
     config,
     approval_body: dict | None = None,
     *,
     persist_config: bool = False,
+    release_lot_ids=_KEEP_ANCHORS,
 ):
-    """Recalculate with rollback if the candidate plan is invalid."""
+    """Recalculate with rollback if the candidate plan is invalid.
+
+    ``release_lot_ids``: manual pins released first (``None``: all), inside
+    the same rollback boundary («Soltar», decisão de 15/10/2026).
+    """
     from backend.plans.context import is_staging
     from backend.plans.transactions import run_sync_mutation
 
@@ -555,6 +567,7 @@ def _recompute_transactional(
                 copy.deepcopy(config),
                 approval_body,
                 persist_config=persist_config,
+                release_lot_ids=release_lot_ids,
             ),
         )
     _require_recompute_preview(approval_body)
@@ -585,7 +598,22 @@ def _recompute_transactional(
         "stress_map": copy.deepcopy(state.stress_map),
     }
     try:
-        if (approval_body or {}).get("compact_active_plan", False) and not (
+        from backend.plans.context import recalculation_from_start
+
+        if release_lot_ids is not _KEEP_ANCHORS:
+            from backend.plans.manual_edits import release_manual_anchors
+
+            release_manual_anchors(state, release_lot_ids)
+        if recalculation_from_start():
+            # «Recalcular plano» (decisão do Luís, 15/10/2026): apaga todas as
+            # alterações manuais, as suas fixações incluídas, e calcula o plano
+            # de raiz desde D0. Nunca compacta o plano atual: a compactação
+            # guardava as posições que as alterações manuais tinham deixado.
+            from backend.plans.manual_edits import release_manual_anchors
+
+            release_manual_anchors(state, None)
+            result = _recompute(config)
+        elif (approval_body or {}).get("compact_active_plan", False) and not (
             _recalculation_needs_rebuild(config)
         ):
             result = _compact_active_schedule(config)
@@ -1980,7 +2008,9 @@ def _simulate_and_apply_locked(request: SimulateRequest):
             state.engine_data = result.mutated_data
         if candidate_config is not None:
             state.config = candidate_config
-        state.manual_edits = []
+        from backend.plans.manual_edits import sync_manual_edits
+
+        sync_manual_edits(state)
         state.active_mutations = combined_mutations
         if approval is not None:
             state.approvals.append({**approval, "action": "simulation_apply"})
@@ -2315,7 +2345,9 @@ def _apply_ctp_locked(request: CTPRequest):
         state.engine_data = result.mutated_data
     if getattr(result, "mutated_config", None) is not None:
         state.config = result.mutated_config
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.active_mutations = combined_mutations
     if approval is not None:
         state.approvals.append({**approval, "action": "ctp_apply"})
@@ -2393,6 +2425,52 @@ async def recalculate(body: dict):
         "time_ms": result.time_ms if result else 0,
         "n_segments": len(state.segments),
         "warnings": state.warnings[:10],
+        "gate_report": _result_gate_report(result) or state.gate_report,
+        "plan_revision": state.plan_revision,
+    }
+
+
+@router.post("/manual-edits/release")
+@plan_writer
+async def release_manual_edits(body: dict):
+    """«Soltar»: release manual pins (``lot_ids``; omitted or null: all) and replan.
+
+    The released lots go back to the engine, which places them again with
+    the rest of the plan; started production stays protected as always.
+    """
+    _require_data()
+    raw = body.get("lot_ids")
+    if raw is not None and not (
+        isinstance(raw, list) and all(isinstance(item, str) and item for item in raw)
+    ):
+        raise HTTPException(400, "lot_ids deve ser uma lista de lotes, ou vazio para todos.")
+    async with plan_mutation_lock:
+        _require_expected_revision(body)
+        pinned = {anchor.lot_id for anchor in state.engine_data.plan_anchors or []}
+        if not pinned:
+            raise HTTPException(400, "Não há lotes fixados à mão para soltar.")
+        if raw is not None and not set(raw) <= pinned:
+            raise HTTPException(400, "Um dos lotes indicados não está fixado à mão.")
+        old_score = dict(state.score) if state.score else {}
+        from backend.planning_control import response_margin
+
+        try:
+            # Same response margin as «Recalcular»: answer before the proxy cuts.
+            with response_margin(RECALCULATE_RESPONSE_MARGIN_S):
+                result = await run_in_threadpool(
+                    lambda: _recompute_transactional(
+                        state.config, body, release_lot_ids=raw,
+                    ),
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _plan_validation_error(exc) from exc
+
+    return {
+        "status": "ok",
+        "released": sorted(pinned if raw is None else set(raw)),
+        "score": state.score,
+        "score_previous": old_score,
+        "time_ms": result.time_ms if result else 0,
         "gate_report": _result_gate_report(result) or state.gate_report,
         "plan_revision": state.plan_revision,
     }

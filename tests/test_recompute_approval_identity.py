@@ -41,6 +41,8 @@ def compact(services, monkeypatch):
 
     function = Mock(side_effect=calculate)
     monkeypatch.setattr("backend.api.data._compact_active_schedule", function)
+    # «Recalcular» calcula de raiz desde 15/10/2026: o mesmo candidato simulado.
+    monkeypatch.setattr("backend.api.data._recompute", function)
     return function
 
 

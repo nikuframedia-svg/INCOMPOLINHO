@@ -324,7 +324,10 @@ def restore_plan_into_state(
     target_state.saved_config = None
     target_state.saved_plan_revision = None
     target_state.active_mutations = restored["active_mutations"]
-    target_state.manual_edits = restored["manual_edits"]
+    from backend.plans.manual_edits import synced_manual_edits
+
+    # Older snapshots kept anchors without records: show every pin (15/10/2026).
+    target_state.manual_edits = synced_manual_edits(restored["manual_edits"], engine_data)
     target_state.learning_info = restored["learning_info"]
     target_state.approvals = prior_approvals
     if approval is not None:

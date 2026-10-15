@@ -394,7 +394,11 @@ async def apply_move(body: dict):
             "previous_version_id": (previous_version.get("id") if previous_version else None),
             "delivery_risk_confirmed": bool(candidate.requires_confirmation and confirmed),
         }
-        state.manual_edits = [*state.manual_edits, edit]
+        # One record per pinned lot: a second move of the same lot replaces it.
+        state.manual_edits = [
+            *(item for item in state.manual_edits if item.get("lot_id") != candidate.lot_id),
+            edit,
+        ]
         if approval is not None:
             state.approvals.append({**approval, "action": "manual_move"})
         journal = copy.deepcopy(state.journal_entries or [])

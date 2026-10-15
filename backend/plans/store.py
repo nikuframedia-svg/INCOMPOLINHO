@@ -376,12 +376,17 @@ class PlansStore:
             payload.get("dataset_info") or {}
         ).get("id"):
             raise RecalculationContextChanged("dataset")
-        # A past date is not execution. Observations and intentional anchors
-        # are real constraints and must survive this special recalculation.
+        # A past date is not execution. Observations are real constraints and
+        # must survive this special recalculation. Manual anchors are released
+        # by it (decisão de 15/10/2026): they may only disappear, never change.
         old_data, new_data = before.get("engine_data") or {}, payload.get("engine_data") or {}
-        for field in ("plan_anchors", "current_machine_states", "committed_supplies"):
+        for field in ("current_machine_states", "committed_supplies"):
             if old_data.get(field, []) != new_data.get(field, []):
                 raise RecalculationContextChanged(field)
+        if new_data.get("plan_anchors") and (
+            old_data.get("plan_anchors", []) != new_data.get("plan_anchors", [])
+        ):
+            raise RecalculationContextChanged("plan_anchors")
 
     def active(self) -> dict | None:
         from backend.plans.serialize import snapshot_integrity_errors

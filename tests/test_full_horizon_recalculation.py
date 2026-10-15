@@ -154,19 +154,36 @@ def test_recalculation_requires_server_journal_not_payload_flag(planning):
     assert planning.store.active()["payload"] == baseline
 
 
-def test_recalculation_cannot_remove_a_manual_anchor(planning):
+def test_recalculation_releases_manual_anchors_but_cannot_change_them(planning):
+    """«Recalcular» apaga as alterações manuais (decisão de 15/10/2026): the
+    anchors may disappear, but never move to another position."""
+    planning.state.engine_data.plan_anchors = [PlanAnchor("LOT1", "M1", "2026-03-17T07:30")]
+    _, candidate = _dated_active(planning)
+    released = copy.deepcopy(candidate)
+    released["engine_data"]["plan_anchors"] = []
+    _finalize_snapshot(released)
+    planning.store.prepare_mutation("released", "fingerprint", {
+        "plan_revision": 8, "recalculate_from_start": True,
+    })
+    planning.store.commit_mutation("released", released, {}, source="auto",
+                                   recalculate_from_start=True)
+    assert planning.store.active()["payload"]["engine_data"]["plan_anchors"] == []
+
+
+def test_recalculation_cannot_move_a_manual_anchor(planning):
     planning.state.engine_data.plan_anchors = [PlanAnchor("LOT1", "M1", "2026-03-17T07:30")]
     baseline, candidate = _dated_active(planning)
-    candidate["engine_data"]["plan_anchors"] = []
+    candidate["engine_data"]["plan_anchors"][0]["start_at"] = "2026-03-17T09:00"
     _finalize_snapshot(candidate)
     planning.store.prepare_mutation("anchor", "fingerprint", {
         "plan_revision": 8, "recalculate_from_start": True,
     })
-    with pytest.raises(RecalculationContextChanged) as refused:
+    from backend.scheduler.validation import PlanValidationError
+
+    # Refused either by the pin's own check or by the recalculation context.
+    with pytest.raises((RecalculationContextChanged, PlanValidationError)):
         planning.store.commit_mutation("anchor", candidate, {}, source="auto",
                                        recalculate_from_start=True)
-    assert (refused.value.code, refused.value.changed) == ("recalculation_context", "plan_anchors")
-    assert "posições manuais" in str(refused.value)
     assert planning.store.active()["payload"] == baseline
 
 
@@ -276,8 +293,8 @@ def test_real_compaction_moves_past_planned_production_and_keeps_quantities(monk
 def test_recalculate_rebuilds_lots_when_protected_durations_are_stale(
     client, compact, monkeypatch, stale,
 ):
-    """After an OEE change, "Recalcular" from D0 cannot compact lots planned
-    under the old configuration; it must rebuild them instead of failing."""
+    """«Recalcular» always rebuilds from D0 (decisão de 15/10/2026), stale or
+    not, even when an older client still asks to compact the active plan."""
     rebuild = Mock(side_effect=lambda config: compact.side_effect(config))
     monkeypatch.setattr(data_api, "_recompute", rebuild)
     monkeypatch.setattr(data_api, "_recalculation_needs_rebuild", lambda _config: stale)
@@ -286,8 +303,8 @@ def test_recalculate_rebuilds_lots_when_protected_durations_are_stale(
     response = client.post("/api/data/recalculate", json=body)
 
     assert response.status_code in (200, 409), response.text
-    assert rebuild.call_count == (1 if stale else 0)
-    assert compact.call_count == (0 if stale else 1)
+    assert rebuild.call_count == 1
+    assert compact.call_count == 0
 
 
 def test_accepted_risk_recalculation_then_ordinary_write_freezes_past_placement(monkeypatch):

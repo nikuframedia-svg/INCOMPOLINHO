@@ -1849,7 +1849,9 @@ class ReplanJobManager:
             state.engine_data = engine_data
             state.config = config
             state.current_machine_states = list(engine_data.current_machine_states)
-            state.manual_edits = []
+            from backend.plans.manual_edits import sync_manual_edits
+
+            sync_manual_edits(state)
             state.active_mutations = active_mutations
             if approval is not None:
                 state.approvals.append({**approval, "action": "replan_apply", "job_id": job_id})

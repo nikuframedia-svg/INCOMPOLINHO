@@ -496,6 +496,21 @@ export const applyCTP = (
     COMPUTE_OPTIONS,
   );
 
+/** «Soltar»: release lots pinned by hand (null: all) and replan (decisão de 15/10/2026). */
+export const releaseManualEdits = (
+  lotIds: string[] | null,
+  approval?: { reason: string; author: string },
+) => postWithRevision<{ status: string; released: string[]; score: Score; score_previous: Score }>(
+  "/api/data/manual-edits/release",
+  {
+    lot_ids: lotIds,
+    approve_exceptions: Boolean(approval),
+    approval_reason: approval?.reason ?? "",
+    approval_author: approval?.author ?? "",
+  },
+  COMPUTE_OPTIONS,
+);
+
 export const recalculate = (
   approval?: { reason: string; author: string },
 ) => postWithRevision<{
@@ -505,7 +520,7 @@ export const recalculate = (
   time_ms: number;
   n_segments: number;
 }>("/api/data/recalculate", {
-  compact_active_plan: true,
+  // Decisão de 15/10/2026: sempre de raiz, sem compactar o plano atual.
   approve_exceptions: Boolean(approval),
   approval_reason: approval?.reason ?? "",
   approval_author: approval?.author ?? "",

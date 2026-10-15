@@ -201,7 +201,9 @@ def _reschedule() -> dict:
         )
     if approval is not None:
         state.approvals.append({**approval, "action": "master_data"})
-    state.manual_edits = []
+    from backend.plans.manual_edits import sync_manual_edits
+
+    sync_manual_edits(state)
     state.update_schedule(result, plan_source="auto", plan_note="Dados mestre alterados")
     if _PENDING_CONFIG.get() is not None:
         _persist_config(_PENDING_CONFIG.get())

@@ -258,8 +258,9 @@ mantém esta libertação e só muda o tamanho do lote, acima).
     produções separadas do contrato antigo e mantém o envio por entrega até
     ao «Recalcular plano»; se uma âncora manual o mantém (com os lotes da
     mesma ferramenta montada que o alimentam,
-    `frozen._protected_lots(mount_suppliers=True)`), mantém-no em cada
-    «Recalcular» até a âncora ser removida. Leem-no sem regra própria:
+    `frozen._protected_lots(mount_suppliers=True)`), mantém-no até a âncora
+    ser solta («Soltar» ou «Recalcular», que desde 15/10/2026 apaga todas as
+    âncoras). Leem-no sem regra própria:
     o score (`subcontract_dispatch_misses`), o comparador sem perdas e o
     gatilho do replaneamento por capacidade libertada (conta o resto do
     lote).
@@ -698,8 +699,19 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   ISOP completo desde D0, incluindo produção passada apenas planeada. Nesse
   comando, a data decorrida não congela lotes nem gera reservas de capacidade;
   provas antigas derivadas exclusivamente da data são retiradas da cópia de
-  cálculo. Mantêm-se âncoras manuais, estados observados das máquinas e oferta
-  já comprometida. Outras alterações operacionais e reposições conservam a
+  cálculo. Mantêm-se estados observados das máquinas e oferta já comprometida.
+  **Alterado pelo Luís a 15/10/2026:** «Recalcular plano» apaga todas as
+  alterações manuais (registos e âncoras, `plans/manual_edits.release_manual_anchors`)
+  e calcula sempre de raiz (`_recompute`, nunca `_compact_active_schedule`,
+  mesmo que o cliente peça `compact_active_plan`); o ecrã pede confirmação
+  quando há alterações manuais. A gravação aceita âncoras que desaparecem,
+  nunca âncoras mudadas (`store._assert_recalculation_context_locked`). Antes,
+  o «Recalcular» guardava as âncoras e compactava: a revisão 158 saiu igual à
+  157, com 5 lotes presos sem nada no ecrã. **Uma só fonte de verdade:** a
+  lista de alterações manuais é sempre a das âncoras, um registo por lote
+  (`sync_manual_edits` em todas as escritas; um segundo movimento do mesmo
+  lote substitui o registo); «Soltar» (`POST /api/data/manual-edits/release`,
+  um lote ou todos) solta a âncora com o registo e replaneia. Outras alterações operacionais e reposições conservam a
   proteção por data existente. Esta exceção é interna ao coordenador, não um
   parâmetro de cliente que permita contornar a validação. O orçamento atual
   permanece inalterado; recalcular continua sujeito às aprovações existentes.

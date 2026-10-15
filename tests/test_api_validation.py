@@ -1193,18 +1193,20 @@ def test_recalculate_returns_result_time(monkeypatch):
     assert response.json()["time_ms"] == 123.4
 
 
-def test_recalculate_can_compact_the_active_plan(monkeypatch):
+def test_recalculate_never_compacts_the_active_plan(monkeypatch):
+    """Decisão de 15/10/2026: «Recalcular» calcula de raiz, mesmo que um
+    cliente antigo ainda peça para compactar o plano ativo."""
     client = TestClient(app)
     called = []
     monkeypatch.setattr(
         data_api,
         "_compact_active_schedule",
-        lambda config: called.append(config) or SimpleNamespace(time_ms=45.6),
+        lambda _config: pytest.fail("não deve compactar o plano ativo"),
     )
     monkeypatch.setattr(
         data_api,
         "_recompute",
-        lambda _config: pytest.fail("não deve reconstruir o plano"),
+        lambda config: called.append(config) or SimpleNamespace(time_ms=45.6),
     )
 
     response = client.post(
