@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 import copy
+from datetime import date as dt_date
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.api.locks import commit_lock, plan_mutation_lock
+from backend.config.changes import (
+    RETIRED_CONFIG_KEYS,
+    TUNABLE_CONFIG_KEYS,
+    add_extra_workday,
+    add_holiday,
+    add_twin,
+    apply_operator_counts,
+    apply_subcontracts,
+    coerce_tunable_value,
+    normalize_setup_overrides,
+    normalize_subcontracts,
+    remove_extra_workday,
+    remove_holiday,
+    remove_twin,
+    set_sku_planning,
+)
 from backend.config.loader import normalize_setup_families, validate_config
+from backend.config.planning import apply_effective_planning_config
+from backend.config.presets import apply_preset
 from backend.config.shifts import (
     clear_legacy_common_machine_capacity_overrides,
     normalize_shift_updates,
@@ -157,6 +176,385 @@ def _sync_active_machines(candidate, candidate_data) -> list[str]:
     return warnings
 
 
+# Fixed processing order, whatever the order of the JSON keys: calendar
+# removals, then new machines and tools (later keys may name them), then the
+# edits (the preset before the individual parameters), then the calendar
+# additions and updates (they may name a machine added in this request).
+_UPDATE_ORDER = (
+    "unavailability_removals",
+    "holiday_removals",
+    "extra_day_removals",
+    "machine_additions",
+    "tool_additions",
+    "preset",
+    "config_params",
+    "machine_oee",
+    "setup_families",
+    "machine_groups",
+    "machine_active",
+    "tool_updates",
+    "shifts",
+    "setup_crews_by_group",
+    "operators",
+    "setup_overrides",
+    "twin_removals",
+    "twin_additions",
+    "sku_planning",
+    "subcontracts",
+    "holiday_additions",
+    "extra_day_additions",
+    "unavailability_updates",
+    "unavailability_additions",
+)
+
+_DATE_CHANGES = {
+    "holiday_removals": remove_holiday,
+    "extra_day_removals": remove_extra_workday,
+    "holiday_additions": add_holiday,
+    "extra_day_additions": add_extra_workday,
+}
+
+# Words of the automatic job reason: key → (one, many).
+_CHANGE_WORDS = {
+    "machine_additions": ("máquina", "máquinas"),
+    "tool_additions": ("ferramenta", "ferramentas"),
+    "tool_updates": ("ferramenta alterada", "ferramentas alteradas"),
+    "holiday_additions": ("feriado", "feriados"),
+    "holiday_removals": ("feriado retirado", "feriados retirados"),
+    "extra_day_additions": ("dia extra", "dias extra"),
+    "extra_day_removals": ("dia extra retirado", "dias extra retirados"),
+    "twin_removals": ("gémea retirada", "gémeas retiradas"),
+    "sku_planning": ("regra de referência", "regras de referência"),
+    "unavailability_additions": ("indisponibilidade", "indisponibilidades"),
+    "unavailability_removals": ("indisponibilidade retirada", "indisponibilidades retiradas"),
+    "unavailability_updates": ("indisponibilidade alterada", "indisponibilidades alteradas"),
+}
+_CHANGE_LABELS = {
+    "config_params": "parâmetros",
+    "machine_oee": "OEE",
+    "setup_families": "famílias de setup",
+    "machine_groups": "grupos de máquinas",
+    "machine_active": "máquinas ativas",
+    "shifts": "turnos",
+    "setup_crews_by_group": "equipas de setup",
+    "operators": "operadores",
+    "setup_overrides": "exceções de setup",
+    "subcontracts": "subcontratação",
+}
+
+
+def _describe_changes(updates: dict) -> str:
+    """Short pt-PT job reason, e.g. «Configuração: 2 máquinas, 1 feriado»."""
+
+    parts = []
+    for key in _UPDATE_ORDER:
+        if key not in updates:
+            continue
+        value = updates[key]
+        if key == "preset":
+            parts.append(f"predefinição «{value}»")
+        elif key == "twin_additions":
+            tools = [str(twin.get("tool_id", "")) for twin in value if isinstance(twin, dict)]
+            parts.append(("gémea " if len(tools) == 1 else "gémeas ") + ", ".join(tools))
+        elif key in _CHANGE_WORDS:
+            one, many = _CHANGE_WORDS[key]
+            count = len(value) if isinstance(value, (list, dict)) else 1
+            parts.append(f"{count} {one if count == 1 else many}")
+        else:
+            parts.append(_CHANGE_LABELS.get(key, key))
+    if not parts:
+        return "Replaneamento pedido pelo utilizador"
+    return "Configuração: " + ", ".join(parts)
+
+
+def _check_iso_date(date: str) -> None:
+    try:
+        dt_date.fromisoformat(date)
+    except ValueError as exc:
+        raise ValueError(f"A data {date} deve usar o formato YYYY-MM-DD.") from exc
+
+
+def _apply_change(key, value, candidate, candidate_data, previous_day_capacity) -> None:
+    """Apply one ``config_updates`` key (not unavailability, not preset)."""
+
+    if key == "machine_additions":
+        if not isinstance(value, list):
+            raise HTTPException(400, "machine_additions deve ser uma lista.")
+        for raw_machine in value:
+            if not isinstance(raw_machine, dict):
+                raise HTTPException(400, "Nova máquina inválida.")
+            machine_id = str(raw_machine.get("id", "")).strip().upper()
+            group = str(raw_machine.get("group", "")).strip()
+            active = raw_machine.get("active", True)
+            if not machine_id:
+                raise HTTPException(400, "O identificador da máquina é obrigatório.")
+            if machine_id in OUT_OF_SCOPE_MACHINES:
+                raise HTTPException(400, f"{machine_id} está fora do âmbito da análise.")
+            if machine_id in candidate.machines:
+                raise HTTPException(400, f"Máquina {machine_id} já existe.")
+            if group not in {"Grandes", "Medias"}:
+                raise HTTPException(400, f"Grupo inválido para {machine_id}.")
+            if not isinstance(active, bool):
+                raise HTTPException(400, f"Estado inválido para {machine_id}.")
+            candidate.machines[machine_id] = MachineConfig(
+                id=machine_id,
+                group=group,
+                active=active,
+            )
+            # A machine the ISOP already brought keeps its one engine entry.
+            imported = next(
+                (machine for machine in candidate_data.machines if machine.id == machine_id),
+                None,
+            )
+            if imported is not None:
+                imported.group = group
+            elif active:
+                candidate_data.machines.append(
+                    MachineInfo(
+                        id=machine_id,
+                        group=group,
+                        day_capacity=candidate.day_capacity_min,
+                    )
+                )
+        return
+    if key == "tool_additions":
+        if not isinstance(value, list):
+            raise HTTPException(400, "tool_additions deve ser uma lista.")
+        for raw_tool in value:
+            if not isinstance(raw_tool, dict):
+                raise HTTPException(400, "Nova ferramenta inválida.")
+            tool_id = str(raw_tool.get("id", "")).strip().upper()
+            primary = str(raw_tool.get("primary", "")).strip().upper()
+            alt = str(raw_tool.get("alt", "") or "").strip().upper() or None
+            try:
+                setup_hours = finite_float(raw_tool.get("setup_hours", 0.5), "setup_hours")
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(400, "O setup deve ser indicado em horas.") from exc
+            if not tool_id or not primary:
+                raise HTTPException(
+                    400,
+                    "A ferramenta e a máquina principal são obrigatórias.",
+                )
+            if tool_id in candidate.tools:
+                raise HTTPException(400, f"Ferramenta {tool_id} já existe.")
+            if primary not in candidate.machines:
+                raise HTTPException(400, f"Máquina principal {primary} não existe.")
+            if alt and alt not in candidate.machines:
+                raise HTTPException(400, f"Máquina alternativa {alt} não existe.")
+            if not 0 <= setup_hours <= 8:
+                raise HTTPException(400, "O setup deve estar entre 0 e 8 horas.")
+            candidate.tools[tool_id] = {
+                "primary": primary,
+                "alt": alt,
+                "setup_hours": setup_hours,
+            }
+        return
+    if key == "machine_oee":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "machine_oee deve ser um objeto.")
+        for machine_id, oee in value.items():
+            if machine_id not in candidate.machines:
+                raise HTTPException(400, f"Máquina {machine_id} não existe.")
+            try:
+                candidate.machines[machine_id].oee = (
+                    None if oee in (None, "") else finite_float(oee, "oee")
+                )
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    400,
+                    f"OEE inválido para {machine_id}.",
+                ) from exc
+        return
+    if key == "setup_families":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "setup_families deve ser um objeto.")
+        candidate.setup_families = normalize_setup_families(value)
+        return
+    if key == "machine_groups":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "machine_groups deve ser um objeto.")
+        for machine_id, group in value.items():
+            if machine_id not in candidate.machines:
+                raise HTTPException(400, f"Máquina {machine_id} não existe.")
+            if str(group) not in {"Grandes", "Medias"}:
+                raise HTTPException(400, f"Grupo inválido para {machine_id}.")
+            candidate.machines[machine_id].group = str(group)
+            for machine in candidate_data.machines:
+                if machine.id == machine_id:
+                    machine.group = str(group)
+        return
+    if key == "machine_active":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "machine_active deve ser um objeto.")
+        for machine_id, active in value.items():
+            if machine_id not in candidate.machines:
+                raise HTTPException(400, f"Máquina {machine_id} não existe.")
+            if not isinstance(active, bool):
+                raise HTTPException(
+                    400,
+                    f"Estado inválido para {machine_id}: usa verdadeiro ou falso.",
+                )
+            candidate.machines[machine_id].active = active
+        return
+    if key == "tool_updates":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "tool_updates deve ser um objeto.")
+        for tool_id, raw_update in value.items():
+            if tool_id not in candidate.tools:
+                raise HTTPException(400, f"Ferramenta {tool_id} não existe.")
+            if not isinstance(raw_update, dict):
+                raise HTTPException(400, f"Alteração inválida para {tool_id}.")
+            tool = candidate.tools[tool_id]
+            if "setup_hours" in raw_update:
+                try:
+                    setup_hours = finite_float(raw_update["setup_hours"], "setup_hours")
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        400,
+                        f"Tempo de setup inválido para {tool_id}.",
+                    ) from exc
+                if not 0 <= setup_hours <= 8:
+                    raise HTTPException(
+                        400,
+                        f"O setup de {tool_id} deve estar entre 0 e 8 horas.",
+                    )
+                tool["setup_hours"] = setup_hours
+                for op in candidate_data.ops:
+                    if op.t == tool_id:
+                        op.sH = setup_hours
+            if "alt" in raw_update:
+                alt = str(raw_update["alt"] or "").strip() or None
+                if alt and alt not in candidate.machines:
+                    raise HTTPException(400, f"Máquina alternativa {alt} não existe.")
+                tool["alt"] = alt
+                for op in candidate_data.ops:
+                    if op.t == tool_id:
+                        op.alt = alt
+        return
+    if key == "shifts":
+        try:
+            candidate.shifts = normalize_shift_updates(value)
+            clear_legacy_common_machine_capacity_overrides(
+                candidate,
+                previous_day_capacity,
+            )
+        except ValueError as exc:
+            raise refusal_http(400, exc) from exc
+        return
+    if key == "setup_crews_by_group":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "setup_crews_by_group deve ser um objeto.")
+        try:
+            candidate.setup_crews_by_group = {
+                str(group): strict_int(count, f"setup_crews.{group}")
+                for group, count in value.items()
+            }
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                400,
+                "As equipas de setup devem ser números inteiros.",
+            ) from exc
+        return
+    if key in _DATE_CHANGES:
+        if not isinstance(value, list):
+            raise HTTPException(400, f"{key} deve ser uma lista.")
+        for raw_date in value:
+            date = str(raw_date).strip()
+            try:
+                if key == "holiday_additions":
+                    _check_iso_date(date)
+                _DATE_CHANGES[key](candidate, date)
+            except (LookupError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+        return
+    if key == "config_params":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "config_params deve ser um objeto.")
+        for param, raw_value in value.items():
+            if param in RETIRED_CONFIG_KEYS:
+                continue
+            if param == "setup_crews":
+                raise HTTPException(
+                    400,
+                    "setup_crews global foi substituído por setup_crews_by_group.",
+                )
+            if param not in TUNABLE_CONFIG_KEYS:
+                raise HTTPException(400, f"Parâmetro desconhecido: config_params.{param}")
+            try:
+                coerced = coerce_tunable_value(param, getattr(candidate, param), raw_value)
+            except ValueError as exc:
+                raise refusal_http(400, exc) from exc
+            setattr(candidate, param, coerced)
+        return
+    if key == "operators":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "operators deve ser um objeto.")
+        try:
+            apply_operator_counts(candidate, value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return
+    if key == "setup_overrides":
+        if not isinstance(value, list):
+            raise HTTPException(400, "setup_overrides deve ser uma lista.")
+        try:
+            candidate.setup_overrides = normalize_setup_overrides(value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return
+    if key == "twin_removals":
+        if not isinstance(value, list):
+            raise HTTPException(400, "twin_removals deve ser uma lista.")
+        for tool_id in value:
+            try:
+                remove_twin(candidate, str(tool_id).strip())
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        return
+    if key == "twin_additions":
+        # Only the configuration changes: the job rebuilds the twin groups.
+        if not isinstance(value, list):
+            raise HTTPException(400, "twin_additions deve ser uma lista.")
+        for raw_twin in value:
+            fields = ("tool_id", "sku_a", "sku_b")
+            if not isinstance(raw_twin, dict) or not all(
+                str(raw_twin.get(field) or "").strip() for field in fields
+            ):
+                raise HTTPException(400, "Gémea inválida: indica tool_id, sku_a e sku_b.")
+            tool_id, sku_a, sku_b = (str(raw_twin[field]).strip() for field in fields)
+            try:
+                add_twin(candidate, candidate_data, tool_id, sku_a, sku_b)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        return
+    if key == "sku_planning":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "sku_planning deve ser um objeto.")
+        for sku, raw_rule in value.items():
+            if raw_rule is None:
+                candidate.sku_planning_rules.pop(sku, None)
+                continue
+            if not isinstance(raw_rule, dict):
+                raise HTTPException(400, f"Regra de planeamento inválida para {sku}.")
+            try:
+                set_sku_planning(candidate, candidate_data, sku, raw_rule)
+            except LookupError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            except ValueError as exc:
+                raise refusal_http(400, exc) from exc
+        return
+    if key == "subcontracts":
+        if not isinstance(value, dict):
+            raise HTTPException(400, "subcontracts deve ser um objeto.")
+        try:
+            companies, sku_subcontracts = normalize_subcontracts(value)
+        except ValueError as exc:
+            raise refusal_http(400, exc) from exc
+        apply_subcontracts(candidate, companies, sku_subcontracts)
+        return
+    raise HTTPException(400, f"Parâmetro desconhecido: {key}")
+
+
 @router.post("")
 async def start_replan(body: dict):
     if "expected_revision" not in body:
@@ -180,6 +578,10 @@ async def start_replan(body: dict):
             candidate = copy.deepcopy(state.config)
             candidate_data = copy.deepcopy(state.engine_data)
             dataset_info = copy.deepcopy(state.dataset_info)
+            # A preset resets its tunables against the load-time configuration.
+            preset_baseline = copy.deepcopy(
+                state.default_config if state.default_config is not None else state.config
+            )
             base_revision = int(state.plan_revision)
             baseline_snapshot = serialize_snapshot(state)
     base_input_fingerprints = replan_base_fingerprints(baseline_snapshot)
@@ -190,6 +592,9 @@ async def start_replan(body: dict):
     operator_capacity_tightened = False
     if not isinstance(updates, dict):
         raise HTTPException(400, "config_updates deve ser um objeto.")
+    for key in updates:
+        if key not in _UPDATE_ORDER:
+            raise HTTPException(400, f"Parâmetro desconhecido: {key}")
     additions = updates.get("unavailability_additions", [])
     removals = updates.get("unavailability_removals", [])
     replacements = updates.get("unavailability_updates", [])
@@ -222,242 +627,84 @@ async def start_replan(body: dict):
         for entry in entries
     }
     calendar_capacity_relaxed = bool(removal_ids)
-    for entry_id in removal_ids:
-        removed = remove_unavailability_entry(candidate, entry_id)
-        if removed is None:
-            raise HTTPException(404, f"Indisponibilidade {entry_id} não existe.")
-    for raw_entry in replacements:
-        if not isinstance(raw_entry, dict):
-            raise HTTPException(400, "Alteração de indisponibilidade inválida.")
-        entry_id = str(raw_entry.get("id", "")).strip()
-        next_kind = str(raw_entry.get("kind", raw_entry.get("type", ""))).lower()
-        try:
-            update_unavailability_entry(candidate, candidate_data, entry_id, raw_entry)
-        except UnavailabilityConflict as exc:
-            raise refusal_http(409, exc) from exc
-        except (TypeError, ValueError) as exc:
-            raise refusal_http(400, exc) from exc
-        previous_kind, previous_entry = original_entries[entry_id]
-        current_kind = next_kind.rstrip("s") or previous_kind
-        current_entry = next(
-            (
-                entry
-                for kind, entries in (
-                    ("machine", candidate.machine_unavailability),
-                    ("tool", candidate.tool_unavailability),
-                    ("operator", candidate.operator_unavailability),
-                )
-                if kind == current_kind
-                for entry in entries
-                if str(entry.get("id", "")) == entry_id
-            ),
-            None,
-        )
-        edit_effect = _unavailability_edit_effect(
-            previous_kind,
-            previous_entry,
-            current_kind,
-            current_entry,
-        )
-        edit_tightens = edit_effect == "tightens"
-        calendar_capacity_tightened = calendar_capacity_tightened or edit_tightens
-        calendar_capacity_relaxed = calendar_capacity_relaxed or (
-            edit_effect == "relaxes"
-        )
-        operator_capacity_tightened = operator_capacity_tightened or (
-            edit_tightens and current_kind == "operator"
-        )
-    for raw_entry in additions:
-        if not isinstance(raw_entry, dict):
-            raise HTTPException(400, "Nova indisponibilidade inválida.")
-        addition_kind = str(
-            raw_entry.get("kind", raw_entry.get("type", ""))
-        ).lower().rstrip("s")
-        calendar_capacity_tightened = True
-        operator_capacity_tightened = operator_capacity_tightened or (
-            addition_kind == "operator"
-        )
-        try:
-            add_unavailability_entry(candidate, candidate_data, raw_entry)
-        except UnavailabilityConflict as exc:
-            raise refusal_http(409, exc) from exc
-        except (TypeError, ValueError) as exc:
-            raise refusal_http(400, exc) from exc
-
-    for key, value in updates.items():
-        if key in _CALENDAR_ONLY_UPDATES:
+    for key in _UPDATE_ORDER:
+        if key not in updates:
             continue
-        if key == "machine_additions":
-            if not isinstance(value, list):
-                raise HTTPException(400, "machine_additions deve ser uma lista.")
-            for raw_machine in value:
-                if not isinstance(raw_machine, dict):
-                    raise HTTPException(400, "Nova máquina inválida.")
-                machine_id = str(raw_machine.get("id", "")).strip().upper()
-                group = str(raw_machine.get("group", "")).strip()
-                active = raw_machine.get("active", True)
-                if not machine_id:
-                    raise HTTPException(400, "O identificador da máquina é obrigatório.")
-                if machine_id in OUT_OF_SCOPE_MACHINES:
-                    raise HTTPException(400, f"{machine_id} está fora do âmbito da análise.")
-                if machine_id in candidate.machines:
-                    raise HTTPException(400, f"Máquina {machine_id} já existe.")
-                if group not in {"Grandes", "Medias"}:
-                    raise HTTPException(400, f"Grupo inválido para {machine_id}.")
-                if not isinstance(active, bool):
-                    raise HTTPException(400, f"Estado inválido para {machine_id}.")
-                candidate.machines[machine_id] = MachineConfig(
-                    id=machine_id,
-                    group=group,
-                    active=active,
-                )
-                if active:
-                    candidate_data.machines.append(
-                        MachineInfo(
-                            id=machine_id,
-                            group=group,
-                            day_capacity=candidate.day_capacity_min,
-                        )
-                    )
-            continue
-        if key == "tool_additions":
-            if not isinstance(value, list):
-                raise HTTPException(400, "tool_additions deve ser uma lista.")
-            for raw_tool in value:
-                if not isinstance(raw_tool, dict):
-                    raise HTTPException(400, "Nova ferramenta inválida.")
-                tool_id = str(raw_tool.get("id", "")).strip().upper()
-                primary = str(raw_tool.get("primary", "")).strip().upper()
-                alt = str(raw_tool.get("alt", "") or "").strip().upper() or None
-                try:
-                    setup_hours = finite_float(raw_tool.get("setup_hours", 0.5), "setup_hours")
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(400, "O setup deve ser indicado em horas.") from exc
-                if not tool_id or not primary:
-                    raise HTTPException(
-                        400,
-                        "A ferramenta e a máquina principal são obrigatórias.",
-                    )
-                if tool_id in candidate.tools:
-                    raise HTTPException(400, f"Ferramenta {tool_id} já existe.")
-                if primary not in candidate.machines:
-                    raise HTTPException(400, f"Máquina principal {primary} não existe.")
-                if alt and alt not in candidate.machines:
-                    raise HTTPException(400, f"Máquina alternativa {alt} não existe.")
-                if not 0 <= setup_hours <= 8:
-                    raise HTTPException(400, "O setup deve estar entre 0 e 8 horas.")
-                candidate.tools[tool_id] = {
-                    "primary": primary,
-                    "alt": alt,
-                    "setup_hours": setup_hours,
-                }
-            continue
-        if key == "machine_oee":
-            if not isinstance(value, dict):
-                raise HTTPException(400, "machine_oee deve ser um objeto.")
-            for machine_id, oee in value.items():
-                if machine_id not in candidate.machines:
-                    raise HTTPException(400, f"Máquina {machine_id} não existe.")
-                try:
-                    candidate.machines[machine_id].oee = (
-                        None if oee in (None, "") else finite_float(oee, "oee")
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(
-                        400,
-                        f"OEE inválido para {machine_id}.",
-                    ) from exc
-            continue
-        if key == "setup_families":
-            if not isinstance(value, dict):
-                raise HTTPException(400, "setup_families deve ser um objeto.")
-            candidate.setup_families = normalize_setup_families(value)
-            continue
-        if key == "machine_groups":
-            if not isinstance(value, dict):
-                raise HTTPException(400, "machine_groups deve ser um objeto.")
-            for machine_id, group in value.items():
-                if machine_id not in candidate.machines:
-                    raise HTTPException(400, f"Máquina {machine_id} não existe.")
-                if str(group) not in {"Grandes", "Medias"}:
-                    raise HTTPException(400, f"Grupo inválido para {machine_id}.")
-                candidate.machines[machine_id].group = str(group)
-                for machine in candidate_data.machines:
-                    if machine.id == machine_id:
-                        machine.group = str(group)
-            continue
-        if key == "machine_active":
-            if not isinstance(value, dict):
-                raise HTTPException(400, "machine_active deve ser um objeto.")
-            for machine_id, active in value.items():
-                if machine_id not in candidate.machines:
-                    raise HTTPException(400, f"Máquina {machine_id} não existe.")
-                if not isinstance(active, bool):
-                    raise HTTPException(
-                        400,
-                        f"Estado inválido para {machine_id}: usa verdadeiro ou falso.",
-                    )
-                candidate.machines[machine_id].active = active
-            continue
-        if key == "tool_updates":
-            if not isinstance(value, dict):
-                raise HTTPException(400, "tool_updates deve ser um objeto.")
-            for tool_id, raw_update in value.items():
-                if tool_id not in candidate.tools:
-                    raise HTTPException(400, f"Ferramenta {tool_id} não existe.")
-                if not isinstance(raw_update, dict):
-                    raise HTTPException(400, f"Alteração inválida para {tool_id}.")
-                tool = candidate.tools[tool_id]
-                if "setup_hours" in raw_update:
-                    try:
-                        setup_hours = finite_float(raw_update["setup_hours"], "setup_hours")
-                    except (TypeError, ValueError) as exc:
-                        raise HTTPException(
-                            400,
-                            f"Tempo de setup inválido para {tool_id}.",
-                        ) from exc
-                    if not 0 <= setup_hours <= 8:
-                        raise HTTPException(
-                            400,
-                            f"O setup de {tool_id} deve estar entre 0 e 8 horas.",
-                        )
-                    tool["setup_hours"] = setup_hours
-                    for op in candidate_data.ops:
-                        if op.t == tool_id:
-                            op.sH = setup_hours
-                if "alt" in raw_update:
-                    alt = str(raw_update["alt"] or "").strip() or None
-                    if alt and alt not in candidate.machines:
-                        raise HTTPException(400, f"Máquina alternativa {alt} não existe.")
-                    tool["alt"] = alt
-                    for op in candidate_data.ops:
-                        if op.t == tool_id:
-                            op.alt = alt
-            continue
-        if key == "shifts":
+        if key == "unavailability_removals":
+            for entry_id in removal_ids:
+                removed = remove_unavailability_entry(candidate, entry_id)
+                if removed is None:
+                    raise HTTPException(404, f"Indisponibilidade {entry_id} não existe.")
+        elif key == "preset":
             try:
-                candidate.shifts = normalize_shift_updates(value)
-                clear_legacy_common_machine_capacity_overrides(
-                    candidate,
-                    previous_day_capacity,
+                candidate = apply_preset(candidate, str(updates[key]), baseline=preset_baseline)
+            except KeyError as exc:
+                raise HTTPException(400, str(exc.args[0])) from exc
+        elif key == "unavailability_updates":
+            for raw_entry in replacements:
+                if not isinstance(raw_entry, dict):
+                    raise HTTPException(400, "Alteração de indisponibilidade inválida.")
+                entry_id = str(raw_entry.get("id", "")).strip()
+                next_kind = str(raw_entry.get("kind", raw_entry.get("type", ""))).lower()
+                try:
+                    update_unavailability_entry(candidate, candidate_data, entry_id, raw_entry)
+                except UnavailabilityConflict as exc:
+                    raise refusal_http(409, exc) from exc
+                except (TypeError, ValueError) as exc:
+                    raise refusal_http(400, exc) from exc
+                previous_kind, previous_entry = original_entries[entry_id]
+                current_kind = next_kind.rstrip("s") or previous_kind
+                current_entry = next(
+                    (
+                        entry
+                        for kind, entries in (
+                            ("machine", candidate.machine_unavailability),
+                            ("tool", candidate.tool_unavailability),
+                            ("operator", candidate.operator_unavailability),
+                        )
+                        if kind == current_kind
+                        for entry in entries
+                        if str(entry.get("id", "")) == entry_id
+                    ),
+                    None,
                 )
-            except ValueError as exc:
-                raise refusal_http(400, exc) from exc
-            continue
-        if key != "setup_crews_by_group":
-            raise HTTPException(400, f"Parâmetro desconhecido: {key}")
-        if not isinstance(value, dict):
-            raise HTTPException(400, "setup_crews_by_group deve ser um objeto.")
-        try:
-            candidate.setup_crews_by_group = {
-                str(group): strict_int(count, f"setup_crews.{group}")
-                for group, count in value.items()
-            }
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                400,
-                "As equipas de setup devem ser números inteiros.",
-            ) from exc
+                edit_effect = _unavailability_edit_effect(
+                    previous_kind,
+                    previous_entry,
+                    current_kind,
+                    current_entry,
+                )
+                edit_tightens = edit_effect == "tightens"
+                calendar_capacity_tightened = calendar_capacity_tightened or edit_tightens
+                calendar_capacity_relaxed = calendar_capacity_relaxed or (
+                    edit_effect == "relaxes"
+                )
+                operator_capacity_tightened = operator_capacity_tightened or (
+                    edit_tightens and current_kind == "operator"
+                )
+        elif key == "unavailability_additions":
+            for raw_entry in additions:
+                if not isinstance(raw_entry, dict):
+                    raise HTTPException(400, "Nova indisponibilidade inválida.")
+                addition_kind = str(
+                    raw_entry.get("kind", raw_entry.get("type", ""))
+                ).lower().rstrip("s")
+                calendar_capacity_tightened = True
+                operator_capacity_tightened = operator_capacity_tightened or (
+                    addition_kind == "operator"
+                )
+                try:
+                    add_unavailability_entry(candidate, candidate_data, raw_entry)
+                except UnavailabilityConflict as exc:
+                    raise refusal_http(409, exc) from exc
+                except (TypeError, ValueError) as exc:
+                    raise refusal_http(400, exc) from exc
+        else:
+            _apply_change(key, updates[key], candidate, candidate_data, previous_day_capacity)
+    try:
+        apply_effective_planning_config(candidate_data, candidate)
+    except ValueError as exc:
+        raise refusal_http(400, exc) from exc
     errors = validate_config(candidate, candidate_data)
     if errors:
         raise HTTPException(400, {"message": "Configuração inválida", "errors": errors})
@@ -469,7 +716,7 @@ async def start_replan(body: dict):
             "O estado inicial manual foi removido. Replaneia sem current_machine_states.",
         )
     dataset_id = str(dataset_info["id"])
-    reason = str(body.get("reason", "Replaneamento pedido pelo utilizador"))
+    reason = str(body["reason"]) if "reason" in body else _describe_changes(updates)
     request_fingerprint = canonical_replan_fingerprint(
         dataset_id=dataset_id,
         base_revision=base_revision,
@@ -479,6 +726,9 @@ async def start_replan(body: dict):
             "config_updates": updates,
         },
     )
+    # Keeping or re-optimising the active plan is only for a pure
+    # unavailability edit; any other change is a full replan.
+    unavailability_only = bool(updates) and set(updates).issubset(_CALENDAR_ONLY_UPDATES)
     job = manager.start(
         engine_data=candidate_data,
         config=candidate,
@@ -490,18 +740,18 @@ async def start_replan(body: dict):
         baseline_snapshot=baseline_snapshot,
         base_input_fingerprints=base_input_fingerprints,
         prefer_unchanged_baseline=(
-            bool(updates)
-            and set(updates).issubset(_CALENDAR_ONLY_UPDATES)
+            unavailability_only
             and not operator_capacity_tightened
             and not calendar_capacity_relaxed
         ),
         allow_unchanged_baseline_apply=(
-            bool(targeted_ids)
+            unavailability_only
+            and bool(targeted_ids)
             and not additions
             and not calendar_capacity_tightened
             and not calendar_capacity_relaxed
         ),
-        reoptimize_relaxed_baseline=calendar_capacity_relaxed,
+        reoptimize_relaxed_baseline=unavailability_only and calendar_capacity_relaxed,
         request_fingerprint=request_fingerprint,
     )
     return {

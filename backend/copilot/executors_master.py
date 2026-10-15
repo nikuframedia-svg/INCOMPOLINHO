@@ -12,6 +12,7 @@ import logging
 from contextvars import ContextVar
 from functools import wraps
 
+from backend.config.changes import add_holiday, add_twin, remove_holiday, remove_twin
 from backend.config.loader import _parse_time
 from backend.config.loader import save_config as _persist_config
 from backend.config.types import MachineConfig, ShiftConfig
@@ -395,47 +396,11 @@ def exec_adicionar_twin(args: dict) -> str:
     sku_a = args["sku_a"]
     sku_b = args["sku_b"]
 
-    if tid in state.config.twins:
-        return _dumps({"error": f"Twin para ferramenta {tid} já existe."})
-    if sku_a == sku_b:
-        return _dumps({"error": "Uma gémea exige duas referências distintas."})
-    known_tools = set(state.config.tools) | {op.t for op in state.engine_data.ops}
-    if tid not in known_tools:
-        return _dumps({"error": f"Ferramenta {tid} não existe."})
-
-    matches_a = [op for op in state.engine_data.ops if op.sku == sku_a]
-    matches_b = [op for op in state.engine_data.ops if op.sku == sku_b]
-    if len(matches_a) != 1 or len(matches_b) != 1:
-        return _dumps(
-            {
-                "error": (
-                    "Cada SKU gémea deve corresponder a uma operação única; "
-                    f"{sku_a}={len(matches_a)}, {sku_b}={len(matches_b)}."
-                )
-            }
-        )
-    op_a, op_b = matches_a[0], matches_b[0]
-    if op_a.t != tid or op_b.t != tid:
-        return _dumps(
-            {
-                "error": (
-                    f"As duas referências têm de usar a ferramenta {tid}; "
-                    f"{sku_a} usa {op_a.t} e {sku_b} usa {op_b.t}."
-                )
-            }
-        )
-    machines_a = {machine for machine in (op_a.m, op_a.alt) if machine}
-    machines_b = {machine for machine in (op_b.m, op_b.alt) if machine}
-    common_machines = machines_a & machines_b
-    if not common_machines:
-        return _dumps({"error": "As referências gémeas não têm uma máquina elegível comum."})
-    configured_primary = str(state.config.tools.get(tid, {}).get("primary", ""))
-    machine_id = (
-        configured_primary if configured_primary in common_machines else sorted(common_machines)[0]
-    )
-
-    # 1. Update config
-    state.config.twins[tid] = [sku_a, sku_b]
+    # 1. Update config (after the same checks as a batched replan)
+    try:
+        machine_id, op_a, op_b = add_twin(state.config, state.engine_data, tid, sku_a, sku_b)
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
 
     # 2. Sync EngineData
     state.engine_data.twin_groups.append(
@@ -475,11 +440,11 @@ def exec_remover_twin(args: dict) -> str:
         return err
 
     tid = args["tool_id"]
-    if tid not in state.config.twins:
-        return _dumps({"error": f"Twin para ferramenta {tid} não existe."})
-
     # 1. Update config
-    del state.config.twins[tid]
+    try:
+        remove_twin(state.config, tid)
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
 
     # 2. Sync EngineData
     state.engine_data.twin_groups = [
@@ -504,11 +469,11 @@ def exec_adicionar_feriado(args: dict) -> str:
         return err
 
     data = args["data"]
-    if data in state.config.holidays:
-        return _dumps({"error": f"Feriado {data} já existe."})
-
     # 1. Update config
-    state.config.holidays.append(data)
+    try:
+        add_holiday(state.config, data)
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
 
     # 2. Save + re-schedule. _reschedule() rebuilds EngineData calendars from
     # their immutable baseline, avoiding stale indices after later removals.
@@ -529,11 +494,11 @@ def exec_remover_feriado(args: dict) -> str:
         return err
 
     data = args["data"]
-    if data not in state.config.holidays:
-        return _dumps({"error": f"Feriado {data} não existe."})
-
     # 1. Update config
-    state.config.holidays.remove(data)
+    try:
+        remove_holiday(state.config, data)
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
 
     # 2. Save + re-schedule. _reschedule() rebuilds the effective holiday set.
     old_score = dict(state.score)

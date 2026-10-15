@@ -21,6 +21,18 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.api.locks import plan_mutation_lock
 from backend.api.plan_reads import PlanReadRoute
+from backend.config import changes as config_changes
+from backend.config.changes import (
+    RETIRED_CONFIG_KEYS,
+    TUNABLE_CONFIG_KEYS,
+    apply_operator_counts,
+    apply_subcontracts,
+    coerce_tunable_value,
+    normalize_setup_overrides,
+    normalize_subcontracts,
+    set_sku_planning,
+)
+from backend.config.changes import coerce_bool as _coerce_bool
 from backend.config.loader import validate_config
 from backend.config.planning import (
     clean_sku_subcontracts,
@@ -65,33 +77,6 @@ def _require_data():
 def _require_config():
     if state.config is None:
         raise HTTPException(503, "Configuração não carregada.")
-
-
-def _coerce_bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "sim", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "nao", "não", "off"}:
-            return False
-    raise ValueError(f"valor booleano inválido: {value!r}")
-
-
-_RETIRED_CONFIG_KEYS = frozenset({"max_run_days"})
-
-
-def _coerce_tunable_value(key: str, current_value, new_value):
-    if isinstance(current_value, bool):
-        return _coerce_bool(new_value)
-    try:
-        coerced = type(current_value)(new_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{key}: valor inválido {new_value!r}") from exc
-    if key == "eco_lot_mode" and coerced not in {"hard", "soft"}:
-        raise ValueError("eco_lot_mode deve ser 'hard' ou 'soft'")
-    return coerced
 
 
 def _normalize_shift_updates(raw_shifts) -> list[ShiftConfig]:
@@ -794,24 +779,6 @@ def _sku_impact(result, engine_data, sku: str) -> dict:
 
 def _planning_rule_response(sku: str, config) -> dict:
     return dict(config.sku_planning_rules.get(sku, {}))
-
-
-def _validate_subcontract_rules(companies: list[dict], sku_subcontracts: dict[str, dict]) -> None:
-    company_ids = {str(company.get("id")) for company in companies if company.get("id")}
-    for sku, rule in sku_subcontracts.items():
-        if not rule.get("enabled", True):
-            continue
-        company_id = str(rule.get("company_id") or "").strip()
-        if not company_id:
-            raise HTTPException(
-                400,
-                f"{sku}: escolhe uma empresa antes de ativar a subcontratação.",
-            )
-        if company_id not in company_ids:
-            raise HTTPException(
-                400,
-                f"{sku}: empresa de subcontratação desconhecida: {company_id}.",
-            )
 
 
 def _nominal_calendar_days(workdays: int) -> int:
@@ -1664,19 +1631,13 @@ async def update_sku_planning(sku: str, body: dict):
     _require_data()
     _require_config()
     _require_expected_revision(body)
-    if not any(op.sku == sku for op in state.engine_data.ops):
-        raise HTTPException(404, f"SKU {sku} não encontrado.")
-
+    candidate = copy.deepcopy(state.config)
     try:
-        rule = normalize_sku_planning_rule(sku, body)
+        rule = set_sku_planning(candidate, state.engine_data, sku, body)
     except ValueError as exc:
         raise refusal_http(400, exc) from exc
-
-    candidate = copy.deepcopy(state.config)
-    if rule:
-        candidate.sku_planning_rules[sku] = rule
-    else:
-        candidate.sku_planning_rules.pop(sku, None)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
     set_change_label(f"Regra de planeamento da Referência {sku} alterada")
 
     result, old_score = _apply_config_candidate(candidate, body)
@@ -1747,22 +1708,12 @@ async def preview_subcontracts(body: dict):
     _require_config()
 
     try:
-        companies = [
-            normalize_subcontract_company(c)
-            for c in body.get("companies", [])
-            if isinstance(c, dict)
-        ]
-        sku_subcontracts = clean_sku_subcontracts(body.get("sku_subcontracts", {}))
+        companies, sku_subcontracts = normalize_subcontracts(body)
     except ValueError as exc:
         raise refusal_http(400, exc) from exc
-    _validate_subcontract_rules(companies, sku_subcontracts)
 
     candidate = copy.deepcopy(state.config)
-    candidate.subcontract_companies = companies
-    candidate.sku_subcontracts = sku_subcontracts
-    candidate.subcontract_skus = [
-        sku for sku, rule in sku_subcontracts.items() if rule.get("enabled", True)
-    ]
+    apply_subcontracts(candidate, companies, sku_subcontracts)
 
     engine_copy = copy.deepcopy(state.engine_data)
     try:
@@ -1791,22 +1742,12 @@ async def update_subcontracts(body: dict):
     _require_expected_revision(body)
 
     try:
-        companies = [
-            normalize_subcontract_company(c)
-            for c in body.get("companies", [])
-            if isinstance(c, dict)
-        ]
-        sku_subcontracts = clean_sku_subcontracts(body.get("sku_subcontracts", {}))
+        companies, sku_subcontracts = normalize_subcontracts(body)
     except ValueError as exc:
         raise refusal_http(400, exc) from exc
-    _validate_subcontract_rules(companies, sku_subcontracts)
 
     candidate = copy.deepcopy(state.config)
-    candidate.subcontract_companies = companies
-    candidate.sku_subcontracts = sku_subcontracts
-    candidate.subcontract_skus = [
-        sku for sku, rule in sku_subcontracts.items() if rule.get("enabled", True)
-    ]
+    apply_subcontracts(candidate, companies, sku_subcontracts)
     set_change_label("Subcontratação alterada")
 
     result, old_score = _apply_config_candidate(candidate, body)
@@ -1835,34 +1776,10 @@ async def update_config(updates: dict):
     _require_expected_revision(updates)
     set_change_label("Parâmetros de planeamento alterados")
 
-    tunables = [
-        "oee_default",
-        "jit_buffer_pct",
-        "jit_threshold",
-        "jit_max_retries",
-        "max_edd_gap",
-        "max_edd_span",
-        "edd_swap_tolerance",
-        "edd_assign_threshold",
-        "campaign_window",
-        "urgency_threshold",
-        "interleave_enabled",
-        "auto_buffer",
-        "vns_enabled",
-        "vns_max_iter",
-        "compact_enabled",
-        "setup_crews_by_group",
-        "weight_earliness",
-        "weight_setups",
-        "weight_balance",
-        "eco_lot_mode",
-    ]
-    # Chaves retiradas do contrato: clientes antigos ainda as podem enviar.
-    # São ignoradas (não alteram nada) em vez de rejeitarem a gravação.
-    # ``max_run_days`` (limite de dias seguidos) foi retirado a 09/10/2026.
+    # Chaves retiradas (RETIRED_CONFIG_KEYS) são ignoradas, não rejeitadas.
     updates = {
         key: value for key, value in updates.items()
-        if key not in _RETIRED_CONFIG_KEYS
+        if key not in RETIRED_CONFIG_KEYS
     }
     current = state.config
     if "setup_crews" in updates:
@@ -1874,10 +1791,10 @@ async def update_config(updates: dict):
     updates_to_apply = []
     if "shifts" in updates:
         updates_to_apply.append(("shifts", _normalize_shift_updates(updates["shifts"])))
-    for key in tunables:
+    for key in TUNABLE_CONFIG_KEYS:
         if key in updates:
             try:
-                new_val = _coerce_tunable_value(key, getattr(candidate, key), updates[key])
+                new_val = coerce_tunable_value(key, getattr(candidate, key), updates[key])
             except ValueError as exc:
                 raise refusal_http(400, exc) from exc
             updates_to_apply.append((key, new_val))
@@ -2866,10 +2783,11 @@ async def update_operators(body: dict):
     _require_expected_revision(body)
 
     old_score = dict(state.score) if state.score else {}
-    changed = []
     candidate = copy.deepcopy(state.config)
-    for key, count in body.items():
-        if key in {
+    counts = {
+        key: count
+        for key, count in body.items()
+        if key not in {
             "expected_revision",
             "approve_exceptions",
             "approval_reason",
@@ -2883,37 +2801,12 @@ async def update_operators(body: dict):
             "base_revision",
             "input_fingerprint",
             "candidate_fingerprint",
-        }:
-            continue
-        try:
-            parsed_count = strict_int(count, key)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, f"Operadores inválidos para {key}: {count!r}") from exc
-        if parsed_count < 0:
-            raise HTTPException(400, f"Operadores inválidos para {key}: deve ser >= 0")
-
-        if key in candidate.operators:
-            candidate.operators[key] = parsed_count
-            changed.append(key)
-        else:
-            # Try tuple key format: "Grandes A" → ("Grandes", "A")
-            parts = key.rsplit(" ", 1)
-            if len(parts) == 2:
-                group, shift = parts
-                shift_ids = {item.id for item in candidate.shifts}
-                machine_groups = set(candidate.machine_groups.values())
-                if shift not in shift_ids:
-                    raise HTTPException(
-                        400,
-                        f"Turno desconhecido para {key}: {shift}",
-                    )
-                if group not in machine_groups:
-                    raise HTTPException(
-                        400,
-                        f"Grupo desconhecido para {key}: {group}",
-                    )
-                candidate.operators[(group, shift)] = parsed_count
-                changed.append(key)
+        }
+    }
+    try:
+        changed = apply_operator_counts(candidate, counts)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     if not changed:
         return {"status": "ok", "score": state.score, "score_anterior": old_score}
@@ -2994,16 +2887,11 @@ async def add_extra_workday(body: dict):
     _require_config()
     _require_expected_revision(body)
     date_str = str(body.get("date", body.get("data", "")))
-    try:
-        parsed = dt_date.fromisoformat(date_str)
-    except ValueError as exc:
-        raise HTTPException(400, "A data deve usar o formato YYYY-MM-DD.") from exc
-    if parsed.weekday() < 5:
-        raise HTTPException(400, "Só sábados ou domingos podem ser dias extra.")
     candidate = copy.deepcopy(state.config)
-    if date_str not in candidate.extra_workdays:
-        candidate.extra_workdays.append(date_str)
-        candidate.extra_workdays.sort()
+    try:
+        config_changes.add_extra_workday(candidate, date_str)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, extra_workday=date_str)
 
@@ -3015,9 +2903,10 @@ async def remove_extra_workday(date: str, body: dict):
     _require_config()
     _require_expected_revision(body)
     candidate = copy.deepcopy(state.config)
-    if date not in candidate.extra_workdays:
-        raise HTTPException(404, f"Dia de trabalho extra {date} não existe.")
-    candidate.extra_workdays.remove(date)
+    try:
+        config_changes.remove_extra_workday(candidate, date)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
     result, old_score = _apply_config_candidate(candidate, body)
     return _calendar_response(result, old_score, extra_workday=date)
 
@@ -3082,21 +2971,10 @@ async def replace_setup_overrides(body: dict):
     raw_items = body.get("items", [])
     if not isinstance(raw_items, list):
         raise HTTPException(400, "items deve ser uma lista.")
-    items = []
-    for raw in raw_items:
-        if not isinstance(raw, dict):
-            raise HTTPException(400, "Cada override deve ser um objeto.")
-        try:
-            item = {
-                "sku": str(raw.get("sku", "")).strip(),
-                "machine": str(raw.get("machine", "")).strip(),
-                "hours": float(raw.get("hours")),
-            }
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, "hours deve ser um número.") from exc
-        if not item["sku"] or not item["machine"]:
-            raise HTTPException(400, "sku e machine são obrigatórios.")
-        items.append(item)
+    try:
+        items = normalize_setup_overrides(raw_items)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     candidate = copy.deepcopy(state.config)
     candidate.setup_overrides = items
     set_change_label("Exceções de setup alteradas")
