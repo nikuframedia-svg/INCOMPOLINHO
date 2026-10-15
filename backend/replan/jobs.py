@@ -1500,7 +1500,7 @@ class ReplanJobManager:
                                 protected.segments, protected.lots, freeze_day,
                                 time_budget_s=float(remaining_time(60.0) or 0.0),
                                 partial=protected.partial, now=now,
-                                cut=protected.cut,
+                                cut=protected.cut, pinned=protected.pinned,
                             )
                         else:
                             trial.segments, trial.lots, improvement = improve_plan(

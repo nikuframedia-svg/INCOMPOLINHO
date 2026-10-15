@@ -888,7 +888,7 @@ async def get_lots():
     return [asdict(lot) for lot in state.lots]
 
 
-def _plan_notices(segments, lots, engine_data, config) -> list[str]:
+def _plan_notices(segments, lots, engine_data, config, warnings=()) -> list[str]:
     """Plain pt-PT notes about the active plan itself, shown above every screen.
 
     - Legacy material note: a plan saved before the per-delivery material
@@ -900,14 +900,21 @@ def _plan_notices(segments, lots, engine_data, config) -> list[str]:
     - Idle capacity note: a delivery is late while an eligible machine has
       free shift time from today until its deadline
       (``scheduler.idle_capacity``); the plan can be improved.
+    - Released pins: the manual changes the calculation that wrote this plan
+      had to release, and why (``frozen.reconcile_manual_anchors``, decisão
+      de 15/10/2026), read from the plan's own ``warnings``; the next
+      calculation does not inherit them.
 
     Computed from the plan and today's date on every read, never stored, and
     never changes the plan: each note disappears as soon as its cause does.
     """
+    from backend.plans.frozen import RELEASED_ANCHOR_PREFIX
     from backend.plans.restore import legacy_material_warning
     from backend.plans.stale_isop import stale_isop_notice
 
     notes = (
+        *(str(warning) for warning in warnings or []
+          if str(warning).startswith(RELEASED_ANCHOR_PREFIX)),
         legacy_material_warning(lots, engine_data, config),
         stale_isop_notice(engine_data, config),
         _idle_capacity_notice(segments, lots, engine_data, config),
@@ -961,6 +968,7 @@ async def get_plan_view():
         )
         plan_notices = await run_in_threadpool(
             _plan_notices, state.segments, state.lots, state.engine_data, state.config,
+            state.warnings,
         )
         return {
             "plan_revision": revision,

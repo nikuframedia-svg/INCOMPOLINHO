@@ -444,7 +444,10 @@ lotes da mesma ferramenta):
    as duas partes no lote original. Uma continuação congelada sem setup leva
    sempre consigo o lote que montou a ferramenta (a produção anterior desse
    lote incluída); um lote de um contrato de material anterior, ancorado ou já
-   todo feito fica inteiro. A proteção do histórico na gravação compara a
+   todo feito fica inteiro. Um lote ancorado que ainda não começou fica
+   inteiro no sítio, mas é uma posição, não histórico: segue o calendário
+   atual e é creditado nos dias das suas entregas, nunca no dia 0 (§5,
+   «Fixações que deixam de caber», 15/10/2026). A proteção do histórico na gravação compara a
    produção anterior a hoje, a de hoje que começou antes da hora do cálculo
    (com a regra de corte abaixo) e o próprio lote.
    **Fronteira = hora atual (decidido pelo Luís a 13/10/2026).** O motor
@@ -756,8 +759,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   - Um segmento que pára sem nenhuma peça feita (afinação a decorrer) sai
     inteiro: a afinação é refeita mais tarde (conservador).
   - Um lote que não pode ser replaneado sozinho (ancorado, de um contrato de
-    material anterior) não é cortado: fica inteiro; se um dado novo chocar
-    com ele o trabalho falha como antes.
+    material anterior) não é cortado: fica inteiro. Se um dado novo chocar
+    com um lote de um contrato anterior o trabalho falha como antes; com um
+    lote fixado à mão, a fixação é solta (abaixo, decisão de 15/10/2026).
   - Elegibilidade (ferramenta/máquina) mudada com um lote começado: a parte
     feita fica como histórico, mas o resto continua preso à máquina do lote
     (regra 3), por isso o plano pode não ter solução.
@@ -787,6 +791,70 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   desta decisão não têm anterior: «Desfazer» começa na primeira escrita nova.
 - Preservar lotes protegidos integralmente e âncoras manuais. Um bloqueio por
   histórico/âncora não é um bloqueio de máquina, material ou operadores.
+- **Fixações que deixam de caber (decidido pelo Luís a 15/10/2026).** Quando
+  uma alteração nova (feriado, dia extra, avaria, operadores, ISOP novo,
+  qualquer replaneamento) choca com um lote fixado à mão: aplica-se a
+  alteração, solta-se a fixação e o ecrã diz qual e porquê; um cálculo nunca
+  aborta por causa de uma fixação, e as fixações que continuam possíveis
+  ficam. Implementado em `plans/frozen.py`, para todos os caminhos que
+  passam por `optimize_preserving_started_lots` e
+  `compact_preserving_started_lots` (dados mestre e feriados, jobs de
+  replaneamento, recálculos de configuração):
+  - **Causa de raiz (revisão 156, corrigida):** um lote fixado que ainda não
+    começou era congelado como histórico e creditado como stock no dia 0
+    (`_install_frozen_reservations`). O dimensionamento do problema residual
+    usava esse crédito nas primeiras entregas da operação (FIFO), voltava a
+    criar um lote com o id do lote fixado para as entregas dele, e a junção
+    deitava-o fora (mesmo id): o plano perdia um lote por operação fixada.
+    Por isso **todo** o replaneamento da revisão 156 falhava, com ou sem o
+    feriado de 07/12 (43 940 peças em falta: JTE001 23 040, JTE003 5 220,
+    gémeas BFP125 2 × 6 400, JDE002 2 880), em ~2 s, no primeiro candidato.
+    Agora um lote fixado (e os lotes que lhe montam a ferramenta sem
+    afinação) que não começou é uma **posição, não histórico**
+    (`ProtectedPlan.pinned`): continua reservado no sítio, mas cada entrega
+    que serve é creditada no seu próprio dia (o dimensionamento residual dá
+    exatamente os outros lotes do dimensionamento completo), as datas das
+    entregas seguem o calendário atual (`_current_delivery_dates`, como os
+    lotes começados) e não leva prova de preservação: o plano completo
+    julga-o contra o dimensionamento atual, como qualquer lote. O lote
+    começado continua a ser histórico como antes.
+  - **Reconciliação antes de calcular** (`reconcile_manual_anchors`): cada
+    fixação de um lote não começado é verificada contra os dados atuais, onde
+    o plano de partida a tem: dias úteis, máquina ativa, e o mesmo validador
+    para o que não depende dos outros lotes (máquina e ferramenta
+    indisponíveis, turnos, elegibilidade, material `R` com as datas atuais, a
+    própria fixação; tipos em `_ANCHOR_FIT_KINDS`). Uma fixação que continua
+    a ferramenta de outro lote sem afinação cai com ele. As que falham saem
+    de `engine_data.plan_anchors` (os registos de alteração manual seguem,
+    `sync_manual_edits`).
+  - **Candidatos inválidos rejeitados:** no optimizador, um candidato completo
+    que falha a validação é rejeitado como um que falha o gate (registado com
+    as primeiras causas), nunca aborta o cálculo. Sem nenhum candidato válido
+    a recusa leva os conflitos do primeiro rejeitado.
+  - **Rede de segurança:** se mesmo assim não há plano válido e os conflitos
+    envolvem lotes fixados (`lot_id`, `other`, `unavailability`, ou os lotes
+    que lhes montam a ferramenta) — ou não nomeiam nenhum lote, e então todas
+    as fixações —, essas fixações são soltas e calcula-se **uma** vez mais. Se
+    falhar de novo, recusa como antes, com causas.
+  - **Aviso:** cada fixação solta dá uma frase nos avisos do plano, mostrada
+    no topo do ecrã (`plan_notices`, «Aviso do plano»), com a referência,
+    nunca o id interno: «Soltei a alteração manual da Referência
+    6800017267C.30 (PRM043), fixada para 03/12 17:30: a PRM043 fica
+    indisponível no dia 03/12 das 16:00 às 20:00 e o lote deixou de caber.»
+    Vale só para a gravação que a soltou (`CALCULATION_NOTE_PREFIXES`).
+  - **Medido a 15/10/2026 (cópia da revisão 156, agora 15/10 13:31, modo
+    normal, um cálculo cada):** feriado 07/12 aceite em ~51 s, as 5 fixações
+    mantidas no sítio, 0 violações físicas, 0 lotes partidos, 0 encomendas
+    atrasadas, 177 setups. Avaria da PRM043 a 03/12 das 16:00 às 20:00 por
+    cima do JTE003 fixado às 17:30: as 2 fixações do JTE003 (03/12 17:30 e
+    04/12 09:00, que continua a mesma ferramenta) soltas com aviso, as outras
+    3 mantidas, 0 violações, 178 setups, ~51 s.
+  - Limites conhecidos: a reconciliação não verifica capacidade partilhada
+    (operadores, equipa de afinação, sobreposições), que fica para a rede de
+    segurança. Um trabalho de replaneamento que depois prefira outro plano
+    (o plano ativo, válido, ou a compactação) pode ficar com uma fixação já
+    solta pela rede de segurança sem o aviso dela. O movimento manual não
+    reconcilia as outras fixações (recusa com causas, §7).
 - **Decisão pendente (11/10/2026, à espera do Luís):** retirar um feriado (ou
   acrescentar um dia extra) dentro da janela de material de uma entrega já
   parcialmente produzida antes de hoje põe o seu `R` depois dessa produção; a
@@ -895,7 +963,15 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   invalidava o contrato da operação (`source_contract`) e desligava a
   melhoria (`reference_invalid`). Agora fica fixado dentro do mesmo construtor
   (`schedule_quantity_releases(pinned=...)`), que coloca os outros lotes à
-  volta dele e valida a operação com todos os seus lotes. A afinação do lote
+  volta dele e valida a operação com todos os seus lotes. **Completado a
+  15/10/2026:** o mesmo valia para os lotes fixados à mão antes, que entravam
+  na proteção do movimento e eram creditados no dia 0; na revisão 154 todo o
+  movimento que precisava de reorganizar era recusado por `source_contract`
+  nos outros lotes dessas operações (BFP125, JDE002, JTE003; ex.: JTE001 para
+  07/12 08:00, 09/12 09:00, 15/12 08:00). Agora são posições, creditadas nos
+  dias das suas entregas (§5, «Fixações que deixam de caber»), e os três
+  movimentos são aceites (~50 s cada, 0 lotes partidos; o de 15/12 atrasa o
+  próprio JTE001 e pede confirmação). A afinação do lote
   movido só é dispensada quando a produção começa colada a um segmento já
   começado com a mesma afinação (`_materialize_target(partial_layout=True)`):
   um intervalo vazio nesse esboço não prova a ferramenta montada. Na
@@ -1026,8 +1102,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   `alert(` no frontend (testes em `tests/test_refusal.py` e
   `frontend/tests/refusal.test.tsx`). Casos reais: revisões 154 (mover JTE001
   para 03/12 08:45: a ferramenta JTE003 fica montada entre os dois lotes
-  JTE003 fixados à mão) e 156 (feriado 07/12: 43 940 peças em falta, porque
-  os lotes fixados à mão ficam com as datas do calendário antigo); sem
+  JTE003 fixados à mão) e 156 (feriado 07/12: 43 940 peças em falta; a causa
+  real era o crédito dos lotes fixados como stock no dia 0, e o feriado é
+  aceite desde a correção de 15/10, §5 «Fixações que deixam de caber»); sem
   fixações (revisão 148) os dois são aceites.
 - **Versões com nome (Luís, 15/10/2026, ver §5).** Uma escrita nova do plano
   dá o nome da sua alteração (`set_change_label`) em vez de deixar «Plano

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import time
 from collections import Counter
@@ -27,6 +28,8 @@ from dataclasses import field as dataclass_field
 from datetime import datetime
 
 from backend.types import CommittedSupply
+
+logger = logging.getLogger(__name__)
 
 
 class NoValidCandidateError(ValueError):
@@ -79,13 +82,16 @@ class ProtectedPlan:
     protected segment cut where a new input conflicts with it
     (``scheduler.history``): its frozen part is in ``segments``, ``rest`` is
     what the residual starts from. ``now_label``: the minute boundary, for
-    the warning.
+    the warning. ``pinned``: lots of ``lots`` kept whole only for a manual
+    anchor (and the lots that mount their tool), none of whose production
+    has started: a position, not history (``_protected_plan``).
     """
 
     segments: list = dataclass_field(default_factory=list)
     lots: list = dataclass_field(default_factory=list)
     partial: list = dataclass_field(default_factory=list)
     anchored: set = dataclass_field(default_factory=set)
+    pinned: set = dataclass_field(default_factory=set)
     started: set = dataclass_field(default_factory=set)
     cut: list = dataclass_field(default_factory=list)
     now_label: str | None = None
@@ -434,6 +440,316 @@ def _honoured_anchor_lot_ids(baseline_result, engine_data, config) -> set[str]:
         for anchor in anchors
         if anchor.lot_id in present and anchor.lot_id not in violated
     }
+
+
+# ── Manual anchors that no longer fit (decisão do Luís, 15/10/2026) ──────────
+# A new input (holiday, extra day, outage, operators, ISOP, any replan) that
+# clashes with a lot pinned by hand is applied; the pin is released and the
+# planner is told which lot and why. A calculation is never aborted because of
+# a pin; the pins that still fit are kept.
+
+RELEASED_ANCHOR_PREFIX = "Soltei a alteração manual"
+# Conflicts of a pinned lot with the calendar, its resources, its eligibility
+# and its material: they hold whatever the other lots do. Shared capacity
+# (overlaps, operators, setup crew) depends on the movable work and is left
+# to the calculation and its safety net.
+_ANCHOR_FIT_KINDS = frozenset({
+    "machine_down", "tool_down", "outside_shift", "ineligible_machine", "ineligible_tool",
+    "unknown_machine", "unknown_tool", "setup_before_material", "ghost_segment",
+    "lot_production_minutes", "plan_anchor",
+})
+
+
+def _date_label(day_idx: int, data) -> str:
+    """``07/12`` (``dia N`` when the calendar has no date)."""
+    from backend.calendar import _day_date
+
+    calendar_date = _day_date(int(day_idx), data) if data is not None else None
+    return f"{calendar_date:%d/%m}" if calendar_date is not None else f"dia {int(day_idx)}"
+
+
+def _anchor_when(anchor) -> str:
+    """``03/12 17:30`` of an anchor (empty when its start cannot be read)."""
+    raw = str(getattr(anchor, "start_at", "") or "")
+    if len(raw) >= 16 and raw[4] == "-" and raw[10] in "T ":
+        return f"{raw[8:10]}/{raw[5:7]} {raw[11:16]}"
+    return ""
+
+
+def released_anchor_notice(anchor, lot, reason: str) -> str:
+    """«Soltei a alteração manual da Referência X (PRM043), fixada para 03/12
+    17:30: <reason>.» Never the internal lot id."""
+    from backend.scheduler.canonical import _lot_label
+
+    subject = f"da {_lot_label(lot, anchor.machine_id)}" if lot is not None else "de um lote"
+    when = _anchor_when(anchor)
+    reason = str(reason).strip().rstrip(".")
+    return (
+        f"{RELEASED_ANCHOR_PREFIX} {subject}"
+        + (f", fixada para {when}" if when else "")
+        + f": {reason}."
+    )
+
+
+def _not_workday_reason(day_idx: int, data, config) -> str:
+    from backend.calendar import _day_date, _is_explicit_holiday
+
+    label = _date_label(day_idx, data)
+    if _is_explicit_holiday(day_idx, _day_date(day_idx, data), data, config):
+        return f"o dia {label} passou a feriado e o lote deixou de caber"
+    return f"o dia {label} deixou de ser dia de trabalho e o lote deixou de caber"
+
+
+def _anchor_violation_reason(violation: dict, lot, data, config) -> str:
+    """Why a conflict of the pinned lot with the current inputs releases it."""
+    from backend.calendar import is_factory_workday
+
+    kind = violation.get("kind")
+    day = violation.get("day_idx")
+    if kind in {"machine_down", "tool_down"} and day is not None:
+        if not is_factory_workday(int(day), data, config):
+            return _not_workday_reason(int(day), data, config)
+        resource = (
+            f"a {violation.get('machine_id') or lot.machine_id}" if kind == "machine_down"
+            else f"a ferramenta {violation.get('tool_id') or lot.tool_id}"
+        )
+        block = violation.get("unavailability")
+        hours = ""
+        if isinstance(block, dict) and block.get("end_min") is not None:
+            start, end = int(block.get("start_min", 0)), int(block["end_min"])
+            hours = f" das {start // 60:02d}:{start % 60:02d} às {end // 60:02d}:{end % 60:02d}"
+        return (
+            f"{resource} fica indisponível no dia {_date_label(int(day), data)}{hours} "
+            "e o lote deixou de caber"
+        )
+    if kind in {"ineligible_machine", "unknown_machine"}:
+        return f"o lote deixou de poder ser feito na {violation.get('machine_id')}"
+    if kind in {"ineligible_tool", "unknown_tool"}:
+        return f"o lote deixou de poder ser feito com a ferramenta {violation.get('tool_id')}"
+    if kind == "outside_shift":
+        return "os turnos mudaram e o lote deixou de caber nas horas fixadas"
+    if kind in {"setup_before_material", "source_contract"}:
+        floor = violation.get("material_floor_day")
+        if floor is not None:
+            return (
+                "o material deste lote só é libertado no dia "
+                f"{_date_label(int(floor), data)}"
+            )
+        return "o material deste lote ainda não está libertado nessa data"
+    message = str(violation.get("message") or "").strip().rstrip(".")
+    return (message[:1].lower() + message[1:]) if message else "o lote deixou de caber"
+
+
+def _anchor_misfits(anchors, baseline, engine_data, config, history: set[str]) -> dict:
+    """``{lot_id: reason}`` of the anchors that no longer fit the current inputs.
+
+    Each pinned lot that has not started is judged where the baseline has it,
+    against the current data: its days are working days, its machine is
+    active, then the same validator as any plan for the conflicts that hold
+    whatever the other lots do (``_ANCHOR_FIT_KINDS``: machine and tool
+    availability, shifts, eligibility, the material release ``R`` with the
+    lot's deliveries dated by the current calendar, the anchor itself).
+    """
+    from backend.calendar import is_factory_workday
+    from backend.scheduler.validation import plan_anchor_violations, validate_plan
+
+    lots_by_id = {lot.id: lot for lot in baseline.lots}
+    by_lot: dict[str, list] = {}
+    for segment in baseline.segments:
+        by_lot.setdefault(segment.lot_id, []).append(segment)
+    active = {machine.id for machine in engine_data.machines}
+    misfits: dict[str, str] = {}
+    checked = []
+    for anchor in anchors:
+        if anchor.lot_id in history:
+            continue
+        lot = lots_by_id.get(anchor.lot_id)
+        segments = [s for s in by_lot.get(anchor.lot_id, []) if s.end_min > s.start_min]
+        if lot is None or not segments:
+            misfits[anchor.lot_id] = "o lote deixou de existir no plano"
+            continue
+        if anchor.machine_id not in active:
+            misfits[anchor.lot_id] = f"a máquina {anchor.machine_id} deixou de estar ativa"
+            continue
+        off = next(
+            (s.day_idx for s in segments
+             if not is_factory_workday(s.day_idx, engine_data, config)),
+            None,
+        )
+        if off is not None:
+            misfits[anchor.lot_id] = _not_workday_reason(off, engine_data, config)
+            continue
+        checked.append(anchor)
+    if not checked:
+        return misfits
+    # A pinned lot that continues a mounted tool without setup is kept with
+    # the lots that mount it (``_protected_plan``): they are judged with it.
+    suppliers = _anchor_mount_suppliers(baseline.segments, [a.lot_id for a in checked])
+    judged = {
+        lot_id for anchor in checked for lot_id in suppliers[anchor.lot_id] | {anchor.lot_id}
+    } - history
+    view = copy.copy(engine_data)
+    view.plan_anchors = list(checked)
+    # A pinned lot is a position, not history: judged with its deliveries
+    # dated by the current calendar and without a preservation proof.
+    view.preserved_lot_proofs = {
+        lot_id: proof for lot_id, proof in (engine_data.preserved_lot_proofs or {}).items()
+        if lot_id not in judged
+    }
+    lots = [
+        _current_delivery_dates(lot, engine_data) if lot.id in judged else lot
+        for lot in baseline.lots
+    ]
+    violations = [
+        *plan_anchor_violations(baseline.segments, view, config),
+        *validate_plan(baseline.segments, view, config, lots=lots),
+    ]
+    unfit: dict[str, str] = {}
+    for violation in violations:
+        lot_id = str(violation.get("lot_id") or "")
+        if lot_id not in judged or lot_id in unfit or lot_id not in lots_by_id:
+            continue
+        kind = violation.get("kind")
+        if kind not in _ANCHOR_FIT_KINDS and not (
+            kind == "source_contract" and violation.get("field") == "material_quantity"
+        ):
+            continue
+        unfit[lot_id] = _anchor_violation_reason(
+            violation, lots_by_id[lot_id], engine_data, config,
+        )
+    from backend.scheduler.canonical import _lot_label
+
+    anchored_ids = {anchor.lot_id for anchor in anchors}
+    for anchor in checked:
+        if anchor.lot_id in unfit:
+            misfits[anchor.lot_id] = unfit[anchor.lot_id]
+            continue
+        supplier = next((
+            lot_id for lot_id in sorted(suppliers[anchor.lot_id])
+            if lot_id in unfit or lot_id in misfits
+        ), None)
+        if supplier is None:
+            continue
+        label = _lot_label(lots_by_id[supplier])
+        if supplier in anchored_ids:
+            misfits[anchor.lot_id] = (
+                f"seguia sem nova afinação a seguir à {label}, que também foi solta"
+            )
+        else:
+            misfits[anchor.lot_id] = (
+                f"seguia sem nova afinação a seguir à {label}, que deixou de caber "
+                f"({unfit.get(supplier) or misfits[supplier]})"
+            )
+    return misfits
+
+
+def _anchor_mount_suppliers(segments, lot_ids) -> dict[str, set[str]]:
+    """``{lot_id: lots whose mounted tool it continues without setup}``, transitively."""
+    previous = _machine_order(segments)
+    by_lot: dict[str, set[int]] = {}
+    for index, segment in enumerate(segments):
+        by_lot.setdefault(segment.lot_id, set()).add(index)
+    result = {}
+    for lot_id in lot_ids:
+        found: set[str] = set()
+        while True:
+            selected = set().union(*(by_lot.get(item, set()) for item in found | {lot_id}))
+            missing = {
+                segments[index].lot_id
+                for index in _mount_suppliers(segments, selected, previous)
+            } - found - {lot_id}
+            if not missing:
+                break
+            found |= missing
+        result[lot_id] = found
+    return result
+
+
+def release_anchors(engine_data, lots, reasons: dict) -> list[str]:
+    """Remove the anchors of ``reasons`` (``{lot_id: reason}``); their notices."""
+    if not reasons:
+        return []
+    lots_by_id = {lot.id: lot for lot in lots or []}
+    anchors = list(getattr(engine_data, "plan_anchors", None) or [])
+    notices = []
+    for anchor in anchors:
+        if anchor.lot_id in reasons:
+            notice = released_anchor_notice(
+                anchor, lots_by_id.get(anchor.lot_id), reasons[anchor.lot_id],
+            )
+            logger.info("Fixação manual solta (%s): %s", anchor.lot_id, notice)
+            notices.append(notice)
+    engine_data.plan_anchors = [anchor for anchor in anchors if anchor.lot_id not in reasons]
+    return notices
+
+
+def reconcile_manual_anchors(
+    engine_data, config, baseline_result, *, now: datetime | None = None,
+) -> list[str]:
+    """Release the manual anchors the current inputs no longer allow.
+
+    Called at the start of every calculation that keeps the manual positions
+    (``optimize_preserving_started_lots``, ``compact_preserving_started_lots``),
+    so a holiday, an extra day, an outage, an operator change, a new ISOP or
+    any replan never aborts because of a pin (decisão do Luís, 15/10/2026).
+    Each anchor is checked against ``engine_data`` as it is now
+    (``_anchor_misfits``). The anchors that fail are removed from
+    ``engine_data.plan_anchors`` (the write's staging data, so
+    ``manual_edits.sync_manual_edits`` drops their records); the others are
+    kept. A pinned lot that has started is history and stays protected.
+
+    Returns one plain pt-PT notice per released pin
+    (``released_anchor_notice``), for the plan warnings.
+    """
+    anchors = list(getattr(engine_data, "plan_anchors", None) or [])
+    if not anchors or baseline_result is None:
+        return []
+    now = calculation_now(config, now)
+    freeze_day = _current_planning_day(engine_data, config, now)
+    now_min = elapsed_on_planning_day(freeze_day, engine_data, config, now)
+    baseline = with_current_material(baseline_result, engine_data, record=False)
+    history = {
+        segment.lot_id for segment in baseline.segments
+        if started_before(segment, freeze_day, now_min)
+    }
+    misfits = _anchor_misfits(anchors, baseline, engine_data, config, history)
+    return release_anchors(engine_data, baseline.lots, misfits)
+
+
+def anchors_in_violations(violations, engine_data, segments=()) -> set[str]:
+    """Anchored lots a refusal involves; every anchor when it names no lot.
+
+    A conflict names its lot (``lot_id``), the lot it clashes with
+    (``other``) and the reservation's holder (``unavailability``). An anchor
+    is involved too when a named lot mounts the tool it continues without
+    setup in ``segments`` (the baseline): that lot is kept with it.
+    """
+    anchored = {anchor.lot_id for anchor in getattr(engine_data, "plan_anchors", None) or []}
+    named = set()
+    for violation in violations or []:
+        if not isinstance(violation, dict):
+            continue
+        for item in (violation, violation.get("other"), violation.get("unavailability")):
+            if isinstance(item, dict) and item.get("lot_id"):
+                named.add(str(item["lot_id"]))
+    if not named:
+        return anchored
+    segments = list(segments or [])
+    suppliers = _anchor_mount_suppliers(segments, sorted(anchored)) if segments else {}
+    return {
+        lot_id for lot_id in anchored
+        if lot_id in named or suppliers.get(lot_id, set()) & named
+    }
+
+
+def with_released_anchor_notices(result, notices):
+    """``result`` with the released-pin notices first among its warnings."""
+    if notices:
+        result.warnings = [
+            *notices,
+            *(warning for warning in result.warnings or [] if warning not in notices),
+        ]
+    return result
 
 
 def _protected_lots(
@@ -846,6 +1162,7 @@ def _protected_plan(
     started_ids = set()
     started_lots: set[str] = set()
     selected: set[int] = set()
+    kept: set[int] = set()
     parts: dict[int, object] = {}
     if freeze_day > 0 or now_min > 0:
         started = {
@@ -929,12 +1246,27 @@ def _protected_plan(
         lot_id for lot_id in touched
         if set(by_lot[lot_id]) <= selected and not any(i in parts for i in by_lot[lot_id])
     }
+    # Kept whole only for a manual anchor (or to mount an anchored lot's
+    # tool): nothing of it has started, so it is a position, not history.
+    # It follows the current calendar like every lot (its deliveries are
+    # dated again, ``_current_delivery_dates``), its output is credited on
+    # the days of the deliveries it serves, never as stock on day 0
+    # (``_install_frozen_reservations``), and it carries no preservation
+    # proof: the complete plan judges it against the current sizing.
+    history = {segments[index].lot_id for index in kept} | started_lots
+    pinned = {lot_id for lot_id in whole if lot_id not in history and lot_id in lots_by_id}
+    redated = {
+        lot_id: lot for lot_id in sorted(pinned)
+        if (lot := _current_delivery_dates(lots_by_id[lot_id], engine_data))
+        != lots_by_id[lot_id]
+    }
     frozen_segments = [
-        copy.deepcopy(parts.get(index, segment))
+        _with_lot_metadata(copy.deepcopy(segment), redated[segment.lot_id])
+        if segment.lot_id in redated else copy.deepcopy(parts.get(index, segment))
         for index, segment in enumerate(segments) if index in selected
     ]
-    frozen_lots = [copy.deepcopy(lots_by_id[lot_id]) for lot_id in sorted(whole)
-                   if lot_id in lots_by_id]
+    frozen_lots = [copy.deepcopy(redated.get(lot_id, lots_by_id[lot_id]))
+                   for lot_id in sorted(whole) if lot_id in lots_by_id]
     partial = []
     for lot_id in sorted((touched - whole) | released_lots):
         # Never re-sized, but its deliveries are dated by the current calendar
@@ -945,7 +1277,7 @@ def _protected_plan(
         partial.append((copy.deepcopy(lot), _remainder_lot(lot, started, engine_data, config)))
     return ProtectedPlan(
         segments=frozen_segments, lots=frozen_lots, partial=partial,
-        anchored=anchored - started_ids, started=started_ids,
+        anchored=anchored - started_ids, started=started_ids, pinned=pinned,
         cut=[
             (copy.deepcopy(segments[index]), rest_of_cut(segments[index], part))
             for index, part in sorted(parts.items())
@@ -1125,13 +1457,20 @@ def _remainder_lot(lot, started_segments, engine_data, config):
 
 def _install_frozen_reservations(
     engine_data, frozen_segments, frozen_lots, freeze_day: int, config=None, partial=(),
-    *, now_min: float = 0,
+    *, now_min: float = 0, pinned=(),
 ) -> dict:
     """Temporarily reserve frozen output and all future resource occupancy.
 
     ``partial``: ``(original, remainder)`` of started lots whose rest is
     replanned. The whole original lot is credited (lot sizing must not size
     it again) and the remainder is handed to lot sizing as a pre-sized lot.
+    ``pinned`` (``ProtectedPlan.pinned``): frozen lots that have not started
+    (manual anchors). Each delivery they serve is credited on its own day,
+    so lot sizing sizes exactly the other lots of the complete sizing.
+    Credited as stock on day 0, a lot pinned on day 57 covered the first
+    deliveries of its operation instead, the residual sized a lot with its
+    id for the later ones and the complete plan lost a lot (revision 156,
+    15/10/2026: 43 940 pieces missing in every replan).
     ``now_min``: minutes of the planning day already gone; every machine and
     tool is blocked until then, so nothing new (production or setup) is
     placed in elapsed time (AGENTS §2 rule 4, 13/10/2026). Never persisted.
@@ -1280,6 +1619,19 @@ def _install_frozen_reservations(
         # on its own machine and tool: its rest is the whole lot.
         machine_id = segment.machine_id if segment is not None else lot.machine_id
         tool_id = segment.tool_id if segment is not None else lot.tool_id
+        if lot.id in pinned and lot.output_milestones:
+            for output in lot.output_milestones:
+                day = max(0, int(output.get("customer_delivery_day") or 0))
+                engine_data.committed_supplies.append(CommittedSupply(
+                    op_id=str(output.get("op_id")), sku=str(output.get("sku") or lot.sku),
+                    qty=int(output.get("qty", 0)),
+                    available_at=(
+                        f"{str(engine_data.workdays[day])[:10]}T00:00:00"
+                        if day < len(engine_data.workdays or []) else ""
+                    ),
+                    available_day=day, machine_id=machine_id, tool_id=tool_id,
+                ))
+            continue
         for op_id, sku, qty in lot.twin_outputs or [(lot.op_id, lot.sku, lot.qty)]:
             engine_data.committed_supplies.append(CommittedSupply(
                 op_id=str(op_id), sku=str(sku), qty=int(qty),
@@ -1294,15 +1646,28 @@ def _restore_frozen_reservations(engine_data, snapshot: dict) -> None:
         setattr(engine_data, field, value)
 
 
-def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=()):
+def _with_lot_metadata(segment, lot):
+    """A copy of ``segment`` carrying ``lot``'s own metadata, as the builder writes it."""
+    from backend.scheduler.quantity_dispatch import _LOT_FIELDS
+
+    segment = copy.copy(segment)
+    segment.lot_qty = lot.qty
+    segment.output_milestones = copy.deepcopy(lot.output_milestones)
+    for name in _LOT_FIELDS:
+        setattr(segment, name, getattr(lot, name))
+    return segment
+
+
+def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=(), pinned=()):
     """Join the residual plan with the frozen work into the complete plan.
 
     A partial lot's residual segments rejoin its original lot: the remainder
     record is replaced by the original economic lot and the segments carry
-    the lot's own metadata, as the builder writes it.
+    the lot's own metadata, as the builder writes it. ``pinned`` lots
+    (``ProtectedPlan.pinned``) have not started: they carry no preservation
+    proof, so the plan is judged with them against the current sizing.
     """
     from backend.scheduler.canonical import preserved_lot_proofs
-    from backend.scheduler.quantity_dispatch import _LOT_FIELDS
 
     frozen_ids = {lot.id for lot in frozen_lots}
     originals = {original.id: original for original, _rest in partial}
@@ -1335,14 +1700,7 @@ def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=()
                 segment.run_id = replacements[segment.run_id]
     def rejoined(segment):
         original = originals.get(segment.lot_id)
-        if original is None:
-            return segment
-        segment = copy.copy(segment)
-        segment.lot_qty = original.qty
-        segment.output_milestones = copy.deepcopy(original.output_milestones)
-        for name in _LOT_FIELDS:
-            setattr(segment, name, getattr(original, name))
-        return segment
+        return segment if original is None else _with_lot_metadata(segment, original)
 
     result.segments = [rejoined(s) for s in result.segments if s.lot_id not in frozen_ids]
     # The started part of a partial lot carries the same lot metadata as its
@@ -1357,8 +1715,10 @@ def _splice_frozen_started_lots(result, frozen_segments, frozen_lots, partial=()
         for lot in result.lots if lot.id not in frozen_ids
     ]
     result.lots.extend(copy.deepcopy(frozen_lots))
+    proven = frozen_ids - set(pinned)
     result.preserved_lot_proofs = preserved_lot_proofs(
-        [s for s in frozen_segments if s.lot_id in frozen_ids], frozen_lots,
+        [s for s in frozen_segments if s.lot_id in proven],
+        [lot for lot in frozen_lots if lot.id in proven],
     )
     return result
 
@@ -1427,15 +1787,19 @@ def compact_preserving_started_lots(
 ):
     """Recompact a valid active plan after capacity is released.
 
-    ``now``: the calculation's instant (``calculation_now``).
+    ``now``: the calculation's instant (``calculation_now``). Manual anchors
+    the current inputs no longer allow are released first, with a notice
+    (``reconcile_manual_anchors``, decisão de 15/10/2026).
     """
     from backend.planning_control import planning_scope
 
+    notices = reconcile_manual_anchors(engine_data, config, baseline_result, now=now)
     with planning_scope(timeout_s=60.0):
-        return _compact_preserving_started_lots(
+        result = _compact_preserving_started_lots(
             engine_data, config, baseline_result, recalculate_from_start=recalculate_from_start,
             now=now,
         )
+    return with_released_anchor_notices(result, notices)
 
 
 def _compact_preserving_started_lots(
@@ -1462,7 +1826,7 @@ def _compact_preserving_started_lots(
         result, engine_data, copy.deepcopy(engine_data), config,
         protected.segments, protected.lots, freeze_day,
         time_budget_s=improvement_time_budget(60.0), partial=protected.partial, now=now,
-        cut=protected.cut,
+        cut=protected.cut, pinned=protected.pinned,
     )
     result.improvement_report = improvement
     engine_data = result_validation_data(engine_data, result)
@@ -1501,6 +1865,9 @@ CALCULATION_NOTE_PREFIXES = (
     "Foi mantido o melhor plano de base",
     "O plano ativo deixou de ser uma referência válida",
     "Tempo de melhoria esgotado",
+    # Pins released by that calculation (``reconcile_manual_anchors``): true
+    # of the write that released them, never inherited by a later one.
+    RELEASED_ANCHOR_PREFIX,
 )
 
 
@@ -1543,13 +1910,14 @@ def _anchor_warning(anchored: set[str]) -> str:
 def improve_preserving_protected_lots(
     result, engine_data, original_data, config, protected_segments, protected_lots,
     freeze_day: int, *, time_budget_s: float, partial=(), now: datetime | None = None,
-    cut=(),
+    cut=(), pinned=(),
 ):
     """Run the no-loss improvement cycle on the residual plan only.
 
     ``now``: the calculation's instant; nothing moves into today's elapsed
     minutes (``_install_frozen_reservations``). ``cut``: the protection's
     cut segments, so the residual starts from their rest, not the uncut row.
+    ``pinned``: protected lots that have not started (``ProtectedPlan.pinned``).
 
     Frozen work (``protected_segments``: whole protected lots and the started
     part of ``partial`` lots) stays reserved exactly as in the complete
@@ -1583,7 +1951,7 @@ def improve_preserving_protected_lots(
         ]
         complete.lots = list(lots)
         complete = _splice_frozen_started_lots(
-            complete, protected_segments, protected_lots, partial,
+            complete, protected_segments, protected_lots, partial, pinned,
         )
         return complete.segments, complete.lots, result_validation_data(original_data, complete)
 
@@ -1597,6 +1965,7 @@ def improve_preserving_protected_lots(
         now_min=elapsed_on_planning_day(
             freeze_day, engine_data, config, calculation_now(config, now),
         ),
+        pinned=pinned,
     )
     try:
         segments, lots, report = improve_plan(
@@ -1625,7 +1994,7 @@ def improve_preserving_protected_lots(
     improved.segments, improved.lots = segments, lots
     if protected_lots or partial:
         improved = _splice_frozen_started_lots(
-            improved, protected_segments, protected_lots, partial,
+            improved, protected_segments, protected_lots, partial, pinned,
         )
     view = result_validation_data(original_data, improved)
     if validate_plan(improved.segments, view, config, lots=improved.lots):
@@ -1693,7 +2062,7 @@ def repair_preserving_protected_lots(
     started_rests = {rest.id for _original, rest in protected.partial}
     snapshot = _install_frozen_reservations(
         engine_data, protected.segments, protected.lots, freeze_day, config, protected.partial,
-        now_min=now_min,
+        now_min=now_min, pinned=protected.pinned,
     )
     try:
         segments, lots = repair(copy.deepcopy(segments), copy.deepcopy(lots), started_rests)
@@ -1702,7 +2071,7 @@ def repair_preserving_protected_lots(
     repaired.segments, repaired.lots = segments, lots
     repaired.history_boundary = planning_boundary(freeze_day, now_min)
     return _splice_frozen_started_lots(
-        repaired, protected.segments, protected.lots, protected.partial,
+        repaired, protected.segments, protected.lots, protected.partial, protected.pinned,
     )
 
 
@@ -1738,6 +2107,25 @@ def candidate_history_changes(
     )
 
 
+def _safety_net_reason(violations, lot_id: str) -> str:
+    """Why the safety net released a pin: the first conflict naming its lot."""
+    for violation in violations or []:
+        if not isinstance(violation, dict):
+            continue
+        named = {
+            str(item.get("lot_id")) for item in (
+                violation, violation.get("other"), violation.get("unavailability"),
+            ) if isinstance(item, dict) and item.get("lot_id")
+        }
+        message = str(violation.get("message") or "").strip().rstrip(".")
+        if lot_id in named and message and "LOT_" not in message:
+            return (
+                "com a alteração nova o plano deixou de ter solução com o lote nesse "
+                f"sítio ({message[:1].lower() + message[1:]})"
+            )
+    return "com a alteração nova o plano deixou de ter solução com o lote nesse sítio"
+
+
 def optimize_preserving_started_lots(
     engine_data, config, baseline_result, *, mode="normal", audit=False, cancel_event=None,
     optimizer=None, recalculate_from_start=False, now: datetime | None = None,
@@ -1750,7 +2138,52 @@ def optimize_preserving_started_lots(
     validation share one budget and propagate PlanningCancelled/PlanningTimeout.
     ``now``: the calculation's instant (``calculation_now``); nothing new is
     placed in today's minutes before it.
+
+    Manual anchors (decisão do Luís, 15/10/2026): the ones the current inputs
+    no longer allow are released first (``reconcile_manual_anchors``). If no
+    complete candidate is valid and the conflicts involve pinned lots (or
+    name no lot at all, then every pin), those pins are released and the
+    calculation runs once more; a second failure is refused as before, with
+    its conflicts. Every released pin is named in the plan warnings
+    (``RELEASED_ANCHOR_PREFIX``). ``engine_data`` is the write's staging data:
+    its ``plan_anchors`` lose the released pins.
     """
+    from backend.plans.refusal import causes_for_log
+    from backend.scheduler.validation import PlanValidationError
+
+    notices = reconcile_manual_anchors(engine_data, config, baseline_result, now=now)
+    options = dict(
+        mode=mode, audit=audit, cancel_event=cancel_event, optimizer=optimizer,
+        recalculate_from_start=recalculate_from_start, now=now,
+    )
+    try:
+        result = _optimize_preserving_started_lots(
+            engine_data, config, baseline_result, **options,
+        )
+    except PlanValidationError as error:
+        involved = anchors_in_violations(
+            error.violations, engine_data, getattr(baseline_result, "segments", None),
+        )
+        if not involved:
+            raise
+        lots = list(getattr(baseline_result, "lots", None) or [])
+        logger.info(
+            "Sem plano válido com %d fixação(ões) manual(is); solto-as e recalculo uma vez: %s",
+            len(involved), causes_for_log(error, engine_data, lots),
+        )
+        notices.extend(release_anchors(engine_data, lots, {
+            lot_id: _safety_net_reason(error.violations, lot_id) for lot_id in sorted(involved)
+        }))
+        result = _optimize_preserving_started_lots(
+            engine_data, config, baseline_result, **options,
+        )
+    return with_released_anchor_notices(result, notices)
+
+
+def _optimize_preserving_started_lots(
+    engine_data, config, baseline_result, *, mode="normal", audit=False, cancel_event=None,
+    optimizer=None, recalculate_from_start=False, now: datetime | None = None,
+):
     from backend.cpo import optimize
     from backend.cpo.optimizer import (
         MODE_CONFIG,
@@ -1765,12 +2198,13 @@ def optimize_preserving_started_lots(
         planning_scope,
         remaining_time,
     )
+    from backend.plans.refusal import causes_for_log
     from backend.plans.serialize import schedule_fingerprint
     from backend.scheduler.canonical import result_validation_data, stored_history_boundary
     from backend.scheduler.gates import build_gate_report
     from backend.scheduler.operators import compute_operator_alerts
     from backend.scheduler.scoring import compute_score
-    from backend.scheduler.validation import assert_plan_valid
+    from backend.scheduler.validation import PlanValidationError, assert_plan_valid
 
     if mode not in MODE_CONFIG:
         raise ValueError(f"Unknown mode: {mode}. Use: {list(MODE_CONFIG)}")
@@ -1788,9 +2222,13 @@ def optimize_preserving_started_lots(
         baseline_result = with_current_material(baseline_result, engine_data, config, boundary)
         protected = _protected_plan(baseline_result, freeze_day, engine_data, config, now=now)
         segments, lots, partial = protected.segments, protected.lots, protected.partial
+        pinned = protected.pinned
         original_data = copy.deepcopy(engine_data)
         complete = None
         complete_fingerprint = None
+        # Conflicts of the first complete candidate the validation rejected:
+        # the refusal when no candidate is valid.
+        rejected: list[dict] = []
 
         def retain(candidate):
             nonlocal complete, complete_fingerprint
@@ -1811,7 +2249,7 @@ def optimize_preserving_started_lots(
             if recalculate_from_start:
                 merged.preserved_lot_proofs = {}
             if protected:
-                merged = _splice_frozen_started_lots(merged, segments, lots, partial)
+                merged = _splice_frozen_started_lots(merged, segments, lots, partial, pinned)
                 view = result_validation_data(original_data, merged)
                 merged.score = compute_score(merged.segments, merged.lots, view, config=config)
                 merged.operator_alerts = compute_operator_alerts(
@@ -1823,7 +2261,19 @@ def optimize_preserving_started_lots(
             else:
                 view = copy.copy(original_data)
                 view.history_boundary = stored_history_boundary(boundary)
-            assert_plan_valid(merged.segments, view, config, lots=merged.lots)
+            try:
+                assert_plan_valid(merged.segments, view, config, lots=merged.lots)
+            except PlanValidationError as error:
+                # Rejected like a candidate that fails the gate below: the
+                # optimizer goes on with the next ones (15/10/2026: the first
+                # invalid candidate used to abort the whole calculation).
+                logger.info(
+                    "Candidato completo rejeitado pela validação: %s",
+                    causes_for_log(error, view, merged.lots),
+                )
+                if not rejected:
+                    rejected.extend(error.violations)
+                return
             merged.gate_report = build_gate_report(
                 merged.segments, merged.lots, merged.score, view, config,
             )
@@ -1836,6 +2286,7 @@ def optimize_preserving_started_lots(
         snapshot = _install_frozen_reservations(
             engine_data, segments, lots, freeze_day, config, partial,
             now_min=elapsed_on_planning_day(freeze_day, engine_data, config, now),
+            pinned=pinned,
         )
         try:
             planning_checkpoint()
@@ -1861,6 +2312,8 @@ def optimize_preserving_started_lots(
                 except PlanningTimeout:
                     planning_checkpoint()
                     if complete is None:
+                        if rejected:
+                            raise PlanValidationError(list(rejected)) from None
                         raise
                     complete.warnings.append(
                         "Tempo de melhoria esgotado; conservado o candidato completo validado."
@@ -1869,6 +2322,9 @@ def optimize_preserving_started_lots(
             _restore_frozen_reservations(engine_data, snapshot)
         planning_checkpoint()
         if complete is None:
+            if rejected:
+                # Refused as before, with the conflicts of a rejected candidate.
+                raise PlanValidationError(list(rejected))
             raise NoValidCandidateError(
                 "O cálculo não produziu um candidato completo fisicamente válido."
             )
@@ -1883,7 +2339,7 @@ def optimize_preserving_started_lots(
         if budget > 0:
             result, report = improve_preserving_protected_lots(
                 result, engine_data, original_data, config, segments, lots, freeze_day,
-                time_budget_s=budget, partial=partial, now=now,
+                time_budget_s=budget, partial=partial, now=now, pinned=pinned,
             )
         else:
             report = {"status": "not_evaluated", "stop_reason": "no_time_left"}
