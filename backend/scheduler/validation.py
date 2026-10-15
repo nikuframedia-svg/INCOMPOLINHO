@@ -727,7 +727,8 @@ def _validate_plan(
                 {
                     "kind": "lot_production_minutes",
                     "message": (
-                        f"Referência {lot.sku or lot.op_id} · {lot.tool_id} ({lot.machine_id}): o plano tem "
+                        f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
+                        f"({lot.machine_id}): o plano tem "
                         f"{pt_int(actual_prod_min)} de {pt_int(expected_prod_min)} min "
                         "de produção."
                     ),
@@ -1526,7 +1527,8 @@ def _split_violation(
     segment, before = item.after, item.before
     if productions is not None:
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} ({segment.machine_id}): o lote económico "
+            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
+            f"({segment.machine_id}): o lote económico "
             f"passa de {allowed} para {productions} produções separadas (no "
             f"{day_label(segment.day_idx, data)}), sem avaria nem bloqueio pelo meio. "
             "Um lote de um plano anterior pode manter as produções que tinha, "
@@ -1534,14 +1536,16 @@ def _split_violation(
         )
     elif item.kind == "pause":
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} ({segment.machine_id}): o lote económico "
+            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
+            f"({segment.machine_id}): o lote económico "
             f"para com a ferramenta montada e retoma no {day_label(segment.day_idx, data)}, "
             "com tempo de turno livre pelo meio. Um lote económico produz-se de uma só "
             "vez, sem paragens."
         )
     else:
         message = (
-            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} ({segment.machine_id}): o lote económico "
+            f"Referência {lot.sku or lot.op_id} · {lot.tool_id} "
+            f"({segment.machine_id}): o lote económico "
             f"volta a ser produzido no {day_label(segment.day_idx, data)} "
             "numa produção separada, sem avaria nem bloqueio pelo meio. "
             "Um lote económico produz-se de uma só vez, com um único setup."
