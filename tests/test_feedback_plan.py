@@ -2007,7 +2007,7 @@ def test_replan_keeps_demand_without_an_active_machine(monkeypatch):
         assert len(captured["engine_data"].ops) == 1
         assert sum(captured["engine_data"].ops[0].d) == 100
         assert any(machine.id == "M1" for machine in captured["engine_data"].machines)
-        assert "procura não planeada" in captured["preparation_warnings"][0]
+        assert "Sem máquina ativa" in captured["preparation_warnings"][0]
     finally:
         for key, value in previous.items():
             setattr(state, key, value)
