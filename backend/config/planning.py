@@ -120,6 +120,58 @@ def enforce_machine_scope(
         ]
 
 
+def machine_is_active(config: FactoryConfig | None, machine_id: str | None) -> bool:
+    """A machine the plan may use: known id, not deactivated in the config.
+
+    An imported machine the configuration does not list is active.
+    """
+    if not machine_id:
+        return False
+    machine = config.machines.get(machine_id) if config is not None else None
+    return machine is None or bool(machine.active)
+
+
+def unplaceable_op_ids(data: EngineData, config: FactoryConfig | None) -> set[str]:
+    """Operations with neither the primary nor the alternative machine active.
+
+    Owner decision of 16/10/2026: deactivating a machine always works; the
+    operations it leaves without an allowed active machine stay out of the
+    plan as unmet demand (late on Entregas, never a physical violation).
+    """
+    if config is None or not config.machines:
+        return set()
+    return {
+        op.id
+        for op in data.ops
+        if not machine_is_active(config, op.m) and not machine_is_active(config, op.alt)
+    }
+
+
+NO_ACTIVE_MACHINE_PREFIX = "Sem máquina ativa:"
+_NOTICE_REFERENCES = 10
+
+
+def no_active_machine_notice(data: EngineData | None, config: FactoryConfig | None) -> str | None:
+    """«Sem máquina ativa: <refs> — ative uma máquina ou defina uma alternativa.»
+
+    ``None`` when every operation has an allowed active machine. A note of
+    the calculation that found them (``frozen.CALCULATION_NOTE_PREFIXES``):
+    each calculation and each read of the plan state it again.
+    """
+    if data is None:
+        return None
+    ids = unplaceable_op_ids(data, config)
+    references = sorted({str(op.sku or op.id) for op in data.ops if op.id in ids})
+    if not references:
+        return None
+    shown = ", ".join(references[:_NOTICE_REFERENCES])
+    if len(references) > _NOTICE_REFERENCES:
+        shown += f" e mais {len(references) - _NOTICE_REFERENCES}"
+    return (
+        f"{NO_ACTIVE_MACHINE_PREFIX} {shown} — ative uma máquina ou defina uma alternativa."
+    )
+
+
 def _ensure_machine_info(engine_data: EngineData, config: FactoryConfig, machine_id: str) -> None:
     if any(machine.id == machine_id for machine in engine_data.machines):
         return

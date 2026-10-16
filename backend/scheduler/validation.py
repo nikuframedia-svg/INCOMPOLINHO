@@ -1895,6 +1895,7 @@ def demand_coverage_metrics(
     overproduction (``lot_sizing.older_sizing_lots``).
     """
 
+    from backend.config.planning import unplaceable_op_ids
     from backend.scheduler.canonical import quantity_material_version
     from backend.scheduler.lot_sizing import (
         create_lots,
@@ -1919,6 +1920,21 @@ def demand_coverage_metrics(
     expected = quantities(create_lots(sized, config, quantity_material=version))
     for op_id, qty in quantities(older).items():
         expected[op_id] = expected.get(op_id, 0) + qty
+    # What a started lot made before its machine stopped being allowed and
+    # active, with no other for the rest (owner decision, 16/10/2026): history
+    # of an operation that now gets no lot, never overproduction.
+    unplaceable = unplaceable_op_ids(data, config)
+    preserved = set(getattr(data, "preserved_lot_proofs", None) or {})
+    history = [
+        lot for lot in lots
+        if lot.id in preserved and any(
+            str(op_id) in unplaceable
+            for op_id, _sku, _qty in lot.twin_outputs or [(lot.op_id, lot.sku, lot.qty)]
+        )
+    ]
+    for op_id, qty in quantities(history).items():
+        if op_id in unplaceable:
+            expected[op_id] = expected.get(op_id, 0) + qty
     actual = quantities(lots)
     op_ids = set(expected) | set(actual)
     missing = sum(max(0, expected.get(op_id, 0) - actual.get(op_id, 0)) for op_id in op_ids)

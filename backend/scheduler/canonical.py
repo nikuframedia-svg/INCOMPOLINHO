@@ -6,6 +6,7 @@ import copy
 import math
 from collections import Counter, defaultdict
 
+from backend.config.planning import unplaceable_op_ids
 from backend.config.types import FactoryConfig
 from backend.planning_control import current_planning_control, execution_cache
 from backend.plans.serialize import schedule_fingerprint
@@ -103,6 +104,8 @@ def _lot_sizing_inputs(data, config, quantity_material):
         data.n_days,
         None if config is None else (
             config.oee_default, config.min_prod_min, config.setup_families,
+            # Operations without an active machine get no lot (``create_lots``).
+            tuple(sorted(unplaceable_op_ids(data, config))),
         ),
     )
 
@@ -284,9 +287,21 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
     older = {id(lot) for lot in older_sizing_lots(remaining, data)}
     credited = [lot for lot in remaining if id(lot) in older]
     remaining_sized = [lot for lot in remaining if id(lot) not in older]
+    from backend.scheduler.history import history_boundary, judged_start
+
+    boundary = history_boundary(data)
     for lot in remaining:
         physical = by_lot[lot.id]
         machines = {s.machine_id for s in physical if s.prod_min > 0}
+        # A started lot whose machine it may no longer use goes on on another
+        # one (owner decision, 16/10/2026): what already ran is history.
+        judged = {
+            s.machine_id for s in physical
+            if s.prod_min > 0
+            and judged_start(s.day_idx, s.start_min, s.end_min, boundary) is not None
+        }
+        if judged:
+            machines = judged
         if len(machines) > 1:
             fail(lot, "machine_id")
         machine = next(iter(machines), lot.machine_id)

@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from backend.config.planning import (
     PlanningMilestones,
     planning_milestones_for_op,
+    unplaceable_op_ids,
     validate_active_twin_eco_lots,
 )
 from backend.config.types import FactoryConfig
@@ -191,8 +192,14 @@ def create_lots(
     oee_default = config.oee_default if config else DEFAULT_OEE
     min_prod = config.min_prod_min if config else MIN_PROD_MIN
 
+    # No allowed active machine: unmet demand, never a lot (owner, 16/10/2026).
+    unplaceable = unplaceable_op_ids(data, config)
+    twin_groups = [
+        tg for tg in data.twin_groups
+        if tg.op_id_1 not in unplaceable and tg.op_id_2 not in unplaceable
+    ]
     twin_op_ids: set[str] = set()
-    for tg in data.twin_groups:
+    for tg in twin_groups:
         twin_op_ids.add(tg.op_id_1)
         twin_op_ids.add(tg.op_id_2)
 
@@ -203,7 +210,7 @@ def create_lots(
     lots: list[Lot] = []
 
     # Twin lots first
-    for tg in data.twin_groups:
+    for tg in twin_groups:
         op_a = ops_by_id.get(tg.op_id_1)
         op_b = ops_by_id.get(tg.op_id_2)
         if op_a and op_b:
@@ -222,7 +229,7 @@ def create_lots(
     # Solo lots for non-twin ops
     for source_op in data.ops:
         op = ops_by_id[source_op.id]
-        if op.id not in twin_op_ids:
+        if op.id not in twin_op_ids and op.id not in unplaceable:
             lots.extend(
                 _create_solo_lots(
                     op,

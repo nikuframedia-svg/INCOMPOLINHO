@@ -26,7 +26,7 @@ from backend.config.changes import (
     set_sku_planning,
 )
 from backend.config.loader import normalize_setup_families, validate_config
-from backend.config.planning import apply_effective_planning_config
+from backend.config.planning import apply_effective_planning_config, no_active_machine_notice
 from backend.config.presets import apply_preset
 from backend.config.shifts import (
     clear_legacy_common_machine_capacity_overrides,
@@ -138,7 +138,6 @@ def _sync_active_machines(candidate, candidate_data) -> list[str]:
                 )
             )
 
-    unschedulable_ops = []
     for op in candidate_data.ops:
         primary_active = op.m in active_machine_ids
         alt_active = bool(op.alt and op.alt in active_machine_ids)
@@ -148,15 +147,11 @@ def _sync_active_machines(candidate, candidate_data) -> list[str]:
             op.alt = inactive_primary if inactive_primary in active_machine_ids else None
         elif op.alt not in active_machine_ids:
             op.alt = None
-        if op.m not in active_machine_ids:
-            unschedulable_ops.append(op)
-    if unschedulable_ops:
-        affected_ids = ", ".join(op.id for op in unschedulable_ops[:5])
-        suffix = "..." if len(unschedulable_ops) > 5 else ""
-        warnings.append(
-            f"{len(unschedulable_ops)} operação(ões) sem máquina ativa foram "
-            f"mantidas como procura não planeada: {affected_ids}{suffix}"
-        )
+    # Without an allowed active machine an operation is unmet demand, never an
+    # error (owner decision, 16/10/2026): lot sizing gives it no lot.
+    notice = no_active_machine_notice(candidate_data, candidate)
+    if notice:
+        warnings.append(notice)
     ops_by_id = {op.id: op for op in candidate_data.ops}
     synced_twin_groups = []
     dropped_twins = []

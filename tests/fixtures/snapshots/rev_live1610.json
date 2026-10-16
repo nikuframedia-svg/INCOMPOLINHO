@@ -1,0 +1,25 @@
+{
+  "name": "rev_live1610",
+  "snapshot_id": "64284073953c428fadf7e96adb69fd37",
+  "plan_revision": 164,
+  "payload_sha256": "c99216ab1d45ffcf75279e13309e9de01f712f9523aa050490d3f03e08c11c75",
+  "as_of": "2026-10-16",
+  "freeze_day": 1,
+  "lots": 332,
+  "segments": 925,
+  "protected_lots": 13,
+  "anchored_lots": 0,
+  "stored_model_version": "aps-v5",
+  "stored_planning_policy_version": "setup-families-v1",
+  "improvement_contract_in_stored_report": 3,
+  "frozen_with_model_identity": {
+    "model": "aps-v5",
+    "planning_policy": "setup-families-v1",
+    "improvement_contract": 3,
+    "manual_allocation": 1,
+    "protected_context": 5,
+    "transfer_search": 2,
+    "quantity_material": 4
+  },
+  "private_fixture": "tests/fixtures/private/rev_live1610.json.gz"
+}

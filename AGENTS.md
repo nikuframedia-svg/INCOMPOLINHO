@@ -441,7 +441,11 @@ lotes da mesma ferramenta):
    problema residual como o mesmo lote, já dimensionado
    (`EngineData.residual_lot_remainders`, com o lote inteiro creditado para o
    dimensionamento não o repetir), na mesma máquina, e o plano completo junta
-   as duas partes no lote original. Uma continuação congelada sem setup leva
+   as duas partes no lote original. Exceção (decisão do Luís, 16/10/2026):
+   se o lote já não pode usar essa máquina (máquina desativada, ou deixou de
+   ser a principal ou a alternativa da ferramenta), a execução pára no
+   "agora" e o resto vai a outra máquina permitida e ativa (novo setup); sem
+   nenhuma, o lote fica só com o que já fez e o resto é procura por cumprir. Uma continuação congelada sem setup leva
    sempre consigo o lote que montou a ferramenta (a produção anterior desse
    lote incluída); um lote de um contrato de material anterior, ancorado ou já
    todo feito fica inteiro. Um lote ancorado que ainda não começou fica
@@ -762,9 +766,20 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
     material anterior) não é cortado: fica inteiro. Se um dado novo chocar
     com um lote de um contrato anterior o trabalho falha como antes; com um
     lote fixado à mão, a fixação é solta (abaixo, decisão de 15/10/2026).
-  - Elegibilidade (ferramenta/máquina) mudada com um lote começado: a parte
-    feita fica como histórico, mas o resto continua preso à máquina do lote
-    (regra 3), por isso o plano pode não ter solução.
+  - Elegibilidade (ferramenta/máquina) mudada ou máquina desativada com um
+    lote começado (decisão do Luís, 16/10/2026): a parte feita fica como
+    histórico (não é julgada pela elegibilidade nova) e o resto passa para a
+    outra máquina permitida e ativa (principal ou alternativa). Desativar uma
+    máquina funciona sempre: uma operação sem nenhuma máquina permitida e
+    ativa não é erro, fica fora do plano como procura por cumprir (atrasada
+    nas Entregas, nunca violação física; `config.planning.unplaceable_op_ids`)
+    e o plano avisa «Sem máquina ativa: <referências> — ative uma máquina ou
+    defina uma alternativa.». Aplicar pede confirmação, porque piora entregas.
+    Caso real: revisão 164, MAE054, MAS191 e PRM042 desativadas e a BFP080 sem
+    a alternativa PRM039 davam «erro interno» ou recusa.
+  - Uma recusa do motor com texto pt-PT (`ValueError`) num replaneamento
+    aparece com esse texto como causa (código `refused`), nunca como «erro
+    interno».
 - **Histórico com nomes e «Desfazer» multi-passo (decisão do Luís,
   15/10/2026).** Caso real: depois de 8 movimentos manuais não houve forma de
   voltar ao plano da manhã («Desfazer» só desfazia um passo, em memória; todas

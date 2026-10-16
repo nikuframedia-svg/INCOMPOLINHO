@@ -871,10 +871,14 @@ def _plan_notices(segments, lots, engine_data, config, warnings=()) -> list[str]
       had to release, and why (``frozen.reconcile_manual_anchors``, decisão
       de 15/10/2026), read from the plan's own ``warnings``; the next
       calculation does not inherit them.
+    - No active machine: references whose primary and alternative machines
+      are both inactive, left out of the plan as unmet demand (decisão de
+      16/10/2026, ``config.planning.no_active_machine_notice``).
 
     Computed from the plan and today's date on every read, never stored, and
     never changes the plan: each note disappears as soon as its cause does.
     """
+    from backend.config.planning import no_active_machine_notice
     from backend.plans.frozen import RELEASED_ANCHOR_PREFIX
     from backend.plans.restore import legacy_material_warning
     from backend.plans.stale_isop import stale_isop_notice
@@ -882,6 +886,7 @@ def _plan_notices(segments, lots, engine_data, config, warnings=()) -> list[str]
     notes = (
         *(str(warning) for warning in warnings or []
           if str(warning).startswith(RELEASED_ANCHOR_PREFIX)),
+        no_active_machine_notice(engine_data, config),
         legacy_material_warning(lots, engine_data, config),
         stale_isop_notice(engine_data, config),
         _idle_capacity_notice(segments, lots, engine_data, config),

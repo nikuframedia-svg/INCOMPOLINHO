@@ -934,9 +934,14 @@ class _CampaignBuilder:
             if machine is not None and placement is None:
                 placement = self.place(portion, machine, self.segments)
             if placement is None:
+                from backend.scheduler.canonical import _lot_label
+
+                lot = next((item for item in self.lots if item.id == portion.lot_id), None)
+                label = _lot_label(lot) if lot is not None else f"Lote {portion.lot_id}"
                 raise ValueError(
-                    "Não foi possível alocar as quantidades libertadas do lote "
-                    f"{portion.lot_id}."
+                    "Não foi possível alocar as quantidades libertadas da "
+                    f"{label[0].lower()}{label[1:]}: nenhuma máquina permitida e ativa "
+                    "tem lugar para ela."
                 )
             if not self.campaigns:
                 self.commit(placement)

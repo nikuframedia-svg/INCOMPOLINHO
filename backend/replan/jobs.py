@@ -95,6 +95,12 @@ FAILURE_TEXTS = {
         "por isso não pode ser aplicado. O plano e a configuração não foram "
         "alterados. Pode iniciar novamente.",
     ),
+    # A planning refusal with its own pt-PT text (a ValueError of the
+    # planner): the text is the cause, never «erro interno» (16/10/2026).
+    "refused": (
+        "Não foi possível concluir o replaneamento",
+        "O cálculo foi recusado. O plano e a configuração não foram alterados.",
+    ),
     "internal_error": (
         "Não foi possível concluir o replaneamento",
         "Ocorreu um erro interno durante o cálculo. O plano e a configuração "
@@ -107,6 +113,16 @@ FAILURE_TEXTS = {
         "novamente.",
     ),
 }
+
+
+_PORTUGUESE_MARKERS = ("ã", "õ", "ç", "á", "é", "í", "ó", "ú", "â", "ê", "ô", " não ", " de ")
+
+
+def portuguese_text(text: str) -> bool:
+    """Whether a planner message is pt-PT text the screen may show as it is."""
+
+    lowered = f" {text.lower()} "
+    return bool(text) and any(marker in lowered for marker in _PORTUGUESE_MARKERS)
 
 
 class _BlockedCandidate(ValueError):
@@ -1679,6 +1695,13 @@ class ReplanJobManager:
                 job_id, "invalid_plan",
                 causes=_violation_causes(exc, engine_data, baseline_lots),
             )
+        except ValueError as exc:
+            logger.exception("Replan job %s was refused by the planner", job_id)
+            text = str(exc).strip()
+            if portuguese_text(text):
+                self._fail(job_id, "refused", causes=[text])
+            else:
+                self._fail(job_id, "internal_error")
         except Exception:  # defensive job boundary: never show raw (English) text
             logger.exception("Replan job %s failed unexpectedly", job_id)
             self._fail(job_id, "internal_error")
