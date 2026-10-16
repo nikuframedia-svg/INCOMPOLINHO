@@ -44,6 +44,7 @@ import { jobFailureText } from "../lib/jobFailure";
 import { refusalCauses } from "../lib/refusal";
 import { RefusalDetails } from "../components/RefusalDetails";
 import { ConfigPendingBar } from "../components/ConfigPendingBar";
+import { configImpact } from "../lib/configImpact";
 import { assertRefreshed, isAppliedRefreshError, refreshAfterCommit } from "../lib/refreshOutcome";
 
 type Section = "geral" | "turnos" | "maquinas" | "ferramentas" | "gemeas" | "setup_overrides" | "operadores" | "feriados" | "indisponibilidades" | "parametros" | "planeamento" | "subcontratacoes" | "operacoes" | "qualidade_dados";
@@ -1101,7 +1102,11 @@ export function ConfigPage() {
   // staged here and applied together by one replan job.
   const draftItems = useConfigDraftStore((s) => s.items);
   const draftApplying = useConfigDraftStore((s) => s.applying);
-  const draftLines = useMemo(() => draftItems.map((item) => ({ id: item.id, text: item.label })), [draftItems]);
+  const draftImpact = useMemo(() => configImpact(draftItems, catalog), [draftItems, catalog]);
+  const draftLines = useMemo(
+    () => draftItems.map((item) => ({ id: item.id, text: draftImpact.lines.get(item.id) ?? item.label })),
+    [draftItems, draftImpact],
+  );
   const draftById = useMemo(() => new Map(draftItems.map((item) => [item.id, item])), [draftItems]);
   const draftValues = useMemo(() => {
     const oee: Record<string, number | null> = {};
@@ -2113,6 +2118,7 @@ export function ConfigPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <ConfigPendingBar
         lines={draftLines}
+        orphanCount={draftImpact.orphanCount}
         busy={draftApplying || saving}
         disabled={readOnly || pendingReplan !== null}
         onRemove={unstage}

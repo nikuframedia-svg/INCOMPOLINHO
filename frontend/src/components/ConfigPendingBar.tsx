@@ -8,6 +8,7 @@ import { Card } from "./ui/Card";
  */
 export function ConfigPendingBar({
   lines,
+  orphanCount = 0,
   busy,
   disabled,
   onRemove,
@@ -15,6 +16,8 @@ export function ConfigPendingBar({
   onDiscard,
 }: {
   lines: { id: string; text: string }[];
+  /** References the pending changes leave with no active machine. */
+  orphanCount?: number;
   /** A replan with these changes is running: nothing can be removed or applied. */
   busy: boolean;
   /** Read-only profile or another candidate waiting: the list cannot be applied. */
@@ -29,6 +32,11 @@ export function ConfigPendingBar({
   return (
     <Card style={{ borderColor: T.blue, padding: "12px 16px" }}>
       <section aria-label="Alterações por aplicar" style={{ display: "grid", gap: 8 }}>
+        {orphanCount > 0 && (
+          <div role="alert" style={{ color: T.red, fontSize: 12, fontWeight: 600 }}>
+            {`Atenção: ${orphanCount} ${orphanCount === 1 ? "referência fica" : "referências ficam"} sem máquina ativa e passa${orphanCount === 1 ? "" : "m"} a atrasada${orphanCount === 1 ? "" : "s"}.`}
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ color: T.primary, fontSize: 13, fontWeight: 700 }}>{title}</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
