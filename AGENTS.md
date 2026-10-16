@@ -777,9 +777,17 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
     defina uma alternativa.». Aplicar pede confirmação, porque piora entregas.
     Caso real: revisão 164, MAE054, MAS191 e PRM042 desativadas e a BFP080 sem
     a alternativa PRM039 davam «erro interno» ou recusa.
-  - Uma recusa do motor com texto pt-PT (`ValueError`) num replaneamento
-    aparece com esse texto como causa (código `refused`), nunca como «erro
-    interno».
+  - Uma recusa deliberada do motor (`scheduler.errors.PlanningRefusal`, texto
+    pt-PT) num replaneamento aparece com esse texto como causa (código
+    `refused`), nunca como «erro interno». Qualquer outro erro é «erro
+    interno» e o seu texto técnico nunca chega ao ecrã (17/10/2026).
+  - O resto de um lote começado só muda de máquina se a dele deixou de poder
+    ser usada (desativada ou já não principal/alternativa); a verificação do
+    plano (`source_contract`) e a guarda ao aplicar
+    (`historical_schedule_changes`) recusam qualquer outra mudança. Com duas
+    máquinas permitidas, o resto pode ir para qualquer uma. Um lote começado
+    que só fez a afinação (0 peças) numa máquina sem alternativa sai do plano
+    como procura por cumprir (17/10/2026).
 - **Histórico com nomes e «Desfazer» multi-passo (decisão do Luís,
   15/10/2026).** Caso real: depois de 8 movimentos manuais não houve forma de
   voltar ao plano da manhã («Desfazer» só desfazia um passo, em memória; todas

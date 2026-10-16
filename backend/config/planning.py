@@ -15,6 +15,7 @@ from backend.config.types import (
     OUT_OF_SCOPE_MACHINES,
     FactoryConfig,
 )
+from backend.scheduler.errors import PlanningRefusal
 from backend.types import EngineData, MachineInfo
 
 SKU_RULE_FIELDS = {
@@ -67,25 +68,27 @@ def enforce_machine_scope(
             if op.m in OUT_OF_SCOPE_MACHINES or op.alt in OUT_OF_SCOPE_MACHINES
         ]
         if excluded_ops:
-            raise ValueError(
+            raise PlanningRefusal(
                 "PRM020 fora do âmbito: operação atribuída a esta máquina "
                 f"({excluded_ops[0].sku}). Corrija o ISOP antes de calcular."
             )
         if any(group.machine_id in OUT_OF_SCOPE_MACHINES for group in engine_data.twin_groups):
-            raise ValueError("O plano contém peças gémeas na PRM020, fora do âmbito atual.")
+            raise PlanningRefusal("O plano contém peças gémeas na PRM020, fora do âmbito atual.")
         if any(
             supply.machine_id in OUT_OF_SCOPE_MACHINES
             for supply in engine_data.committed_supplies
         ):
-            raise ValueError("O plano contém produção em curso na PRM020, fora do âmbito atual.")
+            raise PlanningRefusal(
+                "O plano contém produção em curso na PRM020, fora do âmbito atual."
+            )
     if segments is not None and any(
         segment.machine_id in OUT_OF_SCOPE_MACHINES for segment in segments
     ):
-        raise ValueError("O plano contém produção na PRM020, fora do âmbito atual.")
+        raise PlanningRefusal("O plano contém produção na PRM020, fora do âmbito atual.")
 
     for tool_id, raw in config.tools.items():
         if _tool_value(raw, "primary") in OUT_OF_SCOPE_MACHINES:
-            raise ValueError(
+            raise PlanningRefusal(
                 f"A ferramenta {tool_id} usa a PRM020 como máquina principal; "
                 "corrija o encaminhamento antes de continuar."
             )
@@ -129,6 +132,25 @@ def machine_is_active(config: FactoryConfig | None, machine_id: str | None) -> b
         return False
     machine = config.machines.get(machine_id) if config is not None else None
     return machine is None or bool(machine.active)
+
+
+def allowed_machines(lot, engine_data, config) -> list[str] | None:
+    """Machines ``lot`` may use now: its operations' primary, then alternative,
+    when active. ``None`` when its operations are unknown (nothing to judge).
+    """
+    ops = {op.id: op for op in getattr(engine_data, "ops", None) or []}
+    op_ids = [str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []] or [lot.op_id]
+    lot_ops = [ops[op_id] for op_id in op_ids if op_id in ops]
+    if not lot_ops:
+        return None
+    allowed: list[str] = []
+    for machine in (lot_ops[0].m, lot_ops[0].alt):
+        if (
+            machine and machine not in allowed and machine_is_active(config, machine)
+            and all(machine in (op.m, op.alt) for op in lot_ops)
+        ):
+            allowed.append(machine)
+    return allowed
 
 
 def unplaceable_op_ids(data: EngineData, config: FactoryConfig | None) -> set[str]:
@@ -566,7 +588,7 @@ def validate_active_twin_eco_lots(engine_data: EngineData) -> None:
             )
 
     if mismatches:
-        raise ValueError(
+        raise PlanningRefusal(
             "Definição de peças gémeas incompatível: os eco-lotes efetivos "
             "têm de ser iguais (" + "; ".join(mismatches) + ")."
         )

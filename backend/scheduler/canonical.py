@@ -6,7 +6,7 @@ import copy
 import math
 from collections import Counter, defaultdict
 
-from backend.config.planning import unplaceable_op_ids
+from backend.config.planning import allowed_machines, unplaceable_op_ids
 from backend.config.types import FactoryConfig
 from backend.planning_control import current_planning_control, execution_cache
 from backend.plans.serialize import schedule_fingerprint
@@ -301,7 +301,12 @@ def source_contract_violations(segments, lots, data, config, *, require_current_
             and judged_start(s.day_idx, s.start_min, s.end_min, boundary) is not None
         }
         if judged:
-            machines = judged
+            # Only when the history machine may no longer be used: a lot on a
+            # machine still active and allowed never changes machine.
+            history = machines - judged
+            allowed = allowed_machines(lot, data, config)
+            if not history or (allowed is not None and not (history & set(allowed))):
+                machines = judged
         if len(machines) > 1:
             fail(lot, "machine_id")
         machine = next(iter(machines), lot.machine_id)

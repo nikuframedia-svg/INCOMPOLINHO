@@ -66,6 +66,7 @@ from dataclasses import dataclass, field, replace
 from backend.config.shifts import ordered_shifts
 from backend.planning_control import planning_checkpoint
 from backend.scheduler.alternative_repair import _schedule_run_earliest
+from backend.scheduler.errors import PlanningRefusal
 from backend.scheduler.lot_sizing import _aggregate_milestones
 from backend.scheduler.material_quantities import (
     material_portions,
@@ -938,7 +939,7 @@ class _CampaignBuilder:
 
                 lot = next((item for item in self.lots if item.id == portion.lot_id), None)
                 label = _lot_label(lot) if lot is not None else f"Lote {portion.lot_id}"
-                raise ValueError(
+                raise PlanningRefusal(
                     "Não foi possível alocar as quantidades libertadas da "
                     f"{label[0].lower()}{label[1:]}: nenhuma máquina permitida e ativa "
                     "tem lugar para ela."

@@ -29,8 +29,9 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
+from types import SimpleNamespace
 
-from backend.config.planning import NO_ACTIVE_MACHINE_PREFIX
+from backend.config.planning import NO_ACTIVE_MACHINE_PREFIX, allowed_machines
 from backend.types import CommittedSupply
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,7 @@ _MOVABLE_LOT_FIELDS = ("machine_id", "prod_min", "setup_min")
 
 def historical_schedule_changes(
     before: dict, after: dict, *, today: str | None = None, now: datetime | None = None,
+    engine_data=None, config=None,
 ) -> list[str]:
     """Started lots whose history changed (same dataset), or new past production.
 
@@ -281,6 +283,11 @@ def historical_schedule_changes(
     before ``now`` (``cut_row``, the cut of a new input over it); it may be
     missing only if it made no piece before ``now``; no production is added
     before ``now``; a lot with such a segment keeps its size.
+
+    The rest of a started lot may change machine only when the lot may no
+    longer use its old one (owner decision, 16/10/2026), judged by the
+    candidate's own operations and configuration: ``engine_data`` and
+    ``config`` when given, else the ones ``after`` carries.
     """
     from backend.calendar import factory_now
     from backend.scheduler.history import cut_row
@@ -377,16 +384,69 @@ def historical_schedule_changes(
             int(previous[0].get("qty") or 0)
         )
 
+    eligibility: list = []
+
+    def allowed_now(snapshot: dict, lot_id: str) -> set[str] | None:
+        """Machines the lot may use under the candidate's own data."""
+        if not eligibility:
+            eligibility.append(_candidate_eligibility(after, engine_data, config))
+        data, factory = eligibility[0]
+        lots = [lot for lot in snapshot.get("lots", []) if lot.get("id") == lot_id]
+        if data is None or len(lots) != 1:
+            return None
+        lot = SimpleNamespace(
+            op_id=lots[0].get("op_id"), twin_outputs=lots[0].get("twin_outputs") or [],
+        )
+        allowed = allowed_machines(lot, data, factory)
+        return None if allowed is None else set(allowed)
+
+    def move_justified(lot_id: str) -> bool:
+        """The old machine may no longer be used, the new one may."""
+        allowed = allowed_now(after, lot_id)
+        if allowed is None:
+            return False
+        old = set(lot_machines(before, lot_id))
+        new = set(lot_machines(after, lot_id))
+        return not (old & allowed) and new <= allowed
+
+    def dropped_unmade(lot_id: str) -> bool:
+        """A started lot that made nothing (a setup alone) left out because
+        no allowed machine is active for it: it ends with what it made."""
+        if any(lot.get("id") == lot_id for lot in after.get("lots", [])) or any(
+            segment.get("lot_id") == lot_id for segment in after.get("segments", [])
+        ):
+            return False
+        before_date = calendar_dates(before)
+        history = [
+            segment for segment in before.get("segments", [])
+            if segment.get("lot_id") == lot_id and (
+                (before_date(segment) or "") < current_day
+                or (before_date(segment) == current_day
+                    and float(segment["start_min"]) < now_min)
+            )
+        ]
+        if any(
+            int(segment.get("qty") or 0) or float(segment.get("prod_min") or 0)
+            or any(int(output[2] or 0) for output in segment.get("twin_outputs") or [])
+            for segment in history
+        ):
+            return False
+        allowed = allowed_now(before, lot_id)
+        return allowed is not None and not (set(lot_machines(before, lot_id)) & allowed)
+
     def lot_changed(lot_id: str) -> bool:
-        """Whether a started lot was re-sized (rule 4).
+        """Whether a started lot was re-sized (rule 4) or moved without cause.
 
         Its rest may move to another allowed active machine, with that
-        machine's times, and with none it ends with what it made (owner
-        decision, 16/10/2026); its history rows are compared apart.
+        machine's times, only when it may no longer use its own, and with
+        none it ends with what it made (owner decision, 16/10/2026); its
+        history rows are compared apart.
         """
         if lot_fields(before, lot_id) == lot_fields(after, lot_id):
             return False
         moved = lot_machines(before, lot_id) != lot_machines(after, lot_id)
+        if moved and not move_justified(lot_id):
+            return True
         if moved and lot_fields(before, lot_id, _MOVABLE_LOT_FIELDS) == lot_fields(
             after, lot_id, _MOVABLE_LOT_FIELDS,
         ):
@@ -453,12 +513,28 @@ def historical_schedule_changes(
         for lot_id in {segment["lot_id"] for segment, _text in kept_today}
         if lot_id not in started and lot_changed(lot_id)
     }
-    return sorted(
-        newly_past | resized_today | {
-            lot_id for lot_id in started
-            if lot_rows(before, lot_id) != lot_rows(after, lot_id) or lot_changed(lot_id)
-        }
-    )
+    changed = newly_past | resized_today | {
+        lot_id for lot_id in started
+        if lot_rows(before, lot_id) != lot_rows(after, lot_id) or lot_changed(lot_id)
+    }
+    return sorted(lot_id for lot_id in changed if not dropped_unmade(lot_id))
+
+
+def _candidate_eligibility(after: dict, engine_data, config):
+    """``(engine_data, config)`` that judge where ``after``'s lots may run:
+    the given ones, else restored from ``after``; ``(None, None)`` when it
+    carries no operations (nothing justifies a change of machine)."""
+    if engine_data is not None:
+        return engine_data, config
+    from backend.plans.serialize import deserialize_config, deserialize_engine_data
+
+    try:
+        data = deserialize_engine_data(after.get("engine_data") or {})
+        factory = deserialize_config(after.get("config"))
+    except Exception:  # a payload that cannot be restored justifies nothing
+        logger.debug("candidate eligibility not restorable", exc_info=True)
+        return None, None
+    return (data, factory) if data.ops else (None, None)
 
 
 def _cut_key(segment: dict) -> tuple:
@@ -1036,27 +1112,6 @@ def _running_continuations(
     return chains
 
 
-def allowed_machines(lot, engine_data, config) -> list[str] | None:
-    """Machines ``lot`` may use now: its operations' primary, then alternative,
-    when active. ``None`` when its operations are unknown (nothing to judge).
-    """
-    from backend.config.planning import machine_is_active
-
-    ops = {op.id: op for op in getattr(engine_data, "ops", None) or []}
-    op_ids = [str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []] or [lot.op_id]
-    lot_ops = [ops[op_id] for op_id in op_ids if op_id in ops]
-    if not lot_ops:
-        return None
-    allowed: list[str] = []
-    for machine in (lot_ops[0].m, lot_ops[0].alt):
-        if (
-            machine and machine not in allowed and machine_is_active(config, machine)
-            and all(machine in (op.m, op.alt) for op in lot_ops)
-        ):
-            allowed.append(machine)
-    return allowed
-
-
 def _stop_minute(segment, conflict: float, boundary: tuple[int, int]) -> int:
     """Where a conflict starting at ``conflict`` stops ``segment``.
 
@@ -1393,9 +1448,13 @@ def _protected_plan(
         # (owner decision, 16/10/2026).
         machine = next((s.machine_id for s in started if s.prod_min > 0), lot.machine_id)
         allowed = allowed_machines(lot, engine_data, config)
+        alt = None
         if allowed is not None and machine not in allowed:
             if allowed:
-                lot = _on_machine(lot, allowed[0], engine_data, config)
+                # The second allowed machine stays its alternative: dispatch
+                # may use it when the first is full.
+                alt = allowed[1] if len(allowed) > 1 else None
+                lot = _on_machine(lot, allowed[0], engine_data, config, alt=alt)
                 machine = allowed[0]
             else:
                 made = _made_part(lot, started)
@@ -1410,7 +1469,8 @@ def _protected_plan(
                     frozen_segments = [s for s in frozen_segments if s.lot_id != lot_id]
                 continue
         partial.append((
-            copy.deepcopy(lot), _remainder_lot(lot, started, engine_data, config, machine),
+            copy.deepcopy(lot),
+            _remainder_lot(lot, started, engine_data, config, machine, alt=alt),
         ))
     return ProtectedPlan(
         segments=frozen_segments, lots=frozen_lots, partial=partial,
@@ -1543,14 +1603,14 @@ def _lot_times(lot, machine, engine_data, config, qty_by_op=None) -> tuple[float
     return max([config.min_prod_min, *times]), max(setups, default=0.0)
 
 
-def _on_machine(lot, machine, engine_data, config):
+def _on_machine(lot, machine, engine_data, config, alt=None):
     """A started lot whose rest moves to ``machine``: the same economic lot
     (never re-sized), timed on its new machine; its started part stays as it
     ran on the old one (history)."""
     from backend.config.types import FactoryConfig
 
     moved = copy.deepcopy(lot)
-    moved.machine_id, moved.alt_machine_id = machine, None
+    moved.machine_id, moved.alt_machine_id = machine, alt
     times = _lot_times(moved, machine, engine_data, config or FactoryConfig())
     if times is not None:
         moved.prod_min, moved.setup_min = times
@@ -1564,7 +1624,10 @@ def _made_part(lot, started_segments):
     from backend.scheduler.lot_sizing import _aggregate_milestones
 
     made_cycles = sum(int(segment.qty) for segment in started_segments)
-    if not started_segments:
+    made_pieces = made_cycles + sum(
+        int(qty) for segment in started_segments for _op, _sku, qty in segment.twin_outputs or []
+    )
+    if not started_segments or made_pieces <= 0:  # a setup alone made nothing
         return None
     part = copy.deepcopy(lot)
     part.qty = made_cycles
@@ -1595,7 +1658,7 @@ def _made_part(lot, started_segments):
     return part
 
 
-def _remainder_lot(lot, started_segments, engine_data, config, machine=None):
+def _remainder_lot(lot, started_segments, engine_data, config, machine=None, alt=None):
     """The rest of a started economic lot, as one pre-sized lot (never re-sized).
 
     Same identity, operation, tool and machine (a started lot never changes
@@ -1620,7 +1683,7 @@ def _remainder_lot(lot, started_segments, engine_data, config, machine=None):
     machine = machine or next(
         (s.machine_id for s in started_segments if s.prod_min > 0), lot.machine_id,
     )
-    rest.machine_id, rest.alt_machine_id = machine, None
+    rest.machine_id, rest.alt_machine_id = machine, alt
     if lot.twin_outputs:
         made = {str(op_id): 0 for op_id, _sku, _qty in lot.twin_outputs}
         for segment in started_segments:
@@ -2316,6 +2379,7 @@ def candidate_history_changes(
     }
     return historical_schedule_changes(
         baseline_snapshot, candidate, today=str(workdays[freeze_day])[:10], now=now,
+        engine_data=engine_data, config=config,
     )
 
 

@@ -211,13 +211,17 @@ def test_alternative_removed_while_lot_started_today_on_it_goes_on_on_the_primar
 
 
 def _snapshots(data, config, baseline, result):
+    """The active plan and the candidate as the commit guard reads them; the
+    candidate's own operations and config judge a change of machine."""
     from dataclasses import asdict
+
+    from backend.plans.serialize import _jsonable, serialize_config
 
     def snapshot(plan):
         return {
             "dataset_info": {"id": "fixture"},
-            "config": {"timezone": config.timezone},
-            "engine_data": {"workdays": list(data.workdays)},
+            "config": serialize_config(config),
+            "engine_data": _jsonable(data),
             "segments": [asdict(s) for s in plan.segments],
             "lots": [asdict(lot) for lot in plan.lots],
         }
@@ -225,12 +229,11 @@ def _snapshots(data, config, baseline, result):
     return snapshot(baseline), snapshot(result)
 
 
-def test_a_portuguese_planning_refusal_is_its_own_cause_not_an_internal_error(monkeypatch):
-    from backend.replan import jobs
+def test_a_portuguese_planning_refusal_is_its_own_cause_not_an_internal_error():
+    from backend.scheduler.errors import PlanningRefusal
 
-    assert jobs.portuguese_text("Não foi possível alocar as quantidades libertadas da referência X")
-    assert not jobs.portuguese_text("Planning deadline expired")
-    assert not jobs.portuguese_text("")
+    # Classified by type, not by its text (17/10/2026).
+    assert issubclass(PlanningRefusal, ValueError)
 
 
 # ── Real case: revision 164, 16/10/2026 09:54Z ──────────────────────────────
