@@ -1,0 +1,94 @@
+# Motor de planeamento — arquitetura, pipeline e histórico técnico
+
+> Antigo conteúdo técnico do CLAUDE.md (até 19/10/2026). `AGENTS.md` prevalece.
+
+## Arquitectura
+
+- `backend/` — Python: Scheduler + Analytics + Simulator + Parser + Transform + Copilot LLM (`backend/copilot/`)
+- `frontend/` — React 19 + TypeScript + Vite + Zustand (UI: Console, Gantt, Stock, Risk, Expedition, Simulator, Config, Journal, Rules)
+- `config/incompol.yaml` — Master data (máquinas, setups, twins, holidays)
+- `docker/` + `Dockerfile` + `docker-compose.yml` — Orquestração multi-stage (Node build → Python slim + Nginx + Supervisor)
+- `tests/` — ~2780 testes (backend Python); casos reais congelados em `tests/fixtures/private/` (fora do git)
+
+## Comandos
+```bash
+python -m pytest tests/ -v
+```
+
+## Pipeline
+
+```
+ISOP Excel (.xlsx)
+  ↓ read_isop()                [backend/parser/isop_reader.py]
+RawRow[]
+  ↓ transform()                [backend/transform/transform.py]
+EngineData
+  ↓ optimize()                 [backend/cpo/optimizer.py]
+ScheduleResult { segments, lots, score, warnings, operator_alerts }
+```
+
+## CPO v3.0 — Cascading Pipeline Optimizer
+
+Entry point: `from backend.cpo import optimize`
+Modos: quick (greedy passthrough), normal (num ISOP real, ≥50 operações: greedy + ciclo de melhoria sem perdas; em instâncias pequenas também pesquisa candidatos e CP-SAT local), deep/max (pesquisa de candidatos + CP-SAT local + ciclo de melhoria; diferem no orçamento). O GA não é operacional: vive em `backend/cpo/offline_ga.py` só para experiências offline.
+
+- `optimize(data, mode="quick")` — mesmo que schedule_all(), <500ms
+- `optimize(data, mode="normal")` — melhoria limitada e validada sobre o greedy (critério canónico em `backend/scheduler/policy.py`, ver `AGENTS.md`)
+- `schedule_all()` — pipeline greedy interno (5 fases), chamado pelo CPO internamente
+
+Todos os callers externos usam `optimize()`. `schedule_all()` é interno.
+
+## SCHEDULER — 5 FASES
+
+1. **Lot Sizing** (lot_sizing.py): EOps → Lots. Lote económico mínimo (max(eco, necessidade)) + carry-forward + twins.
+2. **Tool Grouping** (tool_grouping.py): Lots → ToolRuns. Split por EDD gap e infeasibilidade.
+3. **Dispatch** (dispatch.py): Assign machines (EDD-aware) + Sequence (campaign + interleave urgent + 2-opt) + Allocate segments.
+4. **JIT** (jit.py): Histórico. O objetivo atual é o oposto: produzir o mais cedo possível após a libertação de material (5 dias úteis); ver `AGENTS.md`, que prevalece sobre este ficheiro. Setups extra desempatam, não vetam (decisão 02/10/2026).
+5. **Scoring** (scoring.py): OTD, OTD-D, earliness, setups, utilisation.
+
+## CONSTANTES
+DAY_CAP=1020 | SHIFT_A=420-930 | SHIFT_B=930-1440
+DEFAULT_OEE=0.66 | DEFAULT_SETUP=0.5h | MIN_PROD_MIN=1.0
+MAX_RUN_DAYS=5 | MAX_EDD_GAP=10 | LST_SAFETY_BUFFER=2
+EDD_SWAP_TOLERANCE=5
+
+## PÓS-PROCESSAMENTO (scheduler.py)
+
+Após dispatch + JIT + VNS + crew serialization, 3 funções de pós-processamento:
+
+1. **`_fix_day_overlaps`**: Corrige sobreposições intra-dia. Empurra segmentos para o dia seguinte se não cabem (com EDD guard). Pode criar "zero-duration placeholders" quando EDD bloqueia o push.
+2. **`_sanitize_segments`** (2 passes):
+   - Pass 1: remove invertidos, clamp start≥420, cap end≤1440
+   - Pass 2: detecta **ghost segments** (`duration < prod_min + setup_min`) — tenta relocar para dia anterior com capacidade via `_try_relocate_truncated`, senão trunca proporcionalmente ou remove
+3. **`_fix_orphan_continuations`**: Reseta `is_continuation=False` no primeiro segmento de cada lot (corrige flags erradas de `_fix_day_overlaps`)
+
+## BUGS CORRIGIDOS
+
+### Crew Buffer Day Fix (2026-04-08)
+**Bug**: `_serialize_crew_setups` e `_serialize_crew_safe` filtravam `seg.day_idx >= 0`, ignorando setups em buffer days (dias negativos). `crew_free_at` começava a 0.0, fazendo com que setups com abs_time negativo nunca fossem processados. Resultado: setups simultâneos em máquinas diferentes nos buffer days.
+**Fix**: Removido filtro `day_idx >= 0`. `crew_free_at` inicializado ao `min(abs_times)` dos setups. Ambos os ISOPs validados: 0 crew overlaps em todos os dias (reais e buffer).
+
+### Ghost Segment Fix (2026-04-08)
+**Bug**: `_fix_day_overlaps` criava segmentos com `start=end=1440` (zero duração) mas mantinha `prod_min`/`qty` intactos quando EDD impedia push para dia seguinte. Resultado: produção fantasma contabilizada no scoring mas fisicamente impossível. Caso real: PRM019 dia 67 declarava 1413 min (cap=1020), com 7200 pç de BFP179 que nunca seriam produzidas.
+**Fix**: `_sanitize_segments` Pass 2 detecta `duration < prod_min + setup_min` e chama `_try_relocate_truncated` que procura dia anterior com capacidade (verifica shift bounds). No caso real, relocou para dia 65 (livre, EDD=67). OTD-D mantém-se 100%.
+
+### Orphan Continuation Fix (2026-04-08)
+**Bug**: `_fix_day_overlaps` marcava `is_continuation=True` incondicionalmente ao empurrar segmentos, mesmo quando o segmento era o primeiro do lot. 25 segmentos ficavam como "continuação" sem precedente visível no Gantt.
+**Fix**: `_fix_orphan_continuations` identifica o primeiro segmento de cada lot (ordenado por day_idx, start_min) e reseta a flag.
+
+## RESULTADOS
+Históricos (política antiga JIT, não comparáveis): ISOP 27/02 e 17/03 com
+OTD=100%, 125/136 setups, <500ms no modo quick.
+
+Atuais (lote económico = uma produção, decisão de 13/10; ensaio de 14/10
+numa cópia da revisão 128, ISOP 13/10): 0 violações físicas, 0 lotes
+partidos, 0 produção antes do `R` do lote; 178 setups (antes 445), 1 entrega
+atrasada (HAN002 de 16/10, lote já para lá do envio, igual a antes); cada
+recálculo < 60 s (~44 s). Revisão 90 (ISOP 17/09): 5 atrasados (antes 11),
+188 setups (antes 538). Custo da regra: mais stock e produção mais cedo
+(AGENTS §1.1, §2). Com corte por tempo o resultado **não é garantidamente
+determinístico** (AGENTS §6).
+
+Anteriores (revisão 90, janela por entrega, recálculo a 02/10, 1 núcleo):
+OTD 96,5%, OTD-D 99,1%, 7 atrasados (capacidade PRM042); ciclo de melhoria
+~11,5 s p50, 128 MiB. Ver `docs/plano-solver-2026-10-02.md` §10–12.

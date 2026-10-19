@@ -1,0 +1,13 @@
+# Mapa de ligações (percursos verificados até 19/10/2026)
+
+Ação | entrada/caminho | regra/símbolo | dados | efeitos/consumidores | testes | fonte/revisão
+--- | --- | --- | --- | --- | --- | ---
+Carregar ISOP | UI Trocar ISOP → `POST /api/data/load` | `backend/parser/isop_reader.py` → `transform/transform.py` → `config/planning.apply_effective_planning_config` → `cpo.optimize` | `data/plans.db` snapshot | plano ativo, Entregas, Stock | `tests/test_load_jobs.py` | confirmado
+Alterações de configuração (lote) | `ConfigPendingBar` → `POST /api/data/replan-jobs` (`config_updates`) → `…/apply` | `backend/api/replan.start_replan`, `config/changes.py`, `_sync_active_machines`, `replan/jobs.py` | `config/factory.yaml` + snapshot (commit atómico `plans/transactions._commit`) | plano ativo; versão com nome | `tests/test_replan_change_keys.py`, `test_deactivate_machines.py`, `frontend/tests/ConfigPage.test.tsx` | 1137c55
+Recalcular plano | Shell → `POST /api/data/recalculate` | `api/data._recompute_transactional` (de raiz, solta âncoras) | snapshot | apaga alterações manuais | `tests/test_full_horizon_recalculation.py` | 55ffe2e
+Mover lote | Gantt → `MoveLotModal` → `move-preview-jobs` → `move-apply` | `plans/move_fit.py` (pré-verificação), `plans/manual_move.py` | `engine_data.plan_anchors` + snapshot | «lotes fixados à mão» | `tests/test_move_fit_precheck.py`, `test_manual_move*.py` | 8f23fb8
+Soltar lote fixado | Shell → `POST /api/data/manual-edits/release` | `plans/manual_edits.release_manual_anchors` | âncoras + snapshot | replaneia | `tests/test_manual_edits_single_source.py` | 55ffe2e
+Desfazer / Planos | Shell → `POST /api/data/undo`; PlansDrawer → `plans/{id}/restore` | `plans/history.py`, `plans/restore.py` | `plans` (`previous_snapshot_id`, `undo_to`) | versão anterior | `tests/test_plan_history_undo.py` | 70f6b81
+Paragem no Gantt | `MachineDowntimeQuickAction` → simulate → `simulate-apply` | `simulator/mutations.py` | mutações ativas | plano com paragem | `frontend/tests/MachineDowntimeQuickAction.test.tsx` | a48cac8
+Tooltip do Gantt | `pages/GanttPage.tsx` (segmentos) | `lib/segmentDeliveries.ts` (`mergeLotSegments`, `lotSpanLine`) | `segments[].delivery_allocations` | só leitura | `frontend/tests/GanttPage.test.tsx` | em curso (feat/lot-tooltip)
+Stock | `pages/StockPage.tsx` → `GET /api/data/stock[/{sku}]` | `analytics/stock_projection.py`, `api/data.get_stock_*` | estado em memória | só leitura | `tests/test_engine_fixes_1610.py` | e5fe6c0
