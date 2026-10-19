@@ -8,7 +8,7 @@
 
 **`AGENTS.md` é o contrato de planeamento e prevalece** (física → entregas → antecipação → setups; decisões datadas).
 Produção da Incompol corre desta árvore: só código commitado, publicado com cópia de segurança (ver PROJETO).
-`config/factory.yaml` é a configuração viva da fábrica: nunca fazer commit nem checkout dele.
+A configuração viva da fábrica é `data/factory.yaml` (fora do git); `config/factory.yaml` é só a semente.
 
 ## Índice
 - Visão (proposta, por aprovar): `docs/produto/VISAO.md`

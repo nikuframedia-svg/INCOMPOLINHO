@@ -141,6 +141,19 @@ function isoAtDay(workdays: string[], dayIdx: number): string | null {
   return date.toISOString().slice(0, 10);
 }
 
+/** Tooltip de um lote (todas as partes): subcontratação, partes, entregas e excedente. */
+function lotTooltip(workdays: string[], parts: Segment[]): string[] {
+  const dateAt = (day: number) => isoAtDay(workdays, day);
+  const spanLine = lotSpanLine(parts, dateAt, fmtMin);
+  const merged = parts.length > 1 ? mergeLotSegments(parts) : parts[0];
+  const subcontractLine = segmentSubcontractLine(merged, dateAt);
+  return [
+    ...(subcontractLine ? [subcontractLine] : []),
+    ...(spanLine ? [spanLine] : []),
+    ...segmentDeliveryTooltipLines(merged),
+  ];
+}
+
 function fmtMin(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -664,6 +677,12 @@ export function GanttPage() {
     }
     return map;
   }, [segments]);
+  // Linhas do tooltip por lote, calculadas uma vez: todas as partes de um lote
+  // mostram o mesmo resumo (subcontratação, partes, entregas, excedente).
+  const lotTooltipLines = useMemo(
+    () => new Map([...partsByLot].map(([lotId, parts]) => [lotId, lotTooltip(workdays, parts)])),
+    [partsByLot, workdays],
+  );
 
   const [view, setView] = useState<"gantt" | "tabela">("gantt");
   const [sel, setSel] = useState<Segment | null>(null);
@@ -1764,15 +1783,8 @@ export function GanttPage() {
                       const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
-                      const subcontractLine = segmentSubcontractLine(s, (day) => isoAtDay(workdays, day));
-                      const lotParts = partsByLot.get(s.lot_id) ?? [s];
-                      const spanLine = lotSpanLine(lotParts, (day) => isoAtDay(workdays, day), fmtMin);
-                      const deliveryLines = segmentDeliveryTooltipLines(spanLine ? mergeLotSegments(lotParts) : s);
-                      const deliveryTitle = [
-                        ...(subcontractLine ? [subcontractLine] : []),
-                        ...(spanLine ? [spanLine] : []),
-                        ...deliveryLines,
-                      ].map((line) => `\n${line}`).join("");
+                      const deliveryTitle = (lotTooltipLines.get(s.lot_id) ?? lotTooltip(workdays, [s]))
+                        .map((line) => `\n${line}`).join("");
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}

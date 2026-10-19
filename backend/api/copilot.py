@@ -254,7 +254,7 @@ class ChatRequest(BaseModel):
 
 class LoadRequest(BaseModel):
     isop_path: str
-    config_path: str = "config/factory.yaml"
+    config_path: str = DEFAULT_CONFIG_PATH
     master_path: str = "config/incompol.yaml"
 
 

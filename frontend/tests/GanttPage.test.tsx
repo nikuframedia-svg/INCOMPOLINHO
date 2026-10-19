@@ -223,6 +223,26 @@ describe("GanttPage", () => {
       "Excedente: 100 pç (fica em stock)",
     ]);
   });
+  it("todas as partes de um lote subcontratado mostram a mesma linha de subcontratação", () => {
+    const base = { ...segment, lot_id: "LOT_S", is_subcontracted: true, production_due_day: 0, lot_qty: 20 };
+    const view = renderGantt(undefined, undefined, [
+      { ...base, start_min: 420, end_min: 450, qty: 0, prod_min: 0, setup_min: 30,
+        delivery_allocations: [], unallocated_output: [] },
+      { ...base, start_min: 450, end_min: 540, qty: 10, prod_min: 90, setup_min: 0,
+        delivery_allocations: [{ sku: "SKU1", client: "Cliente B", qty: 10,
+          delivery_day: 1, delivery_date: "2026-03-17", customer_ready_day: 1 }],
+        unallocated_output: [] },
+      { ...base, start_min: 600, end_min: 690, qty: 10, prod_min: 90, setup_min: 0,
+        delivery_allocations: [{ sku: "SKU1", client: "Cliente B", qty: 10,
+          delivery_day: 2, delivery_date: "2026-03-18", customer_ready_day: 2 }],
+        unallocated_output: [] },
+    ]);
+    const titles = [...view.container.querySelectorAll('[title*="LOT_S"], [title*="Subcontratado"]')]
+      .map((node) => node.getAttribute("title") ?? "");
+    const lines = titles.map((title) => title.split("\n").find((line) => line.startsWith("Subcontratado")));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(lines)).toEqual(new Set(["Subcontratado — acabar até 16/03"]));
+  });
   it("diz no tooltip até quando o lote subcontratado tem de estar acabado", () => {
     const view = renderGantt(undefined, undefined, [{
       ...segment, is_subcontracted: true, production_due_day: 0,

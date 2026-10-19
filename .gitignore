@@ -12,6 +12,9 @@ build/
 node_modules/
 data/*.db
 data/copilot_state.json
+# Live factory configuration (written by the Config screen; never in git, 19/10/2026)
+data/factory.yaml
+data/factory.yaml.*
 apps/
 frontend/dist/
 

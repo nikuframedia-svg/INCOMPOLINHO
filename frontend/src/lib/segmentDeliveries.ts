@@ -119,8 +119,14 @@ export function mergeLotSegments(parts: readonly Segment[]): Segment {
       surplus.set(entry.sku, (surplus.get(entry.sku) ?? 0) + entry.qty);
     }
   }
+  // Os marcos de entrega (subcontratação, prazo) vêm da primeira parte que os tem:
+  // uma parte só de afinação não os traz.
+  const withMilestones = parts.find((part) => part.output_milestones?.length) ?? first;
   return {
     ...first,
+    output_milestones: withMilestones.output_milestones,
+    production_due_day: withMilestones.production_due_day,
+    is_subcontracted: parts.some((part) => part.is_subcontracted),
     qty: parts.reduce((sum, part) => sum + part.qty, 0),
     prod_min: parts.reduce((sum, part) => sum + part.prod_min, 0),
     delivery_allocations: complete ? [...deliveries.values()] : null,
