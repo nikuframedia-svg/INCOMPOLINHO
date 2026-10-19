@@ -11,3 +11,5 @@ Data | Decisão (Luís) | Onde | Substitui
 16/10/2026 | Desativar máquina funciona sempre; sem máquina ativa = atraso + aviso | AGENTS §2 regra 3/4, §5 | recusa / erro interno
 17/10/2026 | Lote começado só muda de máquina se a dele deixar de servir | AGENTS §2 | —
 19/10/2026 | Protocolo `fundador-nao-tecnico` 5.1.0; documentação nesta estrutura | este índice | CLAUDE.md longo
+19/10/2026 | Skill 5.1.1: memória permanente de erros obrigatória (`docs/agente/ERROS.md`) | skill §22 | —
+19/10/2026 | Configuração viva fora do git (`data/factory.yaml`) | PROJETO | `config/factory.yaml` vivo

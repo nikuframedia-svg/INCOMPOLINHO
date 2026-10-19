@@ -1,7 +1,7 @@
 # Projeto — receitas verificadas, ambientes e controlos
 
-Skill: `fundador-nao-tecnico` v5.1.0 em `/home/luis/.claude/skills/fundador-nao-tecnico/SKILL.md`
-(origem: `SKILL-3.md` entregue pelo fundador a 19/10/2026; versão 4.3.0 guardada em `~/.claude/skill-backups/`).
+Skill: `fundador-nao-tecnico` v5.1.1 em `/home/luis/.claude/skills/fundador-nao-tecnico/SKILL.md`
+(origem: `SKILL-3.md` entregue pelo fundador a 19/10/2026; 5.1.1 a 19/10/2026 com memória de erros obrigatória; versões anteriores em `~/.claude/skill-backups/`).
 
 ## Ambientes
 | Ambiente | Onde | Notas |
