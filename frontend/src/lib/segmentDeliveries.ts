@@ -97,6 +97,55 @@ export function segmentDeliveryTooltipLines(segment: Segment): string[] {
   return lines.length ? lines : ["Sem peças neste segmento"];
 }
 
+/**
+ * O lote inteiro como um só segmento: entregas e excedente de todas as suas
+ * partes somados. O Gantt divide um lote em partes por turno; o tooltip mostra
+ * o que o lote cobre, não só a parte por baixo do rato (pedido de 19/10/2026).
+ */
+export function mergeLotSegments(parts: readonly Segment[]): Segment {
+  const [first] = parts;
+  const deliveries = new Map<string, DeliveryAllocation>();
+  const surplus = new Map<string, number>();
+  let complete = true;
+  for (const part of parts) {
+    if (!hasProduction(part)) continue;
+    if (!hasAllocationData(part)) complete = false;
+    for (const entry of part.delivery_allocations ?? []) {
+      const key = [entry.sku, entry.client, entry.delivery_day, entry.delivery_date].join("|");
+      const known = deliveries.get(key);
+      deliveries.set(key, known ? { ...known, qty: known.qty + entry.qty } : { ...entry });
+    }
+    for (const entry of part.unallocated_output ?? []) {
+      surplus.set(entry.sku, (surplus.get(entry.sku) ?? 0) + entry.qty);
+    }
+  }
+  return {
+    ...first,
+    qty: parts.reduce((sum, part) => sum + part.qty, 0),
+    prod_min: parts.reduce((sum, part) => sum + part.prod_min, 0),
+    delivery_allocations: complete ? [...deliveries.values()] : null,
+    unallocated_output: complete ? [...surplus].map(([sku, qty]) => ({ sku, qty })) : null,
+  };
+}
+
+/** "Lote em 3 partes: 21/10 19:51 → 23/10 11:56" (só quando há mais de uma parte). */
+export function lotSpanLine(
+  parts: readonly Segment[],
+  dateAt: (day: number) => string | null,
+  fmtMin: (minute: number) => string,
+): string | null {
+  const productive = parts.filter(hasProduction);
+  if (productive.length < 2) return null;
+  const ordered = [...productive].sort((a, b) => a.day_idx - b.day_idx || a.start_min - b.start_min);
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const when = (day: number, minute: number) => {
+    const iso = dateAt(day);
+    return `${iso ? fmtDeliveryDate(iso) : `dia ${day}`} ${fmtMin(minute)}`;
+  };
+  return `Lote em ${ordered.length} partes: ${when(first.day_idx, first.start_min)} → ${when(last.day_idx, last.end_min)}`;
+}
+
 function subcontractedSkus(segment: Segment): Set<string> | null {
   const outputs = segment.output_milestones ?? [];
   if (outputs.length) return new Set(outputs.filter((output) => output.is_subcontracted).map((output) => output.sku));

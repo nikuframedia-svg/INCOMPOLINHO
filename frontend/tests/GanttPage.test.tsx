@@ -201,6 +201,28 @@ describe("GanttPage", () => {
       "Cobre até dia 14 (27/10) — 3 entregas no total",
     ]);
   });
+  it("num lote em várias partes, o tooltip resume o lote inteiro (19/10/2026)", () => {
+    const part = (start: number, qty: number, delivery: { qty: number; day: number; date: string } | null) => ({
+      ...segment, lot_id: "LOT_A", start_min: start, end_min: start + 60, qty, lot_qty: 300,
+      delivery_allocations: delivery
+        ? [{ sku: "SKU1", client: "FAURECIA", qty: delivery.qty, delivery_day: delivery.day,
+          delivery_date: delivery.date, customer_ready_day: delivery.day }]
+        : [],
+      unallocated_output: delivery ? [] : [{ sku: "SKU1", qty }],
+    });
+    const view = renderGantt(undefined, undefined, [
+      part(420, 100, { qty: 100, day: 1, date: "2026-03-17" }),
+      part(600, 100, { qty: 100, day: 2, date: "2026-03-18" }),
+      part(780, 100, null),
+    ]);
+    const title = view.container.querySelector('[title*="Lote em 3 partes"]')?.getAttribute("title") ?? "";
+    expect(title.split("\n").slice(1)).toEqual([
+      "Lote em 3 partes: 16/03 07:00 → 16/03 14:00",
+      "Próxima entrega: dia 1 (17/03) · FAURECIA · 100 pç",
+      "Cobre até dia 2 (18/03) — 2 entregas no total",
+      "Excedente: 100 pç (fica em stock)",
+    ]);
+  });
   it("diz no tooltip até quando o lote subcontratado tem de estar acabado", () => {
     const view = renderGantt(undefined, undefined, [{
       ...segment, is_subcontracted: true, production_due_day: 0,

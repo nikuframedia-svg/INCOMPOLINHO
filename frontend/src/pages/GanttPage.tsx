@@ -19,6 +19,8 @@ import {
   segmentDeliveryLines,
   segmentDeliveryTooltipLines,
   segmentSubcontractLine,
+  mergeLotSegments,
+  lotSpanLine,
   capitalize,
   fmtWorkday,
 } from "../lib/segmentDeliveries";
@@ -652,6 +654,16 @@ export function GanttPage() {
   ), [activeMutations, blockedDays]);
 
   const lotById = useMemo(() => new Map((lots ?? []).map((lot) => [lot.id, lot])), [lots]);
+  // Todas as partes de cada lote: o tooltip resume o lote inteiro (pedido de 19/10).
+  const partsByLot = useMemo(() => {
+    const map = new Map<string, Segment[]>();
+    for (const part of segments ?? []) {
+      const list = map.get(part.lot_id);
+      if (list) list.push(part);
+      else map.set(part.lot_id, [part]);
+    }
+    return map;
+  }, [segments]);
 
   const [view, setView] = useState<"gantt" | "tabela">("gantt");
   const [sel, setSel] = useState<Segment | null>(null);
@@ -1753,8 +1765,14 @@ export function GanttPage() {
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
                       const subcontractLine = segmentSubcontractLine(s, (day) => isoAtDay(workdays, day));
-                      const deliveryTitle = [...(subcontractLine ? [subcontractLine] : []), ...segmentDeliveryTooltipLines(s)]
-                        .map((line) => `\n${line}`).join("");
+                      const lotParts = partsByLot.get(s.lot_id) ?? [s];
+                      const spanLine = lotSpanLine(lotParts, (day) => isoAtDay(workdays, day), fmtMin);
+                      const deliveryLines = segmentDeliveryTooltipLines(spanLine ? mergeLotSegments(lotParts) : s);
+                      const deliveryTitle = [
+                        ...(subcontractLine ? [subcontractLine] : []),
+                        ...(spanLine ? [spanLine] : []),
+                        ...deliveryLines,
+                      ].map((line) => `\n${line}`).join("");
                       return (
                         <div
                           key={`${s.lot_id}-${s.day_idx}-${s.start_min}`}
