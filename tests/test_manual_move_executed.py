@@ -433,3 +433,98 @@ def test_ordinary_pins_keep_their_payload():
     )
     anchors = _jsonable(data)["plan_anchors"]
     assert "kind" not in anchors[0] and anchors[1]["kind"] == EXECUTED
+
+
+# ── Later the same day: the guard compares everything but the record ────────
+# Revisão 178 shape (PRM043, 20/10/2026): JTE recorded on M43 from 08:00 at
+# 11:49; CF, which it displaced, replanned on M44 from 12:00.
+_DAYS = ["2026-10-20", "2026-10-21", "2026-10-22"]
+
+
+def _row(lot_id, machine, tool, start, end, qty, setup=0.0):
+    return {
+        "lot_id": lot_id, "run_id": lot_id, "machine_id": machine, "tool_id": tool,
+        "day_idx": 0, "start_min": start, "end_min": end, "shift": "A", "qty": qty,
+        "prod_min": end - start - setup, "setup_min": setup, "is_continuation": False,
+        "twin_outputs": None,
+    }
+
+
+def _lot(lot_id, machine, tool, qty):
+    return {
+        "id": lot_id, "op_id": f"op{lot_id}", "tool_id": tool, "machine_id": machine,
+        "qty": qty, "prod_min": 100, "setup_min": 60, "is_twin": False, "twin_outputs": None,
+    }
+
+
+def _state(rows, *, recorded=False):
+    machines = {}
+    for item in rows:
+        machines.setdefault(item["lot_id"], (item["machine_id"], item["tool_id"], 0))
+        machine, tool, qty = machines[item["lot_id"]]
+        machines[item["lot_id"]] = (machine, tool, qty + item["qty"])
+    engine = {"workdays": _DAYS, "plan_anchors": []}
+    if recorded:
+        engine["plan_anchors"] = [{
+            "lot_id": "JTE", "machine_id": "M43", "start_at": "2026-10-20T08:00:00",
+            "reason": "", "author": "u", "kind": EXECUTED,
+        }]
+        engine["history_boundary"] = [0, 709]
+    return {
+        "dataset_info": {"id": "ds"}, "engine_data": engine,
+        "config": {"timezone": "Europe/Lisbon"}, "segments": rows,
+        "lots": [_lot(lot_id, *values) for lot_id, values in machines.items()],
+    }
+
+
+def _lisbon(hour, minute):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime(2026, 10, 20, hour, minute, tzinfo=ZoneInfo("Europe/Lisbon"))
+
+
+_BEFORE_RECORD = [
+    _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
+    _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60),
+]
+
+
+def _after_record(cf_start):
+    return [
+        _row("JTE", "M43", "T2", 420, 1300, 500, setup=60),
+        _row("CF", "M44", "T1", cf_start, cf_start + 480, 1000, setup=60),
+    ]
+
+
+def test_desfazer_later_is_refused_once_the_replanned_work_started():
+    """At 14:00 CF has run on M44 since 12:00: «Desfazer» would erase it."""
+    record = _state(_after_record(720), recorded=True)
+    previous = _state(_BEFORE_RECORD)
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(11, 52)) == []
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == ["CF"]
+
+
+def test_desfazer_later_is_not_blocked_by_work_the_same_in_both_plans():
+    """Y on M30 from 12:30 is identical in both plans; CF waits for 15:00."""
+    same = [_row("Y", "M30", "T8", 750, 900, 100), _row("Z", "M20", "T9", 360, 1080, 800)]
+    record = _state(_after_record(900) + same, recorded=True)
+    previous = _state(_BEFORE_RECORD + same)
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == []
+
+
+def test_repor_the_record_later_cannot_add_work_after_it():
+    """Restoring the record version at 14:00 over the undo: CF on M44 from
+    12:00 and any other row from 11:49 on would be production added in
+    time already gone."""
+    undone = _state(_BEFORE_RECORD)
+    restored = _state(_after_record(720), recorded=True)
+    assert frozen.historical_schedule_changes(undone, restored, now=_lisbon(14, 0)) == ["CF"]
+    invented = _state(
+        _after_record(900) + [_row("W", "M50", "T7", 730, 1000, 300)], recorded=True,
+    )
+    assert frozen.historical_schedule_changes(undone, invented, now=_lisbon(14, 0)) == ["W"]
+    # The same restore while nothing else has started yet is the record alone.
+    assert frozen.historical_schedule_changes(
+        undone, _state(_after_record(900), recorded=True), now=_lisbon(14, 0),
+    ) == []

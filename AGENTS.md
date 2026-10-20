@@ -502,14 +502,21 @@ lotes da mesma ferramenta):
        agora (aconteceu). O movimento leva a fronteira de agora
        (`ScheduleResult.history_boundary`), lida na aplicação e na gravação.
      - Fica a âncora `kind="executed"` (`manual_edits.EXECUTED`): o ecrã
-       mostra «registado como feito desde …», com «Soltar»; a
-       pré-visualização diz o que fica por fazer e quando fica pronto.
+       mostra «registado como feito desde …»; a pré-visualização diz o que
+       fica por fazer e quando fica pronto. Corrige-se com «Desfazer»;
+       «Soltar» só tira a marca (o plano fica igual e um «Recalcular»
+       seguinte já não mantém o lote onde correu).
      - A proteção na gravação aceita esta única alteração da manhã
        (`frozen._declared_today`): exatamente um registo de hoje diferente
        entre os dois planos, as linhas desse lote numa só máquina e os
        cortes no início da sua afinação; qualquer outra diferença antes de
        agora continua recusada. A mesma leitura no sentido inverso deixa
        «Desfazer» no mesmo dia, enquanto o trabalho replaneado não começou.
+       Só as linhas do próprio lote registado ficam fora da comparação:
+       tudo o resto, em qualquer máquina, é comparado até agora (um
+       «Desfazer» ou «Repor» mais tarde não apaga nem acrescenta trabalho
+       que começou depois do registo; trabalho igual nos dois planos não
+       impede o «Desfazer»).
      - Durante o dia o lote registado é histórico como outro lote começado
        (uma avaria nova corta-o e o registo fica; a rede de segurança nunca
        o solta fora de «Recalcular»).
@@ -758,7 +765,7 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   20/10/2026:** os lotes registados como feitos (§2, «Hora já passada hoje»)
   ficam no «Recalcular» (`release_manual_anchors(keep_executed=True)`): desde
   D0 o lote fica onde correu e o resto é refeito à volta; só um ISOP novo
-  (ou «Soltar») os tira. Na gravação cada âncora pode desaparecer mas nunca
+  (ou «Soltar», que tira a marca sem mudar o plano) os tira. Na gravação cada âncora pode desaparecer mas nunca
   mudar. **Uma só fonte de verdade:** a
   lista de alterações manuais é sempre a das âncoras, um registo por lote
   (`sync_manual_edits` em todas as escritas; um segundo movimento do mesmo
@@ -803,9 +810,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   - «Anular» dentro do mesmo dia (`plans/restore.py`) passa pela proteção ao
     minuto: repor uma versão anterior que difere do plano atual antes do
     "agora" é recusado. Está de acordo com a regra, mas é uma mudança.
-    Exceção: desfazer um registo do que correu (§2, 20/10/2026), enquanto o
-    plano anterior não tiver trabalho a começar entre o registo e o
-    «Desfazer».
+    Exceção: desfazer um registo do que correu (§2, 20/10/2026), enquanto
+    nenhum trabalho que difere entre os dois planos tiver começado entre o
+    registo e o «Desfazer» (fora as linhas do próprio lote registado).
   - Entre o cálculo e a aplicação (até 15 minutos, ver §2) um candidato pode
     ainda reescrever produção do plano ativo desse intervalo.
   - Um segmento que pára sem nenhuma peça feita (afinação a decorrer) sai

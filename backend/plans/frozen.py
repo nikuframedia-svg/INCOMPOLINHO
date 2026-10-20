@@ -494,14 +494,13 @@ def historical_schedule_changes(
         from backend.scheduler.history import displaced_by
 
         record_side, lot_id, declaration = declared
-        setup_start, since = declaration[1], declaration[2]
+        setup_start = declaration[1]
 
         def ran(rows):
-            # The record's own rows, and what it placed from its instant on.
-            return [
-                (segment, text) for segment, text in rows
-                if segment.get("lot_id") != lot_id and float(segment["start_min"]) < since
-            ]
+            # Only the record's own rows: everything else on the side holding
+            # it is still compared up to ``now`` (a later «Desfazer» or
+            # «Repor» may not erase or add work that has started since).
+            return [(segment, text) for segment, text in rows if segment.get("lot_id") != lot_id]
 
         def without_displaced(rows, snapshot):
             dates = calendar_dates(snapshot)
