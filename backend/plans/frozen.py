@@ -519,12 +519,29 @@ def historical_schedule_changes(
                 kept.append((segment, text))
             return kept
 
+        def outside_record_time(rows):
+            # «Desfazer»: on the plan without the record, what it had on the
+            # record's machine (or tool) from the record's instant to ``now``
+            # is the time the record occupied; it never ran, as the record's
+            # own rows did not on the other side. What the record replanned
+            # and has started since is on the record side, still compared.
+            day, _setup, since, machine, tool = declaration
+            return [
+                (segment, text) for segment, text in rows
+                if not (
+                    int(segment["day_idx"]) == int(day)
+                    and float(segment["start_min"]) >= float(since)
+                    and (segment.get("machine_id") == machine
+                         or (bool(tool) and segment.get("tool_id") == tool))
+                )
+            ]
+
         if record_side == "after":
             after_today = ran(after_today)
             kept_today = ran(without_displaced(kept_today, before))
         else:
             kept_today = ran(kept_today)
-            after_today = ran(without_displaced(after_today, after))
+            after_today = ran(outside_record_time(without_displaced(after_today, after)))
     pending: dict[tuple, list[tuple[dict, str]]] = {}
     for segment, text in kept_today:
         pending.setdefault(_cut_key(segment), []).append((segment, text))

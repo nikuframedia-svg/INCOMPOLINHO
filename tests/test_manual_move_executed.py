@@ -652,6 +652,28 @@ def test_an_outage_that_stops_a_record_after_a_piece_keeps_the_record():
     assert _shape(result.segments, lots["OP2"].id)[0][:5] == (TODAY, "M1", 629.0, 661, 1)
 
 
+def test_desfazer_is_not_blocked_by_what_the_original_plan_had_after_the_record():
+    """Revisão 2 do achado 3 (ensaio real, PRM043): CF's second row 15:30–15:50
+    and Y at 13:00 on M43, in the plan without the record, sit in the time
+    the record occupied; CF and Y were replanned for later. «Desfazer» at
+    15:40 puts the plan back; once CF has started on M44 it is refused."""
+    original = _BEFORE_RECORD[:1] + [
+        _row("CF", "M43", "T1", 930, 950, 40),
+        _row("Y", "M43", "T5", 780, 900, 100),
+    ]
+    previous = _state([dict(original[0], end_min=930, qty=960), *original[1:]])
+    later = _state(_after_record(1300) + [_row("Y", "M44", "T5", 1320, 1400, 100)],
+                   recorded=True)
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 25)) == []
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 40)) == []
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(13, 30)) == []
+    started = _state(_after_record(720) + [_row("Y", "M44", "T5", 1320, 1400, 100)],
+                     recorded=True)
+    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(15, 40)) == ["CF"]
+    # Repor over the undo stays strict: Y on M43 from 13:00 there has run.
+    assert frozen.historical_schedule_changes(previous, later, now=_lisbon(13, 30)) == ["Y"]
+
+
 _PLANNED_AT_1200 = [
     _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
     _row("JTE", "M50", "T2", 720, 1300, 500, setup=60),

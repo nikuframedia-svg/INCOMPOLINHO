@@ -521,8 +521,11 @@ lotes da mesma ferramenta):
        tenha chegado (essa posição é a que o registo substituiu; só não pode
        ter começado antes do registo). Recusado, diz porquê e lembra
        «Soltar» (`history.undo_refusal_message`).
-       Só as linhas do próprio lote registado ficam fora da comparação:
-       tudo o resto, em qualquer máquina, é comparado até agora (um
+       Só as linhas do próprio lote registado ficam fora da comparação e,
+       no «Desfazer», o que o plano sem registo tinha na máquina (ou
+       ferramenta) do registo desde o instante do registo (esse tempo foi
+       do registo; nunca correu); tudo o resto, em qualquer máquina, é
+       comparado até agora (um
        «Desfazer» ou «Repor» mais tarde não apaga nem acrescenta trabalho
        que começou depois do registo; trabalho igual nos dois planos não
        impede o «Desfazer»).
