@@ -728,3 +728,43 @@ def test_apply_refuses_a_record_its_check_did_not_show(morning):
     ordinary = copy.copy(move)
     ordinary.executed, ordinary.notice = False, None
     _require_executed_preview(ordinary)
+
+
+# ── 2.ª revisão de 20/10/2026 (B1, B2) ──────────────────────────────────────
+
+
+def test_repor_stays_strict_once_the_original_time_of_the_recorded_lot_has_come():
+    """B1: JTE recorded on M43 from 08:00 at 11:49, «Desfazer» at 11:55; the
+    active plan has JTE on M50 from 12:00 and CF on M43 07:00–15:50. At
+    14:00 «Repor» would erase JTE's run on M50 and CF's on M43: refused."""
+    undone = _state(_PLANNED_AT_1200)
+    record = _state(_after_record(900), recorded=True)
+    assert frozen.historical_schedule_changes(undone, record, now=_lisbon(14, 0)) == [
+        "CF", "JTE",
+    ]
+    # The «Desfazer» direction keeps the same-day exception (achado 3).
+    assert frozen.historical_schedule_changes(record, undone, now=_lisbon(14, 0)) == []
+
+
+def test_desfazer_is_not_blocked_by_work_the_same_in_both_plans_on_the_record_machine():
+    """B2: Z on M43 13:00–15:00 is identical in both plans; the record took
+    M43 from 07:00 and replanned CF on M44 for 21:40. «Desfazer» puts the
+    plan back; a Z the record changed is still refused."""
+    previous = _state([
+        _row("CF", "M43", "T1", 420, 500, 100, setup=60),
+        _row("Z", "M43", "T5", 780, 900, 100),
+        _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60),
+    ])
+    record = _state([
+        _row("JTE", "M43", "T2", 420, 600, 500, setup=60),
+        _row("Z", "M43", "T5", 780, 900, 100),
+        _row("CF", "M44", "T1", 1300, 1380, 100, setup=60),
+    ], recorded=True)
+    for now in (_lisbon(14, 0), _lisbon(15, 10)):
+        assert frozen.historical_schedule_changes(record, previous, now=now) == []
+    changed = _state([
+        _row("JTE", "M43", "T2", 420, 600, 500, setup=60),
+        _row("Z", "M43", "T5", 720, 840, 100),
+        _row("CF", "M44", "T1", 1300, 1380, 100, setup=60),
+    ], recorded=True)
+    assert frozen.historical_schedule_changes(changed, previous, now=_lisbon(15, 10)) == ["Z"]

@@ -506,8 +506,10 @@ lotes da mesma ferramenta):
        antes de «Aplicar» e em destaque, «Vai ficar registado como já
        produzido desde HH:MM na <máquina>: …», o que fica por fazer e quando
        fica pronto (uma hora mal escrita, 08:00 em vez de 18:00, não passa
-       despercebida; sem passos novos). A aplicação recusa um registo cuja
-       verificação não o mostrou (`manual_plan._require_executed_preview`).
+       despercebida; sem passos novos). A aplicação usa o próprio resultado
+       da verificação, por isso o registo aplicado é o que ela mostrou
+       (`manual_plan._require_executed_preview` é só uma salvaguarda de
+       coerência, não um controlo).
        Corrige-se com «Desfazer»;
        «Soltar» tira a marca: a manhã fica igual; o resto é replaneado (e um
        «Recalcular» seguinte já não mantém o lote onde correu).
@@ -519,12 +521,15 @@ lotes da mesma ferramenta):
        «Desfazer» no mesmo dia, enquanto o trabalho replaneado não começou,
        mesmo que a hora onde o lote estava planeado antes do registo já
        tenha chegado (essa posição é a que o registo substituiu; só não pode
-       ter começado antes do registo). Recusado, diz porquê e lembra
+       ter começado antes do registo). O «Repor» do registo por cima desse
+       «Desfazer» fica estrito: se o lote já correu no plano ativo, é
+       recusado. Recusado, diz porquê e lembra
        «Soltar» (`history.undo_refusal_message`).
        Só as linhas do próprio lote registado ficam fora da comparação e,
        no «Desfazer», o que o plano sem registo tinha na máquina (ou
-       ferramenta) do registo desde o instante do registo (esse tempo foi
-       do registo; nunca correu); tudo o resto, em qualquer máquina, é
+       ferramenta) do registo desde o instante do registo e que o plano com
+       registo não tem igual (esse tempo foi do registo; nunca correu); tudo
+       o resto, em qualquer máquina, é
        comparado até agora (um
        «Desfazer» ou «Repor» mais tarde não apaga nem acrescenta trabalho
        que começou depois do registo; trabalho igual nos dois planos não

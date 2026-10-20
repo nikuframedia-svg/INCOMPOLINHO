@@ -497,7 +497,7 @@ def historical_schedule_changes(
         setup_start = declaration[1]
 
         def ran(rows):
-            # Only the record's own rows, on both sides (on the other one,
+            # Only the record's own rows (on both sides in a «Desfazer»,
             # where the lot was planned instead): everything else is still
             # compared up to ``now`` (a later «Desfazer» or «Repor» may not
             # erase or add work that has started since).
@@ -519,29 +519,44 @@ def historical_schedule_changes(
                 kept.append((segment, text))
             return kept
 
-        def outside_record_time(rows):
+        def outside_record_time(rows, record_rows):
             # «Desfazer»: on the plan without the record, what it had on the
             # record's machine (or tool) from the record's instant to ``now``
             # is the time the record occupied; it never ran, as the record's
-            # own rows did not on the other side. What the record replanned
-            # and has started since is on the record side, still compared.
+            # own rows did not on the other side. A row the record side has
+            # identical is the same work in both plans and is kept (it
+            # matches). What the record replanned and has started since is
+            # on the record side, still compared.
             day, _setup, since, machine, tool = declaration
-            return [
-                (segment, text) for segment, text in rows
-                if not (
+            same: dict[tuple, int] = {}
+            for segment, text in record_rows:
+                key = (_cut_key(segment), text)
+                same[key] = same.get(key, 0) + 1
+            kept = []
+            for segment, text in rows:
+                key = (_cut_key(segment), text)
+                if same.get(key):
+                    same[key] -= 1
+                elif (
                     int(segment["day_idx"]) == int(day)
                     and float(segment["start_min"]) >= float(since)
                     and (segment.get("machine_id") == machine
                          or (bool(tool) and segment.get("tool_id") == tool))
-                )
-            ]
+                ):
+                    continue
+                kept.append((segment, text))
+            return kept
 
         if record_side == "after":
+            # Applying the record, or «Repor» over its «Desfazer»: strict
+            # (``_declared_today`` refuses when the lot ran on the other side).
             after_today = ran(after_today)
-            kept_today = ran(without_displaced(kept_today, before))
+            kept_today = without_displaced(kept_today, before)
         else:
             kept_today = ran(kept_today)
-            after_today = ran(outside_record_time(without_displaced(after_today, after)))
+            after_today = ran(
+                outside_record_time(without_displaced(after_today, after), kept_today),
+            )
     pending: dict[tuple, list[tuple[dict, str]]] = {}
     for segment, text in kept_today:
         pending.setdefault(_cut_key(segment), []).append((segment, text))
@@ -587,9 +602,11 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     or ``None``. Only an anchor written by a move to a time of today already
     gone (``manual_edits.EXECUTED``, decisão do Luís, 20/10/2026), exactly
     one, dated today: its lot has rows before ``now`` on the anchor's
-    machine only, on that side; on the other, none that started before the
-    record's instant (where the lot was planned before it, once that time
-    has come too, is the position the record replaced). The setup start is
+    machine only, on that side; on the other, none before ``now`` or, in a
+    «Desfazer» (the record on the active plan), none that started before
+    the record's instant (where the lot was planned before it, once that
+    time has come too, is the position the record replaced; a «Repor» stays
+    strict: it may not erase what the lot ran since). The setup start is
     the lot's first row; ``since`` is the record's own instant (its history
     boundary), so «Desfazer» later that day reads the same morning.
     """
@@ -640,8 +657,9 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     setup_start = int(math.floor(min(float(segment["start_min"]) for segment in ran)))
     boundary = as_boundary((record.get("engine_data") or {}).get("history_boundary"))
     since = min(boundary[1], now_min) if boundary is not None and boundary[0] == day else now_min
+    limit = since if side == "before" else now_min
     if since <= setup_start or any(
-        (int(s["day_idx"]), float(s["start_min"])) < (day, since) for s in rows_before_now(other)
+        (int(s["day_idx"]), float(s["start_min"])) < (day, limit) for s in rows_before_now(other)
     ):
         return None
     return side, lot_id, (day, setup_start, since, machine, ran[0].get("tool_id"))
