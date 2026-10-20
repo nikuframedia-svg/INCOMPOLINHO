@@ -57,6 +57,14 @@ def move_label(lot, machine_id: str, workday, start_min, data=None) -> str:
     return f"Movido {lot_reference(lot, machine_id, data)} → {when}"
 
 
+def executed_label(lot, machine_id: str, workday, start_min, data=None) -> str:
+    """A move to a time of today already gone: what ran (20/10/2026)."""
+    when = day_month(str(workday)[:10])
+    if start_min is not None:
+        when += f" {clock(start_min)}"
+    return f"Registado como feito: {lot_reference(lot, machine_id, data)} desde {when}"
+
+
 def release_label(lots: list, release_all: bool, data=None) -> str:
     if release_all:
         return "Todos os lotes soltos"

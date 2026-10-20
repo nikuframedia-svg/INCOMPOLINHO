@@ -364,11 +364,14 @@ export function Shell() {
       confirmLabel: "Recalcular mesmo assim",
       variant: "danger",
     }))) return;
-    // Decisão de 15/10/2026: «Recalcular» apaga todas as alterações manuais.
-    const edits = useDataStore.getState().manualEdits.length;
+    // Decisão de 15/10/2026: «Recalcular» apaga todas as alterações manuais;
+    // os lotes registados como feitos ficam (20/10/2026).
+    const allEdits = useDataStore.getState().manualEdits;
+    const edits = allEdits.filter((edit) => edit.kind !== "executed").length;
+    const kept = allEdits.length - edits;
     if (edits > 0 && !(await confirm({
       title: "Apagar as alterações manuais?",
-      message: `Recalcular apaga ${edits === 1 ? "a alteração manual" : `as ${edits} alterações manuais`} (lotes fixados à mão) e calcula o plano de raiz. Demora cerca de 1 minuto.`,
+      message: `Recalcular apaga ${edits === 1 ? "a alteração manual" : `as ${edits} alterações manuais`} (lotes fixados à mão) e calcula o plano de raiz. ${kept > 0 ? "Os lotes registados como feitos ficam. " : ""}Demora cerca de 1 minuto.`,
       confirmLabel: "Recalcular e apagar",
       variant: "danger",
     }))) return;

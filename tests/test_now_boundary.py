@@ -651,10 +651,12 @@ def test_manual_move_at_eleven_respects_the_morning():
             baseline.segments, baseline.lots, {}, data, config,
             lot_id=lots["OP1"].id, target_day=2, target_start_min=420, now=eleven,
         )
-    with pytest.raises(ManualMoveError, match="já passou"):
+    # Today before now records what ran (tests/test_manual_move_executed.py,
+    # decisão de 20/10/2026); an earlier day stays as it is.
+    with pytest.raises(ManualMoveError, match="só se pode registar o que já correu hoje"):
         move_lot(
             baseline.segments, baseline.lots, {}, data, config,
-            lot_id=lots["OP2"].id, target_day=1, target_start_min=630, now=eleven,
+            lot_id=lots["OP2"].id, target_day=0, target_start_min=630, now=eleven,
         )
 
 

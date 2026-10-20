@@ -345,7 +345,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
     <Modal title={`Mover lote ${lot.id}`} onClose={handleClose} width={760}>
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ padding: "10px 12px", borderRadius: 8, background: T.elevated, color: T.secondary, fontSize: 11, lineHeight: 1.5 }}>
-          O lote só é guardado se o horário pedido for fisicamente válido. O motor tenta reorganizar o restante plano e mostra o impacto antes de guardar.
+          O lote só é guardado se o horário pedido for fisicamente válido. O motor tenta reorganizar o restante plano e mostra o impacto antes de guardar. Uma hora de hoje que já passou regista que o lote correu desde essa hora.
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
           <label style={{ display: "grid", gap: 4, flex: "1 1 220px" }}>
@@ -424,6 +424,11 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
 
         {preview && (
           <>
+            {preview.notice && (
+              <div role="status" style={{ padding: "10px 12px", borderRadius: 8, background: T.elevated, border: `1px solid ${T.border}`, color: T.secondary, fontSize: 11, lineHeight: 1.5 }}>
+                {preview.notice}
+              </div>
+            )}
             <PlanDeltaCards delta={preview.delta} />
             <GateReportCard gate={preview.gate_report} />
             {blocked || stale ? (
@@ -527,7 +532,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                 {busy === "apply" ? "A aplicar…" : "Aplicar movimento"}
               </button>
               <span style={{ color: T.tertiary, fontSize: 10 }}>
-                Pode desfazer no aviso que aparecerá no topo.
+                Pode voltar atrás com «Desfazer», no topo.
               </span>
             </div>
           </>

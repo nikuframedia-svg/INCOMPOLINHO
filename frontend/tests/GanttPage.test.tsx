@@ -341,6 +341,19 @@ describe("GanttPage", () => {
     expect(screen.getByText(/Plano passado; execução não confirmada na aplicação/)).toBeTruthy();
   });
 
+  // Decisão de 20/10/2026: um lote registado como feito correu; não se arrasta.
+  it("um lote registado como feito não se arrasta e diz como corrigir", async () => {
+    renderGantt(undefined, undefined, [{ ...segment, left_shift_blockers: [] }]);
+    act(() => useDataStore.setState({ placementReasons: {
+      L1: { kind: "manual", machine_id: "M1", start_at: "2026-03-16T08:00", historical: false, executed: true },
+    } }));
+    expect(document.querySelector('[title*="Registado como feito"]')?.getAttribute("draggable")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
+    fireEvent.click((await screen.findAllByText("SKU1"))[0]);
+
+    expect(screen.getByText("Registado como feito: correu em M1 desde 16/03 08:00. Para corrigir, use «Desfazer».")).toBeTruthy();
+  });
+
   it("explica porque um bloco ficou noutra máquina", async () => {
     const moved = { ...segment, machine_id: "M2", tool_id: "BFP079", sku: "1064169X100" } satisfies Segment;
     renderGantt(undefined, undefined, [moved]);

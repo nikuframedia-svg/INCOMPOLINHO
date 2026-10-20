@@ -126,6 +126,8 @@ export function normalizeManualMoveResponse(value: unknown): ManualMoveResponse 
     delivery_warnings: Array.isArray(value.delivery_warnings)
       ? value.delivery_warnings.filter((item): item is string => typeof item === "string")
       : [],
+    executed: value.executed === true,
+    notice: typeof value.notice === "string" && value.notice ? value.notice : null,
   } as ManualMoveResponse;
 }
 

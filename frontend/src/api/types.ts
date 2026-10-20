@@ -59,6 +59,8 @@ export interface PlacementReason {
   start_at?: string;
   reason?: string;
   historical?: boolean;
+  /** Recorded as run (a move to a time of today already gone, 20/10/2026). */
+  executed?: boolean;
 }
 
 export interface OutputMilestone {
@@ -1404,6 +1406,8 @@ export interface ManualEdit {
   target_start_min?: number;
   target_machine: string;
   delivery_risk_confirmed: boolean;
+  /** "executed": recorded as run; «Recalcular» keeps it (20/10/2026). */
+  kind?: string;
 }
 
 export interface ManualMoveResponse {
@@ -1422,6 +1426,10 @@ export interface ManualMoveResponse {
   requires_confirmation: boolean;
   delivery_warnings: string[];
   time_ms: number;
+  /** A time of today already gone: the lot is recorded as run (20/10/2026). */
+  executed?: boolean;
+  /** What that record means for the plan, in plain words. */
+  notice?: string | null;
   edit?: ManualEdit;
   can_revert?: boolean;
   plan_revision?: number;

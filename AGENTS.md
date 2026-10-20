@@ -477,7 +477,46 @@ lotes da mesma ferramenta):
      máquina: no problema residual há um bloqueio temporário de máquinas e
      ferramentas de 00:00 até ao "agora" no dia de planeamento
      (`frozen._install_frozen_reservations`, "Tempo já decorrido hoje"),
-     nunca gravado na configuração.
+     nunca gravado na configuração. Exceção única: o registo do que correu
+     (abaixo, 20/10/2026).
+   - **Hora já passada hoje (decidido pelo Luís a 20/10/2026).** Caso real:
+     na PRM043 o plano tinha a CF589 desde as 07:00 e a JTE001 às 18:35; o
+     chefe de produção pôs a JTE001 de manhã e às 11:49 o «Mover lote» para
+     as 08:00 era recusado («esse momento já passou»). Agora, sem botões
+     novos, o «Mover lote» (diálogo ou arrastar) para uma hora de **hoje** já
+     passada quer dizer «foi isto que correu» (`manual_move._move_lot`,
+     `declared`):
+     - A hora é o início da produção; a afinação fica imediatamente antes,
+       no mesmo dia (se começasse no dia anterior é recusado, com a primeira
+       hora possível). Dias anteriores a hoje continuam recusados («só se
+       pode registar o que já correu hoje»).
+     - O que o plano tinha nessa máquina, ou com essa ferramenta, desde o
+       início da afinação até agora não correu: pára no início da afinação
+       com as peças feitas até lá, ou sai se não fez nenhuma
+       (`history.displaced_by`, `cut_segment`), e o resto é replaneado a
+       partir de agora como o mesmo lote. Um lote fixado à mão (ou de um
+       contrato de material anterior) no caminho é recusado: solta-se
+       primeiro.
+     - Material (R), calendário e indisponibilidades continuam a ser
+       verificados; equipa de setup e operadores não são julgados antes de
+       agora (aconteceu). O movimento leva a fronteira de agora
+       (`ScheduleResult.history_boundary`), lida na aplicação e na gravação.
+     - Fica a âncora `kind="executed"` (`manual_edits.EXECUTED`): o ecrã
+       mostra «registado como feito desde …», com «Soltar»; a
+       pré-visualização diz o que fica por fazer e quando fica pronto.
+     - A proteção na gravação aceita esta única alteração da manhã
+       (`frozen._declared_today`): exatamente um registo de hoje diferente
+       entre os dois planos, as linhas desse lote numa só máquina e os
+       cortes no início da sua afinação; qualquer outra diferença antes de
+       agora continua recusada. A mesma leitura no sentido inverso deixa
+       «Desfazer» no mesmo dia, enquanto o trabalho replaneado não começou.
+     - Durante o dia o lote registado é histórico como outro lote começado
+       (uma avaria nova corta-o e o registo fica; a rede de segurança nunca
+       o solta fora de «Recalcular»).
+     - Ensaio na cópia da revisão 178 às 11:49, pela API: aceite em ~51 s;
+       afinação 07:00–08:00, produção desde as 08:00; a manhã das outras
+       máquinas igual; a CF589 passa para 21/10 13:33–22:23; 0 atrasos
+       (como antes), 187 setups (antes 188).
    - **Uma só regra para o que já aconteceu** (`scheduler/history.py`):
      o que começa antes do "agora" já aconteceu. Um dado com hora (avaria ou
      indisponibilidade de máquina/ferramenta, ausência ou corte de
@@ -583,7 +622,8 @@ lotes da mesma ferramenta):
    nunca redimensionado; depois de cada caminho (posições fixas, realocação,
    lote fixo primeiro, melhoria) a produção congelada tem de estar fisicamente
    igual (`_keeps_frozen`), senão o candidato é recusado. Mover um lote já
-   começado continua recusado. Caminho por quantidades no §6.
+   começado continua recusado; mover para uma hora de hoje já passada regista
+   o que correu (acima, 20/10/2026). Caminho por quantidades no §6.
    **Calendário e ajuste rápido (11/10/2026).** As datas das entregas de um
    lote começado seguem o calendário atual: um feriado ou dia extra novo
    volta a datá-las (`U`, `I`, `R`, `R_ciclo`, envio para subcontratação)
@@ -714,7 +754,12 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   quando há alterações manuais. A gravação aceita âncoras que desaparecem,
   nunca âncoras mudadas (`store._assert_recalculation_context_locked`). Antes,
   o «Recalcular» guardava as âncoras e compactava: a revisão 158 saiu igual à
-  157, com 5 lotes presos sem nada no ecrã. **Uma só fonte de verdade:** a
+  157, com 5 lotes presos sem nada no ecrã. **Alterado pelo Luís a
+  20/10/2026:** os lotes registados como feitos (§2, «Hora já passada hoje»)
+  ficam no «Recalcular» (`release_manual_anchors(keep_executed=True)`): desde
+  D0 o lote fica onde correu e o resto é refeito à volta; só um ISOP novo
+  (ou «Soltar») os tira. Na gravação cada âncora pode desaparecer mas nunca
+  mudar. **Uma só fonte de verdade:** a
   lista de alterações manuais é sempre a das âncoras, um registo por lote
   (`sync_manual_edits` em todas as escritas; um segundo movimento do mesmo
   lote substitui o registo); «Soltar» (`POST /api/data/manual-edits/release`,
@@ -758,6 +803,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   - «Anular» dentro do mesmo dia (`plans/restore.py`) passa pela proteção ao
     minuto: repor uma versão anterior que difere do plano atual antes do
     "agora" é recusado. Está de acordo com a regra, mas é uma mudança.
+    Exceção: desfazer um registo do que correu (§2, 20/10/2026), enquanto o
+    plano anterior não tiver trabalho a começar entre o registo e o
+    «Desfazer».
   - Entre o cálculo e a aplicação (até 15 minutos, ver §2) um candidato pode
     ainda reescrever produção do plano ativo desse intervalo.
   - Um segmento que pára sem nenhuma peça feita (afinação a decorrer) sai

@@ -475,14 +475,21 @@ class PlansStore:
             raise RecalculationContextChanged("dataset")
         # A past date is not execution. Observations are real constraints and
         # must survive this special recalculation. Manual anchors are released
-        # by it (decisão de 15/10/2026): they may only disappear, never change.
+        # by it (decisão de 15/10/2026) except the records of what ran
+        # (20/10/2026): each anchor may only disappear, never change.
         old_data, new_data = before.get("engine_data") or {}, payload.get("engine_data") or {}
         for field in ("current_machine_states", "committed_supplies"):
             if old_data.get(field, []) != new_data.get(field, []):
                 raise RecalculationContextChanged(field)
-        if new_data.get("plan_anchors") and (
-            old_data.get("plan_anchors", []) != new_data.get("plan_anchors", [])
-        ):
+
+        def anchors(data: dict) -> list[dict]:
+            return [
+                {**anchor, "kind": anchor.get("kind") or ""}
+                for anchor in data.get("plan_anchors") or [] if isinstance(anchor, dict)
+            ]
+
+        old_anchors = anchors(old_data)
+        if any(anchor not in old_anchors for anchor in anchors(new_data)):
             raise RecalculationContextChanged("plan_anchors")
 
     def active(self) -> dict | None:

@@ -595,9 +595,10 @@ def _recompute_transactional(
             # alterações manuais, as suas fixações incluídas, e calcula o plano
             # de raiz desde D0. Nunca compacta o plano atual: a compactação
             # guardava as posições que as alterações manuais tinham deixado.
+            # O que foi registado como feito fica (decisão de 20/10/2026).
             from backend.plans.manual_edits import release_manual_anchors
 
-            release_manual_anchors(state, None)
+            release_manual_anchors(state, None, keep_executed=True)
             result = _recompute(config)
         elif (approval_body or {}).get("compact_active_plan", False) and not (
             _recalculation_needs_rebuild(config)

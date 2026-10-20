@@ -6,6 +6,7 @@ import copy
 import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -141,6 +142,9 @@ def _response(candidate: ManualMoveResult, score_previous: dict | None = None) -
         "requires_confirmation": candidate.requires_confirmation,
         "delivery_warnings": candidate.delivery_warnings,
         "time_ms": candidate.time_ms,
+        # A time of today already gone: what ran (decisão de 20/10/2026).
+        "executed": bool(candidate.executed),
+        "notice": candidate.notice,
     }
 
 
@@ -357,11 +361,13 @@ async def apply_move(body: dict):
         # record point to it (decisão de 15/10/2026).
         previous_version_id = state.get_plans_store().runtime_identity()["snapshot_id"]
         from backend.plans.context import set_change_label
-        from backend.plans.history import move_label
+        from backend.plans.history import executed_label, move_label
+        from backend.plans.manual_edits import EXECUTED
 
         moved = next((lot for lot in candidate.lots if lot.id == candidate.lot_id), None)
+        label = executed_label if candidate.executed else move_label
         change = (
-            move_label(
+            label(
                 moved, candidate.target_machine,
                 state.engine_data.workdays[candidate.target_day], candidate.target_start_min,
                 state.engine_data,
@@ -386,6 +392,7 @@ async def apply_move(body: dict):
                 start_at=target_at,
                 reason=str(body.get("reason", "")),
                 author=str(body.get("author", "utilizador")),
+                kind=EXECUTED if candidate.executed else "",
             )
         )
         edit = {
@@ -400,6 +407,7 @@ async def apply_move(body: dict):
             "author": str(body.get("author", "utilizador")),
             "previous_version_id": previous_version_id,
             "delivery_risk_confirmed": bool(candidate.requires_confirmation and confirmed),
+            **({"kind": EXECUTED} if candidate.executed else {}),
         }
         # One record per pinned lot: a second move of the same lot replaces it.
         state.manual_edits = [
@@ -418,6 +426,13 @@ async def apply_move(body: dict):
                 "elapsed_ms": candidate.time_ms,
             }
         )
+        from backend.scheduler.canonical import result_validation_data
+
+        # A record of what ran carries the history boundary of its check:
+        # crew and operators before it are not judged (AGENTS §2 rule 4).
+        boundary_view = SimpleNamespace(
+            preserved_lot_proofs=None, history_boundary=candidate.history_boundary,
+        )
         result = ScheduleResult(
             segments=candidate.segments,
             lots=candidate.lots,
@@ -428,13 +443,14 @@ async def apply_move(body: dict):
             warnings=[*without_calculation_notes(state.warnings), *candidate.delivery_warnings],
             operator_alerts=compute_operator_alerts(
                 candidate.segments,
-                state.engine_data,
+                result_validation_data(state.engine_data, boundary_view),
                 state.config,
             ),
             audit_trail=None,
             journal=journal,
             gate_report=candidate.gate_report,
             improvement_report=copy.deepcopy(candidate.improvement_report),
+            history_boundary=copy.deepcopy(candidate.history_boundary),
         )
         state.update_schedule(
             result,

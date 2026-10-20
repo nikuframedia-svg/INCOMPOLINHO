@@ -127,6 +127,10 @@ class PlanAnchor:
     start_at: str
     reason: str = ""
     author: str = "utilizador"
+    # ``""``: a position chosen by the planner. ``"executed"``: a move to a
+    # time of today already gone, i.e. what really ran (decisão do Luís,
+    # 20/10/2026): kept by «Recalcular plano», dropped only by a new ISOP.
+    kind: str = ""
 
 
 @dataclass(slots=True)

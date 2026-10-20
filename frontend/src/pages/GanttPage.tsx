@@ -69,11 +69,16 @@ type PositionedResourceOverlay = ResourceOverlay & {
 };
 
 function isHistoricalPlacement(reason?: PlacementReason): boolean {
-  return reason?.kind === "historical" || reason?.historical === true;
+  return reason?.kind === "historical" || reason?.historical === true || reason?.executed === true;
 }
 
 function placementReasonText(reason?: PlacementReason): string | null {
   if (!reason) return null;
+  if (reason.executed) {
+    const at = reason.start_at ?? "";
+    const when = at.length >= 16 ? `${at.slice(8, 10)}/${at.slice(5, 7)} ${at.slice(11, 16)}` : "hora guardada";
+    return `Registado como feito: correu em ${reason.machine_id ?? "máquina guardada"} desde ${when}. Para corrigir, use «Desfazer».`;
+  }
   if (reason.kind === "manual") {
     const when = reason.start_at?.slice(0, 16).replace("T", " ") ?? "hora guardada";
     const motive = reason.reason ? ` Motivo: ${reason.reason}.` : "";
@@ -1780,7 +1785,9 @@ export function GanttPage() {
                       const segmentTitle = setupOnly
                         ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min de preparação | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`
                         : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString("pt-PT")} pç | Lote: ${lotQty.toLocaleString("pt-PT")} pç | Lote económico (mínimo): ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString("pt-PT")} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`;
-                      const placementTitle = placementReasons[s.lot_id]?.kind === "manual"
+                      const placementTitle = placementReasons[s.lot_id]?.executed
+                        ? " | Registado como feito; para corrigir, use «Desfazer»"
+                        : placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";
                       const deliveryTitle = (lotTooltipLines.get(s.lot_id) ?? lotTooltip(workdays, [s]))

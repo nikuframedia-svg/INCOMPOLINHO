@@ -87,6 +87,14 @@ it("shows a partial complete-plan improvement without creating another apply blo
   expect(apply.disabled).toBe(false);
 });
 
+it("says what a time already gone today records before applying (20/10/2026)", async () => {
+  const notice = "Hora já passada: fica registado que a Referência X (M1) correu desde as 08:00.";
+  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, result: { ...result, executed: true, notice } } });
+  await preview();
+  expect(screen.getByRole("status").textContent).toBe(notice);
+  expect(screen.getByText("Pode voltar atrás com «Desfazer», no topo.")).toBeTruthy();
+});
+
 it("invalidates the ready preview when the target changes", async () => {
   await preview();
   fireEvent.change(screen.getByLabelText("Máquina"), { target: { value: "M2" } });

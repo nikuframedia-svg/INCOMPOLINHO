@@ -572,6 +572,34 @@ describe("Shell", () => {
     expect(endpointMocks.recalculate).not.toHaveBeenCalled();
   });
 
+  // Decisão de 20/10/2026: um lote registado como feito aparece como tal, com
+  // «Soltar»; «Recalcular» não o apaga, por isso não pede confirmação por ele.
+  function mockRecordedPlan() {
+    mockPinnedPlan();
+    const planView = endpointMocks.getPlanView.getMockImplementation()!;
+    endpointMocks.getPlanView.mockImplementation(async () => {
+      const view = await planView();
+      return { ...view, manual_edits: view.manual_edits.map((edit: object) => ({ ...edit, kind: "executed" })) };
+    });
+  }
+
+  it("mostra o lote registado como feito, com «Soltar»", async () => {
+    mockRecordedPlan();
+    render(<Shell />);
+    expect(await screen.findByText("Referência 6800016767A.10 (PRM043) registado como feito desde 06/03 08:45")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Soltar" })).toBeTruthy();
+  });
+
+  it("Recalcular só pede para apagar as alterações comuns", async () => {
+    mockRecordedPlan();
+    endpointMocks.recalculate.mockResolvedValue({ status: "ok", plan_revision: 2, score });
+    render(<Shell />);
+    await screen.findByText(/registado como feito/);
+    fireEvent.click(screen.getByRole("button", { name: /Recalcular plano/ }));
+    // Nada a apagar: recalcula sem o diálogo de confirmação.
+    await waitFor(() => expect(endpointMocks.recalculate).toHaveBeenCalled());
+  });
+
   // Decisão de 15/10/2026: «Desfazer» multi-passo, sempre que há uma versão
   // anterior guardada (não só com alterações manuais), e diz o que desfaz.
   it("Desfazer diz que alteração desfaz e chama o desfazer multi-passo", async () => {

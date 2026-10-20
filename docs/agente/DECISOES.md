@@ -13,3 +13,4 @@ Data | Decisão (Luís) | Onde | Substitui
 19/10/2026 | Protocolo `fundador-nao-tecnico` 5.1.0; documentação nesta estrutura | este índice | CLAUDE.md longo
 19/10/2026 | Skill 5.1.1: memória permanente de erros obrigatória (`docs/agente/ERROS.md`) | skill §22 | —
 19/10/2026 | Configuração viva fora do git (`data/factory.yaml`) | PROJETO | `config/factory.yaml` vivo
+20/10/2026 | «Mover lote» para uma hora de hoje já passada regista o que correu; o registo fica no «Recalcular» | AGENTS §2 («Hora já passada hoje»), §5 | «esse momento já passou» (13/10)

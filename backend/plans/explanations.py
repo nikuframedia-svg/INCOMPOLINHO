@@ -37,6 +37,8 @@ def plan_view_explanations(segments, lots, data, config):
                 "start_at": anchor.start_at,
                 "reason": anchor.reason,
                 "historical": lot_id in historical,
+                # Recorded as run (decisão de 20/10/2026): not draggable.
+                **({"executed": True} if getattr(anchor, "kind", "") == "executed" else {}),
             }
         elif lot_id in historical:
             placement[lot_id] = {"kind": "historical"}

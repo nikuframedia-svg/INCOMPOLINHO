@@ -142,3 +142,27 @@ def cut_row(row: dict, at: float) -> dict | None:
     if "twin_outputs" in values:
         values["twin_outputs"] = [list(side) for side in values["twin_outputs"]]
     return {**row, **values}
+
+
+def displaced_by(
+    day_idx: int, start_min: float, end_min: float, machine_id: str, tool_id: str,
+    declared,
+) -> bool:
+    """Whether recording what ran (decisão do Luís, 20/10/2026) displaces a segment.
+
+    ``declared`` is ``(day, setup start, since, machine, tool)`` of a lot the
+    planner recorded as run today from ``setup start``, at the instant
+    ``since``. A segment of that day on the machine or with the tool that
+    started before ``since`` and ends after the setup start did not run from
+    then on: it stops at the setup start (``cut_segment``), or goes whole when
+    it made nothing by then. The move and the commit guard read this rule.
+    """
+
+    day, setup_start, since, machine, tool = declared
+    return (
+        int(day_idx) == int(day)
+        and (machine_id == machine or tool_id == tool)
+        and float(start_min) < float(since)
+        and float(end_min) > float(setup_start)
+        and float(end_min) > float(start_min)
+    )

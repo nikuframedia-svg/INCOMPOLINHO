@@ -288,6 +288,12 @@ def historical_schedule_changes(
     longer use its old one (owner decision, 16/10/2026), judged by the
     candidate's own operations and configuration: ``engine_data`` and
     ``config`` when given, else the ones ``after`` carries.
+
+    A record of what ran today (decisão do Luís, 20/10/2026;
+    ``_declared_today``) rewrites exactly one machine's morning: its own
+    rows, and what it displaced cut at its setup start, are set aside;
+    every other row before ``now`` is judged as above. The same reading
+    in the other direction lets «Desfazer» take the record back that day.
     """
     from backend.calendar import factory_now
     from backend.scheduler.history import cut_row
@@ -481,11 +487,48 @@ def historical_schedule_changes(
     # row may be missing only when it made nothing before ``now``; any other
     # row is production added (or changed) in time already gone.
     kept_today = elapsed_today(before)
+    after_today = elapsed_today(after)
     after_dates = calendar_dates(after)
+    declared = _declared_today(before, after, current_day, now_min)
+    if declared is not None:
+        from backend.scheduler.history import displaced_by
+
+        record_side, lot_id, declaration = declared
+        setup_start, since = declaration[1], declaration[2]
+
+        def ran(rows):
+            # The record's own rows, and what it placed from its instant on.
+            return [
+                (segment, text) for segment, text in rows
+                if segment.get("lot_id") != lot_id and float(segment["start_min"]) < since
+            ]
+
+        def without_displaced(rows, snapshot):
+            dates = calendar_dates(snapshot)
+            kept = []
+            for segment, text in rows:
+                if segment.get("lot_id") != lot_id and displaced_by(
+                    int(segment["day_idx"]), float(segment["start_min"]),
+                    float(segment["end_min"]), segment.get("machine_id"),
+                    segment.get("tool_id"), declaration,
+                ):
+                    part = cut_row(segment, setup_start)
+                    if part is not None:
+                        kept.append((part, row(part, dates)))
+                    continue
+                kept.append((segment, text))
+            return kept
+
+        if record_side == "after":
+            after_today = ran(after_today)
+            kept_today = without_displaced(kept_today, before)
+        else:
+            kept_today = ran(kept_today)
+            after_today = without_displaced(after_today, after)
     pending: dict[tuple, list[tuple[dict, str]]] = {}
     for segment, text in kept_today:
         pending.setdefault(_cut_key(segment), []).append((segment, text))
-    for segment, text in elapsed_today(after):
+    for segment, text in after_today:
         candidates = pending.get(_cut_key(segment), [])
         match = next(
             (
@@ -518,6 +561,69 @@ def historical_schedule_changes(
         if lot_rows(before, lot_id) != lot_rows(after, lot_id) or lot_changed(lot_id)
     }
     return sorted(lot_id for lot_id in changed if not dropped_unmade(lot_id))
+
+
+def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
+    """The one record of what ran today that differs between two snapshots.
+
+    ``(side holding it, lot id, declaration)`` (``history.displaced_by``),
+    or ``None``. Only an anchor written by a move to a time of today already
+    gone (``manual_edits.EXECUTED``, decisão do Luís, 20/10/2026), exactly
+    one, dated today: its lot has rows before ``now`` on the anchor's
+    machine only, on that side, and none on the other. The setup start is
+    the lot's first row; ``since`` is the record's own instant (its history
+    boundary), so «Desfazer» later that day reads the same morning.
+    """
+    from backend.plans.manual_edits import EXECUTED
+    from backend.scheduler.history import as_boundary
+
+    if not now_min:
+        return None
+
+    def executed(snapshot: dict) -> list[dict]:
+        return [
+            anchor for anchor in (snapshot.get("engine_data") or {}).get("plan_anchors") or []
+            if isinstance(anchor, dict) and anchor.get("kind") == EXECUTED
+        ]
+
+    old, new = executed(before), executed(after)
+    changed = [("before", a) for a in old if a not in new] + [
+        ("after", a) for a in new if a not in old
+    ]
+    if len(changed) != 1 or str(changed[0][1].get("start_at") or "")[:10] != current_day:
+        return None
+    side, anchor = changed[0]
+    record, other = (before, after) if side == "before" else (after, before)
+    lot_id, machine = anchor.get("lot_id"), anchor.get("machine_id")
+    workdays = [str(day)[:10] for day in (record.get("engine_data") or {}).get("workdays") or []]
+    if current_day not in workdays or [
+        str(day)[:10] for day in (other.get("engine_data") or {}).get("workdays") or []
+    ] != workdays:
+        return None
+    day = workdays.index(current_day)
+
+    def rows_before_now(snapshot: dict) -> list[dict]:
+        return [
+            segment for segment in snapshot.get("segments") or []
+            if segment.get("lot_id") == lot_id and int(segment["day_idx"]) <= day
+            and (int(segment["day_idx"]) < day or float(segment["start_min"]) < now_min)
+            and float(segment["end_min"]) > float(segment["start_min"])
+        ]
+
+    ran = rows_before_now(record)
+    if (
+        not ran or rows_before_now(other)
+        or any(int(s["day_idx"]) != day or s.get("machine_id") != machine for s in ran)
+        or len({s.get("tool_id") for s in ran}) != 1
+    ):
+        return None
+    # Whole minutes, as the move cuts (``manual_move._declared_setup_start``).
+    setup_start = int(math.floor(min(float(segment["start_min"]) for segment in ran)))
+    boundary = as_boundary((record.get("engine_data") or {}).get("history_boundary"))
+    since = min(boundary[1], now_min) if boundary is not None and boundary[0] == day else now_min
+    if since <= setup_start:
+        return None
+    return side, lot_id, (day, setup_start, since, machine, ran[0].get("tool_id"))
 
 
 def _candidate_eligibility(after: dict, engine_data, config):
@@ -1325,6 +1431,13 @@ def _protected_plan(
     segments = list(baseline_result.segments)
     lots_by_id = {lot.id: lot for lot in baseline_result.lots}
     anchored = _honoured_anchor_lot_ids(baseline_result, engine_data, config)
+    if freeze_day > 0 or now_min > 0:
+        from backend.plans.manual_edits import executed_lot_ids
+
+        # A record of what ran is history during the day, like any started
+        # lot: a new input may cut it and the record stays (20/10/2026).
+        # From D0 («Recalcular plano») it pins the lot where it ran.
+        anchored -= executed_lot_ids(engine_data)
     previous = _machine_order(segments)
     started_ids = set()
     started_lots: set[str] = set()
@@ -1410,9 +1523,19 @@ def _protected_plan(
         if segments[index].lot_id not in forced_whole
     }
     touched = {segments[index].lot_id for index in selected}
+    # Rows holding fewer pieces than their lot (what a record of what ran
+    # left of a displaced lot, ``manual_move._without_displaced``): the lot
+    # is not whole, its rest is replanned.
+    short = {
+        lot_id for lot_id in touched
+        if lot_id not in forced_whole and lot_id in lots_by_id
+        and sum(int(segments[index].qty) for index in by_lot[lot_id])
+        < int(lots_by_id[lot_id].qty)
+    }
     whole = {
         lot_id for lot_id in touched
         if set(by_lot[lot_id]) <= selected and not any(i in parts for i in by_lot[lot_id])
+        and lot_id not in short
     }
     # Kept whole only for a manual anchor (or to mount an anchored lot's
     # tool): nothing of it has started, so it is a position, not history.
@@ -2372,7 +2495,13 @@ def candidate_history_changes(
         return []
     candidate = {
         "dataset_info": baseline_snapshot.get("dataset_info"),
-        "engine_data": {"workdays": [str(day) for day in engine_data.workdays or []]},
+        "engine_data": {
+            "workdays": [str(day) for day in engine_data.workdays or []],
+            # The records of what ran it keeps (``_declared_today``).
+            "plan_anchors": [
+                asdict(anchor) for anchor in getattr(engine_data, "plan_anchors", None) or []
+            ],
+        },
         "config": {"timezone": str(getattr(config, "timezone", "Europe/Lisbon"))},
         "segments": [asdict(segment) for segment in result.segments],
         "lots": [asdict(lot) for lot in result.lots],
@@ -2440,6 +2569,11 @@ def optimize_preserving_started_lots(
         involved = anchors_in_violations(
             error.violations, engine_data, getattr(baseline_result, "segments", None),
         )
+        if not recalculate_from_start:
+            from backend.plans.manual_edits import executed_lot_ids
+
+            # A record of what ran is history during the day, never released.
+            involved -= executed_lot_ids(engine_data)
         if not involved:
             raise
         lots = list(getattr(baseline_result, "lots", None) or [])

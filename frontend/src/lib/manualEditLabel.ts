@@ -3,6 +3,7 @@ import type { Lot, ManualEdit } from "../api/types";
 /**
  * «Referência 6800016767A.10 · JTE001 (PRM043) → 03/12 08:45»: a lot pinned by hand,
  * as the planner knows it; never the internal lot id (decisão de 15/10/2026).
+ * A record of what ran (20/10/2026): «… (PRM043) registado como feito desde 20/10 08:00».
  */
 export function manualEditLabel(edit: ManualEdit, lots: readonly Lot[], workdays: readonly string[]): string {
   const lot = lots.find((item) => item.id === edit.lot_id);
@@ -13,5 +14,8 @@ export function manualEditLabel(edit: ManualEdit, lots: readonly Lot[], workdays
   const date = day ? `${day.slice(8, 10)}/${day.slice(5, 7)}` : edit.target_day != null ? `dia ${edit.target_day}` : "";
   const minute = edit.target_start_min;
   const time = minute != null ? ` ${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}` : "";
+  if (edit.kind === "executed") {
+    return `Referência ${reference} (${edit.target_machine}) registado como feito desde ${date}${time}`.trim();
+  }
   return `Referência ${reference} (${edit.target_machine}) → ${date}${time}`.trim();
 }
