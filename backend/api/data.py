@@ -2116,7 +2116,7 @@ async def undo_last_change(body: dict):
     the place of the one put back, so repeated clicks walk back the chain.
     """
     from backend.plans.context import api_write_context
-    from backend.plans.history import UNDO_PREFIX
+    from backend.plans.history import UNDO_PREFIX, undo_refusal_message
     from backend.plans.refusal import refusal_detail
     from backend.plans.restore import restore_plan_into_state
 
@@ -2143,11 +2143,7 @@ async def undo_last_change(body: dict):
         )
         if refusal is not None:
             raise HTTPException(409, {
-                **refusal_detail(refusal, message=(
-                    f"Não é possível desfazer «{label}»: o plano anterior mudaria "
-                    "produção que já começou, que está protegida. O plano ativo "
-                    "não foi alterado."
-                )),
+                **refusal_detail(refusal, message=undo_refusal_message(label)),
                 "current_revision": state.plan_revision,
             })
         set_change_label(f"{UNDO_PREFIX}{label}", kind="undo", undo_restores=plan["id"])

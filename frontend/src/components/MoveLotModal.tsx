@@ -424,11 +424,6 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
 
         {preview && (
           <>
-            {preview.notice && (
-              <div role="status" style={{ padding: "10px 12px", borderRadius: 8, background: T.elevated, border: `1px solid ${T.border}`, color: T.secondary, fontSize: 11, lineHeight: 1.5 }}>
-                {preview.notice}
-              </div>
-            )}
             <PlanDeltaCards delta={preview.delta} />
             <GateReportCard gate={preview.gate_report} />
             {blocked || stale ? (
@@ -496,6 +491,13 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
                   />
                 </label>
               </>
+            )}
+            {/* Uma hora de hoje já passada fica registada como produzida: dito
+                logo antes de aplicar, em qualquer dos casos (revisão de 20/10/2026). */}
+            {preview.notice && (
+              <div role="status" style={{ padding: "10px 12px", borderRadius: 8, background: `${T.orange}12`, border: `1px solid ${T.orange}55`, color: T.primary, fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}>
+                {preview.notice}
+              </div>
             )}
             {applyError && (
               <div

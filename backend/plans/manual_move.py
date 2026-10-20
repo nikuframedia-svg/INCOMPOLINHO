@@ -668,7 +668,9 @@ def _declared_history_changes(
 
 
 def _executed_notice(complete, lot_id, declaration, start_min, baseline_segments, data):
-    """«Hora já passada: fica registado que …»: what the record means for the plan."""
+    """«Vai ficar registado como já produzido desde 08:00 na PRM043: …»: what the
+    record means for the plan, said before it is applied (a time typed by
+    mistake must not become production unnoticed, 20/10/2026)."""
     from backend.plans.frozen import _date_label
     from backend.scheduler.canonical import _lot_label, result_validation_data
     from backend.scheduler.history import cut_segment, displaced_by
@@ -678,9 +680,12 @@ def _executed_notice(complete, lot_id, declaration, start_min, baseline_segments
     lots_by_id = {item.id: item for item in complete.lots}
     moved = lots_by_id.get(lot_id)
     subject = _lot_label(moved) if moved is not None else "o lote"
-    text = f"Hora já passada: fica registado que a {subject} correu desde as {_clock(start_min)}"
+    text = (
+        f"Vai ficar registado como já produzido desde {_clock(start_min)} na "
+        f"{declaration[3]}: a {subject}"
+    )
     if setup_start < start_min:
-        text += f" (afinação desde as {_clock(setup_start)})"
+        text += f", com afinação desde {_clock(setup_start)}"
     made: dict[str, int] = {}
     order: list[str] = []
     for segment in sorted(baseline_segments, key=lambda item: (item.day_idx, item.start_min)):

@@ -502,8 +502,13 @@ lotes da mesma ferramenta):
        agora (aconteceu). O movimento leva a fronteira de agora
        (`ScheduleResult.history_boundary`), lida na aplicação e na gravação.
      - Fica a âncora `kind="executed"` (`manual_edits.EXECUTED`): o ecrã
-       mostra «registado como feito desde …»; a pré-visualização diz o que
-       fica por fazer e quando fica pronto. Corrige-se com «Desfazer»;
+       mostra «registado como feito desde …»; a pré-visualização diz, logo
+       antes de «Aplicar» e em destaque, «Vai ficar registado como já
+       produzido desde HH:MM na <máquina>: …», o que fica por fazer e quando
+       fica pronto (uma hora mal escrita, 08:00 em vez de 18:00, não passa
+       despercebida; sem passos novos). A aplicação recusa um registo cuja
+       verificação não o mostrou (`manual_plan._require_executed_preview`).
+       Corrige-se com «Desfazer»;
        «Soltar» tira a marca: a manhã fica igual; o resto é replaneado (e um
        «Recalcular» seguinte já não mantém o lote onde correu).
      - A proteção na gravação aceita esta única alteração da manhã
@@ -511,7 +516,11 @@ lotes da mesma ferramenta):
        entre os dois planos, as linhas desse lote numa só máquina e os
        cortes no início da sua afinação; qualquer outra diferença antes de
        agora continua recusada. A mesma leitura no sentido inverso deixa
-       «Desfazer» no mesmo dia, enquanto o trabalho replaneado não começou.
+       «Desfazer» no mesmo dia, enquanto o trabalho replaneado não começou,
+       mesmo que a hora onde o lote estava planeado antes do registo já
+       tenha chegado (essa posição é a que o registo substituiu; só não pode
+       ter começado antes do registo). Recusado, diz porquê e lembra
+       «Soltar» (`history.undo_refusal_message`).
        Só as linhas do próprio lote registado ficam fora da comparação:
        tudo o resto, em qualquer máquina, é comparado até agora (um
        «Desfazer» ou «Repor» mais tarde não apaga nem acrescenta trabalho
@@ -519,7 +528,11 @@ lotes da mesma ferramenta):
        impede o «Desfazer»).
      - Durante o dia o lote registado é histórico como outro lote começado
        (uma avaria nova corta-o e o registo fica; a rede de segurança nunca
-       o solta fora de «Recalcular»).
+       o solta fora de «Recalcular»). Exceção (revisão de 20/10/2026): se o
+       corte cai antes da primeira peça, o lote solta-se inteiro como
+       qualquer lote começado e o registo vai com ele, com aviso
+       (`frozen._records_stopped_unmade`); o replaneamento nunca falha por
+       isso.
      - Ensaio na cópia da revisão 178 às 11:49, pela API: aceite em ~50–55 s
        (perto do limite de 60 s com o servidor carregado); afinação 07:00–08:00, produção desde as 08:00; a manhã das outras
        máquinas igual; a CF589 passa para 21/10 13:33–22:23; 0 atrasos

@@ -497,9 +497,10 @@ def historical_schedule_changes(
         setup_start = declaration[1]
 
         def ran(rows):
-            # Only the record's own rows: everything else on the side holding
-            # it is still compared up to ``now`` (a later «Desfazer» or
-            # «Repor» may not erase or add work that has started since).
+            # Only the record's own rows, on both sides (on the other one,
+            # where the lot was planned instead): everything else is still
+            # compared up to ``now`` (a later «Desfazer» or «Repor» may not
+            # erase or add work that has started since).
             return [(segment, text) for segment, text in rows if segment.get("lot_id") != lot_id]
 
         def without_displaced(rows, snapshot):
@@ -520,10 +521,10 @@ def historical_schedule_changes(
 
         if record_side == "after":
             after_today = ran(after_today)
-            kept_today = without_displaced(kept_today, before)
+            kept_today = ran(without_displaced(kept_today, before))
         else:
             kept_today = ran(kept_today)
-            after_today = without_displaced(after_today, after)
+            after_today = ran(without_displaced(after_today, after))
     pending: dict[tuple, list[tuple[dict, str]]] = {}
     for segment, text in kept_today:
         pending.setdefault(_cut_key(segment), []).append((segment, text))
@@ -569,7 +570,9 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     or ``None``. Only an anchor written by a move to a time of today already
     gone (``manual_edits.EXECUTED``, decisão do Luís, 20/10/2026), exactly
     one, dated today: its lot has rows before ``now`` on the anchor's
-    machine only, on that side, and none on the other. The setup start is
+    machine only, on that side; on the other, none that started before the
+    record's instant (where the lot was planned before it, once that time
+    has come too, is the position the record replaced). The setup start is
     the lot's first row; ``since`` is the record's own instant (its history
     boundary), so «Desfazer» later that day reads the same morning.
     """
@@ -611,7 +614,7 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
 
     ran = rows_before_now(record)
     if (
-        not ran or rows_before_now(other)
+        not ran
         or any(int(s["day_idx"]) != day or s.get("machine_id") != machine for s in ran)
         or len({s.get("tool_id") for s in ran}) != 1
     ):
@@ -620,7 +623,9 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     setup_start = int(math.floor(min(float(segment["start_min"]) for segment in ran)))
     boundary = as_boundary((record.get("engine_data") or {}).get("history_boundary"))
     since = min(boundary[1], now_min) if boundary is not None and boundary[0] == day else now_min
-    if since <= setup_start:
+    if since <= setup_start or any(
+        (int(s["day_idx"]), float(s["start_min"])) < (day, since) for s in rows_before_now(other)
+    ):
         return None
     return side, lot_id, (day, setup_start, since, machine, ran[0].get("tool_id"))
 
@@ -972,7 +977,43 @@ def reconcile_manual_anchors(
         if started_before(segment, freeze_day, now_min)
     }
     misfits = _anchor_misfits(anchors, baseline, engine_data, config, history)
+    misfits.update(_records_stopped_unmade(
+        anchors, baseline, engine_data, config, history, freeze_day, now,
+    ))
     return release_anchors(engine_data, baseline.lots, misfits)
+
+
+# A record of what ran (``manual_edits.EXECUTED``) that a new input stops
+# before its first piece: like any started lot it is released whole and
+# replanned (``scheduler.history``), so the record goes too (20/10/2026).
+_RECORD_STOPPED_UNMADE = (
+    "a alteração nova parou-a antes da primeira peça; deixa de estar registada como "
+    "feita e é replaneada a partir de agora"
+)
+
+
+def _records_stopped_unmade(
+    anchors, baseline, engine_data, config, history: set[str], freeze_day: int, now,
+) -> dict[str, str]:
+    """``{lot_id: reason}`` of the records of what ran the protection releases whole.
+
+    A record is protected during the day like any started lot: a new input
+    cuts it at ``max(now, conflict start)`` and the part made stays, so its
+    anchor still holds. When nothing was made by then the lot is released
+    whole (``_conflict_cuts``); its anchor can no longer hold and is released
+    with a notice instead of failing the whole replan.
+    """
+    from backend.plans.manual_edits import EXECUTED
+
+    records = {
+        anchor.lot_id for anchor in anchors
+        if getattr(anchor, "kind", "") == EXECUTED and anchor.lot_id in history
+    }
+    if not records:
+        return {}
+    protection = _protected_plan(baseline, freeze_day, engine_data, config, now=now)
+    kept = {segment.lot_id for segment in protection.segments}
+    return {lot_id: _RECORD_STOPPED_UNMADE for lot_id in sorted(records - kept)}
 
 
 def anchors_in_violations(violations, engine_data, segments=()) -> set[str]:

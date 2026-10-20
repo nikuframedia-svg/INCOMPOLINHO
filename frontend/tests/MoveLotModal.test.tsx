@@ -87,11 +87,17 @@ it("shows a partial complete-plan improvement without creating another apply blo
   expect(apply.disabled).toBe(false);
 });
 
-it("says what a time already gone today records before applying (20/10/2026)", async () => {
-  const notice = "Hora já passada: fica registado que a Referência X (M1) correu desde as 08:00.";
-  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, result: { ...result, executed: true, notice } } });
-  await preview();
-  expect(screen.getByRole("status").textContent).toBe(notice);
+it.each([false, true])("says what a time already gone today records right before applying (requires confirmation: %s)", async (requiresConfirmation) => {
+  const notice = "Vai ficar registado como já produzido desde 08:00 na M1: a Referência X (M1).";
+  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, result: {
+    ...result, executed: true, notice, requires_confirmation: requiresConfirmation,
+  } } });
+  const apply = await preview();
+  const status = screen.getByRole("status");
+  expect(status.textContent).toBe(notice);
+  // Right before the button, after the verdict, in both branches.
+  expect(status.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(status.nextElementSibling?.contains(apply)).toBe(true);
   expect(screen.getByText("Pode voltar atrás com «Desfazer», no topo.")).toBeTruthy();
 });
 

@@ -147,9 +147,11 @@ def test_record_cuts_the_displaced_lot_at_the_setup_and_replans_its_rest(morning
     assert first == (TODAY, "M1", 480, 600, 150, 30)
     assert sum(item[4] for item in rest) == 50
     assert min((item[0], item[2]) for item in rest) >= (TODAY, 660)
+    # Said before it is applied: a time typed by mistake must not become
+    # production unnoticed (revisão de 20/10/2026).
     assert move.notice == (
-        "Hora já passada: fica registado que a Referência SKU_OP2 · T2 (M1) correu desde "
-        "as 10:30 (afinação desde as 10:00); a Referência SKU_OP1 · T1 (M1) fica feita até "
+        "Vai ficar registado como já produzido desde 10:30 na M1: a Referência SKU_OP2 · T2 "
+        "(M1), com afinação desde 10:00; a Referência SKU_OP1 · T1 (M1) fica feita até "
         "às 10:00 (150 peças) e o resto é replaneado a partir de agora (pronta a 03/03 às 13:30)."
     )
     view = result_validation_data(morning.data, SimpleNamespace(
@@ -546,3 +548,161 @@ def test_repor_the_record_later_cannot_add_work_after_it():
     assert frozen.historical_schedule_changes(
         undone, _state(_after_record(900), recorded=True), now=_lisbon(14, 0),
     ) == []
+
+
+# ── Revisão de 20/10/2026 (4 achados) ───────────────────────────────────────
+
+
+def test_a_displaced_lot_that_made_pieces_keeps_its_machine_and_the_guard_accepts():
+    """Achado 1 (não reproduz): OP1 on M1 07:00–12:30 may also run on M2.
+    Recording OP2 from 09:00 at 10:00 cuts OP1 at 08:30 (100 pieces): it
+    started, so its rest stays on M1 (rule 3, ``frozen._remainder_lot``) and
+    the guard has no lot-level change to refuse."""
+    config = _config(two_machines=True)
+    long_op = _op("OP1", "T1", 4, alt="M2")
+    long_op.d[4], long_op.eco_lot = 500, 500
+    data = _data(
+        [long_op, _op("OP2", "T2", 6), _op("OP3", "T3", 2)], two_machines=True,
+    )
+    baseline, lots = _plan(data, config, {
+        "OP1": [(TODAY, 420, 500, 30)], "OP2": [(3, 420, 200, 30)],
+        "OP3": [(TODAY, 750, 200, 30)],
+    })
+    ten = _at(TODAY, 600)
+    op1 = lots["OP1"].id
+    move = _move(baseline, data, config, lots["OP2"].id, TODAY, 540, ten)
+    rows = _shape(move.segments, op1)
+    assert rows[0][:5] == (TODAY, "M1", 420, 510, 100)
+    assert {machine for _day, machine, *_ in rows} == {"M1"}
+    assert next(lot for lot in move.lots if lot.id == op1).machine_id == "M1"
+    before = _snapshot(baseline.segments, baseline.lots, data)
+    assert frozen.historical_schedule_changes(before, _snapshot(
+        move.segments, move.lots, data, anchors=[_record(move, data)],
+        boundary=move.history_boundary,
+    ), now=ten) == []
+
+
+def _slow_record():
+    """OP2 (2 min per piece) recorded at 11:00 as run from 10:59 on M1."""
+    config = _config()
+    slow = _op("OP2", "T2", 6)
+    slow.pH = 30
+    data = _data([_op("OP1", "T1", 4), slow])
+    baseline, lots = _plan(data, config, {
+        "OP1": [(TODAY, 480, 200, 30)], "OP2": [(5, 420, 200, 30)],
+    })
+    move = _move(baseline, data, config, lots["OP2"].id, TODAY, 659, _at(TODAY, 660))
+    recorded = copy.deepcopy(data)
+    recorded.plan_anchors = [_record(move, recorded)]
+    recorded.history_boundary = list(move.history_boundary)
+    plan = ScheduleResult(
+        segments=move.segments, lots=move.lots, score=move.score, time_ms=0, warnings=[],
+        operator_alerts=[], history_boundary=list(move.history_boundary),
+    )
+    return config, lots, recorded, plan
+
+
+def test_an_outage_that_stops_a_record_before_its_first_piece_releases_the_record():
+    """Achado 2: an outage from 10:30 entered at 11:00 stops OP2 at 11:00,
+    before its first piece. Like any started lot it is released whole and
+    replanned; its record goes with a notice, the replan never fails."""
+    config, lots, recorded, plan = _slow_record()
+    op2 = lots["OP2"].id
+    outage = copy.deepcopy(recorded)
+    outage.machine_blocked_intervals = {"M1": [{
+        "id": "u1", "start_day": TODAY, "start_min": 630, "end_day": TODAY, "end_min": 720,
+    }]}
+    eleven = _at(TODAY, 660)
+    result = frozen.optimize_preserving_started_lots(
+        outage, config, copy.deepcopy(plan), mode="quick", now=eleven,
+    )
+    assert executed_lot_ids(outage) == set()
+    assert min((day, start) for day, _m, start, *_ in _shape(result.segments, op2)) >= (
+        TODAY, 720,
+    )
+    assert sum(item[4] for item in _shape(result.segments, op2)) == 200
+    assert result.warnings[0] == (
+        "Soltei a alteração manual da Referência SKU_OP2 · T2 (M1), fixada para 03/03 10:59: "
+        "a alteração nova parou-a antes da primeira peça; deixa de estar registada como "
+        "feita e é replaneada a partir de agora."
+    )
+    assert_plan_valid(
+        result.segments, result_validation_data(outage, result), config, lots=result.lots,
+    )
+    before = _snapshot(
+        plan.segments, plan.lots, recorded, anchors=recorded.plan_anchors,
+        boundary=plan.history_boundary,
+    )
+    assert frozen.historical_schedule_changes(before, _snapshot(
+        result.segments, result.lots, outage, boundary=result.history_boundary,
+    ), now=eleven) == []
+
+
+def test_an_outage_that_stops_a_record_after_a_piece_keeps_the_record():
+    """The same outage a minute later: one piece made, the record stays."""
+    config, lots, recorded, plan = _slow_record()
+    outage = copy.deepcopy(recorded)
+    outage.machine_blocked_intervals = {"M1": [{
+        "id": "u1", "start_day": TODAY, "start_min": 600, "end_day": TODAY, "end_min": 720,
+    }]}
+    result = frozen.optimize_preserving_started_lots(
+        outage, config, copy.deepcopy(plan), mode="quick", now=_at(TODAY, 661),
+    )
+    assert executed_lot_ids(outage) == {lots["OP2"].id}
+    assert _shape(result.segments, lots["OP2"].id)[0][:5] == (TODAY, "M1", 629.0, 661, 1)
+
+
+_PLANNED_AT_1200 = [
+    _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
+    _row("JTE", "M50", "T2", 720, 1300, 500, setup=60),
+]
+
+
+def test_desfazer_works_once_the_original_time_of_the_recorded_lot_has_come():
+    """Achado 3: JTE was planned on M50 from 12:00 and recorded at 11:49 as
+    run from 08:00. At 14:00 the original position has started too, but CF,
+    which the record replanned, waits for 15:00: «Desfazer» puts the plan back."""
+    record = _state(_after_record(900), recorded=True)
+    previous = _state(_PLANNED_AT_1200)
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == []
+    # Once CF has started on M44 it is still refused.
+    started = _state(_after_record(720), recorded=True)
+    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(14, 0)) == ["CF"]
+    # A plan where the lot had started before the record's instant is not
+    # the one it replaced: no exception.
+    earlier = _state([
+        _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
+        _row("JTE", "M30", "T2", 600, 1300, 500, setup=60),
+    ])
+    assert frozen.historical_schedule_changes(record, earlier, now=_lisbon(14, 0))
+
+
+def test_desfazer_of_a_record_refused_says_why():
+    from backend.plans.history import undo_refusal_message
+
+    message = undo_refusal_message("Registado como feito: Referência X (M1) desde 20/10 08:00")
+    assert "desde o registo já começou trabalho que ele replaneou" in message
+    assert "«Soltar»" in message
+    assert "o plano anterior mudaria" in undo_refusal_message("Movido Referência X (M1)")
+
+
+def test_apply_refuses_a_record_its_check_did_not_show(morning):
+    """Achado 4: a record is applied only as the check showed it."""
+    from fastapi import HTTPException
+
+    from backend.api.manual_plan import _require_executed_preview
+
+    move = _move(
+        morning.baseline, morning.data, morning.config, morning.lots["OP2"].id, TODAY, 630,
+        _at(TODAY, 660),
+    )
+    _require_executed_preview(move)
+    unseen = copy.copy(move)
+    unseen.notice = None
+    with pytest.raises(HTTPException) as refused:
+        _require_executed_preview(unseen)
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "preview_required"
+    ordinary = copy.copy(move)
+    ordinary.executed, ordinary.notice = False, None
+    _require_executed_preview(ordinary)

@@ -279,6 +279,24 @@ def _require_matching_preview_request(
         )
 
 
+def _require_executed_preview(candidate: ManualMoveResult) -> None:
+    """A record of what ran is applied only as the check showed it (20/10/2026).
+
+    The verification of a time of today already gone says, before it is
+    applied, «Vai ficar registado como já produzido desde …» (``notice``) and
+    carries the boundary of its instant; a candidate marked as a record
+    without them was not shown as one, so it is checked again.
+    """
+    if candidate.executed and not (candidate.notice and candidate.history_boundary):
+        raise HTTPException(409, {
+            "code": "preview_required",
+            "message": (
+                "Esta hora já passou e a verificação não mostrou o que fica registado "
+                "como já produzido; verifique de novo. O plano ativo não foi alterado."
+            ),
+        })
+
+
 @router.post("/move-apply")
 @plan_writer
 async def apply_move(body: dict):
@@ -328,6 +346,7 @@ async def apply_move(body: dict):
             raise HTTPException(
                 409, {"code": exc.code, "message": f"{exc} O plano ativo não foi alterado."},
             ) from exc
+        _require_executed_preview(candidate)
         try:
             approval = authorize_application(
                 candidate.gate_report,

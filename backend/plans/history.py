@@ -57,12 +57,35 @@ def move_label(lot, machine_id: str, workday, start_min, data=None) -> str:
     return f"Movido {lot_reference(lot, machine_id, data)} → {when}"
 
 
+EXECUTED_PREFIX = "Registado como feito: "
+
+
 def executed_label(lot, machine_id: str, workday, start_min, data=None) -> str:
     """A move to a time of today already gone: what ran (20/10/2026)."""
     when = day_month(str(workday)[:10])
     if start_min is not None:
         when += f" {clock(start_min)}"
-    return f"Registado como feito: {lot_reference(lot, machine_id, data)} desde {when}"
+    return f"{EXECUTED_PREFIX}{lot_reference(lot, machine_id, data)} desde {when}"
+
+
+def undo_refusal_message(label: str) -> str:
+    """Why «Desfazer» of ``label`` is refused: started production would change.
+
+    A record of what ran is undone the same day while the work it replanned
+    has not started (AGENTS §2, «Hora já passada hoje»); once it has, the
+    planner is told so, and that «Soltar» takes the mark away instead.
+    """
+    if label.startswith(EXECUTED_PREFIX):
+        return (
+            f"Não é possível desfazer «{label}»: desde o registo já começou trabalho que "
+            "ele replaneou, e essa produção está protegida. O plano ativo não foi "
+            "alterado. Para tirar a marca sem mexer no que já correu, use «Soltar»."
+        )
+    return (
+        f"Não é possível desfazer «{label}»: o plano anterior mudaria "
+        "produção que já começou, que está protegida. O plano ativo "
+        "não foi alterado."
+    )
 
 
 def release_label(lots: list, release_all: bool, data=None) -> str:
