@@ -504,8 +504,8 @@ lotes da mesma ferramenta):
      - Fica a âncora `kind="executed"` (`manual_edits.EXECUTED`): o ecrã
        mostra «registado como feito desde …»; a pré-visualização diz o que
        fica por fazer e quando fica pronto. Corrige-se com «Desfazer»;
-       «Soltar» só tira a marca (o plano fica igual e um «Recalcular»
-       seguinte já não mantém o lote onde correu).
+       «Soltar» tira a marca: a manhã fica igual; o resto é replaneado (e um
+       «Recalcular» seguinte já não mantém o lote onde correu).
      - A proteção na gravação aceita esta única alteração da manhã
        (`frozen._declared_today`): exatamente um registo de hoje diferente
        entre os dois planos, as linhas desse lote numa só máquina e os
@@ -520,8 +520,8 @@ lotes da mesma ferramenta):
      - Durante o dia o lote registado é histórico como outro lote começado
        (uma avaria nova corta-o e o registo fica; a rede de segurança nunca
        o solta fora de «Recalcular»).
-     - Ensaio na cópia da revisão 178 às 11:49, pela API: aceite em ~51 s;
-       afinação 07:00–08:00, produção desde as 08:00; a manhã das outras
+     - Ensaio na cópia da revisão 178 às 11:49, pela API: aceite em ~50–55 s
+       (perto do limite de 60 s com o servidor carregado); afinação 07:00–08:00, produção desde as 08:00; a manhã das outras
        máquinas igual; a CF589 passa para 21/10 13:33–22:23; 0 atrasos
        (como antes), 187 setups (antes 188).
    - **Uma só regra para o que já aconteceu** (`scheduler/history.py`):
@@ -765,7 +765,9 @@ indicador. Um teste estático proíbe outra regra "fim do lote" nas vistas.
   20/10/2026:** os lotes registados como feitos (§2, «Hora já passada hoje»)
   ficam no «Recalcular» (`release_manual_anchors(keep_executed=True)`): desde
   D0 o lote fica onde correu e o resto é refeito à volta; só um ISOP novo
-  (ou «Soltar», que tira a marca sem mudar o plano) os tira. Na gravação cada âncora pode desaparecer mas nunca
+  (ou «Soltar», que tira a marca: a manhã fica igual; o resto é replaneado)
+  os tira; exceção: se não houver plano válido, um registo pode ser solto,
+  com aviso (`frozen.py`, recálculo de raiz). Na gravação cada âncora pode desaparecer mas nunca
   mudar. **Uma só fonte de verdade:** a
   lista de alterações manuais é sempre a das âncoras, um registo por lote
   (`sync_manual_edits` em todas as escritas; um segundo movimento do mesmo

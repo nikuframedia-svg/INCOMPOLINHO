@@ -161,7 +161,7 @@ def displaced_by(
     day, setup_start, since, machine, tool = declared
     return (
         int(day_idx) == int(day)
-        and (machine_id == machine or tool_id == tool)
+        and (machine_id == machine or (bool(tool) and tool_id == tool))
         and float(start_min) < float(since)
         and float(end_min) > float(setup_start)
         and float(end_min) > float(start_min)

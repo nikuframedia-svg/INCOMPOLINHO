@@ -77,7 +77,7 @@ function placementReasonText(reason?: PlacementReason): string | null {
   if (reason.executed) {
     const at = reason.start_at ?? "";
     const when = at.length >= 16 ? `${at.slice(8, 10)}/${at.slice(5, 7)} ${at.slice(11, 16)}` : "hora guardada";
-    return `Registado como feito: correu em ${reason.machine_id ?? "máquina guardada"} desde ${when}. Para corrigir, use «Desfazer».`;
+    return `Registado como feito: correu em ${reason.machine_id ?? "máquina guardada"} desde ${when}. Para corrigir: «Desfazer» no mesmo dia, ou «Soltar» na lista de alterações.`;
   }
   if (reason.kind === "manual") {
     const when = reason.start_at?.slice(0, 16).replace("T", " ") ?? "hora guardada";
@@ -1786,7 +1786,7 @@ export function GanttPage() {
                         ? `${s.tool_id} | Preparação | ${s.setup_min.toFixed(0)} min de preparação | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`
                         : `${s.tool_id} | ${controllingReferenceLabel(s)} | Segmento: ${s.qty.toLocaleString("pt-PT")} pç | Lote: ${lotQty.toLocaleString("pt-PT")} pç | Lote económico (mínimo): ${(s.eco_lot_effective ?? lot?.eco_lot_effective ?? 0).toLocaleString("pt-PT")} pç | ${fmtMin(s.start_min)}–${fmtMin(s.end_min)}${s.twin_outputs ? " | Gémeas" : ""}`;
                       const placementTitle = placementReasons[s.lot_id]?.executed
-                        ? " | Registado como feito; para corrigir, use «Desfazer»"
+                        ? " | Registado como feito. Para corrigir: «Desfazer» no mesmo dia, ou «Soltar» na lista de alterações."
                         : placementReasons[s.lot_id]?.kind === "manual"
                         ? " | Hora manual"
                         : placementReasons[s.lot_id]?.kind === "historical" ? " | Plano passado" : "";

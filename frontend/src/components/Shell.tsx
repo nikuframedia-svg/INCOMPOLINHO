@@ -95,6 +95,18 @@ function PageContent() {
   }
 }
 
+
+// Os registos do que correu contam à parte dos lotes fixados à mão (20/10/2026).
+function manualEditsSummary(edits: { kind?: string }[]): string {
+  const recorded = edits.filter((edit) => edit.kind === "executed").length;
+  const pinned = edits.length - recorded;
+  const parts = [
+    pinned > 0 ? (pinned === 1 ? "1 lote fixado à mão" : `${pinned} lotes fixados à mão`) : "",
+    recorded > 0 ? (recorded === 1 ? "1 registado como feito" : `${recorded} registados como feitos`) : "",
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
 export function Shell() {
   const { confirm } = useConfirm();
   const hasData = useAppStore((s) => s.hasData);
@@ -371,7 +383,7 @@ export function Shell() {
     const kept = allEdits.length - edits;
     if (edits > 0 && !(await confirm({
       title: "Apagar as alterações manuais?",
-      message: `Recalcular apaga ${edits === 1 ? "a alteração manual" : `as ${edits} alterações manuais`} (lotes fixados à mão) e calcula o plano de raiz. ${kept > 0 ? "Os lotes registados como feitos ficam. " : ""}Demora cerca de 1 minuto.`,
+      message: `Recalcular apaga ${edits === 1 ? "a alteração manual" : `as ${edits} alterações manuais`} (lotes fixados à mão) e calcula o plano de raiz. ${kept > 0 ? "Os lotes registados como feitos ficam (sem plano válido, um pode ser solto, com aviso). " : ""}Demora cerca de 1 minuto.`,
       confirmLabel: "Recalcular e apagar",
       variant: "danger",
     }))) return;
@@ -740,7 +752,7 @@ export function Shell() {
             flexShrink: 0,
           }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.blue, whiteSpace: "nowrap" }}>
-              {manualEdits.length === 1 ? "1 lote fixado à mão" : `${manualEdits.length} lotes fixados à mão`}
+              {manualEditsSummary(manualEdits)}
             </span>
             <ul aria-label="Lotes fixados à mão" style={{ margin: 0, padding: 0, listStyle: "none", flex: 1, display: "grid", gap: 4 }}>
               {manualEdits.map((edit) => (

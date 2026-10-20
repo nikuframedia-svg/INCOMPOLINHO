@@ -599,12 +599,13 @@ def _refuse_fixed_displaced(segments, lots, data, declaration, lot, day, minute,
     A lot pinned by hand is the planner's decision: it is released first.
     A lot of an older material contract is kept whole by every replan.
     """
+    from backend.plans.manual_edits import EXECUTED
     from backend.scheduler.canonical import _lot_label
     from backend.scheduler.history import displaced_by
     from backend.scheduler.lot_sizing import WHOLE_LOT_MATERIAL_VERSION
     from backend.scheduler.material_quantities import lot_material_version
 
-    anchored = {anchor.lot_id for anchor in getattr(data, "plan_anchors", None) or []}
+    anchors = {anchor.lot_id: anchor for anchor in getattr(data, "plan_anchors", None) or []}
     lots_by_id = {item.id: item for item in lots}
     for segment in sorted(segments, key=lambda item: (item.start_min, item.machine_id)):
         if not displaced_by(
@@ -618,7 +619,14 @@ def _refuse_fixed_displaced(segments, lots, data, declaration, lot, day, minute,
             f"ocupa a {segment.machine_id} das {_clock(segment.start_min)} às "
             f"{_clock(segment.end_min)}"
         )
-        if segment.lot_id in anchored:
+        anchor = anchors.get(segment.lot_id)
+        if anchor is not None and getattr(anchor, "kind", "") == EXECUTED:
+            since = str(getattr(anchor, "start_at", "") or "")[11:16] or _clock(segment.start_min)
+            detail = (
+                f"a {label} já está registada como feita nessa máquina desde {since}; "
+                "desfaça esse registo primeiro."
+            )
+        elif anchor is not None:
             detail = f"a {label}, fixada à mão, {where}; solte-a primeiro."
         elif other is None or lot_material_version(other) < WHOLE_LOT_MATERIAL_VERSION:
             detail = (

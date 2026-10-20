@@ -327,6 +327,24 @@ def test_unavailability_yesterday_setup_before_material_and_pins_are_refused(mor
     pinned.plan_anchors = [PlanAnchor(op1, "M1", f"{pinned.workdays[TODAY]}T08:30")]
     with pytest.raises(ManualMoveError, match="fixada à mão.*solte-a primeiro"):
         _move(morning.baseline, pinned, morning.config, op2, TODAY, 630, eleven)
+    recorded = copy.deepcopy(morning.data)
+    recorded.plan_anchors = [PlanAnchor(
+        op1, "M1", f"{recorded.workdays[TODAY]}T08:30", kind=EXECUTED,
+    )]
+    with pytest.raises(
+        ManualMoveError,
+        match="já está registada como feita nessa máquina desde 08:30; desfaça esse registo",
+    ):
+        _move(morning.baseline, recorded, morning.config, op2, TODAY, 630, eleven)
+
+
+def test_an_empty_tool_never_matches_another_segment():
+    from backend.scheduler.history import displaced_by
+
+    declared = (TODAY, 600, 630, "M1", "")
+    assert not displaced_by(TODAY, 540, 660, "M2", "", declared)
+    assert displaced_by(TODAY, 540, 660, "M1", "", declared)
+    assert displaced_by(TODAY, 540, 660, "M2", "T1", (TODAY, 600, 630, "M1", "T1"))
 
 
 def test_record_before_the_material_is_refused():

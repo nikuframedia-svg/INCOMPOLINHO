@@ -351,7 +351,7 @@ describe("GanttPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
     fireEvent.click((await screen.findAllByText("SKU1"))[0]);
 
-    expect(screen.getByText("Registado como feito: correu em M1 desde 16/03 08:00. Para corrigir, use «Desfazer».")).toBeTruthy();
+    expect(screen.getByText("Registado como feito: correu em M1 desde 16/03 08:00. Para corrigir: «Desfazer» no mesmo dia, ou «Soltar» na lista de alterações.")).toBeTruthy();
   });
 
   it("explica porque um bloco ficou noutra máquina", async () => {

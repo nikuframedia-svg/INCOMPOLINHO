@@ -588,13 +588,16 @@ describe("Shell", () => {
     render(<Shell />);
     expect(await screen.findByText("Referência 6800016767A.10 (PRM043) registado como feito desde 06/03 08:45")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Soltar" })).toBeTruthy();
+    // Conta à parte: não é um lote fixado à mão.
+    expect(screen.getByText("1 registado como feito")).toBeTruthy();
+    expect(screen.queryByText(/fixado à mão/)).toBeNull();
   });
 
   it("Recalcular só pede para apagar as alterações comuns", async () => {
     mockRecordedPlan();
     endpointMocks.recalculate.mockResolvedValue({ status: "ok", plan_revision: 2, score });
     render(<Shell />);
-    await screen.findByText(/registado como feito/);
+    await screen.findByText("1 registado como feito");
     fireEvent.click(screen.getByRole("button", { name: /Recalcular plano/ }));
     // Nada a apagar: recalcula sem o diálogo de confirmação.
     await waitFor(() => expect(endpointMocks.recalculate).toHaveBeenCalled());
