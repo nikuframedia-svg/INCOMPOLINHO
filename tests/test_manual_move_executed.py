@@ -382,13 +382,13 @@ def test_desfazer_the_same_day_takes_the_record_back(morning):
     )
     previous = _snapshot(morning.baseline.segments, morning.baseline.lots, morning.data)
     later = _at(TODAY, 672)
-    assert frozen.historical_schedule_changes(record, previous, now=later) == []
+    assert frozen.historical_schedule_changes(record, previous, now=later, undo=True) == []
     # Anything else of the morning that differs is still refused.
     other = copy.deepcopy(morning.baseline)
     other.segments[0].start_min += 5
     other.segments[0].end_min += 5
     assert frozen.historical_schedule_changes(
-        record, _snapshot(other.segments, other.lots, morning.data), now=later,
+        record, _snapshot(other.segments, other.lots, morning.data), now=later, undo=True,
     )
 
 
@@ -521,8 +521,8 @@ def test_desfazer_later_is_refused_once_the_replanned_work_started():
     """At 14:00 CF has run on M44 since 12:00: «Desfazer» would erase it."""
     record = _state(_after_record(720), recorded=True)
     previous = _state(_BEFORE_RECORD)
-    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(11, 52)) == []
-    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == ["CF"]
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(11, 52), undo=True) == []
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0), undo=True) == ["CF"]
 
 
 def test_desfazer_later_is_not_blocked_by_work_the_same_in_both_plans():
@@ -530,7 +530,7 @@ def test_desfazer_later_is_not_blocked_by_work_the_same_in_both_plans():
     same = [_row("Y", "M30", "T8", 750, 900, 100), _row("Z", "M20", "T9", 360, 1080, 800)]
     record = _state(_after_record(900) + same, recorded=True)
     previous = _state(_BEFORE_RECORD + same)
-    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == []
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0), undo=True) == []
 
 
 def test_repor_the_record_later_cannot_add_work_after_it():
@@ -664,12 +664,12 @@ def test_desfazer_is_not_blocked_by_what_the_original_plan_had_after_the_record(
     previous = _state([dict(original[0], end_min=930, qty=960), *original[1:]])
     later = _state(_after_record(1300) + [_row("Y", "M44", "T5", 1320, 1400, 100)],
                    recorded=True)
-    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 25)) == []
-    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 40)) == []
-    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(13, 30)) == []
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 25), undo=True) == []
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(15, 40), undo=True) == []
+    assert frozen.historical_schedule_changes(later, previous, now=_lisbon(13, 30), undo=True) == []
     started = _state(_after_record(720) + [_row("Y", "M44", "T5", 1320, 1400, 100)],
                      recorded=True)
-    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(15, 40)) == ["CF"]
+    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(15, 40), undo=True) == ["CF"]
     # Repor over the undo stays strict: Y on M43 from 13:00 there has run.
     assert frozen.historical_schedule_changes(previous, later, now=_lisbon(13, 30)) == ["Y"]
 
@@ -686,17 +686,17 @@ def test_desfazer_works_once_the_original_time_of_the_recorded_lot_has_come():
     which the record replanned, waits for 15:00: «Desfazer» puts the plan back."""
     record = _state(_after_record(900), recorded=True)
     previous = _state(_PLANNED_AT_1200)
-    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0)) == []
+    assert frozen.historical_schedule_changes(record, previous, now=_lisbon(14, 0), undo=True) == []
     # Once CF has started on M44 it is still refused.
     started = _state(_after_record(720), recorded=True)
-    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(14, 0)) == ["CF"]
+    assert frozen.historical_schedule_changes(started, previous, now=_lisbon(14, 0), undo=True) == ["CF"]
     # A plan where the lot had started before the record's instant is not
     # the one it replaced: no exception.
     earlier = _state([
         _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
         _row("JTE", "M30", "T2", 600, 1300, 500, setup=60),
     ])
-    assert frozen.historical_schedule_changes(record, earlier, now=_lisbon(14, 0))
+    assert frozen.historical_schedule_changes(record, earlier, now=_lisbon(14, 0), undo=True)
 
 
 def test_desfazer_of_a_record_refused_says_why():
@@ -743,7 +743,7 @@ def test_repor_stays_strict_once_the_original_time_of_the_recorded_lot_has_come(
         "CF", "JTE",
     ]
     # The «Desfazer» direction keeps the same-day exception (achado 3).
-    assert frozen.historical_schedule_changes(record, undone, now=_lisbon(14, 0)) == []
+    assert frozen.historical_schedule_changes(record, undone, now=_lisbon(14, 0), undo=True) == []
 
 
 def test_desfazer_is_not_blocked_by_work_the_same_in_both_plans_on_the_record_machine():
@@ -761,10 +761,60 @@ def test_desfazer_is_not_blocked_by_work_the_same_in_both_plans_on_the_record_ma
         _row("CF", "M44", "T1", 1300, 1380, 100, setup=60),
     ], recorded=True)
     for now in (_lisbon(14, 0), _lisbon(15, 10)):
-        assert frozen.historical_schedule_changes(record, previous, now=now) == []
+        assert frozen.historical_schedule_changes(record, previous, now=now, undo=True) == []
     changed = _state([
         _row("JTE", "M43", "T2", 420, 600, 500, setup=60),
         _row("Z", "M43", "T5", 720, 840, 100),
         _row("CF", "M44", "T1", 1300, 1380, 100, setup=60),
     ], recorded=True)
-    assert frozen.historical_schedule_changes(changed, previous, now=_lisbon(15, 10)) == ["Z"]
+    assert frozen.historical_schedule_changes(changed, previous, now=_lisbon(15, 10), undo=True) == ["Z"]
+
+
+# ── 3.ª revisão de 20/10/2026 (B1: só o «Desfazer» tem a folga) ─────────────
+
+
+def test_a_change_that_drops_the_record_other_than_desfazer_stays_strict():
+    """A replan that releases the record (or an ISOP, a Recalcular) is not
+    the version the record replaced: what it writes into the morning after
+    the record's instant is refused, as without a record."""
+    record = _state(_after_record(900), recorded=True)
+    invented = _state(_BEFORE_RECORD + [_row("W", "M43", "T7", 720, 780, 50)])
+    assert frozen.historical_schedule_changes(record, invented, now=_lisbon(14, 0)) == ["W"]
+    moved = _state([
+        _row("CF", "M43", "T1", 420, 950, 1000, setup=60),
+        _row("JTE", "M50", "T2", 720, 1300, 500, setup=60),
+    ])
+    assert "JTE" in frozen.historical_schedule_changes(record, moved, now=_lisbon(14, 0))
+    # The same version put back by «Desfazer» is accepted.
+    assert frozen.historical_schedule_changes(
+        record, moved, now=_lisbon(14, 0), undo=True,
+    ) == []
+
+
+def test_the_store_gives_the_leeway_only_to_the_version_the_record_replaced(
+    tmp_path, monkeypatch,
+):
+    """``PlansStore``: «Desfazer» names the version the active plan replaced;
+    any other id (or none) is judged strictly."""
+    import json
+
+    import backend.calendar as factory_calendar
+    from backend.plans.store import PlansStore
+
+    monkeypatch.setattr(factory_calendar, "wall_factory_now", lambda _zone: _lisbon(14, 0))
+    store = PlansStore(tmp_path / "plans.db")
+    previous = _state(_PLANNED_AT_1200)
+    with store._conn:
+        for plan_id, payload, undo_to in (
+            ("antes", previous, None),
+            ("registo", _state(_after_record(900), recorded=True), "antes"),
+        ):
+            store._conn.execute(
+                "INSERT INTO plans(id,name,source,payload_json,undo_to) VALUES (?,?,?,?,?)",
+                (plan_id, plan_id, "auto", json.dumps(payload), undo_to),
+            )
+        store._conn.execute("UPDATE plan_runtime SET snapshot_id='registo' WHERE singleton=1")
+    now = _lisbon(14, 0)
+    assert store.protected_changes(previous, now=now, undo_restores="antes") is None
+    assert store.protected_changes(previous, now=now) is not None
+    assert store.protected_changes(previous, now=now, undo_restores="registo") is not None

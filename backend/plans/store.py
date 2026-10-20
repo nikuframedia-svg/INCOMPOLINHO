@@ -416,29 +416,37 @@ class PlansStore:
             (plan_id, revision),
         )
 
-    def _assert_historical_unchanged_locked(self, payload: dict, *, now=None) -> None:
+    def _assert_historical_unchanged_locked(
+        self, payload: dict, *, now=None, undo_restores: str | None = None,
+    ) -> None:
         """``now``: the instant the candidate was calculated at; today's
         production before it is history too (AGENTS §2 rule 4).
 
         The date of today is the real clock's at commit
         (``frozen.commit_instant``): a candidate calculated on an earlier date
         is refused; its own minute counts only on the same date.
+        ``undo_restores``: the version a «Desfazer» puts back.
         """
-        refusal = self._protected_changes_locked(payload, now=now)
+        refusal = self._protected_changes_locked(payload, now=now, undo_restores=undo_restores)
         if refusal is not None:
             raise refusal
 
-    def protected_changes(self, payload: dict, *, now=None):
+    def protected_changes(self, payload: dict, *, now=None, undo_restores: str | None = None):
         """The refusal that replacing the active plan by ``payload`` would
         meet at commit, or ``None``: the same rule, without raising."""
         with self._lock:
-            return self._protected_changes_locked(payload, now=now)
+            return self._protected_changes_locked(payload, now=now, undo_restores=undo_restores)
 
-    def _protected_changes_locked(self, payload: dict, *, now=None):
+    def _protected_changes_locked(
+        self, payload: dict, *, now=None, undo_restores: str | None = None,
+    ):
+        """``undo_restores``: a «Desfazer» of the active version; the
+        record-of-what-ran leeway (``frozen._declared_today``) applies only
+        when it names the version the active one replaced."""
         from backend.plans.frozen import commit_instant, historical_schedule_changes
 
         row = self._conn.execute(
-            "SELECT p.payload_json FROM plans p "
+            "SELECT p.payload_json,p.undo_to FROM plans p "
             "JOIN plan_runtime r ON r.snapshot_id=p.id WHERE r.singleton=1"
         ).fetchone()
         if row is None:
@@ -447,7 +455,8 @@ class PlansStore:
         today, now = commit_instant(
             now, str((before.get("config") or {}).get("timezone") or "Europe/Lisbon"),
         )
-        changed = historical_schedule_changes(before, payload, today=today, now=now)
+        undo = bool(undo_restores) and undo_restores == row[1]
+        changed = historical_schedule_changes(before, payload, today=today, now=now, undo=undo)
         if not changed:
             return None
         return HistoricalPlanProtectedError(changed, _lot_labels(changed, payload, before))
@@ -657,7 +666,9 @@ class PlansStore:
                 if recalculate_from_start:
                     self._assert_recalculation_context_locked(payload)
                 else:
-                    self._assert_historical_unchanged_locked(payload, now=planning_now)
+                    self._assert_historical_unchanged_locked(
+                        payload, now=planning_now, undo_restores=undo_restores,
+                    )
                 plan_id = uuid4().hex
                 name = name or "Plano aplicado"
                 if recalculate_from_start and not kind:

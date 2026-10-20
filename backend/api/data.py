@@ -2140,6 +2140,7 @@ async def undo_last_change(body: dict):
         context = api_write_context()
         refusal = store.protected_changes(
             plan["payload"], now=context.planning_now if context is not None else None,
+            undo_restores=plan["id"],
         )
         if refusal is not None:
             raise HTTPException(409, {

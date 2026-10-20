@@ -269,7 +269,7 @@ _MOVABLE_LOT_FIELDS = ("machine_id", "prod_min", "setup_min")
 
 def historical_schedule_changes(
     before: dict, after: dict, *, today: str | None = None, now: datetime | None = None,
-    engine_data=None, config=None,
+    engine_data=None, config=None, undo: bool = False,
 ) -> list[str]:
     """Started lots whose history changed (same dataset), or new past production.
 
@@ -294,6 +294,10 @@ def historical_schedule_changes(
     rows, and what it displaced cut at its setup start, are set aside;
     every other row before ``now`` is judged as above. The same reading
     in the other direction lets «Desfazer» take the record back that day.
+    ``undo``: ``after`` is the version the active plan replaced, put back
+    by «Desfazer» (``PlansStore``); only then is the time the record
+    occupied set aside on ``after``. Any other change that drops the record
+    (a replan that releases it, an ISOP, ...) is judged strictly.
     """
     from backend.calendar import factory_now
     from backend.scheduler.history import cut_row
@@ -489,7 +493,7 @@ def historical_schedule_changes(
     kept_today = elapsed_today(before)
     after_today = elapsed_today(after)
     after_dates = calendar_dates(after)
-    declared = _declared_today(before, after, current_day, now_min)
+    declared = _declared_today(before, after, current_day, now_min, undo=undo)
     if declared is not None:
         from backend.scheduler.history import displaced_by
 
@@ -552,6 +556,11 @@ def historical_schedule_changes(
             # (``_declared_today`` refuses when the lot ran on the other side).
             after_today = ran(after_today)
             kept_today = without_displaced(kept_today, before)
+        elif not undo:
+            # A change other than «Desfazer» that drops the record: only the
+            # record's own rows and what it displaced are set aside.
+            kept_today = ran(kept_today)
+            after_today = without_displaced(after_today, after)
         else:
             kept_today = ran(kept_today)
             after_today = ran(
@@ -595,7 +604,9 @@ def historical_schedule_changes(
     return sorted(lot_id for lot_id in changed if not dropped_unmade(lot_id))
 
 
-def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
+def _declared_today(
+    before: dict, after: dict, current_day: str, now_min: int, *, undo: bool = False,
+):
     """The one record of what ran today that differs between two snapshots.
 
     ``(side holding it, lot id, declaration)`` (``history.displaced_by``),
@@ -603,7 +614,7 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     gone (``manual_edits.EXECUTED``, decisão do Luís, 20/10/2026), exactly
     one, dated today: its lot has rows before ``now`` on the anchor's
     machine only, on that side; on the other, none before ``now`` or, in a
-    «Desfazer» (the record on the active plan), none that started before
+    «Desfazer» (``undo``, the record on the active plan), none that started before
     the record's instant (where the lot was planned before it, once that
     time has come too, is the position the record replaced; a «Repor» stays
     strict: it may not erase what the lot ran since). The setup start is
@@ -657,7 +668,7 @@ def _declared_today(before: dict, after: dict, current_day: str, now_min: int):
     setup_start = int(math.floor(min(float(segment["start_min"]) for segment in ran)))
     boundary = as_boundary((record.get("engine_data") or {}).get("history_boundary"))
     since = min(boundary[1], now_min) if boundary is not None and boundary[0] == day else now_min
-    limit = since if side == "before" else now_min
+    limit = since if undo and side == "before" else now_min
     if since <= setup_start or any(
         (int(s["day_idx"]), float(s["start_min"])) < (day, limit) for s in rows_before_now(other)
     ):

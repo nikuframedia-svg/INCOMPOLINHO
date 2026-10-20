@@ -528,7 +528,11 @@ lotes da mesma ferramenta):
        Só as linhas do próprio lote registado ficam fora da comparação e,
        no «Desfazer», o que o plano sem registo tinha na máquina (ou
        ferramenta) do registo desde o instante do registo e que o plano com
-       registo não tem igual (esse tempo foi do registo; nunca correu); tudo
+       registo não tem igual (esse tempo foi do registo; nunca correu). Esta
+       folga vale só no «Desfazer» que repõe a versão que o registo
+       substituiu (`PlansStore`, `undo_restores` igual ao `undo_to` do plano
+       ativo); qualquer outra alteração que tire o registo (replaneamento
+       que o solta, ISOP, «Recalcular») é comparada com rigor; tudo
        o resto, em qualquer máquina, é
        comparado até agora (um
        «Desfazer» ou «Repor» mais tarde não apaga nem acrescenta trabalho
