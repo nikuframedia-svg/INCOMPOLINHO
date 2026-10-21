@@ -157,6 +157,17 @@ def _assert_activatable_payload(payload: dict) -> None:
         raise PlanValidationError(anchor_errors)
 
 
+def _records_unproduced(payload: dict, lot_id, previous_version_id) -> bool:
+    """``payload`` holds the «Mover lote» of ``lot_id`` as not produced today,
+    made over ``previous_version_id`` (``manual_plan.apply_move``)."""
+    return bool(lot_id) and bool(previous_version_id) and any(
+        isinstance(edit, dict) and edit.get("lot_id") == lot_id
+        and edit.get("unproduced_today") is True
+        and edit.get("previous_version_id") == previous_version_id
+        for edit in payload.get("manual_edits") or []
+    )
+
+
 class PlansStore:
     """Small, thread-safe SQLite store with denormalized list metadata."""
 
@@ -418,6 +429,7 @@ class PlansStore:
 
     def _assert_historical_unchanged_locked(
         self, payload: dict, *, now=None, undo_restores: str | None = None,
+        unproduced: str | None = None,
     ) -> None:
         """``now``: the instant the candidate was calculated at; today's
         production before it is history too (AGENTS §2 rule 4).
@@ -426,37 +438,64 @@ class PlansStore:
         (``frozen.commit_instant``): a candidate calculated on an earlier date
         is refused; its own minute counts only on the same date.
         ``undo_restores``: the version a «Desfazer» puts back.
+        ``unproduced``: the lot «Mover lote» says was not produced today.
         """
-        refusal = self._protected_changes_locked(payload, now=now, undo_restores=undo_restores)
+        refusal = self._protected_changes_locked(
+            payload, now=now, undo_restores=undo_restores, unproduced=unproduced,
+        )
         if refusal is not None:
             raise refusal
 
-    def protected_changes(self, payload: dict, *, now=None, undo_restores: str | None = None):
+    def protected_changes(
+        self, payload: dict, *, now=None, undo_restores: str | None = None,
+        unproduced: str | None = None,
+    ):
         """The refusal that replacing the active plan by ``payload`` would
         meet at commit, or ``None``: the same rule, without raising."""
         with self._lock:
-            return self._protected_changes_locked(payload, now=now, undo_restores=undo_restores)
+            return self._protected_changes_locked(
+                payload, now=now, undo_restores=undo_restores, unproduced=unproduced,
+            )
 
     def _protected_changes_locked(
         self, payload: dict, *, now=None, undo_restores: str | None = None,
+        unproduced: str | None = None,
     ):
         """``undo_restores``: a «Desfazer» of the active version; the
         record-of-what-ran leeway (``frozen._declared_today``) applies only
-        when it names the version the active one replaced."""
+        when it names the version the active one replaced.
+
+        A lot that had only started today and is moved as not produced
+        (decisão do Luís, 21/10/2026, ``frozen._unproduced_today``): its
+        morning rows on the active plan are set aside only when ``unproduced``
+        names it and ``payload`` records that move over the active version;
+        in the «Desfazer» of that move, its rows on the version put back."""
         from backend.plans.frozen import commit_instant, historical_schedule_changes
 
         row = self._conn.execute(
-            "SELECT p.payload_json,p.undo_to FROM plans p "
+            "SELECT p.payload_json,p.undo_to,p.id FROM plans p "
             "JOIN plan_runtime r ON r.snapshot_id=p.id WHERE r.singleton=1"
         ).fetchone()
         if row is None:
             return None
         before = json.loads(row[0])
+        active_id = row[2]
         today, now = commit_instant(
             now, str((before.get("config") or {}).get("timezone") or "Europe/Lisbon"),
         )
         undo = bool(undo_restores) and undo_restores == row[1]
-        changed = historical_schedule_changes(before, payload, today=today, now=now, undo=undo)
+        signal = None
+        if unproduced and _records_unproduced(payload, unproduced, active_id):
+            signal = ("before", unproduced)
+        elif undo:
+            undone = [
+                str(edit.get("lot_id")) for edit in before.get("manual_edits") or []
+                if _records_unproduced(before, edit.get("lot_id"), undo_restores)
+            ]
+            signal = ("after", undone[0]) if len(undone) == 1 else None
+        changed = historical_schedule_changes(
+            before, payload, today=today, now=now, undo=undo, unproduced=signal,
+        )
         if not changed:
             return None
         return HistoricalPlanProtectedError(changed, _lot_labels(changed, payload, before))
@@ -643,9 +682,11 @@ class PlansStore:
         self, operation_id: str, payload: dict | None, response, *, source: str,
         recalculate_from_start: bool = False, planning_now=None,
         name: str | None = None, kind: str = "", undo_restores: str | None = None,
+        unproduced: str | None = None,
     ) -> None:
         """``name``: what the write changed (``history.snapshot_name``);
-        ``undo_restores``: the version a «Desfazer» puts back."""
+        ``undo_restores``: the version a «Desfazer» puts back;
+        ``unproduced``: the lot «Mover lote» says was not produced today."""
         from backend.plans.serialize import assert_snapshot_integrity
 
         if payload is not None:
@@ -668,6 +709,7 @@ class PlansStore:
                 else:
                     self._assert_historical_unchanged_locked(
                         payload, now=planning_now, undo_restores=undo_restores,
+                        unproduced=unproduced,
                     )
                 plan_id = uuid4().hex
                 name = name or "Plano aplicado"

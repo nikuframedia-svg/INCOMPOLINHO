@@ -201,3 +201,11 @@ class EngineData:
     # absences, eligibility) judge the plan only from it on
     # (``scheduler.history``). ``None``: the whole plan is judged.
     history_boundary: list[int] | None = None
+    # Lots moved by hand that, by the plan, had only started today: they
+    # were not produced (decisão do Luís, 21/10/2026). Each item is
+    # ``{lot_id, tool_id, date, start_min, since}``: on ``date`` the tool is
+    # kept free of new work from ``start_min`` to ``since`` (the move's
+    # minute) in every calculation, so «Recalcular plano», which plans from
+    # D0, never puts the lot back in that morning
+    # (``frozen._install_frozen_reservations``). A new ISOP drops it.
+    unproduced_today: list[dict] = field(default_factory=list)

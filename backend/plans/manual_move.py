@@ -84,6 +84,10 @@ class ManualMoveResult:
     executed: bool = False
     notice: str | None = None
     history_boundary: list[int] | None = None
+    # A lot that, by the plan, had only started today is moved as not
+    # produced (decisão do Luís, 21/10/2026): ``{lot_id, tool_id, date,
+    # start_min, since}``, the morning it leaves (``EngineData.unproduced_today``).
+    unproduced_today: dict | None = None
 
 
 def _move_protection(
@@ -639,9 +643,10 @@ def _refuse_fixed_displaced(segments, lots, data, declaration, lot, day, minute,
 
 
 def _declared_history_changes(
-    segments, lots, data, complete, candidate_data, config, freeze_day, now,
+    segments, lots, data, complete, candidate_data, config, freeze_day, now, unproduced=None,
 ) -> list[str]:
-    """What the commit guard would refuse in a record of what ran, checked now."""
+    """What the commit guard would refuse in a record of what ran (or a lot
+    moved as not produced today, ``unproduced``), checked now."""
     from dataclasses import asdict
 
     from backend.plans.frozen import historical_schedule_changes
@@ -664,6 +669,29 @@ def _declared_history_changes(
         snapshot(candidate_data, complete.segments, complete.lots, complete.history_boundary),
         today=str(data.workdays[freeze_day])[:10], now=now,
         engine_data=candidate_data, config=config,
+        unproduced=("before", unproduced) if unproduced else None,
+    )
+
+
+def _unproduced_notice(moved_segments, lot, freeze_day, target_day, start_min, machine_id,
+                       data, *, executed=False) -> str:
+    """«A … fica registada como não produzida hoje (estava na PRM043 das 07:00
+    às 15:50) e passa para 22/10 às 16:00.» (decisão do Luís, 21/10/2026)."""
+    from backend.plans.frozen import _date_label
+    from backend.scheduler.canonical import _lot_label
+
+    today = [s for s in moved_segments if s.day_idx == freeze_day and s.end_min > s.start_min]
+    machine = today[0].machine_id if today else machine_id
+    was = (
+        f"estava na {machine} das {_clock(min(s.start_min for s in today))} às "
+        f"{_clock(max(s.end_min for s in today))}"
+    )
+    if executed:
+        return f" Onde o plano a tinha hoje ({was}) fica como não produzida."
+    where = f" na {machine_id}" if machine_id != machine else ""
+    return (
+        f"A {_lot_label(lot)} fica registada como não produzida hoje ({was}) e passa "
+        f"para {_date_label(target_day, data)} às {_clock(start_min)}{where}."
     )
 
 
@@ -2180,10 +2208,35 @@ def _move_lot(
         operator_alerts=[],
     )
     started_segments, _ = _frozen_started_lots(baseline_result, freeze_day, now_min)
-    if any(segment.lot_id == lot_id for segment in started_segments):
-        raise ManualMoveError(
-            f"Lote {lot_id} já iniciado está congelado e não pode ser movido."
-        )
+    started_rows = [segment for segment in started_segments if segment.lot_id == lot_id]
+    # A lot that, by the plan, only started today moves freely: it was not
+    # produced (decisão do Luís, 21/10/2026). Started on an earlier day, or
+    # recorded as run, it stays as it is.
+    unproduced = bool(started_rows)
+    if started_rows:
+        from backend.plans.frozen import _date_label
+        from backend.plans.manual_edits import EXECUTED
+        from backend.scheduler.canonical import _lot_label
+
+        earlier = [segment for segment in started_rows if segment.day_idx < freeze_day]
+        if earlier:
+            first_day = min(segment.day_idx for segment in earlier)
+            raise ManualMoveError(
+                f"Lote {_lot_label(lot)} começou em {_date_label(first_day, data)} e está "
+                "congelado; não pode ser movido."
+            )
+        record = next((
+            anchor for anchor in getattr(data, "plan_anchors", None) or []
+            if anchor.lot_id == lot_id and getattr(anchor, "kind", "") == EXECUTED
+        ), None)
+        if record is not None:
+            since = str(getattr(record, "start_at", "") or "")[11:16] or _clock(
+                min(segment.start_min for segment in started_rows),
+            )
+            raise ManualMoveError(
+                f"A {_lot_label(lot)} está registada como feita desde {since}; "
+                "desfaça esse registo primeiro."
+            )
 
     current_machine = moved_segments[0].machine_id
     machine_id = target_machine or current_machine
@@ -2421,24 +2474,31 @@ def _move_lot(
     )
     candidate_segments, candidate_lots = complete.segments, complete.lots
     notice = None
-    if declared:
-        # The commit guard's own reading, now: only the record changes the
-        # morning (``frozen._declared_today``).
-        if _declared_history_changes(
-            segments, input_lots, data, complete, candidate_data, config, freeze_day, now,
-        ):
-            raise _refused_move(
-                lot_id, target_day, start_min, machine_id, data, _HISTORY_CHANGED, lot=lot,
-            )
-        notice = _executed_notice(
-            complete, lot_id, declaration, start_min, segments, candidate_data,
-        )
-    # Its setup too: nothing new is placed in time already gone today.
-    elif any(
+    if not declared and any(
         segment.lot_id == lot_id and started_before(segment, freeze_day, now_min)
         for segment in candidate_segments
     ):
+        # Its setup too: nothing new is placed in time already gone today.
         raise ManualMoveError(_elapsed_text(target_day, start_min, data, now_min, setup=True))
+    # The commit guard's own reading, now: only the record (or the lot that
+    # was not produced) changes the morning (``frozen._declared_today``,
+    # ``frozen._unproduced_today``).
+    if (declared or unproduced) and _declared_history_changes(
+        segments, input_lots, data, complete, candidate_data, config, freeze_day, now,
+        unproduced=lot_id if unproduced else None,
+    ):
+        raise _refused_move(
+            lot_id, target_day, start_min, machine_id, data, _HISTORY_CHANGED, lot=lot,
+        )
+    if declared:
+        notice = _executed_notice(
+            complete, lot_id, declaration, start_min, segments, candidate_data,
+        )
+    if unproduced:
+        notice = (notice or "") + _unproduced_notice(
+            moved_segments, lot, freeze_day, target_day, start_min, machine_id,
+            candidate_data, executed=declared,
+        )
     score, gate_report = complete.score, complete.gate_report
     if progress:
         progress("finalizing", 90, "A preparar a comparação")
@@ -2478,4 +2538,12 @@ def _move_lot(
         executed=declared,
         notice=notice,
         history_boundary=list(complete.history_boundary) if declared else None,
+        unproduced_today={
+            "lot_id": lot_id, "tool_id": started_rows[0].tool_id,
+            "date": str(data.workdays[freeze_day])[:10],
+            "start_min": int(min(
+                segment.start_min for segment in started_rows if segment.day_idx == freeze_day
+            )),
+            "since": int(now_min),
+        } if unproduced else None,
     )

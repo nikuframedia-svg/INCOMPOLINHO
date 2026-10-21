@@ -635,7 +635,23 @@ def test_history_guard_keeps_the_size_of_a_lot_started_today():
 # ── Manual moves ───────────────────────────────────────────────────────
 
 
+def _engine_snapshot(segments, lots, data) -> dict:
+    from dataclasses import asdict
+
+    return {
+        "dataset_info": {"id": "ds"},
+        "engine_data": {"workdays": list(data.workdays), "plan_anchors": []},
+        "config": {"timezone": "Europe/Lisbon"},
+        "segments": [asdict(segment) for segment in segments],
+        "lots": [asdict(lot) for lot in lots],
+    }
+
+
 def test_manual_move_at_eleven_respects_the_morning():
+    """OP1, by the plan, started at 08:00 today: moved at 11:00 it was not
+    produced (decisão do Luís, 21/10/2026) and goes whole to the target;
+    nothing new is placed before 11:00. The commit guard accepts it only
+    with the server's signal for OP1."""
     from backend.plans.manual_move import ManualMoveError, move_lot
 
     config = _config()
@@ -646,11 +662,27 @@ def test_manual_move_at_eleven_respects_the_morning():
     })
     eleven = _at(1, 660)
 
-    with pytest.raises(ManualMoveError, match="já iniciado"):
-        move_lot(
-            baseline.segments, baseline.lots, {}, data, config,
-            lot_id=lots["OP1"].id, target_day=2, target_start_min=420, now=eleven,
-        )
+    move = move_lot(
+        baseline.segments, baseline.lots, {}, data, config,
+        lot_id=lots["OP1"].id, target_day=2, target_start_min=420, now=eleven,
+    )
+    assert move.unproduced_today and not move.executed
+    assert "fica registada como não produzida hoje" in move.notice
+    op1 = sorted(
+        (s.day_idx, s.production_start_min, s.qty)
+        for s in move.segments if s.lot_id == lots["OP1"].id and s.qty
+    )
+    assert op1[0][:2] == (2, 420) and sum(item[2] for item in op1) == 200
+    assert not [
+        s for s in move.segments
+        if s.day_idx == 1 and s.start_min < 660 and s.end_min > s.start_min
+    ]
+    before = _engine_snapshot(baseline.segments, baseline.lots, data)
+    after = _engine_snapshot(move.segments, move.lots, data)
+    assert frozen.historical_schedule_changes(
+        before, after, now=eleven, unproduced=("before", lots["OP1"].id),
+    ) == []
+    assert frozen.historical_schedule_changes(before, after, now=eleven) == [lots["OP1"].id]
     # Today before now records what ran (tests/test_manual_move_executed.py,
     # decisão de 20/10/2026); an earlier day stays as it is.
     with pytest.raises(ManualMoveError, match="só se pode registar o que já correu hoje"):

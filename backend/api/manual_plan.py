@@ -145,6 +145,8 @@ def _response(candidate: ManualMoveResult, score_previous: dict | None = None) -
         # A time of today already gone: what ran (decisão de 20/10/2026).
         "executed": bool(candidate.executed),
         "notice": candidate.notice,
+        # Only started today by the plan: moved as not produced (21/10/2026).
+        "unproduced_today": bool(candidate.unproduced_today),
     }
 
 
@@ -295,6 +297,15 @@ def _require_executed_preview(candidate: ManualMoveResult) -> None:
                 "como já produzido; verifique de novo. O plano ativo não foi alterado."
             ),
         })
+    # A lot moved as not produced today (21/10/2026): only as the check said.
+    if candidate.unproduced_today and not candidate.notice:
+        raise HTTPException(409, {
+            "code": "preview_required",
+            "message": (
+                "A verificação não mostrou que o lote fica como não produzido hoje; "
+                "verifique de novo. O plano ativo não foi alterado."
+            ),
+        })
 
 
 @router.post("/move-apply")
@@ -393,7 +404,13 @@ async def apply_move(body: dict):
             )
             if moved is not None else "Lote movido à mão"
         )
-        set_change_label(change, kind="manual_move")
+        # The commit guard sets the lot's morning aside only on this signal,
+        # from the server's own checked candidate (never from the request).
+        unproduced = candidate.unproduced_today
+        set_change_label(
+            change, kind="manual_move",
+            unproduced=candidate.lot_id if unproduced else None,
+        )
 
         state.save_current()
         target_date = str(state.engine_data.workdays[candidate.target_day])[:10]
@@ -414,6 +431,22 @@ async def apply_move(body: dict):
                 kind=EXECUTED if candidate.executed else "",
             )
         )
+        # The morning it left stays free in every later calculation of the
+        # day, «Recalcular plano» included; a record of what ran replaces it.
+        today = str(candidate.planning_now or "")[:10]
+        kept = [
+            entry for entry in state.engine_data.unproduced_today or []
+            if str(entry.get("date") or "") == today
+        ]
+        earlier = [entry for entry in kept if entry.get("lot_id") == candidate.lot_id]
+        kept = [entry for entry in kept if entry.get("lot_id") != candidate.lot_id]
+        if candidate.executed:
+            earlier = []
+        elif unproduced:
+            earlier = [{**unproduced, "start_min": min(
+                int(entry.get("start_min") or 0) for entry in [*earlier, unproduced]
+            )}]
+        state.engine_data.unproduced_today = [*kept, *earlier]
         edit = {
             "id": f"edit_{uuid4().hex[:12]}",
             "created_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
@@ -427,6 +460,7 @@ async def apply_move(body: dict):
             "previous_version_id": previous_version_id,
             "delivery_risk_confirmed": bool(candidate.requires_confirmation and confirmed),
             **({"kind": EXECUTED} if candidate.executed else {}),
+            **({"unproduced_today": True} if unproduced else {}),
         }
         # One record per pinned lot: a second move of the same lot replaces it.
         state.manual_edits = [

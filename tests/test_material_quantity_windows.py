@@ -206,6 +206,8 @@ def test_empty_mounting_context_preserves_legacy_engine_identity():
     legacy.pop("residual_lot_remainders")
     # No history boundary (AGENTS §2 rule 4, 13/10/2026) is no new key either.
     legacy.pop("history_boundary")
+    # Nor is an empty list of lots moved as not produced today (21/10/2026).
+    legacy.pop("unproduced_today")
     assert value_fingerprint(data) == value_fingerprint(legacy)
 
 

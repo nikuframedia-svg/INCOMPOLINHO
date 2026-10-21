@@ -472,7 +472,9 @@ lotes da mesma ferramenta):
    - Hoje, os segmentos que começam antes do "agora" ficam congelados como os
      dos dias anteriores (`frozen.started_before`); um segmento a decorrer
      nesse minuto fica inteiro, e a execução montada continua a partir do
-     último deles com a regra de continuidade acima.
+     último deles com a regra de continuidade acima. Exceção: o lote que,
+     pelo plano, só começou hoje e o planeador move à mão (abaixo,
+     21/10/2026).
    - Nenhuma produção ou setup novo entra hoje antes do "agora", em nenhuma
      máquina: no problema residual há um bloqueio temporário de máquinas e
      ferramentas de 00:00 até ao "agora" no dia de planeamento
@@ -549,6 +551,42 @@ lotes da mesma ferramenta):
        (perto do limite de 60 s com o servidor carregado); afinação 07:00–08:00, produção desde as 08:00; a manhã das outras
        máquinas igual; a CF589 passa para 21/10 13:33–22:23; 0 atrasos
        (como antes), 187 setups (antes 188).
+   - **Lote começado hoje (decidido pelo Luís a 21/10/2026).** Caso real:
+     na revisão 179 (ISOP de 21/10) a PRM043 tinha a CF589 das 07:00 às 15:50
+     e a JTE001 a partir das 15:50; às 10:34 mover a CF589 para 22/10 16:00
+     era recusado («já iniciado está congelado»). Agora, sem botões novos:
+     - Um lote com linhas antes de agora só no dia de hoje, nenhuma de um
+       dia anterior e sem registo do que correu (`frozen._unproduced_today`)
+       move-se livremente («Mover lote» ou arrastar): quer dizer «não foi
+       produzido». As linhas dele antes de agora saem e o lote inteiro vai
+       para o destino; na manhã libertada não entra nada novo (bloqueio de
+       00:00 até agora); o resto é replaneado a partir de agora. A
+       verificação diz, antes de «Aplicar», «A <lote> fica registada como não
+       produzida hoje (estava na <máquina> das HH:MM às HH:MM) e passa para
+       dd/mm às HH:MM.» (`manual_move._unproduced_notice`); sem esse aviso a
+       aplicação é recusada.
+     - Começado num dia anterior: recusado («Lote … começou em dd/mm e está
+       congelado»); registado como feito: recusado («… está registada como
+       feita desde HH:MM; desfaça esse registo primeiro»).
+     - Para uma hora de hoje já passada (registo do que correu, acima) vale
+       o mesmo: a troca amarela/verde funciona pelas duas ordens.
+     - A proteção na gravação só põe de lado as linhas desse lote antes de
+       agora com um sinal do servidor: `manual_plan.apply_move` dá-o a
+       partir da sua própria verificação (`set_change_label(unproduced=…)`,
+       nunca do pedido) e o `PlansStore` só o aceita se o plano novo
+       guarda esse movimento sobre a versão ativa (`edit.unproduced_today`
+       e `previous_version_id`); no «Desfazer» desse movimento, do lado da
+       versão reposta. Tudo o resto é comparado com rigor (o «Repor» também);
+       se já começou trabalho no tempo libertado, o «Desfazer» é recusado.
+     - «Recalcular plano» (de D0) não volta a pôr o lote nessa manhã: o
+       facto fica em `EngineData.unproduced_today` (lote, ferramenta, dia,
+       início, minuto do movimento) e, nesse dia, a ferramenta fica livre de
+       trabalho novo desde o início da manhã que o lote deixou até
+       max(movimento, agora) (`frozen._install_frozen_reservations`); a
+       posição exata não é mantida. Noutro dia não vale; um ISOP novo
+       apaga-o; um registo do que correu do mesmo lote substitui-o.
+     - Prova: `tests/test_manual_move_executed.py` (secção «Lote começado
+       hoje»), `tests/test_rev179_unproduced.py` (fixture privada rev179).
    - **Uma só regra para o que já aconteceu** (`scheduler/history.py`):
      o que começa antes do "agora" já aconteceu. Um dado com hora (avaria ou
      indisponibilidade de máquina/ferramenta, ausência ou corte de
@@ -653,9 +691,11 @@ lotes da mesma ferramenta):
    sai da proteção; o resto de um lote começado é realocado como o mesmo lote,
    nunca redimensionado; depois de cada caminho (posições fixas, realocação,
    lote fixo primeiro, melhoria) a produção congelada tem de estar fisicamente
-   igual (`_keeps_frozen`), senão o candidato é recusado. Mover um lote já
-   começado continua recusado; mover para uma hora de hoje já passada regista
-   o que correu (acima, 20/10/2026). Caminho por quantidades no §6.
+   igual (`_keeps_frozen`), senão o candidato é recusado. Mover um lote
+   começado num dia anterior, ou registado como feito, continua recusado; um
+   lote que só começou hoje pelo plano move-se como não produzido (acima,
+   21/10/2026); mover para uma hora de hoje já passada regista o que correu
+   (acima, 20/10/2026). Caminho por quantidades no §6.
    **Calendário e ajuste rápido (11/10/2026).** As datas das entregas de um
    lote começado seguem o calendário atual: um feriado ou dia extra novo
    volta a datá-las (`U`, `I`, `R`, `R_ciclo`, envio para subcontratação)

@@ -303,6 +303,7 @@ def _commit(
                 name=snapshot_name(history, state.config, staged.config),
                 kind=history.get("kind") or "",
                 undo_restores=history.get("undo_restores"),
+                unproduced=history.get("unproduced"),
                 **scope,
             )
         except BaseException:

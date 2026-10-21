@@ -61,6 +61,8 @@ def _jsonable(value: Any) -> Any:
             raw.pop("residual_lot_remainders", None)
         if isinstance(value, EngineData) and value.history_boundary is None:
             raw.pop("history_boundary", None)
+        if isinstance(value, EngineData) and not value.unproduced_today:
+            raw.pop("unproduced_today", None)
         if isinstance(value, EngineData):
             # An ordinary pin keeps the payload it had before ``kind`` existed.
             for anchor in raw.get("plan_anchors") or []:

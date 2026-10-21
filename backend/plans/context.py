@@ -31,6 +31,10 @@ class MutationContext:
     # «Desfazer»: the snapshot being put back; the new one takes its place in
     # the chain (its own «Desfazer» goes further back, never forward).
     undo_restores: str | None = None
+    # «Mover lote» of a lot that, by the plan, had only started today: the
+    # server's own signal that it was not produced (decisão do Luís,
+    # 21/10/2026), read by the commit guard (``frozen._unproduced_today``).
+    unproduced_lot: str | None = None
 
 
 _context: ContextVar[MutationContext | None] = ContextVar("plan_mutation", default=None)
@@ -58,8 +62,15 @@ def set_planning_now(now: datetime | str | None) -> None:
     context.planning_now = datetime.fromisoformat(now) if isinstance(now, str) else now
 
 
-def set_change_label(label: str, *, kind: str = "", undo_restores: str | None = None) -> None:
-    """Name the change this write makes (the snapshot name in «Planos»)."""
+def set_change_label(
+    label: str, *, kind: str = "", undo_restores: str | None = None,
+    unproduced: str | None = None,
+) -> None:
+    """Name the change this write makes (the snapshot name in «Planos»).
+
+    ``unproduced``: the lot a «Mover lote» says was not produced today; set
+    only by ``manual_plan.apply_move`` from its own checked candidate.
+    """
     context = _context.get()
     if context is None or not label:
         return
@@ -68,6 +79,8 @@ def set_change_label(label: str, *, kind: str = "", undo_restores: str | None = 
         context.change_kind = kind
     if undo_restores:
         context.undo_restores = undo_restores
+    if unproduced:
+        context.unproduced_lot = str(unproduced)
 
 
 def set_default_change_label(label: str | None) -> None:
@@ -86,6 +99,7 @@ def change_history(context: MutationContext | None) -> dict:
         "default_label": context.default_label,
         "kind": context.change_kind,
         "undo_restores": context.undo_restores,
+        "unproduced": context.unproduced_lot,
     }
 
 

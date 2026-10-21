@@ -818,3 +818,542 @@ def test_the_store_gives_the_leeway_only_to_the_version_the_record_replaced(
     assert store.protected_changes(previous, now=now, undo_restores="antes") is None
     assert store.protected_changes(previous, now=now) is not None
     assert store.protected_changes(previous, now=now, undo_restores="registo") is not None
+
+
+# ── Lote começado hoje (decisão do Luís, 21/10/2026) ────────────────────────
+# Revisão 179 (PRM043): CF589 planned 07:00–15:50 and JTE001 from 15:50; at
+# 10:34 moving CF589 to 22/10 16:00 was refused («já iniciado está
+# congelado»). A lot that, by the plan, only started today moves freely: it
+# was not produced. Its morning rows leave, nothing new enters before now,
+# «Recalcular» does not put it back there and «Desfazer» works the same day.
+# Started on an earlier day or recorded as run, it stays refused. The commit
+# guard sets its morning aside only on the server's own signal.
+
+
+def _unproduced(move, data):
+    """``data`` and plan after ``move-apply`` of a lot moved as not produced."""
+    applied = copy.deepcopy(data)
+    applied.plan_anchors = [
+        *(anchor for anchor in applied.plan_anchors if anchor.lot_id != move.lot_id),
+        PlanAnchor(
+            move.lot_id, move.target_machine,
+            f"{data.workdays[move.target_day]}T{move.target_start_min // 60:02d}:"
+            f"{move.target_start_min % 60:02d}",
+        ),
+    ]
+    applied.unproduced_today = [dict(move.unproduced_today)]
+    plan = ScheduleResult(
+        segments=move.segments, lots=move.lots, score=move.score, time_ms=0, warnings=[],
+        operator_alerts=[],
+    )
+    return applied, plan
+
+
+def test_a_lot_started_today_moves_as_not_produced(morning):
+    nine = _at(TODAY, 540)
+    op1 = morning.lots["OP1"].id
+    move = _move(morning.baseline, morning.data, morning.config, op1, 3, 420, nine)
+    assert not move.executed
+    assert move.unproduced_today == {
+        "lot_id": op1, "tool_id": "T1", "date": morning.data.workdays[TODAY][:10],
+        "start_min": 480, "since": 540,
+    }
+    assert move.notice == (
+        "A Referência SKU_OP1 · T1 (M1) fica registada como não produzida hoje (estava na "
+        "M1 das 08:00 às 10:30) e passa para 05/03 às 07:00."
+    )
+    assert "LOT_" not in move.notice
+    assert min(
+        (s.day_idx, s.production_start_min) for s in move.segments if s.lot_id == op1 and s.qty
+    ) == (3, 420)
+    assert not [
+        s for s in move.segments
+        if s.day_idx == TODAY and s.start_min < 540 and s.end_min > s.start_min
+    ]
+    before = _snapshot(morning.baseline.segments, morning.baseline.lots, morning.data)
+    after = _snapshot(move.segments, move.lots, morning.data)
+    assert frozen.historical_schedule_changes(
+        before, after, now=nine, unproduced=("before", op1),
+    ) == []
+    assert frozen.historical_schedule_changes(before, after, now=nine) == [op1]
+    # «Desfazer» the same day: only with the signal for the lot it moved.
+    later = _at(TODAY, 560)
+    assert frozen.historical_schedule_changes(
+        after, before, now=later, undo=True, unproduced=("after", op1),
+    ) == []
+    assert frozen.historical_schedule_changes(after, before, now=later, undo=True) == [op1]
+    # «Repor» the move over that «Desfazer» stays strict (OP2, replanned
+    # from 09:00, is in the morning too).
+    assert frozen.historical_schedule_changes(before, after, now=later) == sorted(
+        [op1, morning.lots["OP2"].id],
+    )
+
+
+def test_a_lot_recorded_as_run_or_started_on_an_earlier_day_stays_refused(morning):
+    nine = _at(TODAY, 540)
+    op1 = morning.lots["OP1"].id
+    recorded = copy.deepcopy(morning.data)
+    recorded.plan_anchors = [
+        PlanAnchor(op1, "M1", f"{recorded.workdays[TODAY]}T08:30", kind=EXECUTED),
+    ]
+    with pytest.raises(ManualMoveError) as refused:
+        _move(morning.baseline, recorded, morning.config, op1, 3, 420, nine)
+    assert str(refused.value) == (
+        "A Referência SKU_OP1 · T1 (M1) está registada como feita desde 08:30; "
+        "desfaça esse registo primeiro."
+    )
+    yesterday = copy.deepcopy(morning.baseline)
+    yesterday.segments[0].day_idx = TODAY - 1
+    with pytest.raises(ManualMoveError) as refused:
+        _move(yesterday, morning.data, morning.config, op1, 3, 420, nine)
+    assert str(refused.value) == (
+        "Lote Referência SKU_OP1 · T1 (M1) começou em 02/03 e está congelado; "
+        "não pode ser movido."
+    )
+
+
+def test_the_guard_ignores_a_signal_the_lot_does_not_meet():
+    """Only the named lot, only if it started today alone and has no record."""
+    previous = _state(_BEFORE_RECORD)
+    moved = _state([_row("JTE", "M43", "T2", 1115, 1300, 500, setup=60)])
+    ten = _lisbon(10, 0)
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=ten, unproduced=("before", "CF"),
+    ) == []
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=ten, unproduced=("before", "JTE"),
+    ) == ["CF"]
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=ten, unproduced=("after", "CF"),
+    ) == ["CF"]
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=ten, unproduced=("other", "CF"),
+    ) == ["CF"]
+    # A row on an earlier day: the lot started before today.
+    started = copy.deepcopy(previous)
+    started["engine_data"]["workdays"] = ["2026-10-19", *_DAYS]
+    for segment in started["segments"]:
+        segment["day_idx"] += 1
+    earlier = copy.deepcopy(started["segments"][0])
+    earlier["day_idx"], earlier["setup_min"] = 0, 0.0
+    started["segments"].append(earlier)
+    stayed = copy.deepcopy(started)
+    stayed["segments"] = [s for s in stayed["segments"] if s["lot_id"] != "CF" or s["day_idx"] == 0]
+    assert frozen.historical_schedule_changes(
+        started, stayed, now=ten, unproduced=("before", "CF"),
+    ) == ["CF"]
+    # A lot recorded as run on that side (and still recorded).
+    record = [{
+        "lot_id": "CF", "machine_id": "M43", "start_at": "2026-10-20T07:00", "kind": EXECUTED,
+    }]
+    recorded, still = copy.deepcopy(previous), copy.deepcopy(moved)
+    recorded["engine_data"]["plan_anchors"] = still["engine_data"]["plan_anchors"] = record
+    assert frozen.historical_schedule_changes(
+        recorded, still, now=ten, unproduced=("before", "CF"),
+    ) == ["CF"]
+    # Anything else of the morning stays strict.
+    other = _state([
+        _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60),
+        _row("W", "M50", "T7", 500, 700, 50),
+    ])
+    assert frozen.historical_schedule_changes(
+        previous, other, now=ten, unproduced=("before", "CF"),
+    ) == ["W"]
+
+
+def test_twin_lot_started_today_leaves_whole():
+    twin = _row("TW", "M43", "T1", 420, 950, 1000, setup=60)
+    twin["twin_outputs"] = [["opA", "A", 1000], ["opB", "B", 1000]]
+    previous = _state([twin, _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60)])
+    later = copy.deepcopy(twin)
+    later["day_idx"], later["start_min"], later["end_min"] = 1, 420, 950
+    moved = _state([_row("JTE", "M43", "T2", 600, 785, 500, setup=60), later])
+    ten = _lisbon(10, 0)
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=ten, unproduced=("before", "TW"),
+    ) == []
+    assert frozen.historical_schedule_changes(previous, moved, now=ten) == ["TW"]
+
+
+def test_a_lot_started_today_moves_to_its_alternative_machine():
+    config = _config(two_machines=True)
+    data = _data([_op("OP1", "T1", 4, alt="M2"), _op("OP2", "T2", 6)], two_machines=True)
+    baseline, lots = _plan(data, config, {
+        "OP1": [(TODAY, 480, 200, 30)], "OP2": [(3, 420, 200, 30)],
+    })
+    nine = _at(TODAY, 540)
+    op1 = lots["OP1"].id
+    move = _move(baseline, data, config, op1, 3, 420, nine, machine="M2")
+    assert move.unproduced_today and move.notice.endswith("passa para 05/03 às 07:00 na M2.")
+    assert {s.machine_id for s in move.segments if s.lot_id == op1} == {"M2"}
+    before = _snapshot(baseline.segments, baseline.lots, data)
+    after = _snapshot(move.segments, move.lots, data)
+    assert frozen.historical_schedule_changes(
+        before, after, now=nine, unproduced=("before", op1),
+    ) == []
+
+
+def _swap():
+    """M1 today: Y (OP1) 07:00–15:30 by the plan, G (OP2) after it."""
+    config = _config()
+    data = _data([_op("OP1", "T1", 4), _op("OP2", "T2", 4)])
+    data.ops[0].d[4] = 800
+    baseline, lots = _plan(data, config, {
+        "OP1": [(TODAY, 420, 800, 30)], "OP2": [(TODAY, 930, 200, 30)],
+    })
+    return config, data, baseline, lots["OP1"].id, lots["OP2"].id
+
+
+def test_swap_green_first_then_yellow():
+    """G recorded as run from 07:30 at 10:00 takes the morning; Y, which then
+    made nothing, is replanned whole from now. At 10:10 its replanned start
+    (10:00) has come too: it moves as not produced, like in the morning."""
+    config, data, baseline, yellow, green = _swap()
+    ten = _at(TODAY, 600)
+    record = _move(baseline, data, config, green, TODAY, 450, ten)
+    assert record.executed and not record.unproduced_today
+    assert not [s for s in record.segments if s.lot_id == yellow and s.day_idx == TODAY
+                and s.start_min < 600]
+    recorded = copy.deepcopy(data)
+    recorded.plan_anchors = [_record(record, recorded)]
+    recorded.history_boundary = list(record.history_boundary)
+    plan = ScheduleResult(record.segments, record.lots, record.score, 0, [], [],
+                          history_boundary=list(record.history_boundary))
+    moved = _move(plan, recorded, config, yellow, 3, 420, _at(TODAY, 610))
+    assert not moved.executed and moved.unproduced_today["start_min"] == 600
+    assert "fica registada como não produzida hoje (estava na M1 das 10:00" in moved.notice
+    before = _snapshot(plan.segments, plan.lots, recorded, anchors=recorded.plan_anchors,
+                       boundary=plan.history_boundary)
+    after = _snapshot(moved.segments, moved.lots, recorded, anchors=recorded.plan_anchors,
+                      boundary=plan.history_boundary)
+    assert frozen.historical_schedule_changes(
+        before, after, now=_at(TODAY, 610), unproduced=("before", yellow),
+    ) == []
+    # The record stays where it ran.
+    assert _shape(moved.segments, green) == _shape(record.segments, green)
+    # «Desfazer» of both, the same day.
+    assert frozen.historical_schedule_changes(
+        after, before, now=_at(TODAY, 612), undo=True, unproduced=("after", yellow),
+    ) == []
+    start = _snapshot(baseline.segments, baseline.lots, data)
+    assert frozen.historical_schedule_changes(before, start, now=_at(TODAY, 613), undo=True) == []
+
+
+def test_swap_yellow_first_then_green():
+    """Y moved at 10:00 as not produced; G, replanned from 10:00, is then
+    recorded as run from 07:30 at 10:10: both at once (not produced where
+    the plan had it, run from 07:30). Each «Desfazer» works the same day."""
+    config, data, baseline, yellow, green = _swap()
+    ten = _at(TODAY, 600)
+    first = _move(baseline, data, config, yellow, 3, 420, ten)
+    assert first.unproduced_today and first.unproduced_today["since"] == 600
+    applied, plan = _unproduced(first, data)
+    # G replanned from now (the engine's choice); for the test, G at 10:00.
+    plan.segments = [s for s in plan.segments if s.lot_id != green]
+    g_rows = [s for s in baseline.segments if s.lot_id == green]
+    for segment in g_rows:
+        segment.start_min, segment.end_min = 600, 600 + (segment.end_min - segment.start_min)
+    plan.segments.extend(copy.deepcopy(g_rows))
+    start = _snapshot(baseline.segments, baseline.lots, data)
+    after_first = _snapshot(plan.segments, plan.lots, applied, anchors=applied.plan_anchors)
+    assert frozen.historical_schedule_changes(
+        start, after_first, now=ten, unproduced=("before", yellow),
+    ) == []
+
+    ten_ten = _at(TODAY, 610)
+    second = _move(plan, applied, config, green, TODAY, 450, ten_ten)
+    assert second.executed and second.unproduced_today
+    assert second.notice.startswith("Vai ficar registado como já produzido desde 07:30 na M1")
+    assert second.notice.endswith(
+        "Onde o plano a tinha hoje (estava na M1 das 10:00 às 12:30) fica como não produzida."
+    )
+    recorded = copy.deepcopy(applied)
+    recorded.plan_anchors = [
+        *(a for a in recorded.plan_anchors if a.lot_id != green), _record(second, recorded),
+    ]
+    after_second = _snapshot(
+        second.segments, second.lots, recorded, anchors=recorded.plan_anchors,
+        boundary=second.history_boundary,
+    )
+    assert frozen.historical_schedule_changes(
+        after_first, after_second, now=ten_ten, unproduced=("before", green),
+    ) == []
+    assert frozen.historical_schedule_changes(after_first, after_second, now=ten_ten) == [green]
+    # «Desfazer» of the record, then of the first move, the same day.
+    later = _at(TODAY, 612)
+    assert frozen.historical_schedule_changes(
+        after_second, after_first, now=later, undo=True, unproduced=("after", green),
+    ) == []
+    assert frozen.historical_schedule_changes(
+        after_second, after_first, now=later, undo=True,
+    ) == [green]
+    assert frozen.historical_schedule_changes(
+        after_first, start, now=_at(TODAY, 613), undo=True, unproduced=("after", yellow),
+    ) == []
+
+
+def test_desfazer_is_refused_once_work_started_in_the_freed_time():
+    """CF left the morning at 10:00; JTE was replanned on M43 from 10:00. At
+    10:20 JTE has made pieces: «Desfazer» would erase them."""
+    previous = _state(_BEFORE_RECORD)
+    moved = _state([
+        _row("JTE", "M43", "T2", 600, 785, 500, setup=10),
+        {**_row("CF", "M43", "T1", 420, 950, 1000, setup=60), "day_idx": 1},
+    ])
+    assert frozen.historical_schedule_changes(
+        moved, previous, now=_lisbon(10, 5), undo=True, unproduced=("after", "CF"),
+    ) == []
+    assert frozen.historical_schedule_changes(
+        moved, previous, now=_lisbon(10, 20), undo=True, unproduced=("after", "CF"),
+    ) == ["JTE"]
+
+
+def _store_with(tmp_path, monkeypatch, versions, active):
+    import json
+
+    import backend.calendar as factory_calendar
+    from backend.plans.store import PlansStore
+
+    monkeypatch.setattr(factory_calendar, "wall_factory_now", lambda _zone: _lisbon(10, 5))
+    store = PlansStore(tmp_path / "plans.db")
+    with store._conn:
+        for plan_id, payload, undo_to in versions:
+            store._conn.execute(
+                "INSERT INTO plans(id,name,source,payload_json,undo_to) VALUES (?,?,?,?,?)",
+                (plan_id, plan_id, "auto", json.dumps(payload), undo_to),
+            )
+        store._conn.execute(
+            "UPDATE plan_runtime SET snapshot_id=? WHERE singleton=1", (active,),
+        )
+    return store
+
+
+def _moved_cf(previous_version_id):
+    moved = _state([
+        _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60),
+        {**_row("CF", "M43", "T1", 420, 950, 1000, setup=60), "day_idx": 1},
+    ])
+    moved["manual_edits"] = [{
+        "lot_id": "CF", "previous_version_id": previous_version_id, "unproduced_today": True,
+    }]
+    return moved
+
+
+def test_the_store_sets_the_morning_aside_only_for_the_move_it_records(tmp_path, monkeypatch):
+    previous = _state(_BEFORE_RECORD)
+    store = _store_with(tmp_path, monkeypatch, [("antes", previous, None)], "antes")
+    now = _lisbon(10, 5)
+    assert store.protected_changes(_moved_cf("antes"), now=now, unproduced="CF") is None
+    # No signal, a signal for another lot, a payload that does not record
+    # this move over the active version: strict.
+    assert store.protected_changes(_moved_cf("antes"), now=now) is not None
+    assert store.protected_changes(_moved_cf("antes"), now=now, unproduced="JTE") is not None
+    assert store.protected_changes(_moved_cf("outra"), now=now, unproduced="CF") is not None
+    unflagged = _moved_cf("antes")
+    unflagged["manual_edits"][0].pop("unproduced_today")
+    assert store.protected_changes(unflagged, now=now, unproduced="CF") is not None
+
+
+def test_the_store_lets_desfazer_take_back_only_the_move_the_active_plan_made(
+    tmp_path, monkeypatch,
+):
+    previous = _state(_BEFORE_RECORD)
+    store = _store_with(tmp_path, monkeypatch, [
+        ("antes", previous, None), ("movido", _moved_cf("antes"), "antes"),
+    ], "movido")
+    now = _lisbon(10, 5)
+    assert store.protected_changes(previous, now=now, undo_restores="antes") is None
+    assert store.protected_changes(previous, now=now) is not None
+    assert store.protected_changes(previous, now=now, undo_restores="movido") is not None
+    # A move recorded over another version gives no leeway.
+    other = _store_with(tmp_path / "b", monkeypatch, [
+        ("antes", previous, None), ("movido", _moved_cf("outra"), "antes"),
+    ], "movido")
+    assert other.protected_changes(previous, now=now, undo_restores="antes") is not None
+
+
+def test_apply_refuses_a_move_as_not_produced_its_check_did_not_show(morning):
+    from fastapi import HTTPException
+
+    from backend.api.manual_plan import _require_executed_preview
+
+    move = _move(
+        morning.baseline, morning.data, morning.config, morning.lots["OP1"].id, 3, 420,
+        _at(TODAY, 540),
+    )
+    _require_executed_preview(move)
+    unseen = copy.copy(move)
+    unseen.notice = None
+    with pytest.raises(HTTPException) as refused:
+        _require_executed_preview(unseen)
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "preview_required"
+
+
+def _big_morning():
+    """Today is day 0 (D0): Y (1500 pieces, 15 h) 07:00–22:30 by the plan."""
+    config = _config()
+    data = _data([_op("OP1", "T1", 0), _op("OP2", "T2", 6)])
+    data.ops[0].d[0] = 1500
+    baseline, lots = _plan(data, config, {
+        "OP1": [(0, 420, 1500, 30)], "OP2": [(3, 420, 200, 30)],
+    })
+    return config, data, baseline, lots
+
+
+def test_recalculate_does_not_put_the_lot_back_in_the_morning():
+    """«Recalcular plano» plans from D0 (00:00 today) and releases the pin;
+    the morning the lot left stays free of it up to now."""
+    config, data, baseline, lots = _big_morning()
+    y = lots["OP1"].id
+    ten = _at(0, 600)
+    move = _move(baseline, data, config, y, 3, 420, ten)
+    applied, plan = _unproduced(move, data)
+    applied.plan_anchors = []  # «Recalcular» releases ordinary pins
+    later = _at(0, 615)
+
+    def first_today(engine):
+        result = frozen.optimize_preserving_started_lots(
+            engine, config, copy.deepcopy(plan), mode="quick", now=later,
+            recalculate_from_start=True,
+        )
+        return min(
+            (s.day_idx, s.start_min) for s in result.segments
+            if s.lot_id in {lot.id for lot in result.lots if lot.op_id == "OP1"}
+            and s.end_min > s.start_min
+        )
+
+    assert first_today(copy.deepcopy(applied)) >= (0, 615)
+    # Without the fact (another day, or a new ISOP) it plans from D0 again.
+    plain = copy.deepcopy(applied)
+    plain.unproduced_today = []
+    assert first_today(plain) < (0, 600)
+    stale = copy.deepcopy(applied)
+    stale.unproduced_today[0]["date"] = data.workdays[1][:10]
+    assert first_today(stale) < (0, 600)
+
+
+def test_the_fact_is_kept_only_when_present():
+    from backend.plans.serialize import _jsonable, deserialize_engine_data
+
+    data = EngineData(
+        ops=[], machines=[], twin_groups=[], client_demands={}, workdays=[], n_days=0,
+    )
+    assert "unproduced_today" not in _jsonable(data)
+    data.unproduced_today = [{"lot_id": "A", "tool_id": "T1", "date": "2026-10-21",
+                              "start_min": 420, "since": 634}]
+    raw = _jsonable(data)
+    assert deserialize_engine_data(raw).unproduced_today == data.unproduced_today
+
+
+@pytest.fixture
+def morning_api(tmp_path, monkeypatch, morning):
+    """The ``morning`` plan as the active version, the clock at 09:00 today."""
+    from fastapi.testclient import TestClient
+
+    import backend.calendar as factory_calendar
+    from backend.api.copilot import app
+    from backend.config import loader
+    from backend.copilot.state import state
+    from backend.plans.serialize import serialize_snapshot
+    from backend.plans.store import PlansStore
+    from backend.scheduler.gates import build_gate_report
+    from backend.scheduler.scoring import compute_score
+
+    clock = {"now": _at(TODAY, 540)}
+    monkeypatch.setattr(factory_calendar, "_wall_clock", lambda zone: clock["now"])
+    config_path = tmp_path / "factory.yaml"
+    monkeypatch.setattr(loader, "DEFAULT_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(loader.save_config, "__defaults__", (str(config_path),))
+    previous = {key: getattr(state, key) for key in state.__dataclass_fields__}
+    store = PlansStore(tmp_path / "plans.db")
+    data, config, plan = morning.data, copy.deepcopy(morning.config), copy.deepcopy(morning.baseline)
+    config.tools.pop("T4")  # its machine M2 is not in this plan
+    plan.score = compute_score(plan.segments, plan.lots, data, config=config)
+    plan.gate_report = build_gate_report(plan.segments, plan.lots, plan.score, data, config)
+    state.engine_data, state.config, state.default_config = data, config, config
+    # A dataset id: the commit guard compares versions of the same dataset.
+    state.dataset_info = {"id": "ds", "filename": "isop.xlsx"}
+    state.active_mutations, state.manual_edits, state.approvals = [], [], []
+    state.saved_schedule = state.saved_mutations = state.saved_manual_edits = None
+    state.plans_store = store
+    state.update_schedule(plan)
+    loader.save_config(config, path=str(config_path))
+    store.save(
+        name="Plano da manhã", source="auto", origin="", note="", payload=serialize_snapshot(state),
+        score=state.score, gate_report=state.gate_report, is_auto=True, activate=True,
+    )
+    yield SimpleNamespace(client=TestClient(app), store=store, state=state, clock=clock)
+    store.close()
+    for key, value in previous.items():
+        setattr(state, key, value)
+
+
+def _api_move(api, lot_id, day, minute, **extra):
+    body = {"lot_id": lot_id, "target_day": day, "target_machine": "M1",
+            "target_start_min": minute, **extra}
+    preview = api.client.post("/api/data/plan/move-preview", json=body)
+    assert preview.status_code == 200, preview.text
+    applied = api.client.post("/api/data/plan/move-apply", json={
+        **body, "candidate_id": preview.json()["candidate_id"],
+        "expected_revision": api.state.plan_revision, "confirm_delivery_risk": True,
+        "approve_exceptions": True, "approval_reason": "teste", "approval_author": "pytest",
+        "reason": "teste", "author": "pytest",
+    })
+    return preview.json(), applied
+
+
+def test_api_moves_a_lot_started_today_and_desfazer_takes_it_back(morning_api, morning):
+    """The whole path: check, apply (the server's signal reaches the commit
+    guard), the fact for «Recalcular», then «Desfazer» the same day. What the
+    request says about it is never read."""
+    api, op1 = morning_api, morning.lots["OP1"].id
+    start = sorted((s.lot_id, s.day_idx, s.start_min) for s in api.state.segments)
+    preview, applied = _api_move(api, op1, 3, 420, unproduced_today=False, unproduced=None)
+    assert preview["unproduced_today"] is True and "não produzida hoje" in preview["notice"]
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["edit"]["unproduced_today"] is True
+    assert api.state.engine_data.unproduced_today == [{
+        "lot_id": op1, "tool_id": "T1", "date": morning.data.workdays[TODAY][:10],
+        "start_min": 480, "since": 540,
+    }]
+    assert not [s for s in api.state.segments
+                if s.day_idx == TODAY and s.start_min < 540 and s.end_min > s.start_min]
+    stored = api.store.active()["payload"]
+    assert stored["engine_data"]["unproduced_today"][0]["lot_id"] == op1
+    api.clock["now"] = _at(TODAY, 545)
+    undone = api.client.post("/api/data/undo", json={
+        "expected_revision": api.state.plan_revision, "approve_exceptions": True,
+        "approval_reason": "teste", "approval_author": "pytest",
+    })
+    assert undone.status_code == 200, undone.text
+    assert sorted((s.lot_id, s.day_idx, s.start_min) for s in api.state.segments) == start
+    assert api.state.engine_data.unproduced_today == []
+
+
+def test_api_ignores_what_the_request_says_about_not_produced(morning_api, morning):
+    api, op2 = morning_api, morning.lots["OP2"].id
+    preview, applied = _api_move(api, op2, 4, 420, unproduced_today=True, unproduced=op2)
+    assert preview["unproduced_today"] is False and preview["notice"] is None
+    assert applied.status_code == 200, applied.text
+    assert "unproduced_today" not in applied.json()["edit"]
+    assert api.state.engine_data.unproduced_today == []
+
+
+def test_api_commit_refuses_the_move_without_the_servers_signal(morning_api, morning, monkeypatch):
+    """The commit guard, not the check, decides: without the signal the
+    same move is refused and the active plan stays."""
+    from backend.plans import context
+
+    original = context.set_change_label
+    monkeypatch.setattr(
+        context, "set_change_label",
+        lambda label, **kwargs: original(label, **{**kwargs, "unproduced": None}),
+    )
+    api = morning_api
+    revision = api.state.plan_revision
+    _preview, applied = _api_move(api, morning.lots["OP1"].id, 3, 420)
+    assert applied.status_code == 409, applied.text
+    assert applied.json()["detail"]["code"] == "historical_plan_protected"
+    assert api.state.plan_revision == revision
+    assert api.state.engine_data.unproduced_today == []

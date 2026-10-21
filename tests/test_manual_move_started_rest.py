@@ -114,8 +114,9 @@ def test_started_lot_itself_is_still_refused(monkeypatch):
     baseline, (lot_l, _lot_m, _lot_x) = _baseline(data, config, SUPPLIED)
     monkeypatch.setattr(frozen, "_current_planning_day", lambda *_: 1)
 
-    with pytest.raises(ManualMoveError, match="congelado"):
+    with pytest.raises(ManualMoveError, match=r"começou em \d\d/\d\d e está congelado") as refused:
         _move(baseline, data, config, lot_l.id, 7, 420)
+    assert "LOT_" not in str(refused.value)
 
 
 def test_mount_supplier_of_a_kept_continuation_is_kept(monkeypatch):

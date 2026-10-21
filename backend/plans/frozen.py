@@ -270,6 +270,7 @@ _MOVABLE_LOT_FIELDS = ("machine_id", "prod_min", "setup_min")
 def historical_schedule_changes(
     before: dict, after: dict, *, today: str | None = None, now: datetime | None = None,
     engine_data=None, config=None, undo: bool = False,
+    unproduced: tuple[str, str] | None = None,
 ) -> list[str]:
     """Started lots whose history changed (same dataset), or new past production.
 
@@ -298,6 +299,15 @@ def historical_schedule_changes(
     by «Desfazer» (``PlansStore``); only then is the time the record
     occupied set aside on ``after``. Any other change that drops the record
     (a replan that releases it, an ISOP, ...) is judged strictly.
+
+    ``unproduced`` (decisão do Luís, 21/10/2026): ``(side, lot id)`` of a lot
+    moved by hand that, by the plan, had only started today; the move says
+    it was not produced. Given by the server only («Mover lote» that showed
+    it, or the «Desfazer» of that move, ``PlansStore``) and honoured only when
+    the lot, on that side, has rows before ``now`` today, none on an earlier
+    day and no record of what ran (``_unproduced_today``): then its rows
+    before ``now`` on that side are set aside. Everything else is judged as
+    above.
     """
     from backend.calendar import factory_now
     from backend.scheduler.history import cut_row
@@ -326,6 +336,17 @@ def historical_schedule_changes(
         (index for index, value in enumerate(workdays) if str(value)[:10] >= current_day),
         len(workdays),
     )
+    if unproduced is not None:
+        side, lot_id = unproduced
+        snapshot = before if side == "before" else after
+        if side in ("before", "after") and _unproduced_today(
+            snapshot, lot_id, current_day, now_min,
+        ):
+            trimmed = {**snapshot, "segments": [
+                segment for segment in snapshot.get("segments", [])
+                if not _before_now_today(segment, snapshot, lot_id, current_day, now_min)
+            ]}
+            before, after = (trimmed, after) if side == "before" else (before, trimmed)
     started = {
         segment["lot_id"]
         for segment in before.get("segments", [])
@@ -602,6 +623,50 @@ def historical_schedule_changes(
         if lot_rows(before, lot_id) != lot_rows(after, lot_id) or lot_changed(lot_id)
     }
     return sorted(lot_id for lot_id in changed if not dropped_unmade(lot_id))
+
+
+def _segment_date(segment: dict, snapshot: dict) -> str | None:
+    workdays = list((snapshot.get("engine_data") or {}).get("workdays") or [])
+    day = int(segment["day_idx"])
+    return str(workdays[day])[:10] if 0 <= day < len(workdays) else None
+
+
+def _before_now_today(segment: dict, snapshot: dict, lot_id: str, current_day: str,
+                      now_min: int) -> bool:
+    return (
+        segment.get("lot_id") == lot_id
+        and float(segment["end_min"]) > float(segment["start_min"])
+        and float(segment["start_min"]) < now_min
+        and _segment_date(segment, snapshot) == current_day
+    )
+
+
+def _unproduced_today(snapshot: dict, lot_id: str, current_day: str, now_min: int) -> bool:
+    """A lot that, by ``snapshot``, only started today (decisão do Luís, 21/10/2026).
+
+    It has rows before ``now`` today, none on an earlier day (or off the
+    calendar) and no record of what ran (``manual_edits.EXECUTED``).
+    """
+    from backend.plans.manual_edits import EXECUTED
+
+    if not now_min or not lot_id:
+        return False
+    if any(
+        isinstance(anchor, dict) and anchor.get("lot_id") == lot_id
+        and anchor.get("kind") == EXECUTED
+        for anchor in (snapshot.get("engine_data") or {}).get("plan_anchors") or []
+    ):
+        return False
+    rows = [
+        segment for segment in snapshot.get("segments") or []
+        if segment.get("lot_id") == lot_id
+        and float(segment["end_min"]) > float(segment["start_min"])
+    ]
+    if any((_segment_date(segment, snapshot) or "") < current_day for segment in rows):
+        return False
+    return any(
+        _before_now_today(segment, snapshot, lot_id, current_day, now_min) for segment in rows
+    )
 
 
 def _declared_today(
@@ -1992,6 +2057,22 @@ def _install_frozen_reservations(
             )
         for tool in tools:
             engine_data.tool_blocked_intervals.setdefault(tool, []).append(dict(elapsed_today))
+    # A lot moved as not produced today keeps its tool free of new work in
+    # the morning it left (decisão do Luís, 21/10/2026): «Recalcular plano»,
+    # which plans from D0, does not put it back there.
+    dates = [str(day)[:10] for day in engine_data.workdays or []]
+    for entry in getattr(engine_data, "unproduced_today", None) or []:
+        tool, date = entry.get("tool_id"), str(entry.get("date") or "")
+        start = int(entry.get("start_min") or 0)
+        since = int(math.ceil(float(entry.get("since") or 0)))
+        if tool and date in dates and since > start:
+            day = dates.index(date)
+            engine_data.tool_blocked_intervals.setdefault(tool, []).append({
+                "id": f"unproduced-{entry.get('lot_id')}", "start_day": day, "start_min": start,
+                "end_day": day, "end_min": since, "category": "Plano passado",
+                "reason": "Lote não produzido hoje", "lot_id": entry.get("lot_id"),
+                "tool_id": tool,
+            })
     groups = {
         machine.id: config.machine_group(machine.id) if config is not None else machine.group
         for machine in engine_data.machines
@@ -2253,6 +2334,15 @@ def _recalculation_context(
     # Date-derived proofs belong to the old protected plan, not to observed
     # execution. Clear them only on detached inputs; keep anchors/observations.
     data, baseline = copy.deepcopy((engine_data, baseline_result))
+    # A lot moved today as not produced (21/10/2026) is not placed again in
+    # time already gone today: its morning stays free up to the later of the
+    # move and now. It is about today only.
+    today, minute = now.date().isoformat(), now.hour * 60 + now.minute
+    data.unproduced_today = [
+        {**entry, "since": max(float(entry.get("since") or 0), minute)}
+        for entry in getattr(data, "unproduced_today", None) or []
+        if str(entry.get("date") or "") == today
+    ]
     data.preserved_lot_proofs = {}
     baseline.preserved_lot_proofs = {}
     baseline.warnings = [
