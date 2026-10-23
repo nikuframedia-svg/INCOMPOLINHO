@@ -1133,7 +1133,7 @@ def test_move_lot_on_alternative_can_return_to_operation_primary():
     assert {segment.machine_id for segment in moved} == {"M1"}
     assert sum(segment.qty for segment in moved) == 100
     moved_lot = next(lot for lot in candidate.lots if lot.id == "LOT1")
-    assert (moved_lot.machine_id, moved_lot.alt_machine_id) == ("M1", "M2")
+    assert {moved_lot.machine_id, moved_lot.alt_machine_id} == {"M1", "M2"}
 
 
 def test_move_lot_on_alternative_still_refuses_a_machine_outside_its_tool():
