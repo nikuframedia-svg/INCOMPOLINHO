@@ -63,6 +63,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
+from backend.config.planning import lot_alternative_on, lot_tool_machines
 from backend.config.shifts import ordered_shifts
 from backend.planning_control import planning_checkpoint
 from backend.scheduler.alternative_repair import _schedule_run_earliest
@@ -363,7 +364,7 @@ class _Chain:
         return self._before[lot_id]
 
 
-def _machine_better(candidate: _MachineOption, best: _MachineOption, primary: str) -> bool:
+def _machine_better(candidate: _MachineOption, best: _MachineOption, primary: str | None) -> bool:
     # Deliveries before anticipation and setups (AGENTS §1.2): the machine
     # that leaves fewer days late wins whatever the minutes.
     if candidate.late_days != best.late_days:
@@ -416,6 +417,10 @@ class _CampaignBuilder:
         # A started lot's rest keeps its lot id (AGENTS §2, rule 4): its new
         # runs must not reuse the run ids of its frozen part.
         self.fixed_run_ids = {segment.run_id for segment in self.fixed}
+        # ...and stays on the machine (pair) the protection gave it (rule 4).
+        self.rests = {
+            str(raw.get("id")) for raw in getattr(data, "residual_lot_remainders", None) or []
+        }
         self.active = {
             machine.id
             for machine in data.machines
@@ -486,12 +491,22 @@ class _CampaignBuilder:
         return float(portion.release_day * _DAY + self.shift_start)
 
     def machines(self, lot_id: str) -> list[str]:
+        """Active machines the lot may use, primary first.
+
+        The machines of its tool (its operations), never only the pair the
+        lot carries: a lot an earlier calculation put on its alternative may
+        come back to its primary (E13). The rest of a started lot keeps the
+        pair the protection gave it (rule 4: it stays on its machine).
+        """
         if lot_id in self.locked:
             return [self.locked[lot_id]]
         original = self.originals[lot_id]
+        candidates = (
+            (original.machine_id, original.alt_machine_id) if lot_id in self.rests
+            else lot_tool_machines(original, self.data)
+        )
         return list(dict.fromkeys(
-            machine for machine in (original.machine_id, original.alt_machine_id)
-            if machine in self.active
+            machine for machine in candidates if machine and machine in self.active
         ))
 
     def parent(self, lot_id: str, machine: str) -> Lot:
@@ -502,6 +517,9 @@ class _CampaignBuilder:
                 _run(original, lot_id), machine, self.data, self.config,
             ).lots[0]
             parent.machine_id = machine
+            if lot_id not in self.rests:
+                # The other machine of the tool stays its alternative (E13).
+                parent.alt_machine_id = lot_alternative_on(original, machine, self.data)
             self.parents[key] = parent
         return self.parents[key]
 
@@ -557,8 +575,9 @@ class _CampaignBuilder:
 
     def best_outlook(self, lot_id: str, segments) -> _MachineOption | None:
         best: _MachineOption | None = None
-        primary = self.originals[lot_id].machine_id
-        for machine in self.machines(lot_id):
+        machines = self.machines(lot_id)
+        primary = machines[0] if machines else None
+        for machine in machines:
             option = self.outlook(lot_id, machine, segments)
             if option is not None and (best is None or _machine_better(option, best, primary)):
                 best = option

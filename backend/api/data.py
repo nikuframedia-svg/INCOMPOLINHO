@@ -36,6 +36,7 @@ from backend.config.changes import coerce_bool as _coerce_bool
 from backend.config.loader import validate_config
 from backend.config.planning import (
     clean_sku_subcontracts,
+    lot_tool_machines,
     normalize_sku_planning_rule,
     normalize_subcontract_company,
 )
@@ -852,8 +853,16 @@ async def get_segments():
 
 @router.get("/lots")
 async def get_lots():
+    """The plan's lots, each with ``eligible_machines``: the machines of its
+    tool, primary first, as the configuration has them (active or not; a move
+    to an inactive one is refused with its own message). Read from the
+    operations, never only the lot's own pair (E13); not part of the lot, so
+    the identity of saved plans does not change."""
     _require_data()
-    return [asdict(lot) for lot in state.lots]
+    return [
+        {**asdict(lot), "eligible_machines": lot_tool_machines(lot, state.engine_data)}
+        for lot in state.lots
+    ]
 
 
 def _plan_notices(segments, lots, engine_data, config, warnings=()) -> list[str]:

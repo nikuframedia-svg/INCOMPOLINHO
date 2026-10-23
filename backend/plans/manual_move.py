@@ -13,6 +13,7 @@ from datetime import datetime
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from backend.config.planning import lot_alternative_on, lot_tool_machines
 from backend.config.types import FactoryConfig
 from backend.planning_control import (
     closing_reserve,
@@ -1268,6 +1269,10 @@ def _rebound_target(
     )
     rebound_lot = rebound.lots[0]
     rebound_lot.planning_source = "manual"
+    # Where it goes, with the other machine of its tool as its alternative:
+    # a lot never loses its primary (E13).
+    rebound_lot.machine_id = machine_id
+    rebound_lot.alt_machine_id = lot_alternative_on(lot, machine_id, data)
     return rebound_lot, replace(
         template, setup_min=rebound.setup_min, run_setup_min=rebound.setup_min,
     )
@@ -1928,10 +1933,11 @@ def move_lot(
 
 
 def _fit_machines(lot: Lot, machine_id: str, data: EngineData) -> list[str]:
-    """The requested machine, then the lot's alternative when it is active."""
+    """The requested machine, then the other machine of the lot's tool when
+    it is active (``lot_tool_machines``, E13)."""
     active = {machine.id for machine in data.machines}
     machines = [machine_id]
-    for other in (lot.machine_id, lot.alt_machine_id):
+    for other in lot_tool_machines(lot, data):
         if other and other not in machines and other in active:
             machines.append(other)
     return machines
@@ -2187,10 +2193,9 @@ def _move_lot(
 
     current_machine = moved_segments[0].machine_id
     machine_id = target_machine or current_machine
-    allowed_machines = {lot.machine_id}
-    if lot.alt_machine_id:
-        allowed_machines.add(lot.alt_machine_id)
-    if machine_id not in allowed_machines:
+    # The machines of its tool, by its operations: a lot an earlier
+    # calculation put on its alternative may come back to its primary (E13).
+    if machine_id not in lot_tool_machines(lot, data):
         raise ManualMoveError(
             f"Máquina {machine_id} não é primária nem alternativa do lote {lot_id}."
         )

@@ -134,23 +134,59 @@ def machine_is_active(config: FactoryConfig | None, machine_id: str | None) -> b
     return machine is None or bool(machine.active)
 
 
-def allowed_machines(lot, engine_data, config) -> list[str] | None:
-    """Machines ``lot`` may use now: its operations' primary, then alternative,
-    when active. ``None`` when its operations are unknown (nothing to judge).
+def _operation_machines(lot, engine_data) -> list[str] | None:
+    """The primary, then the alternative, of ``lot``'s operations (both twin
+    sides must allow it), active or not. ``None`` when its operations are
+    unknown.
     """
     ops = {op.id: op for op in getattr(engine_data, "ops", None) or []}
     op_ids = [str(op_id) for op_id, _sku, _qty in lot.twin_outputs or []] or [lot.op_id]
     lot_ops = [ops[op_id] for op_id in op_ids if op_id in ops]
     if not lot_ops:
         return None
-    allowed: list[str] = []
-    for machine in (lot_ops[0].m, lot_ops[0].alt):
-        if (
-            machine and machine not in allowed and machine_is_active(config, machine)
-            and all(machine in (op.m, op.alt) for op in lot_ops)
-        ):
-            allowed.append(machine)
-    return allowed
+    return [
+        machine for machine in dict.fromkeys((lot_ops[0].m, lot_ops[0].alt))
+        if machine and all(machine in (op.m, op.alt) for op in lot_ops)
+    ]
+
+
+def allowed_machines(lot, engine_data, config) -> list[str] | None:
+    """Machines ``lot`` may use now: its operations' primary, then alternative,
+    when active. ``None`` when its operations are unknown (nothing to judge).
+    """
+    machines = _operation_machines(lot, engine_data)
+    if machines is None:
+        return None
+    return [machine for machine in machines if machine_is_active(config, machine)]
+
+
+def lot_tool_machines(lot, engine_data) -> list[str]:
+    """The machines of ``lot``'s tool, primary first, active or not.
+
+    Read from its operations (the source of truth: a lot placed on its
+    alternative keeps both machines, E13); the lot's own pair only when its
+    operations are unknown.
+    """
+    machines = _operation_machines(lot, engine_data)
+    if machines is None:
+        machines = [m for m in dict.fromkeys((lot.machine_id, lot.alt_machine_id)) if m]
+    return machines
+
+
+def lot_eligible_machines(lot, engine_data, config) -> list[str]:
+    """``lot_tool_machines`` that are active: where the lot may go now."""
+    return [
+        machine for machine in lot_tool_machines(lot, engine_data)
+        if machine_is_active(config, machine)
+    ]
+
+
+def lot_alternative_on(lot, machine: str, engine_data) -> str | None:
+    """The alternative a lot placed on ``machine`` keeps: the other machine of
+    its tool, so that the next calculation can still bring it back (E13)."""
+    return next(
+        (other for other in lot_tool_machines(lot, engine_data) if other != machine), None,
+    )
 
 
 def unplaceable_op_ids(data: EngineData, config: FactoryConfig | None) -> set[str]:

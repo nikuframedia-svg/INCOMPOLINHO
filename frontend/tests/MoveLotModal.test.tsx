@@ -271,3 +271,31 @@ it("offers the first start where the lot fits and only fills the fields (15/10/2
     target_day: 1, target_machine: "M2", target_start_min: 480,
   }));
 });
+
+it("offers the two machines of the tool for a lot an earlier plan put on its alternative (E13)", async () => {
+  const onAlternative = { id: "lot", machine_id: "M2", alt_machine_id: "M2", eligible_machines: ["M1", "M2"], edd: 1 } as never;
+  render(<MoveLotModal {...props} segment={{ machine_id: "M2", start_min: 420, setup_min: 30 } as never}
+    lot={onAlternative} initialTargetMachine="M1" />);
+  const select = screen.getByLabelText("Máquina") as HTMLSelectElement;
+  expect([...select.options].map((option) => option.value)).toEqual(["M1", "M2"]);
+  expect(select.value).toBe("M1");
+});
+
+it("accepts a suggestion on the primary of a lot that sits on its alternative (E13)", async () => {
+  mocks.startManualMovePreview.mockResolvedValue({ job: { ...ready, status: "failed", result: null,
+    code: "blocked", error: "Não cabe.", causes: ["Um lote faz-se numa só produção."],
+    suggestion: { day: 1, start_min: 480, machine: "M1", label: "18/09 às 08:00 (M1)" } } });
+  const onAlternative = { id: "lot", machine_id: "M2", alt_machine_id: "M2", eligible_machines: ["M1", "M2"], edd: 1 } as never;
+  render(<MoveLotModal {...props} segment={{ machine_id: "M2", start_min: 420, setup_min: 30 } as never}
+    lot={onAlternative} initialTargetDay={0} />);
+  expect((screen.getByLabelText("Máquina") as HTMLSelectElement).value).toBe("M2");
+  fireEvent.click(screen.getByRole("button", { name: "Verificar riscos" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Usar este início: 18/09 às 08:00 (M1)" }));
+  expect((screen.getByLabelText("Máquina") as HTMLSelectElement).value).toBe("M1");
+});
+
+it("falls back to the lot's own pair when the server sends no eligible machines", () => {
+  render(<MoveLotModal {...props} />);
+  const select = screen.getByLabelText("Máquina") as HTMLSelectElement;
+  expect([...select.options].map((option) => option.value)).toEqual(["M1", "M2"]);
+});

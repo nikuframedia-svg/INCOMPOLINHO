@@ -155,6 +155,8 @@ export interface Lot extends PlanningMilestoneFields {
   tool_id: string;
   machine_id: string;
   alt_machine_id: string | null;
+  /** Machines of the lot's tool, primary first, from its operations (GET /lots). */
+  eligible_machines?: string[];
   qty: number;
   prod_min: number;
   setup_min: number;
