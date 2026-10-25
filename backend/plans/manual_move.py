@@ -1269,10 +1269,12 @@ def _rebound_target(
     )
     rebound_lot = rebound.lots[0]
     rebound_lot.planning_source = "manual"
-    # A pair saved before E13 lost the primary (alternative/alternative):
-    # the other machine of its tool comes back as the alternative.
+    # A pair saved before E13 lost the primary (alternative/alternative): it
+    # is rebuilt as the builder does (``parent``), where it goes and then the
+    # other machine of its tool (E13).
     if rebound_lot.alt_machine_id in (None, rebound_lot.machine_id):
-        rebound_lot.alt_machine_id = lot_alternative_on(lot, rebound_lot.machine_id, data)
+        rebound_lot.machine_id = machine_id
+        rebound_lot.alt_machine_id = lot_alternative_on(lot, machine_id, data)
     return rebound_lot, replace(
         template, setup_min=rebound.setup_min, run_setup_min=rebound.setup_min,
     )

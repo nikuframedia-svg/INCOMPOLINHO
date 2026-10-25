@@ -61,7 +61,7 @@ def test_rev188_bfp186_moves_to_its_primary_prm039():
     moved = [segment for segment in move.segments if segment.lot_id == BFP186]
     assert moved and {segment.machine_id for segment in moved} == {"PRM039"}
     lot = next(lot for lot in move.lots if lot.id == BFP186)
-    assert {lot.machine_id, lot.alt_machine_id} == {"PRM039", "PRM043"}
+    assert (lot.machine_id, lot.alt_machine_id) == ("PRM039", "PRM043")
     assert move.gate_report["hard_gate_passed"] is True
     assert move.score["tardy_count"] <= plan.score["tardy_count"]
 

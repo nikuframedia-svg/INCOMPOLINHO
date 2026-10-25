@@ -1133,7 +1133,27 @@ def test_move_lot_on_alternative_can_return_to_operation_primary():
     assert {segment.machine_id for segment in moved} == {"M1"}
     assert sum(segment.qty for segment in moved) == 100
     moved_lot = next(lot for lot in candidate.lots if lot.id == "LOT1")
-    assert {moved_lot.machine_id, moved_lot.alt_machine_id} == {"M1", "M2"}
+    # Where it went, then the other machine of its tool (E13), in this order.
+    assert (moved_lot.machine_id, moved_lot.alt_machine_id) == ("M1", "M2")
+
+
+def test_move_lot_with_lost_pair_on_its_alternative_recovers_the_primary_as_alt():
+    """E13: a lost pair moved within its alternative keeps the machine it is
+    on and recovers the primary as its alternative."""
+    data = _engine()
+    config = _config()
+    segments = [_segment(machine="M2")]
+    lots = [_lot_on_alternative_with_lost_primary()]
+
+    candidate = move_lot(
+        segments, lots, _baseline(data, config, segments, lots), data, config,
+        lot_id="LOT1", target_day=1, target_machine="M2", target_start_min=600,
+    )
+
+    moved = [segment for segment in candidate.segments if segment.lot_id == "LOT1"]
+    assert {segment.machine_id for segment in moved} == {"M2"}
+    moved_lot = next(lot for lot in candidate.lots if lot.id == "LOT1")
+    assert (moved_lot.machine_id, moved_lot.alt_machine_id) == ("M2", "M1")
 
 
 def test_move_lot_on_alternative_still_refuses_a_machine_outside_its_tool():
