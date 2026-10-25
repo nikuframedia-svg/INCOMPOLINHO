@@ -834,3 +834,36 @@ describe("GanttPage", () => {
     expect(container.querySelectorAll('[data-overlay-kind="holiday"]')).toHaveLength(2);
   });
 });
+
+describe("GanttPage · arrastar para a máquina principal (E13, 23/10/2026)", () => {
+  const onAlternative = { ...segment, machine_id: "M2", tool_id: "BFP079" } satisfies Segment;
+  const lot = (eligible?: string[]) => ({
+    id: "L1", op_id: "OP1", tool_id: "BFP079", machine_id: "M2", alt_machine_id: "M2",
+    qty: 10, prod_min: 45, setup_min: 15, edd: 0, is_twin: false, sku: "SKU1", twin_outputs: null,
+    ...(eligible ? { eligible_machines: eligible } : {}),
+  });
+
+  function dragTo(view: ReturnType<typeof renderGantt>, machine: string) {
+    const bar = view.container.querySelector('[title*="Segmento: 10"]')!;
+    fireEvent.dragStart(bar, { dataTransfer: { setData: () => undefined, effectAllowed: "" } });
+    const lane = view.container.querySelector(`[data-testid="machine-timeline-lane"][data-machine-id="${machine}"]`)!;
+    fireEvent.drop(lane.firstElementChild!, { clientX: 10 });
+  }
+
+  it("um lote posto na alternativa pode ser arrastado para a principal", async () => {
+    const view = renderGantt(undefined, undefined, [onAlternative]);
+    act(() => useDataStore.setState({ lots: [lot(["M1", "M2"])] as never }));
+    dragTo(view, "M1");
+    expect((await screen.findByLabelText("Máquina") as HTMLSelectElement).value).toBe("M1");
+    expect(screen.queryByText(/não pode trabalhar na máquina/)).toBeNull();
+  });
+
+  it("recusa uma máquina que não é da ferramenta do lote", () => {
+    const view = renderGantt(undefined, undefined, [onAlternative]);
+    act(() => useDataStore.setState({ lots: [lot(["M2"])] as never }));
+    dragTo(view, "M1");
+    expect(screen.getByText("O lote L1 não pode trabalhar na máquina M1. Nenhuma alteração foi feita.")).toBeTruthy();
+    expect(screen.queryByLabelText("Máquina")).toBeNull();
+  });
+});
+

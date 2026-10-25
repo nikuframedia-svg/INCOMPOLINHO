@@ -1108,6 +1108,79 @@ def test_move_rejects_machine_outside_primary_and_alternative():
         )
 
 
+def _lot_on_alternative_with_lost_primary() -> Lot:
+    """A lot an earlier calculation put on its alternative: before E13 the
+    builder left it with M2/M2 although its operation says M1/M2."""
+    lot = _lot()
+    lot.machine_id = lot.alt_machine_id = "M2"
+    return lot
+
+
+def test_move_lot_on_alternative_can_return_to_operation_primary():
+    """E13: the machines of the lot's tool come from its operation, never only
+    from the pair the lot carries."""
+    data = _engine()
+    config = _config()
+    segments = [_segment(machine="M2")]
+    lots = [_lot_on_alternative_with_lost_primary()]
+
+    candidate = move_lot(
+        segments, lots, _baseline(data, config, segments, lots), data, config,
+        lot_id="LOT1", target_day=1, target_machine="M1", target_start_min=600,
+    )
+
+    moved = [segment for segment in candidate.segments if segment.lot_id == "LOT1"]
+    assert {segment.machine_id for segment in moved} == {"M1"}
+    assert sum(segment.qty for segment in moved) == 100
+    moved_lot = next(lot for lot in candidate.lots if lot.id == "LOT1")
+    # Where it went, then the other machine of its tool (E13), in this order.
+    assert (moved_lot.machine_id, moved_lot.alt_machine_id) == ("M1", "M2")
+
+
+def test_move_lot_with_lost_pair_on_its_alternative_recovers_the_primary_as_alt():
+    """E13: a lost pair moved within its alternative keeps the machine it is
+    on and recovers the primary as its alternative."""
+    data = _engine()
+    config = _config()
+    segments = [_segment(machine="M2")]
+    lots = [_lot_on_alternative_with_lost_primary()]
+
+    candidate = move_lot(
+        segments, lots, _baseline(data, config, segments, lots), data, config,
+        lot_id="LOT1", target_day=1, target_machine="M2", target_start_min=600,
+    )
+
+    moved = [segment for segment in candidate.segments if segment.lot_id == "LOT1"]
+    assert {segment.machine_id for segment in moved} == {"M2"}
+    moved_lot = next(lot for lot in candidate.lots if lot.id == "LOT1")
+    assert (moved_lot.machine_id, moved_lot.alt_machine_id) == ("M2", "M1")
+
+
+def test_move_lot_on_alternative_still_refuses_a_machine_outside_its_tool():
+    data = _engine()
+    data.machines.append(MachineInfo(id="M3", group="Grandes", day_capacity=1020))
+    config = _config()
+
+    with pytest.raises(ManualMoveError, match="não é primária nem alternativa"):
+        move_lot(
+            [_segment(machine="M2")], [_lot_on_alternative_with_lost_primary()], {},
+            data, config, lot_id="LOT1", target_day=1, target_machine="M3",
+        )
+
+
+def test_move_lot_on_alternative_to_inactive_primary_keeps_its_own_message():
+    data = _engine()
+    data.machines = [machine for machine in data.machines if machine.id != "M1"]
+    config = _config()
+    config.machines["M1"].active = False
+
+    with pytest.raises(ManualMoveError, match="não está ativa"):
+        move_lot(
+            [_segment(machine="M2")], [_lot_on_alternative_with_lost_primary()], {},
+            data, config, lot_id="LOT1", target_day=1, target_machine="M1",
+        )
+
+
 @pytest.fixture
 def manual_api_state(tmp_path: Path):
     previous = {key: getattr(state, key) for key in state.__dataclass_fields__}

@@ -8,6 +8,7 @@ import {
 import type { GateReport, Lot, ManualMoveResponse, ManualMoveSuggestion, Segment } from "../api/types";
 import { getManualMoveApplyError } from "../lib/manualMoveContract";
 import { jobFailureText } from "../lib/jobFailure";
+import { lotEligibleMachines } from "../lib/lotMachines";
 import { RefusalError, refusalCauses } from "../lib/refusal";
 import { useDataStore } from "../stores/useDataStore";
 import { useAppStore } from "../stores/useAppStore";
@@ -71,7 +72,7 @@ export function MoveLotModal({ segment, lot, workdays, initialTargetDay, initial
   const planRevision = useDataStore((state) => state.planRevision);
   const datasetId = useDataStore((state) => state.datasetId);
   const segments = useDataStore((state) => state.segments);
-  const machines = [lot.machine_id, lot.alt_machine_id].filter((id): id is string => Boolean(id));
+  const machines = lotEligibleMachines(lot);
   const dayCount = Math.max(workdays.length, lot.edd + 1, initialTargetDay + 1, 1);
   const dayOptions = Array.from({ length: dayCount }, (_, day) => day);
   const firstProduction = segments?.reduce<Segment | undefined>((first, item) => {

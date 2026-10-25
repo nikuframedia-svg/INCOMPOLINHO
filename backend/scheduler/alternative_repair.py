@@ -20,6 +20,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from backend.config.planning import lot_alternative_on
 from backend.config.shifts import ordered_shifts
 from backend.config.types import FactoryConfig
 from backend.planning_control import execution_cache, planning_checkpoint
@@ -764,6 +765,9 @@ def _rebound_lot(lot: Lot, machine_id: str, data: EngineData, config: FactoryCon
     )
     rebound = clone_run_for_machine(run, machine_id, data, config).lots[0]
     rebound.machine_id = machine_id
+    # The other machine of its tool stays its alternative (E13): never lose
+    # the primary of a lot moved to its alternative.
+    rebound.alt_machine_id = lot_alternative_on(lot, machine_id, data)
     return rebound
 
 

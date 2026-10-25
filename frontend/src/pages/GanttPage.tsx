@@ -13,6 +13,7 @@ import { PlanSimulatorSection } from "../components/PlanSimulatorSection";
 import { GateReportCard } from "../components/GateReportCard";
 import { JitViolationPanel } from "../components/JitViolationPanel";
 import { analyseJitWindow, type JitViolationDetail } from "../lib/jitAnalysis";
+import { lotEligibleMachines } from "../lib/lotMachines";
 import {
   segmentDeliveriesSortValue,
   segmentDeliveriesText,
@@ -1655,9 +1656,7 @@ export function GanttPage() {
                       if (!dragSegment || isHistoricalPlacement(placementReasons[dragSegment.lot_id])) return;
                       event.preventDefault();
                       const draggedLot = lotById.get(dragSegment.lot_id);
-                      const compatibleMachines = draggedLot
-                        ? [draggedLot.machine_id, draggedLot.alt_machine_id].filter(Boolean)
-                        : [];
+                      const compatibleMachines = draggedLot ? lotEligibleMachines(draggedLot) : [];
                       if (!draggedLot || !compatibleMachines.includes(m)) {
                         setMoveError(`O lote ${dragSegment.lot_id} não pode trabalhar na máquina ${m}. Nenhuma alteração foi feita.`);
                         setDragSegment(null);
