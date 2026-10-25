@@ -1233,6 +1233,114 @@ def test_recalculate_does_not_put_the_lot_back_in_the_morning():
     assert first_today(stale) < (0, 600)
 
 
+# ── Revisão de 23/10/2026 do lote começado hoje ─────────────────────────────
+
+
+@pytest.mark.parametrize("start", [600, 720])
+@pytest.mark.parametrize("qty", [200, 600])
+def test_recalculate_keeps_a_lot_that_started_mid_morning_out_of_the_morning(start, qty):
+    """By the plan the lot started at 10:00 (or 12:00), not at 07:00. The
+    whole morning stays free of it: «Recalcular plano» neither puts it back
+    at 07:00 (200 pieces) nor splits it around the block (600 pieces, which
+    made the whole recalculation fail with «lot_split»)."""
+    config = _config()
+    data = _data([_op("OP1", "T1", 0), _op("OP2", "T2", 6)])
+    data.ops[0].d[0] = qty
+    baseline, lots = _plan(data, config, {
+        "OP1": [(0, start, qty, 30)], "OP2": [(3, 420, 200, 30)],
+    })
+    move = _move(baseline, data, config, lots["OP1"].id, 3, 420, _at(0, start + 60))
+    applied, plan = _unproduced(move, data)
+    applied.plan_anchors = []  # «Recalcular» releases ordinary pins
+    result = frozen.optimize_preserving_started_lots(
+        applied, config, plan, mode="quick", now=_at(0, start + 65),
+        recalculate_from_start=True,
+    )
+    ids = {lot.id for lot in result.lots if lot.op_id == "OP1"}
+    rows = [s for s in result.segments if s.lot_id in ids and s.end_min > s.start_min]
+    assert min((s.day_idx, s.start_min) for s in rows) >= (0, start + 65)
+
+
+def _family_morning():
+    """M1/T1 with setup family {SKU_OP1, SKU_OP3} (like JDE002): A (OP1)
+    07:00–09:30 mounts T1, B (OP3) follows it from 09:30 without setup."""
+    config = _config()
+    config.setup_families = {"T1": [["SKU_OP1", "SKU_OP3"]]}
+    data = _data([_op("OP1", "T1", 4), _op("OP3", "T1", 4), _op("OP2", "T2", 6)])
+    lots = {lot.op_id: lot for lot in create_lots(data, config)}
+    lots["OP3"].setup_min = 0.0
+
+    def row(lot, day, start, setup):
+        return Segment(
+            lot.id, f"quantity:{lot.id}:0", lot.machine_id, lot.tool_id, day, start,
+            start + int(setup + lot.prod_min), "A", lot.qty, lot.prod_min, setup,
+            sku=lot.sku, lot_qty=lot.qty, output_milestones=copy.deepcopy(lot.output_milestones),
+            setup_family=lot.setup_family,
+        )
+
+    baseline = ScheduleResult(
+        segments=[
+            row(lots["OP1"], TODAY, 420, 30), row(lots["OP3"], TODAY, 570, 0),
+            row(lots["OP2"], 3, 700, 30),
+        ],
+        lots=list(lots.values()), score={}, time_ms=0, warnings=[], operator_alerts=[],
+    )
+    return config, data, baseline, lots
+
+
+def test_a_lot_that_mounted_the_tool_for_a_started_continuation_stays():
+    """At 10:00 B has run since 09:30 on the mount A made. Moving A as not
+    produced would leave B in history with no setup and no mount (and every
+    «Recalcular plano» invalid): refused, with what to do instead."""
+    config, data, baseline, lots = _family_morning()
+    assert_plan_valid(baseline.segments, data, config, lots=baseline.lots)
+    ten = _at(TODAY, 600)
+    with pytest.raises(ManualMoveError) as refused:
+        _move(baseline, data, config, lots["OP1"].id, 3, 420, ten)
+    assert str(refused.value) == (
+        "A Referência SKU_OP1 · T1 (M1) não pode ser movida: a Referência SKU_OP3 · T1 "
+        "(M1) das 09:30 já começou a seguir dela, sem afinação, com a ferramenta que ela "
+        "montou. Mova primeiro a Referência SKU_OP3 · T1 (M1) das 09:30."
+    )
+    # B itself, only started today, moves as not produced.
+    moved = _move(baseline, data, config, lots["OP3"].id, 3, 420, ten)
+    assert moved.unproduced_today and moved.unproduced_today["lot_id"] == lots["OP3"].id
+
+
+def test_a_lot_cut_by_another_lots_record_stays_frozen(morning):
+    """At 11:00 OP2 is recorded as run from 10:30 on M1: OP1 «fica feita até
+    às 10:00 (150 peças)». Moving OP1 at 11:10 as not produced would erase
+    those 150 pieces: refused like a started lot, in the move and in the
+    commit guard."""
+    op1, op2 = morning.lots["OP1"].id, morning.lots["OP2"].id
+    record = _move(
+        morning.baseline, morning.data, morning.config, op2, TODAY, 630, _at(TODAY, 660),
+    )
+    recorded = copy.deepcopy(morning.data)
+    recorded.plan_anchors = [_record(record, recorded)]
+    recorded.history_boundary = list(record.history_boundary)
+    plan = ScheduleResult(record.segments, record.lots, record.score, 0, [], [],
+                          history_boundary=list(record.history_boundary))
+    later = _at(TODAY, 670)
+    with pytest.raises(ManualMoveError) as refused:
+        _move(plan, recorded, morning.config, op1, 3, 700, later)
+    assert str(refused.value) == (
+        "A Referência SKU_OP1 · T1 (M1) fica feita até às 10:00 (150 peças) pelo registo "
+        "do que correu da Referência SKU_OP2 · T2 (M1); está congelada e não pode ser movida."
+    )
+    moved = copy.deepcopy(plan.segments)
+    for segment in moved:
+        if segment.lot_id == op1:
+            segment.day_idx, segment.start_min, segment.end_min = 3, 670, 820
+    before = _snapshot(plan.segments, plan.lots, recorded, anchors=recorded.plan_anchors,
+                       boundary=plan.history_boundary)
+    after = _snapshot(moved, plan.lots, recorded, anchors=recorded.plan_anchors,
+                      boundary=plan.history_boundary)
+    assert frozen.historical_schedule_changes(
+        before, after, now=later, unproduced=("before", op1),
+    ) == [op1]
+
+
 def test_the_fact_is_kept_only_when_present():
     from backend.plans.serialize import _jsonable, deserialize_engine_data
 

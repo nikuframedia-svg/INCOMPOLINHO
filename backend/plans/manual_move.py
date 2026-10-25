@@ -673,6 +673,64 @@ def _declared_history_changes(
     )
 
 
+def _refuse_made_or_mounting(segments, lots, data, lot, freeze_day, now_min) -> None:
+    """A lot that only started today but cannot be moved as not produced
+    (revisão de 23/10/2026): another lot's record of what ran says part of
+    it was made (``frozen.record_cut``), or a started setup-free
+    continuation runs on the tool it mounted (same setup identity)."""
+    from backend.plans.frozen import _machine_order, record_cut, started_before
+    from backend.plans.manual_edits import EXECUTED
+    from backend.scheduler.canonical import _lot_label
+    from backend.scheduler.setup_identity import segment_setup_identity
+
+    labels = {item.id: _lot_label(item) for item in lots}
+
+    def row(segment) -> dict:
+        return {
+            "day_idx": segment.day_idx, "start_min": segment.start_min,
+            "end_min": segment.end_min, "machine_id": segment.machine_id,
+            "tool_id": segment.tool_id, "qty": segment.qty,
+        }
+
+    today = str(data.workdays[freeze_day])[:10]
+    recorded = {
+        anchor.lot_id for anchor in getattr(data, "plan_anchors", None) or []
+        if getattr(anchor, "kind", "") == EXECUTED and anchor.lot_id != lot.id
+        and str(anchor.start_at or "")[:10] == today
+    }
+    productive = [s for s in segments if s.end_min > s.start_min]
+    cut = record_cut(
+        [row(s) for s in productive if s.lot_id == lot.id],
+        {
+            other: [row(s) for s in productive if s.lot_id == other and s.day_idx == freeze_day]
+            for other in recorded
+        },
+    ) if recorded else None
+    if cut is not None:
+        other, minute, made = cut
+        raise ManualMoveError(
+            f"A {_lot_label(lot)} fica feita até às {_clock(minute)} ({made} peças) pelo "
+            f"registo do que correu da {labels.get(other, 'outra referência')}; está "
+            "congelada e não pode ser movida."
+        )
+    for index, previous in _machine_order(segments).items():
+        follower = segments[index]
+        if (
+            previous is not None and segments[previous].lot_id == lot.id
+            and follower.lot_id != lot.id and follower.setup_min <= 0
+            and started_before(follower, freeze_day, now_min)
+            and segment_setup_identity(segments[previous]) == segment_setup_identity(follower)
+        ):
+            other = (
+                f"{labels.get(follower.lot_id, 'referência seguinte')} das "
+                f"{_clock(follower.start_min)}"
+            )
+            raise ManualMoveError(
+                f"A {_lot_label(lot)} não pode ser movida: a {other} já começou a seguir "
+                f"dela, sem afinação, com a ferramenta que ela montou. Mova primeiro a {other}."
+            )
+
+
 def _unproduced_notice(moved_segments, lot, freeze_day, target_day, start_min, machine_id,
                        data, *, executed=False) -> str:
     """«A … fica registada como não produzida hoje (estava na PRM043 das 07:00
@@ -2237,6 +2295,7 @@ def _move_lot(
                 f"A {_lot_label(lot)} está registada como feita desde {since}; "
                 "desfaça esse registo primeiro."
             )
+        _refuse_made_or_mounting(segments, lots, data, lot, freeze_day, now_min)
 
     current_machine = moved_segments[0].machine_id
     machine_id = target_machine or current_machine

@@ -567,7 +567,14 @@ lotes da mesma ferramenta):
        aplicação é recusada.
      - Começado num dia anterior: recusado («Lote … começou em dd/mm e está
        congelado»); registado como feito: recusado («… está registada como
-       feita desde HH:MM; desfaça esse registo primeiro»).
+       feita desde HH:MM; desfaça esse registo primeiro»). Revisão de
+       23/10/2026: cortado pelo registo do que correu de outro lote (parte
+       dada como feita, `frozen.record_cut`): recusado («… fica feita até às
+       HH:MM (N peças) pelo registo do que correu da …; está congelada»),
+       também na proteção da gravação; se montou a ferramenta para uma
+       continuação sem afinação que já começou (mesma identidade de setup,
+       p. ex. família como a JDE002): recusado («… não pode ser movida: a …
+       das HH:MM já começou a seguir dela … Mova primeiro a …»).
      - Para uma hora de hoje já passada (registo do que correu, acima) vale
        o mesmo: a troca amarela/verde funciona pelas duas ordens.
      - A proteção na gravação só põe de lado as linhas desse lote antes de
@@ -581,8 +588,10 @@ lotes da mesma ferramenta):
      - «Recalcular plano» (de D0) não volta a pôr o lote nessa manhã: o
        facto fica em `EngineData.unproduced_today` (lote, ferramenta, dia,
        início, minuto do movimento) e, nesse dia, a ferramenta fica livre de
-       trabalho novo desde o início da manhã que o lote deixou até
-       max(movimento, agora) (`frozen._install_frozen_reservations`); a
+       trabalho novo desde o início do dia (não só desde onde o lote
+       começava: um lote das 10:00 voltava às 07:00 ou era partido à volta
+       do bloqueio, revisão de 23/10/2026) até max(movimento, agora)
+       (`frozen._install_frozen_reservations`); a
        posição exata não é mantida. Noutro dia não vale; um ISOP novo
        apaga-o; um registo do que correu do mesmo lote substitui-o.
      - Prova: `tests/test_manual_move_executed.py` (secção «Lote começado

@@ -645,7 +645,8 @@ def _unproduced_today(snapshot: dict, lot_id: str, current_day: str, now_min: in
     """A lot that, by ``snapshot``, only started today (decisão do Luís, 21/10/2026).
 
     It has rows before ``now`` today, none on an earlier day (or off the
-    calendar) and no record of what ran (``manual_edits.EXECUTED``).
+    calendar), no record of what ran (``manual_edits.EXECUTED``) and was not
+    cut by another lot's record (``record_cut``).
     """
     from backend.plans.manual_edits import EXECUTED
 
@@ -664,9 +665,58 @@ def _unproduced_today(snapshot: dict, lot_id: str, current_day: str, now_min: in
     ]
     if any((_segment_date(segment, snapshot) or "") < current_day for segment in rows):
         return False
+    # Cut by another lot's record of what ran: made until then (20/10/2026).
+    anchors = (snapshot.get("engine_data") or {}).get("plan_anchors") or []
+    recorded = {
+        anchor.get("lot_id") for anchor in anchors
+        if isinstance(anchor, dict) and anchor.get("kind") == EXECUTED
+        and str(anchor.get("start_at") or "")[:10] == current_day
+    } - {lot_id}
+    if recorded and record_cut(rows, {
+        other: [
+            segment for segment in snapshot.get("segments") or []
+            if segment.get("lot_id") == other and _segment_date(segment, snapshot) == current_day
+            and float(segment["end_min"]) > float(segment["start_min"])
+        ] for other in recorded
+    }) is not None:
+        return False
     return any(
         _before_now_today(segment, snapshot, lot_id, current_day, now_min) for segment in rows
     )
+
+
+def record_cut(lot_rows: list[dict], recorded_rows: dict) -> tuple[str, int, int] | None:
+    """``(lot id, minute, pieces)``: the record of what ran of another lot that
+    cut this lot today, or ``None`` (revisão de 23/10/2026).
+
+    ``lot_rows``: the lot's rows; ``recorded_rows``: lot id -> today's rows of
+    each other lot recorded as run today. Rows are dicts with ``day_idx``,
+    ``start_min``, ``end_min``, ``machine_id``, ``tool_id`` and ``qty``. The
+    record's setup start is its lot's first row; a row of this lot on that
+    day, on its machine or with its tool, that started before it and stops
+    there, with pieces of the lot left after it, is the part the record says
+    was made (``history.cut_segment``): the lot started and is history.
+    """
+    total = sum(int(row.get("qty") or 0) for row in lot_rows)
+    for other, rows in sorted(recorded_rows.items()):
+        if not rows:
+            continue
+        first = min(rows, key=lambda row: (float(row["start_min"]), float(row["end_min"])))
+        day, setup_start = int(first["day_idx"]), int(math.floor(float(first["start_min"])))
+        cut = [
+            row for row in lot_rows
+            if int(row["day_idx"]) == day and float(row["start_min"]) < setup_start
+            and abs(float(row["end_min"]) - setup_start) < 1
+            and (row.get("machine_id") == first.get("machine_id")
+                 or (bool(row.get("tool_id")) and row.get("tool_id") == first.get("tool_id")))
+        ]
+        made = sum(
+            int(row.get("qty") or 0) for row in lot_rows
+            if (int(row["day_idx"]), float(row["end_min"])) <= (day, setup_start + 0.5)
+        )
+        if cut and 0 < made < total:
+            return str(other), setup_start, made
+    return None
 
 
 def _declared_today(
@@ -2059,16 +2109,18 @@ def _install_frozen_reservations(
             engine_data.tool_blocked_intervals.setdefault(tool, []).append(dict(elapsed_today))
     # A lot moved as not produced today keeps its tool free of new work in
     # the morning it left (decisão do Luís, 21/10/2026): «Recalcular plano»,
-    # which plans from D0, does not put it back there.
+    # which plans from D0, does not put it back there. From the start of the
+    # day, not from where the lot started (revisão de 23/10/2026): a lot that
+    # started at 10:00 would otherwise go back to 07:00, or be split around
+    # the block (a lot is one production).
     dates = [str(day)[:10] for day in engine_data.workdays or []]
     for entry in getattr(engine_data, "unproduced_today", None) or []:
         tool, date = entry.get("tool_id"), str(entry.get("date") or "")
-        start = int(entry.get("start_min") or 0)
         since = int(math.ceil(float(entry.get("since") or 0)))
-        if tool and date in dates and since > start:
+        if tool and date in dates and since > 0:
             day = dates.index(date)
             engine_data.tool_blocked_intervals.setdefault(tool, []).append({
-                "id": f"unproduced-{entry.get('lot_id')}", "start_day": day, "start_min": start,
+                "id": f"unproduced-{entry.get('lot_id')}", "start_day": day, "start_min": 0,
                 "end_day": day, "end_min": since, "category": "Plano passado",
                 "reason": "Lote não produzido hoje", "lot_id": entry.get("lot_id"),
                 "tool_id": tool,
