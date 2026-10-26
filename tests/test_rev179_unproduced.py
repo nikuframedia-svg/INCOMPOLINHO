@@ -53,6 +53,17 @@ def _applied(payload, move, anchors):
     after["engine_data"]["plan_anchors"] = anchors
     if move.history_boundary:
         after["engine_data"]["history_boundary"] = list(move.history_boundary)
+    # As ``manual_plan.apply_move``: the morning a lot left, by lot.
+    kept = [
+        entry for entry in after["engine_data"].get("unproduced_today") or []
+        if entry.get("lot_id") != move.lot_id
+    ]
+    if move.unproduced_today:
+        kept.append(dict(move.unproduced_today))
+    if kept:
+        after["engine_data"]["unproduced_today"] = kept
+    else:
+        after["engine_data"].pop("unproduced_today", None)
     return _finalize_snapshot(after)
 
 

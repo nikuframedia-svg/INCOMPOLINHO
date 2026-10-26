@@ -1108,6 +1108,82 @@ def test_desfazer_is_refused_once_work_started_in_the_freed_time():
     ) == ["JTE"]
 
 
+# «Desfazer» of a move as not produced when the move put another lot in the
+# time it freed (decisão do Luís, 26/10/2026; rev 179: BFP204 on PRM043 from
+# 10:34, «Desfazer» at 10:35). CF left M43 at 10:00; BFP, planned on M50
+# after now, was put on M43 from 10:00 (setup 30).
+_LEFT = {"lot_id": "CF", "tool_id": "T1", "date": "2026-10-20", "start_min": 420, "since": 600}
+
+
+def _cf_out_bfp_in(start=600, machine="M43", tool="T3", *, left=True):
+    previous = _state([*_BEFORE_RECORD, _row("BFP", "M50", "T3", 1040, 1300, 500, setup=30)])
+    moved = _state([
+        _row("BFP", machine, tool, start, start + 260, 500, setup=30),
+        _row("JTE", "M43", "T2", 1115, 1300, 500, setup=60),
+        {**_row("CF", "M43", "T1", 420, 950, 1000, setup=60), "day_idx": 1},
+    ])
+    if left:
+        moved["engine_data"]["unproduced_today"] = [dict(_LEFT)]
+    return previous, moved
+
+
+def _undo(moved, previous, minute, **kwargs):
+    return frozen.historical_schedule_changes(
+        moved, previous, now=_lisbon(10, minute), undo=True, **kwargs,
+    )
+
+
+def test_desfazer_takes_back_a_lot_the_move_put_in_the_freed_time():
+    previous, moved = _cf_out_bfp_in()
+    assert _undo(moved, previous, 5, unproduced=("after", "CF")) == []
+    # Only with the explicit signal, and the move's own entry (its instant).
+    assert "BFP" in _undo(moved, previous, 5)
+    _previous, unmarked = _cf_out_bfp_in(left=False)
+    assert _undo(unmarked, previous, 5, unproduced=("after", "CF")) == ["BFP"]
+    # Not a «Desfazer»: strict.
+    assert frozen.historical_schedule_changes(
+        moved, previous, now=_lisbon(10, 5), unproduced=("after", "CF"),
+    ) == ["BFP"]
+
+
+def test_desfazer_is_refused_once_the_lot_put_in_the_freed_time_made_pieces():
+    previous, moved = _cf_out_bfp_in()
+    assert _undo(moved, previous, 29, unproduced=("after", "CF")) == []
+    assert _undo(moved, previous, 40, unproduced=("after", "CF")) == ["BFP"]
+
+
+def test_desfazer_leeway_needs_the_lot_not_started_in_the_version_put_back():
+    previous, moved = _cf_out_bfp_in()
+    # By the version put back, BFP had started on M50 at 08:20.
+    started = _state([*_BEFORE_RECORD, _row("BFP", "M50", "T3", 500, 760, 500, setup=30)])
+    assert "BFP" in _undo(moved, started, 5, unproduced=("after", "CF"))
+    # A record of what ran of it (kept by the «Desfazer»).
+    recorded, kept = copy.deepcopy(moved), copy.deepcopy(previous)
+    recorded["engine_data"]["plan_anchors"] = kept["engine_data"]["plan_anchors"] = [{
+        "lot_id": "BFP", "machine_id": "M43", "start_at": "2026-10-20T10:00", "kind": EXECUTED,
+    }]
+    assert _undo(recorded, kept, 5, unproduced=("after", "CF")) == ["BFP"]
+
+
+def test_desfazer_leeway_never_covers_a_lot_starting_before_the_move_or_elsewhere():
+    previous, early = _cf_out_bfp_in(start=590)
+    assert _undo(early, previous, 5, unproduced=("after", "CF")) == ["BFP"]
+    # On a machine CF did not leave (BFP planned on M50 later).
+    _previous, elsewhere = _cf_out_bfp_in(machine="M44")
+    assert _undo(elsewhere, previous, 5, unproduced=("after", "CF")) == ["BFP"]
+
+
+def test_repor_over_that_desfazer_stays_strict():
+    previous, moved = _cf_out_bfp_in()
+    later = _lisbon(10, 5)
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=later, unproduced=("before", "CF"),
+    ) == ["BFP"]
+    assert frozen.historical_schedule_changes(
+        previous, moved, now=later, undo=True, unproduced=("before", "CF"),
+    ) == ["BFP"]
+
+
 def _store_with(tmp_path, monkeypatch, versions, active):
     import json
 
@@ -1170,6 +1246,21 @@ def test_the_store_lets_desfazer_take_back_only_the_move_the_active_plan_made(
         ("antes", previous, None), ("movido", _moved_cf("outra"), "antes"),
     ], "movido")
     assert other.protected_changes(previous, now=now, undo_restores="antes") is not None
+
+
+def test_the_store_desfazer_takes_back_the_lot_the_move_put_in_the_freed_time(
+    tmp_path, monkeypatch,
+):
+    previous, moved = _cf_out_bfp_in()
+    moved["manual_edits"] = [{
+        "lot_id": "CF", "previous_version_id": "antes", "unproduced_today": True,
+    }]
+    store = _store_with(tmp_path, monkeypatch, [
+        ("antes", previous, None), ("movido", moved, "antes"),
+    ], "movido")
+    now = _lisbon(10, 5)
+    assert store.protected_changes(previous, now=now, undo_restores="antes") is None
+    assert store.protected_changes(previous, now=now) is not None
 
 
 def test_apply_refuses_a_move_as_not_produced_its_check_did_not_show(morning):

@@ -306,8 +306,11 @@ def historical_schedule_changes(
     it, or the «Desfazer» of that move, ``PlansStore``) and honoured only when
     the lot, on that side, has rows before ``now`` today, none on an earlier
     day and no record of what ran (``_unproduced_today``): then its rows
-    before ``now`` on that side are set aside. Everything else is judged as
-    above.
+    before ``now`` on that side are set aside. In the «Desfazer» of that move
+    (``undo``, side ``after``), so are the rows before ``now`` the move itself
+    put in the time it freed and that made nothing yet
+    (``_placed_by_unproduced_move``, 26/10/2026). Everything else is judged
+    as above.
     """
     from backend.calendar import factory_now
     from backend.scheduler.history import cut_row
@@ -346,6 +349,18 @@ def historical_schedule_changes(
                 segment for segment in snapshot.get("segments", [])
                 if not _before_now_today(segment, snapshot, lot_id, current_day, now_min)
             ]}
+            if undo and side == "after":
+                # «Desfazer» of that move: what the move itself put in the
+                # time it freed, and has made nothing yet, goes too.
+                placed = _placed_by_unproduced_move(
+                    before, snapshot, lot_id, current_day, now_min,
+                )
+                before = {**before, "segments": [
+                    segment for segment in before.get("segments", [])
+                    if segment.get("lot_id") not in placed or not _before_now_today(
+                        segment, before, segment.get("lot_id"), current_day, now_min,
+                    )
+                ]}
             before, after = (trimmed, after) if side == "before" else (before, trimmed)
     started = {
         segment["lot_id"]
@@ -683,6 +698,81 @@ def _unproduced_today(snapshot: dict, lot_id: str, current_day: str, now_min: in
     return any(
         _before_now_today(segment, snapshot, lot_id, current_day, now_min) for segment in rows
     )
+
+
+def _placed_by_unproduced_move(
+    undone: dict, restored: dict, lot_id: str, current_day: str, now_min: int,
+) -> set[str]:
+    """Lots the «Desfazer» of a move as not produced may take out of the
+    morning of ``undone`` (decisão do Luís, 26/10/2026).
+
+    ``undone`` is the plan of the move, ``restored`` the version it replaced,
+    where ``lot_id`` had its morning. The move's instant is ``since`` of its
+    own entry in ``undone``'s ``unproduced_today`` (none: no lot). A lot
+    qualifies only when, on ``undone``, all its rows are today, the first
+    starts at or after ``since`` and those before ``now`` are on the machine
+    or tool ``lot_id`` left and made no piece by ``now`` (setup only); it has
+    no record of what ran on either side; and ``restored`` has no row of it
+    before ``now`` (nor on an earlier day). Anything else is judged strictly:
+    once such a lot made a piece, «Desfazer» is refused.
+    """
+    from backend.plans.manual_edits import EXECUTED
+    from backend.scheduler.history import cut_row
+
+    since = next((
+        entry.get("since")
+        for entry in (undone.get("engine_data") or {}).get("unproduced_today") or []
+        if isinstance(entry, dict) and entry.get("lot_id") == lot_id
+        and str(entry.get("date") or "") == current_day
+    ), None)
+    if not isinstance(since, (int, float)) or since > now_min:
+        return set()
+    freed = [
+        segment for segment in restored.get("segments") or []
+        if _before_now_today(segment, restored, lot_id, current_day, now_min)
+    ]
+    machines = {segment.get("machine_id") for segment in freed}
+    tools = {segment.get("tool_id") for segment in freed if segment.get("tool_id")}
+    recorded = {
+        anchor.get("lot_id")
+        for snapshot in (undone, restored)
+        for anchor in (snapshot.get("engine_data") or {}).get("plan_anchors") or []
+        if isinstance(anchor, dict) and anchor.get("kind") == EXECUTED
+    }
+
+    def rows(snapshot: dict, other: str) -> list[dict]:
+        return [
+            segment for segment in snapshot.get("segments") or []
+            if segment.get("lot_id") == other
+            and float(segment["end_min"]) > float(segment["start_min"])
+        ]
+
+    placed = set()
+    for other in {
+        segment.get("lot_id") for segment in undone.get("segments") or []
+        if _before_now_today(segment, undone, segment.get("lot_id"), current_day, now_min)
+    } - {lot_id} - recorded:
+        own = rows(undone, other)
+        morning = [s for s in own if _before_now_today(s, undone, other, current_day, now_min)]
+        if (
+            any((_segment_date(s, undone) or "") < current_day for s in own)
+            or min(
+                float(s["start_min"]) for s in own if _segment_date(s, undone) == current_day
+            ) < float(since)
+            or any(
+                s.get("machine_id") not in machines and s.get("tool_id") not in tools
+                for s in morning
+            )
+            or any(cut_row(s, now_min) is not None for s in morning)
+            or any(
+                (_segment_date(s, restored) or "") < current_day
+                or _before_now_today(s, restored, other, current_day, now_min)
+                for s in rows(restored, other)
+            )
+        ):
+            continue
+        placed.add(other)
+    return placed
 
 
 def record_cut(lot_rows: list[dict], recorded_rows: dict) -> tuple[str, int, int] | None:
